@@ -97,16 +97,24 @@ export function widgetSources(html: string): string[] {
 
 /**
  * Anchors a widget reads with `useAnchorCode`, from its compiled modules: literal ids, or `all` when an id is
- * computed (any anchor could then be read).
+ * computed or `useAnchorCode` is used any other way (aliased, passed around). The extension serves a widget
+ * only these anchors (host.ts), however the widget asks, so the list is also what Pin and the consent bar
+ * ask about; the checker uses the same function.
  */
 export function anchorsRead(modules: Record<string, string>): Set<string> | 'all' {
   const ids = new Set<string>();
   for (const code of Object.values(modules)) {
+    let calls = 0;
     // Compiled calls look like `useAnchorCode.call(void 0, 'id')` (Sucrase), `(0, x.useAnchorCode)('id')` or plain.
     for (const m of code.matchAll(/useAnchorCode\b\)?(?:\.call\(\s*void 0\s*,|\s*\()\s*(?:(["'`])([A-Za-z][\w-]{0,63})\1\s*\)|([^)\s]))/g)) {
       if (m[2]) ids.add(m[2]);
       else if (m[3]) return 'all';
+      calls++;
     }
+    // Any other mention (an alias, a destructured rename, a call through something else): can't tell which.
+    const mentions = [...code.matchAll(/useAnchorCode\b/g)].length;
+    const imports = [...code.matchAll(/\buseAnchorCode\s*(?:,|\})/g)].length; // `import { useAnchorCode }` left in ESM form
+    if (mentions > calls + imports) return 'all';
   }
   return ids;
 }

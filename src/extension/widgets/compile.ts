@@ -2,7 +2,7 @@
 // worker_thread, one at a time, each with a time limit; a compile that times out or crashes the worker
 // gets an error result and the worker is replaced. The work itself is in compile-core.ts.
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { normalizeEntry } from './specifiers.ts';
 import type { CompileRequest, CompileResult, Diag, WorkerReply } from './types.ts';
@@ -30,6 +30,12 @@ interface Job {
 }
 
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
+
+/** Worker errors can carry absolute paths (stacks, file names): only folder-relative ones reach the reader's box. */
+export function relativize(message: string, explainerDir: string): string {
+  const dir = resolve(explainerDir);
+  return message.split(dir + sep).join('').split(dir).join('.').replace(/(?:[A-Za-z]:)?[\\/](?:[^\s:'"()\\/]+[\\/])+([^\s:'"()\\/]+)/g, '…/$1');
+}
 
 function failed(src: string, code: string, message: string): CompileResult {
   const e = normalizeEntry(src);
@@ -89,13 +95,13 @@ export class WidgetCompiler {
       if (w !== this.worker) return;
       const job = this.current;
       if (!job || job.req.id !== msg.id) return;
-      this.finish(job, 'result' in msg ? msg.result : failed(job.req.src, msg.failure === 'too-complex' ? 'too-complex' : 'internal', msg.failure === 'too-complex' ? 'This widget is nested too deeply to compile.' : `The widget compiler failed: ${msg.failure}`));
+      this.finish(job, 'result' in msg ? msg.result : failed(job.req.src, msg.failure === 'too-complex' ? 'too-complex' : 'internal', msg.failure === 'too-complex' ? 'This widget is nested too deeply to compile.' : `The widget compiler failed: ${relativize(msg.failure, job.req.explainerDir)}`));
     });
     const onDeath = (why: string) => {
       if (w !== this.worker) return;
       this.worker = undefined;
       const job = this.current;
-      if (job) this.finish(job, failed(job.req.src, 'crashed', `The widget compiler stopped while compiling this widget (${why}); it may be too large or too complex.`));
+      if (job) this.finish(job, failed(job.req.src, 'crashed', `The widget compiler stopped while compiling this widget (${relativize(why, job.req.explainerDir)}); it may be too large or too complex.`));
     };
     w.on('error', (e) => onDeath(e.message.slice(0, 200)));
     w.on('exit', (code) => onDeath(`exit code ${code}`));

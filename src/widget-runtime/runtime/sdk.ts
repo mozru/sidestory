@@ -1,7 +1,7 @@
 // The widget SDK, `import … from 'explainer'` (docs/WIDGETS-PLAN.md §6), and the store behind it.
 import { createElement as h, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { FromWidget, ThemeKind, WidgetAnchor, WidgetCode } from '../../shared/widget-protocol.ts';
-import { MAX_WIDGET_STATE_BYTES } from '../limits.ts';
+import { ANCHOR_ID, IDENTIFIER, MAX_IDENTIFIERS, MAX_LINE, MAX_WIDGET_STATE_BYTES } from '../limits.ts';
 
 export interface Snapshot {
   activeStep: string | null;
@@ -63,11 +63,42 @@ export function settle(id: number, ok: boolean) {
 }
 
 type Lines = number | readonly number[] | undefined | null;
-function lineRange(lines: Lines): [number, number] | undefined {
-  if (typeof lines === 'number') return [lines, lines];
-  if (!Array.isArray(lines) || lines.length === 0) return undefined;
-  const [a, b = a] = lines as number[];
-  return [Math.min(a!, b!), Math.max(a!, b!)];
+
+/** A call the panel would drop: said to the author (Output and the box's badge) instead of failing silently. */
+class BadArgument extends Error {}
+function bad(fn: string, what: string): never {
+  throw new BadArgument(`${fn}: ${what}; the call was ignored.`);
+}
+/** Runs a call's argument checks; an invalid call is reported and yields `fallback`. */
+function checked<T>(fallback: T, run: () => T): T {
+  try {
+    return run();
+  } catch (e) {
+    if (!(e instanceof BadArgument)) throw e;
+    reportError(e.message);
+    return fallback;
+  }
+}
+
+function lineRange(fn: string, lines: Lines): [number, number] | undefined {
+  if (lines === undefined || lines === null) return undefined;
+  const list = typeof lines === 'number' ? [lines, lines] : Array.isArray(lines) ? (lines.length === 1 ? [lines[0], lines[0]] : lines) : null;
+  if (!list || list.length !== 2 || !list.every((n) => Number.isInteger(n) && n >= 1 && n <= MAX_LINE)) {
+    bad(fn, `lines must be a line number or a [first, last] pair of whole numbers from 1 (relative to the anchor), not ${JSON.stringify(lines)}`);
+  }
+  const [a, b] = list as [number, number];
+  return [Math.min(a, b), Math.max(a, b)];
+}
+function anchorId(fn: string, anchor: unknown): string {
+  if (typeof anchor !== 'string' || !ANCHOR_ID.test(anchor)) bad(fn, `${JSON.stringify(anchor) ?? String(anchor)} isn't an anchor id`);
+  return anchor;
+}
+function identifiers(fn: string, ids: unknown): string[] | undefined {
+  if (ids === undefined || ids === null) return undefined;
+  if (!Array.isArray(ids) || ids.length > MAX_IDENTIFIERS || !ids.every((i) => typeof i === 'string' && IDENTIFIER.test(i))) {
+    bad(fn, `identifiers must be an array of at most ${MAX_IDENTIFIERS} identifiers (letters, digits, _ and $)`);
+  }
+  return ids as string[];
 }
 
 // ---- steps ----
@@ -107,7 +138,8 @@ export function resetCodeRequests() { requestedCode.clear(); }
 export function useAnchorCode(anchor: string): WidgetCode | null {
   const code = useSnapshot().codes[anchor] ?? null;
   useEffect(() => {
-    if (typeof anchor !== 'string' || requestedCode.has(anchor)) return;
+    if (requestedCode.has(anchor)) return;
+    if (!checked(false, () => !!anchorId('useAnchorCode()', anchor))) return;
     requestedCode.add(anchor);
     post({ type: 'requestCode', anchor });
   }, [anchor]);
@@ -116,13 +148,26 @@ export function useAnchorCode(anchor: string): WidgetCode | null {
 
 // ---- editor ----
 export function highlight(lines?: Lines, opts: { anchor?: string; identifiers?: string[] } = {}) {
-  post({ type: 'highlight', lines: lineRange(lines), anchor: opts.anchor, identifiers: opts.identifiers });
+  checked(undefined, () => {
+    const o = opts ?? {};
+    const m: FromWidget = { type: 'highlight', lines: lineRange('highlight()', lines), anchor: o.anchor === undefined ? undefined : anchorId('highlight()', o.anchor), identifiers: identifiers('highlight()', o.identifiers) };
+    post(m);
+  });
 }
 export function reveal(anchor: string, opts: { lines?: Lines; highlight?: string[] } = {}): Promise<boolean> {
-  return request((id) => ({ type: 'reveal', id, anchor, lines: lineRange(opts.lines), highlight: opts.highlight }));
+  return checked(Promise.resolve(false), () => {
+    const o = opts ?? {};
+    const a = anchorId('reveal()', anchor);
+    const lines = lineRange('reveal()', o.lines);
+    const hl = identifiers('reveal()', o.highlight);
+    return request((id) => ({ type: 'reveal', id, anchor: a, lines, highlight: hl }));
+  });
 }
 export function goToStep(anchor: string): Promise<boolean> {
-  return request((id) => ({ type: 'step', id, anchor }));
+  return checked(Promise.resolve(false), () => {
+    const a = anchorId('goToStep()', anchor);
+    return request((id) => ({ type: 'step', id, anchor: a }));
+  });
 }
 /** A link to an anchor's code: `<Ref anchor="refill">the refill path</Ref>`. Works from a click. */
 export function Ref({ anchor, lines, children, className, ...rest }: { anchor: string; lines?: Lines; children?: ReactNode; className?: string } & Record<string, unknown>) {

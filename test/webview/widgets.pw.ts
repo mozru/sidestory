@@ -5,7 +5,7 @@
 // (Playwright evaluates in the frame; that is not a user gesture).
 import { expect, type FrameLocator, type Page, test } from '@playwright/test';
 import type { FromWebview } from '../../src/shared/protocol.ts';
-import { clearPosted, compile, content, explainerHtml, filler, frames, ON, openWith, posted, send, widgetFrame } from './widget-helpers.ts';
+import { clearPosted, compile, content, explainerHtml, filler, frames, ON, openWith, posted, send, serve, widgetFrame } from './widget-helpers.ts';
 
 const PROBE = `import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -482,12 +482,205 @@ test.describe('watchdogs', () => {
   test('heartbeats carry breadcrumbs; a widget that stops answering pings is reported once', async ({ page }) => {
     await openProbe(page);
     await expect.poll(async () => (await posted(page)).find((m) => m.type === 'heartbeat'), { timeout: 3000 }).toMatchObject({ type: 'heartbeat', visible: true, mounted: ['w/probe.tsx'] });
-    // Hang the widget: pongs stop.
+    // The widget stops answering (a hang that doesn't also freeze the panel, as with site isolation; when it
+    // shares the panel's thread, the panel's own timers stop too and the extension's watchdog handles it).
     const handle = await frames(page).first().elementHandle();
-    void (await handle!.contentFrame())!.evaluate(() => { const end = Date.now() + 6000; while (Date.now() < end) { /* hang */ } }).catch(() => {});
+    await (await handle!.contentFrame())!.evaluate(() => {
+      const data = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data')!.get!;
+      Object.defineProperty(MessageEvent.prototype, 'data', { get() { const d = data.call(this); return d?.type === 'ping' ? null : d; } });
+    });
     await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'widgetsUnresponsive').length, { timeout: 10_000 }).toBe(1);
     // The extension's answer: unmount everywhere.
     await send(page, { type: 'widgetsReset', phase: 'unmount' });
     await expect(frames(page)).toHaveCount(0);
+  });
+});
+
+test.describe('review regressions', () => {
+  test('a key pressed in the panel, then a click on the widget already under the pointer, works and isn’t a theft', async ({ page }) => {
+    await openProbe(page);
+    const ph = (await placeholder(page).boundingBox())!;
+    const at = await centre(widgetFrame(page), 'reveal');
+    // The pointer comes from the prose into the widget and rests there.
+    await page.mouse.move(at.x, ph.y - 40);
+    await page.mouse.move(at.x, at.y, { steps: 8 });
+    await page.locator('.cx-scroll').focus();
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(300);
+    const to = await centre(widgetFrame(page), 'reveal');
+    await page.mouse.move(to.x, to.y, { steps: 3 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(out(widgetFrame(page))).toContainText('reveal:true');
+    expect((await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('took focus'))).toBe(false);
+  });
+
+  test('a widget the pointer rests on only because it grew there is refused, but not stopped as a thief', async ({ page }) => {
+    await openProbe(page);
+    await page.waitForTimeout(1600); // the opening scroll (and its hold) is over
+    // The widget holds the reading line, so its growth isn't compensated by scrolling: it grows downward.
+    const view = (await page.locator('.cx-scroll').boundingBox())!;
+    const top = (await placeholder(page).boundingBox())!.y;
+    await page.locator('.cx-scroll').evaluate((s, d) => (s.scrollTop += d), top - (view.y + view.height * 0.3 - 20));
+    await page.waitForTimeout(300);
+    const ph = (await placeholder(page).boundingBox())!;
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.click(ph.x + 40, ph.y + ph.height + 12 + i);
+      await widgetEval(page, 0, 'grow', 80 + i);
+      await page.waitForTimeout(250);
+      await widgetEval(page, 0, 'steal');
+      expect(await widgetEval<boolean>(page, 0, 'reveal')).toBe(false);
+      await expect.poll(() => contentFocus(page)).toBe('explain-widget');
+      await widgetEval(page, 0, 'grow', 0);
+      await page.waitForTimeout(250);
+    }
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+  });
+
+  test('a mounted widget that is off screen gets no credit for pointer travel toward it', async ({ page }) => {
+    const html = explainerHtml('<p>x</p>', { before: `<p>Before.</p>${filler(12)}${probeTag()}${filler(30)}` });
+    await openWith(page, html, builds, { active: 'intro' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    const fb = (await frames(page).first().boundingBox())!;
+    expect(fb.y).toBeGreaterThan(page.viewportSize()!.height);
+    const p = (await content(page).locator('p', { hasText: 'Paragraph 1 ' }).first().boundingBox())!;
+    await page.mouse.click(fb.x + 40, p.y + 5);
+    await page.mouse.move(fb.x + 40, p.y + 25, { steps: 2 });
+    await widgetEval(page, 0, 'steal');
+    expect(await widgetEval<boolean>(page, 0, 'reveal')).toBe(false);
+  });
+
+  test('author CSS can’t shrink the placeholder under the frame or hide the label', async ({ page }) => {
+    const css = '<style>#w.x{height:0 !important;padding:0 !important;border:0 !important;margin:0 !important} #w.x > .cx-widget-bar{display:none !important} #w.x .cx-widget-tag{visibility:hidden !important}</style>';
+    await openWith(page, css + explainerHtml(probeTag(' id="w" class="x"')), builds, { active: 'ring' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await widgetEval(page, 0, 'grow', 400);
+    await page.waitForTimeout(600);
+    const fb = (await frames(page).first().boundingBox())!;
+    const pb = (await placeholder(page).boundingBox())!;
+    expect(pb.height).toBeGreaterThan(400);
+    expect(fb.y + fb.height).toBeLessThanOrEqual(pb.y + pb.height + 1);
+    await expect(placeholder(page).locator('.cx-widget-tag')).toBeVisible();
+  });
+
+  test('a widget growing while it holds the reading line stays where the reader is using it', async ({ page }) => {
+    const grower = await compile({ 'w/g.tsx': `import { useState } from 'react';
+export default function G() { const [rows, setRows] = useState(1); return <div><button data-testid="add" onClick={() => setRows(rows + 3)}>add</button>{Array.from({ length: rows }, (_, i) => <p key={i} style={{ height: 30, margin: 0 }}>row {i}</p>)}</div>; }` });
+    await openWith(page, explainerHtml('<explain-widget id="g" src="w/g.tsx" title="G" height="300"></explain-widget>', { before: filler(10) }), grower, { active: 'ring' });
+    const f = widgetFrame(page);
+    await expect(f.getByTestId('add')).toBeVisible();
+    await page.waitForTimeout(1600); // the opening scroll (and its hold) is over
+    // The reading line (30% down the panel) runs through the widget.
+    const view = (await page.locator('.cx-scroll').boundingBox())!;
+    const line = view.y + view.height * 0.3;
+    const top = (await placeholder(page).boundingBox())!.y;
+    await page.locator('.cx-scroll').evaluate((s, d) => (s.scrollTop += d), top - (line - 60));
+    await page.waitForTimeout(300);
+    const ph = (await placeholder(page).boundingBox())!;
+    expect(ph.y < line && ph.y + ph.height > line).toBe(true);
+    const b1 = (await f.getByTestId('add').boundingBox())!;
+    for (let i = 0; i < 4; i++) {
+      await f.getByTestId('add').click();
+      await page.waitForTimeout(200);
+    }
+    await page.waitForTimeout(500);
+    expect(Math.abs((await f.getByTestId('add').boundingBox())!.y - b1.y)).toBeLessThan(2);
+  });
+
+  test('fixing a broken src (placeholder with an id) in the HTML runs the widget', async ({ page }) => {
+    const bad = await compile({ 'w/bad.tsx': 'export default function B() { return <div>; }' });
+    await openWith(page, explainerHtml('<explain-widget id="x" src="w/bad.tsx" title="P"></explain-widget>'), { ...builds, ...bad }, { active: 'ring' });
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'error');
+    await send(page, { type: 'content', title: 'Widgets', html: explainerHtml('<explain-widget id="x" src="w/probe.tsx" title="P"></explain-widget>') });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+  });
+
+  test('state set just before diving into another explainer is kept for coming back; heights aren’t filed under the new one', async ({ page }) => {
+    const html = explainerHtml(probeTag(' id="x"'));
+    await openWith(page, html, builds, { active: 'ring' });
+    const f = widgetFrame(page);
+    for (let i = 0; i < 3; i++) await f.getByTestId('inc').click();
+    await expect(out(f)).toContainText('w:3');
+    await widgetEval(page, 0, 'grow', 60);
+    await page.waitForTimeout(150);
+    await clearPosted(page);
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+    const anchors = [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' as const }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' as const }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' as const }];
+    await send(page, { type: 'init', title: 'Other', html: '<section data-explain-anchor="intro"><h2>Other</h2></section>', anchors, active: 'intro', dir: 'file:///ws/.explain/other', base, trail: [{ name: 'w', title: 'Widgets' }, { name: 'other', title: 'Other' }] });
+    await page.waitForTimeout(1500);
+    expect((await posted(page)).filter((m) => m.type === 'widgetHeights')).toEqual([]);
+    await send(page, { type: 'init', title: 'Widgets', html, anchors, active: 'ring', dir: 'file:///ws/.explain/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:3');
+  });
+
+  test('resizing the panel sends widgets no theme messages; a theme change sends one', async ({ page }) => {
+    await openProbe(page);
+    const f = (await (await frames(page).first().elementHandle())!.contentFrame())!;
+    await f.evaluate(() => {
+      (window as any).__themes = 0;
+      addEventListener('message', (e) => { if (e.data?.type === 'theme') (window as any).__themes++; });
+    });
+    for (let w = 600; w < 760; w += 20) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.waitForTimeout(30);
+    }
+    await page.waitForTimeout(200);
+    expect(await f.evaluate(() => (window as any).__themes)).toBe(0);
+    await page.evaluate(() => document.documentElement.style.setProperty('--vscode-foreground', '#123456'));
+    await expect.poll(() => f.evaluate(() => (window as any).__themes)).toBe(1);
+  });
+
+  test('VS Code’s reduce-motion setting (a body class) reaches widgets, and follows changes', async ({ page }) => {
+    const rm = await compile({ 'w/rm.tsx': `import { useReducedMotion } from 'explainer';
+export default function R() { return <p data-testid="rm">{String(useReducedMotion())}</p>; }` });
+    await openWith(page, explainerHtml('<explain-widget src="w/rm.tsx"></explain-widget>'), rm, { active: 'ring' });
+    await expect(widgetFrame(page).getByTestId('rm')).toHaveText('false');
+    await page.evaluate(() => document.body.classList.add('vscode-reduce-motion'));
+    await expect(widgetFrame(page).getByTestId('rm')).toHaveText('true');
+  });
+
+  test('a panel paused for seconds (sleep, debugger) doesn’t report its widgets as unresponsive', async ({ page }) => {
+    await openProbe(page);
+    await page.waitForTimeout(1500);
+    await clearPosted(page);
+    await page.evaluate(() => { const end = performance.now() + 4500; while (performance.now() < end) { /* paused */ } });
+    await page.waitForTimeout(2000);
+    expect((await posted(page)).filter((m) => m.type === 'widgetsUnresponsive')).toEqual([]);
+  });
+
+  test('a refusal sent before the extension saw a new widget is asked again when the gate comes', async ({ page }) => {
+    await openWith(page, explainerHtml(probeTag()), { 'w/probe.tsx': null }, { active: 'ring' });
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'off');
+    await serve(page, builds);
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+  });
+
+  test('heartbeats go on while the page is hidden (visible: false), and one is sent at once on the change', async ({ page }) => {
+    await openProbe(page);
+    await expect.poll(async () => (await posted(page)).some((m) => m.type === 'heartbeat')).toBe(true);
+    await clearPosted(page);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').length, { timeout: 200 }).toBeGreaterThan(0);
+    await page.waitForTimeout(2200);
+    const beats = (await posted(page)).filter((m) => m.type === 'heartbeat');
+    expect(beats.length).toBeGreaterThanOrEqual(3);
+    expect(beats.every((b) => b.type === 'heartbeat' && !b.visible)).toBe(true);
+  });
+
+  test('a highlight waiting in the rate limit is dropped when the step changes', async ({ page }) => {
+    await openProbe(page, { active: 'ring' });
+    for (let i = 1; i <= 12; i++) await widgetEval(page, 0, 'highlight', [i, i]);
+    await clearPosted(page);
+    // The cursor moves into the nested anchor: a step change within the same section, where the old call
+    // would still pass the highlight check.
+    await send(page, { type: 'syncTo', anchorId: 'inner' });
+    await page.waitForTimeout(1300);
+    expect((await posted(page)).filter((m) => m.type === 'widgetHighlight' && 'anchor' in m && m.anchor)).toEqual([]);
   });
 });

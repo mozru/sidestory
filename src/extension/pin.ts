@@ -131,8 +131,16 @@ export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => Li
       patches.delete(a.id);
       refused.push({ anchor: a, reason: 'widgets-secret' });
     }
-    // Quotes that stay as they were and were confirmed before need no second confirmation.
-    const ask = byWidgets.filter((a) => patches.has(a.id) && !widgets.isConfirmed(a.file, patches.get(a.id)!.quote, patches.get(a.id)!.range));
+    // Quotes that stay as they were and were confirmed before, or are committed at HEAD (widgets read them
+    // already), need no second confirmation.
+    const ask: Anchor[] = [];
+    for (const a of byWidgets) {
+      const p = patches.get(a.id);
+      if (!p || widgets.isConfirmed(a.file, p.quote, p.range)) continue;
+      const same = !!a.quote && a.quote.exact === p.quote.exact && a.quote.norm === p.quote.norm;
+      if (same && (await widgets.isCommitted(a))) continue;
+      ask.push(a);
+    }
     if (ask.length) {
       const ok = await widgets.confirm(ask.map((a) => ({ id: a.id, file: a.file, range: patches.get(a.id)!.range })));
       for (const a of ask) {

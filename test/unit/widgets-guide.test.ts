@@ -13,7 +13,9 @@ import { EXPLAINER_SDK_EXPORTS, UI_COMPONENT_EXPORTS, UI_COMPONENTS, UNAVAILABLE
 import { WIDGET_TYPE_FILES, widgetTsconfig } from '../../src/widget-types/index.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
-const guide = readFileSync(join(repo, 'docs/WIDGETS.md'), 'utf8');
+// A Windows checkout may have CRLF line endings.
+const lf = (s: string) => s.replace(/\r\n/g, '\n');
+const guide = lf(readFileSync(join(repo, 'docs/WIDGETS.md'), 'utf8'));
 const blocks = (lang: string) => [...guide.matchAll(new RegExp(`^\`\`\`${lang}\\n([\\s\\S]*?)^\`\`\`$`, 'gm'))].map((m) => m[1]!);
 const tsx = blocks('tsx');
 const typesDir = join(repo, 'src/widget-types');
@@ -56,10 +58,11 @@ describe('docs/WIDGETS.md examples', () => {
     mkdirSync(join(explain, 'demo/widgets'), { recursive: true });
     for (const f of WIDGET_TYPE_FILES) copyFileSync(join(typesDir, f), join(explain, '.types', f));
     writeFileSync(join(explain, 'tsconfig.json'), widgetTsconfig('.types'));
-    const tsc = join(repo, 'node_modules/.bin/tsc');
+    // Through node, not node_modules/.bin (a shell script, or a .cmd on Windows).
+    const tsc = join(repo, 'node_modules/typescript/bin/tsc');
     const run = () => {
       try {
-        execFileSync(tsc, ['-p', explain, '--skipLibCheck', 'false'], { encoding: 'utf8' });
+        execFileSync(process.execPath, [tsc, '-p', explain, '--skipLibCheck', 'false'], { encoding: 'utf8' });
         return '';
       } catch (e) {
         return String((e as { stdout?: string }).stdout ?? e);
@@ -93,7 +96,7 @@ describe('docs/WIDGETS.md examples', () => {
   }, 60_000);
 
   it("the README's example compiles", async () => {
-    const readme = readFileSync(join(repo, 'README.md'), 'utf8');
+    const readme = lf(readFileSync(join(repo, 'README.md'), 'utf8'));
     const code = /^```tsx\n([\s\S]*?)^```$/m.exec(readme)?.[1];
     expect(code).toBeTruthy();
     const dir = join(base, 'readme');
@@ -132,7 +135,7 @@ describe('docs/WIDGETS.md examples', () => {
 });
 
 describe('widget types (src/widget-types)', () => {
-  const read = (f: string) => readFileSync(join(typesDir, f), 'utf8');
+  const read = (f: string) => lf(readFileSync(join(typesDir, f), 'utf8'));
 
   it('declare exactly the SDK and component exports the compiler allows', () => {
     const sdk = read('explainer.d.ts');

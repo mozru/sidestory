@@ -8,6 +8,9 @@ import { command, content, inContainer, openExplainer, resetWorkbench } from './
 test.beforeEach(async ({ page }) => resetWorkbench(page));
 
 /** The (minified) names of the extension's per-panel classes, read from the bundle the container runs. */
+/** Fields that identify each class's objects in a heap snapshot (set by classNames). */
+const FIELDS: Record<string, string[]> = {};
+
 function classNames(): { session: string; decorations: string } {
   const bundle = readFileSync(new URL('../../dist/extension.cjs', import.meta.url), 'utf8');
   // `X=class{trail;panel;positions=` when minified; spaced out otherwise.
@@ -15,6 +18,8 @@ function classNames(): { session: string; decorations: string } {
   const session = name('trail', 'panel', 'positions');
   const decorations = name('focusTypes');
   if (!session || !decorations) throw new Error('ExplainerSession or Decorations not found in dist/extension.cjs');
+  FIELDS[session] = ['trail', 'panel', 'positions'];
+  FIELDS[decorations] = ['focusTypes'];
   return { session, decorations };
 }
 
@@ -51,9 +56,24 @@ function extensionHost(classes: string[] = []): { heap: number; live: Record<str
     const f = snap.snapshot.meta.node_fields;
     const objectType = snap.snapshot.meta.node_types[0].indexOf('object');
     const live = Object.fromEntries(classes.map((c) => [c, 0]));
+    // Minified names can collide with VS Code's own minified classes: count only objects that also have
+    // the class's own fields.
+    const fields = ${JSON.stringify(Object.fromEntries(classes.map((c) => [c, FIELDS[c] ?? []])))};
+    const ef = snap.snapshot.meta.edge_fields;
+    const propertyType = snap.snapshot.meta.edge_types[0].indexOf('property');
+    let edge = 0;
     for (let i = 0; i < snap.nodes.length; i += f.length) {
       const name = snap.strings[snap.nodes[i + f.indexOf('name')]];
-      if (snap.nodes[i + f.indexOf('type')] === objectType && name in live) live[name]++;
+      const edges = snap.nodes[i + f.indexOf('edge_count')];
+      if (snap.nodes[i + f.indexOf('type')] === objectType && name in live) {
+        const props = new Set();
+        for (let k = 0; k < edges; k++) {
+          const e = edge + k * ef.length;
+          if (snap.edges[e + ef.indexOf('type')] === propertyType) props.add(snap.strings[snap.edges[e + ef.indexOf('name_or_index')]]);
+        }
+        if (fields[name].every((p) => props.has(p))) live[name]++;
+      }
+      edge += edges * ef.length;
     }
     console.log(JSON.stringify({ heap, live }));`;
   const out = inContainer(

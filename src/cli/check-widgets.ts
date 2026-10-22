@@ -22,6 +22,7 @@ import { PreparedText } from '../core/text.ts';
 import { patchManifest, type AnchorPatch } from '../extension/manifest-edit.ts';
 import { realPathInside, writeFileAtomic } from '../extension/paths.ts';
 import { WidgetCompiler, type CompileResult, type WidgetCompilerOptions } from '../extension/widgets/compile.ts';
+import { anchorsRead } from '../extension/widgets/html.ts';
 import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-files.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { scanHtml, type WidgetElement } from './html.ts';
@@ -307,12 +308,15 @@ interface Scan {
   uses: AnchorUse[];
   /** Some widget reads code we couldn't see (a computed useAnchorCode id, or code that didn't compile). */
   mayReadAny: boolean;
+  /** Anchors widgets read, as the extension judges it (it serves a widget nothing else). */
+  read: Set<string>;
 }
 
 async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: WidgetCompiler, reports: WidgetReport[]): Promise<Scan> {
   const bySrc = new Map<string, Promise<CompileResult>>();
   const uses: AnchorUse[] = [];
   let mayReadAny = false;
+  const read = new Set<string>();
   for (const w of widgets) {
     const src = w.attrs.get('src');
     const report: WidgetReport = { src: src ?? '', line: w.line, anchor: w.anchor ?? null, ok: false };
@@ -331,6 +335,10 @@ async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: 
     }
     report.ok = r.errors.length === 0;
     if (unscannable(r)) mayReadAny = true;
+    // The extension's own judgment (html.ts), so Pin here and in VS Code agree on what widgets read.
+    const ids = anchorsRead(r.modules);
+    if (ids === 'all') mayReadAny = true;
+    else for (const id of ids) read.add(id);
     for (const [key, code] of Object.entries(r.modules)) {
       if (!isSource(key)) continue;
       const found = anchorUses(join(ctx.dir, key), code);
@@ -347,7 +355,7 @@ async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: 
       }
     }
   }
-  return { uses, mayReadAny };
+  return { uses, mayReadAny, read };
 }
 
 /** Why useAnchorCode won't serve an anchor, judged from the manifest and the file on disk, or undefined. */
@@ -362,12 +370,13 @@ async function servingProblem(root: string, a: Anchor): Promise<{ severity: Seve
   if (a.quote.norm !== 'ws') {
     return { severity: 'warning', code: 'not-pinned', message: `useAnchorCode('${a.id}'): the anchor's quote is case-insensitive (norm "${a.quote.norm}"), which doesn't count as pinned for widgets; re-pin it (norm "ws").` };
   }
-  const lines = a.quote.exact.split(/\r\n|\r|\n/).length;
-  if (lines > CHECK_LIMITS.quoteLines) return { severity: 'warning', code: 'too-large', message: `useAnchorCode('${a.id}'): widgets get at most ${CHECK_LIMITS.quoteLines} lines; this anchor has ${lines}.` };
   const r = resolveAnchor(PreparedText.from(file.text), a);
   if (!r.range) return { severity: 'warning', code: 'lost', message: `useAnchorCode('${a.id}') returns unavailable (lost): the pinned code isn't in ${a.file}. Re-anchor or re-pin it.` };
+  // The extension measures the anchor where it resolves now, as here.
+  const lines = r.range.end - r.range.start + 1;
+  if (lines > CHECK_LIMITS.quoteLines) return { severity: 'warning', code: 'too-large', message: `useAnchorCode('${a.id}'): widgets get at most ${CHECK_LIMITS.quoteLines} lines; this anchor spans ${lines}.` };
   if (r.state !== 'exact' && r.state !== 'moved') {
-    return { severity: 'warning', code: 'changed', message: `useAnchorCode('${a.id}'): the code in ${a.file} changed since it was pinned (${r.state}). Widgets get changed code only if the file is tracked by git and the quote matches the committed version; otherwise re-pin it.` };
+    return { severity: 'warning', code: 'changed', message: `useAnchorCode('${a.id}'): the code in ${a.file} changed since it was pinned (${r.state}). Widgets then get it only if git tracks the file and the quote matches its committed version: otherwise the reason is 'changed-untracked' (not tracked) or 'changed-since-commit' (the committed version differs too). Re-pin it.` };
   }
   return undefined;
 }
@@ -392,7 +401,7 @@ async function checkAnchors(ctx: Context, manifest: Manifest | undefined, scan: 
       if (!served.has(u.id)) served.set(u.id, (await servingProblem(ctx.root, manifest.anchors.get(u.id)!)) ?? null);
       const p = served.get(u.id);
       if (p) add(ctx, { ...p, ...at });
-      else add(ctx, { severity: 'info', ...at, code: 'unconfirmed', message: `useAnchorCode('${u.id}') is pinned. Widgets get it once the manifest with this quote is committed, or once the reader confirms it in VS Code ("Let widgets read …").` });
+      else add(ctx, { severity: 'info', ...at, code: 'unconfirmed', message: `useAnchorCode('${u.id}') is pinned. Until the manifest with exactly this quote is committed, or the reader confirms it in VS Code ("Let widgets read …"), the reason is 'unconfirmed'. A file git ignores is never served ('ignored'); this check can't ask git, so look at .gitignore if widgets get nothing.` });
     }
   }
 }
@@ -511,14 +520,14 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   }
 
   if (opts.pin && manifest && manifestText !== undefined) {
-    const read = new Set(scan.uses.filter((u) => u.kind === 'useAnchorCode' && u.id).map((u) => u.id!));
+    const read = new Set([...scan.read, ...scan.uses.filter((u) => u.kind === 'useAnchorCode' && u.id).map((u) => u.id!)]);
     report.pin = await pin(ctx, manifestText, manifest, (id) => scan.mayReadAny || read.has(id), !!opts.yesWidgetsMayRead);
     for (const s of report.pin.skipped) add(ctx, { severity: 'warning', file: ctx.manifestFile, code: 'pin-skipped', message: `Not pinned: ${s.anchor} (${s.reason}).` });
     if (report.pin.needsConsent.length) {
       const list = report.pin.needsConsent.map((e) => `${e.file} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`).join('; ');
       add(ctx, {
         severity: 'warning', file: ctx.manifestFile, code: 'pin-needs-consent',
-        message: `Not pinned, because widgets ${scan.mayReadAny ? 'may read any anchor (some widget code computes the anchor id or could not be read)' : 'read these anchors with useAnchorCode'}, and pinning lets them read: ${list}. Show the user these files and line ranges, and rerun with --yes-widgets-may-read only if they agree.`,
+        message: `Not pinned, because widgets ${scan.mayReadAny ? 'may read any anchor (some widget code computes the anchor id, uses useAnchorCode other than as a direct call with a literal id, or could not be read)' : 'read these anchors with useAnchorCode'}, and pinning lets them read: ${list}. Show the user these files and line ranges, and rerun with --yes-widgets-may-read only if they agree.`,
       });
     }
     manifestText = await readText(ctx.manifestFile);

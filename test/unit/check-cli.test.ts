@@ -200,6 +200,20 @@ describe('checkExplainer', () => {
     expect(out.join('\n')).toMatch(/1 widget checked: 0 error\(s\), 1 warning\(s\)\.$/);
   });
 
+  it('reads a CRLF checkout (Windows) the same way: same findings, same lines', async () => {
+    const files = (eol: string) => ({
+      'src/a.ts': CODE.replace(/\n/g, eol),
+      '.explain/demo/manifest.json': manifest(ANCHORS).replace(/\n/g, eol),
+      '.explain/demo/explainer.html': page(section('refill', ['<div style="transform: scale(2)">', '<explain-widget src="widgets/w.tsx" title="W">', '<script type="application/json">{', '  "depth": 8,', '}</script>', 'fallback', '</explain-widget></div>'].join('\n'))).replace(/\n/g, eol),
+      '.explain/demo/widgets/w.tsx': ["import { goToStep } from 'explainer';", 'export default function W() {', "  return <button onClick={() => goToStep('nope')}>x</button>;", '}'].join(eol),
+    });
+    const lines = async (eol: string) => {
+      const dir = repoWith(files(eol));
+      return (await check(dir)).findings.map((f) => `${f.file.slice(dir.length + 1).replaceAll('\\', '/')}:${f.line}:${f.code}`).sort();
+    };
+    expect(await lines('\r\n')).toEqual(await lines('\n'));
+  });
+
   it('reports compile errors in the widget file, bad props, unknown anchors and placement, and exits 1', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
@@ -224,7 +238,7 @@ describe('checkExplainer', () => {
       ].join('\n'),
     });
     const r = await check(dir);
-    const errors = r.findings.filter((f) => f.severity === 'error').map((f) => `${f.file.slice(dir.length + 1)}:${f.line}:${f.code}`);
+    const errors = r.findings.filter((f) => f.severity === 'error').map((f) => `${f.file.slice(dir.length + 1).replaceAll('\\', '/')}:${f.line}:${f.code}`);
     expect(errors).toContain('explainer.html:9:props-json'); // the line JSON.parse stopped at
     expect(errors).toContain('explainer.html:6:placement');
     expect(errors).toContain('widgets/w.tsx:2:unknown-export');

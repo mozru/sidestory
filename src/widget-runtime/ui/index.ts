@@ -102,9 +102,11 @@ function Label({ className, ...props }: P) {
 
 // ---- slider (native range; shadcn's value-array API) ----
 function Slider({ className, value, defaultValue, onValueChange, onValueCommit, min = 0, max = 100, step = 1, disabled, orientation, name, 'aria-label': ariaLabel, ...props }: P) {
-  const controlled = Array.isArray(value);
-  const [inner, setInner] = useState<number[]>(() => (Array.isArray(defaultValue) ? defaultValue : [min]));
-  const values: number[] = controlled ? value : inner;
+  // shadcn takes arrays; a plain number (value={5}) is common in generated code and means the same.
+  const asList = (v: unknown): number[] | undefined => (Array.isArray(v) ? v : typeof v === 'number' ? [v] : undefined);
+  const controlled = asList(value) !== undefined;
+  const [inner, setInner] = useState<number[]>(() => asList(defaultValue) ?? [min]);
+  const values: number[] = controlled ? asList(value)! : inner;
   const change = (i: number, v: number, commit: boolean) => {
     const next = values.slice();
     next[i] = v;
@@ -128,28 +130,28 @@ function useControlled<T>(value: T | undefined, defaultValue: T, onChange?: (v: 
   const controlled = value !== undefined;
   return [controlled ? value : inner, (v: T) => { if (!controlled) setInner(v); onChange?.(v); }];
 }
-function Switch({ className, checked, defaultChecked, onCheckedChange, disabled, ...props }: P) {
+function Switch({ className, checked, defaultChecked, onCheckedChange, disabled, onClick, ...props }: P) {
   const [on, set] = useControlled<boolean>(checked, !!defaultChecked, onCheckedChange);
   return h('button', {
     type: 'button', role: 'switch', 'aria-checked': on, 'data-state': on ? 'checked' : 'unchecked', 'data-slot': 'switch', disabled,
     className: cn('peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50',
       on ? 'bg-primary' : 'bg-input', '[:root.hc_&]:border-border', FOCUS, className),
-    onClick: () => set(!on),
     ...props,
+    onClick: (e: any) => { onClick?.(e); if (!e.defaultPrevented) set(!on); },
   }, h('span', {
     'data-slot': 'switch-thumb',
     className: cn('pointer-events-none block size-4 rounded-full shadow-sm transition-transform', on ? 'translate-x-4 bg-primary-foreground' : 'translate-x-0.5 bg-foreground'),
   }));
 }
-function Checkbox({ className, checked, defaultChecked, onCheckedChange, disabled, ...props }: P) {
+function Checkbox({ className, checked, defaultChecked, onCheckedChange, disabled, onChange, ...props }: P) {
   const [on, set] = useControlled<boolean | 'indeterminate'>(checked, !!defaultChecked, onCheckedChange);
   const ref = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => { if (ref.current) ref.current.indeterminate = on === 'indeterminate'; }, [on]);
   return h('input', {
     ref, type: 'checkbox', checked: on === true, disabled, 'data-slot': 'checkbox', 'data-state': on === true ? 'checked' : 'unchecked',
     className: cn('peer size-4 shrink-0 cursor-pointer rounded-sm accent-primary disabled:cursor-not-allowed disabled:opacity-50', FOCUS, className),
-    onChange: (e: any) => set(e.target.checked),
     ...props,
+    onChange: (e: any) => { onChange?.(e); set(e.target.checked); },
   });
 }
 
@@ -178,7 +180,7 @@ function TabsList({ className, ...props }: P) {
     className: cn('inline-flex h-9 w-fit items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground', className), ...props,
   });
 }
-function TabsTrigger({ className, value, disabled, ...props }: P) {
+function TabsTrigger({ className, value, disabled, onClick, ...props }: P) {
   const ctx = useContext(TabsContext);
   const active = ctx?.value === value;
   return h('button', {
@@ -187,8 +189,8 @@ function TabsTrigger({ className, value, disabled, ...props }: P) {
     'data-state': active ? 'active' : 'inactive', 'data-slot': 'tabs-trigger',
     className: cn('inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent px-3 py-1 text-sm font-medium transition-all cursor-pointer disabled:pointer-events-none disabled:opacity-50',
       'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm', FOCUS, className),
-    onClick: () => ctx?.set(value),
     ...props,
+    onClick: (e: any) => { onClick?.(e); if (!e.defaultPrevented) ctx?.set(value); },
   });
 }
 function TabsContent({ className, value, forceMount, ...props }: P) {

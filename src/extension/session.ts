@@ -116,6 +116,8 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly widgets: PanelWidgets | undefined;
   /** Bumped by every widget focus question, so a late answer to an old one is ignored. */
   private focusQueries = 0;
+  /** Recreated by the watchdog, and not yet seen working again. */
+  private recovered = false;
 
   /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
   constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost, opts: SessionOptions = {}) {
@@ -154,9 +156,18 @@ export class ExplainerSession implements vscode.Disposable {
 
   /** What the widget host sees of this session. */
   private widgetPort(recovered: boolean): WidgetSessionPort {
+    this.recovered = recovered;
+    const session = this;
     return {
       panel: this.panel,
-      recovered,
+      // A recreated panel gets no second recovery, until it works again (or shows another explainer).
+      get recovered() {
+        return session.recovered;
+      },
+      healthy: () => {
+        this.recovered = false;
+      },
+      focusQuery: () => this.focusQueries,
       ref: () => this.ref,
       generation: () => this.generation,
       post: (m) => this.post(m),
@@ -229,6 +240,7 @@ export class ExplainerSession implements vscode.Disposable {
   private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
     const generation = ++this.generation;
     this.widgets?.onSwitch();
+    this.recovered = false;
     this.positions.set(this.ref.dir.toString(), this.active);
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();

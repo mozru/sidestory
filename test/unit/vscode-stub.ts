@@ -5,6 +5,10 @@ import { posix } from 'node:path';
 
 export const counts = { joinPath: 0, watchers: 0 };
 
+/** VS Code's file URIs on Windows: forward slashes, a leading slash before the drive, which toString and fsPath lowercase. */
+const win = process.platform === 'win32';
+const drive = /^\/[A-Za-z]:/;
+
 export class Uri {
   readonly scheme: string;
   readonly path: string;
@@ -13,6 +17,10 @@ export class Uri {
     this.path = path;
   }
   static file(path: string): Uri {
+    if (win) {
+      path = path.replace(/\\/g, '/');
+      if (/^[A-Za-z]:/.test(path)) path = `/${path}`;
+    }
     return new Uri('file', path);
   }
   static parse(value: string): Uri {
@@ -24,9 +32,12 @@ export class Uri {
     return new Uri(base.scheme, posix.join(base.path, ...parts));
   }
   get fsPath(): string {
-    return this.path;
+    if (!win) return this.path;
+    const p = drive.test(this.path) ? this.path[1]!.toLowerCase() + this.path.slice(2) : this.path;
+    return p.replace(/\//g, '\\');
   }
   toString(): string {
+    if (win && drive.test(this.path)) return `${this.scheme}:///${this.path[1]!.toLowerCase()}%3A${this.path.slice(3).split('/').map(encodeURIComponent).join('/')}`;
     return `${this.scheme}://${this.path}`;
   }
 }
@@ -105,7 +116,11 @@ export const languages = {
     dispose() {},
   }),
 };
-export const extensions = { getExtension: () => undefined };
+/** The built-in git extension's API (version 1), when a test sets one. */
+export const extensions = {
+  git: undefined as unknown,
+  getExtension: (id: string) => (id === 'vscode.git' && extensions.git ? { isActive: true, exports: { getAPI: () => extensions.git } } : undefined),
+};
 /** What modal questions answer (the button to "click"), set by the test; and the questions asked. */
 export const modal = { answer: undefined as string | undefined, asked: [] as string[] };
 
@@ -115,7 +130,7 @@ export const workspace = {
   isTrusted: true,
   onDidChangeConfiguration: events.configurationChanged.event,
   onDidGrantWorkspaceTrust: events.trustGranted.event,
-  asRelativePath: (u: Uri) => u.path,
+  asRelativePath: (u: Uri) => (workspace.root && u.path.startsWith(`${workspace.root.path}/`) ? u.path.slice(workspace.root.path.length + 1) : u.path),
   textDocuments: [] as unknown[],
   onDidChangeTextDocument: events.documentChanged.event,
   fs: { readFile: async (uri: Uri) => new Uint8Array(await readFile(uri.fsPath)) },

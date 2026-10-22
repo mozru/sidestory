@@ -57,7 +57,7 @@ export type ToWidget =
       type: 'init';
       props: Record<string, unknown>;
       state: string | null;
-      theme: { kind: ThemeKind; vars: Record<string, string>; bodyClass: string };
+      theme: { kind: ThemeKind; vars: Record<string, string>; bodyClass: string; reducedMotion?: boolean };
       viewportHeight: number;
       activeStep: string | null;
       myAnchor: string | null;
@@ -73,7 +73,7 @@ export type ToWidget =
   | { type: 'step'; activeStep: string | null }
   | { type: 'anchors'; anchors: WidgetAnchor[] }
   | { type: 'code'; code: WidgetCode }
-  | { type: 'theme'; kind: ThemeKind; vars: Record<string, string>; bodyClass: string }
+  | { type: 'theme'; kind: ThemeKind; vars: Record<string, string>; bodyClass: string; reducedMotion?: boolean }
   | { type: 'visible'; visible: boolean }
   | { type: 'viewport'; height: number }
   | { type: 'result'; id: number; ok: boolean }

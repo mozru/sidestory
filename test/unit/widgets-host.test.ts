@@ -17,7 +17,8 @@ import { MAX_STATE_PER_PANEL, MAX_STATE_PER_WIDGET, WidgetStates } from '../../s
 
 describe('consent', () => {
   const file = (path: string, hash: string, git: WidgetFile['git'] = { kind: 'none' }): WidgetFile => ({ path, hash, git });
-  const repo = (head: string, headHash: string | null) => ({ kind: 'repo' as const, head, headHash });
+  /** Git's view: the blob at HEAD, and the content hash of HEAD's text (null when not in HEAD). */
+  const repo = (headBlob: string | null, headHash: string | null = headBlob) => ({ kind: 'repo' as const, headBlob, headHash });
 
   it('asks before the first run in a workspace', () => {
     expect(decideConsent(EMPTY_CONSENT, [file('a.tsx', 'h1')])).toMatchObject({ ask: true });
@@ -42,34 +43,53 @@ describe('consent', () => {
     expect(decideConsent(rec, [file('a.tsx', 'h2', { kind: 'unknown' })])).toMatchObject({ ask: true, changed: ['a.tsx'] });
   });
 
-  it('git: bytes equal to a newly moved HEAD arrived through git (ask); edits that differ from HEAD are the user’s', () => {
-    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('c1', 'h1'))], true);
-    // Edited in the working tree (differs from HEAD): recorded, no question.
-    const edit = decideConsent(rec, [file('a.tsx', 'h2', repo('c1', 'h1'))]);
+  it('git: new code after git’s own version of the file changed asks; edits while it stays put are the user’s', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
+    // Edited in the working tree: recorded, no question.
+    const edit = decideConsent(rec, [file('a.tsx', 'h2', repo('b1', 'h1'))]);
     expect(edit).toMatchObject({ ask: false });
     expect(edit.observed).toHaveLength(1);
-    // A checkout or pull: HEAD moved and the bytes are HEAD's.
-    expect(decideConsent(rec, [file('a.tsx', 'h3', repo('c2', 'h3'))])).toMatchObject({ ask: true, changed: ['a.tsx'] });
-    // Bytes equal to HEAD but HEAD didn't move (the user reverted their own edit): theirs.
-    expect(decideConsent(rec, [file('a.tsx', 'h9', repo('c1', 'h9'))]).ask).toBe(false);
+    // A checkout or pull: git's blob changed, and the new bytes came with it.
+    expect(decideConsent(rec, [file('a.tsx', 'h3', repo('b3', 'h3'))])).toMatchObject({ ask: true, changed: ['a.tsx'] });
+    // The user reverted their own edit: git's blob didn't change, so theirs.
+    expect(decideConsent(rec, [file('a.tsx', 'h9', repo('b1', 'h1'))]).ask).toBe(false);
   });
 
-  it('git: committing already-observed edits moves HEAD without changing bytes and doesn’t ask', () => {
-    let rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('c1', 'h1'))], true);
-    const edited = file('a.tsx', 'h2', repo('c1', 'h1'));
-    rec = acknowledge(rec, decideConsent(rec, [edited]).observed, false);
-    expect(decideConsent(rec, [file('a.tsx', 'h2', repo('c2', 'h2'))]).ask).toBe(false);
+  it('git: working-tree bytes that differ from git’s (CRLF checkout, ident or smudge filters, a symlink) still ask after a pull', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
+    // HEAD's text decodes to something else than the working tree (filters), but git's blob moved: asks.
+    expect(decideConsent(rec, [file('a.tsx', 'h2-expanded', repo('b2', 'h2'))])).toMatchObject({ ask: true, changed: ['a.tsx'] });
+    // The text couldn't even be compared (invalid UTF-8, LFS pointer): asks.
+    expect(decideConsent(rec, [file('a.tsx', 'h2', repo('b2', null))]).ask).toBe(true);
   });
 
-  it('git: a file never seen that is HEAD’s (a pull brought a new widget, or a clone) asks; a new untracked file doesn’t', () => {
-    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('c1', 'h1'))], true);
-    expect(decideConsent(rec, [file('new.tsx', 'n1', repo('c1', 'n1'))]).ask).toBe(true);
-    expect(decideConsent(rec, [file('new.tsx', 'n1', repo('c1', null))]).ask).toBe(false);
+  it('git: committing already-observed edits doesn’t ask, then or at the next edit', () => {
+    let rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
+    rec = acknowledge(rec, decideConsent(rec, [file('a.tsx', 'h2', repo('b1', 'h1'))]).observed, false);
+    // Committed: git's blob is now the acknowledged code.
+    const committed = decideConsent(rec, [file('a.tsx', 'h2', repo('b2', 'h2'))]);
+    expect(committed.ask).toBe(false);
+    // Edited again without anything seeing the commit: still the user's.
+    expect(decideConsent(rec, [file('a.tsx', 'h3', repo('b2', 'h2'))]).ask).toBe(false);
+    rec = acknowledge(rec, committed.observed, false);
+    expect(decideConsent(rec, [file('a.tsx', 'h3', repo('b2', 'h2'))]).ask).toBe(false);
+  });
+
+  it('git: a file never seen that is in HEAD (a pull brought a new widget, or a clone) asks as new; a new untracked file doesn’t', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
+    expect(decideConsent(rec, [file('new.tsx', 'n1', repo('nb', 'n1'))])).toMatchObject({ ask: true, changed: [], added: ['new.tsx'] });
+    expect(decideConsent(rec, [file('new.tsx', 'n1', repo(null))]).ask).toBe(false);
+  });
+
+  it('records from before git blobs were kept ask once', () => {
+    const rec = { granted: true, files: { 'a.tsx': { hash: 'h1' } } };
+    expect(decideConsent(rec, [file('a.tsx', 'h2', repo('b1', 'h0'))]).ask).toBe(true);
+    expect(decideConsent(rec, [file('a.tsx', 'h1', repo('b1', 'h1'))]).ask).toBe(false);
   });
 
   it('keeps the most recent acknowledged files', () => {
-    let rec = acknowledge(EMPTY_CONSENT, [], true);
-    for (let i = 0; i < 5100; i++) rec = acknowledge(rec, [file(`f${i}`, 'h')], false);
+    let rec = acknowledge(EMPTY_CONSENT, Array.from({ length: 4990 }, (_, i) => file(`f${i}`, 'h')), true);
+    for (let i = 4990; i < 5100; i++) rec = acknowledge(rec, [file(`f${i}`, 'h')], false);
     expect(Object.keys(rec.files)).toHaveLength(5000);
     expect(rec.files.f5099).toBeDefined();
     expect(rec.files.f0).toBeUndefined();
@@ -110,6 +130,12 @@ describe('what widgets may read (useAnchorCode)', () => {
     expect(reason({ anchor: anchor({ file: 'src/deploy.key' }) })).toBe('secret-file');
     // A quote shaped like ordinary code, over a link whose target holds secrets.
     expect(reason({ realName: 'credentials.json' })).toBe('secret-file');
+  });
+
+  it('an ignored file is refused also when the code matched only approximately', () => {
+    // A symlinked anchor file whose target git ignores: git is asked about the target (host.ts), and the
+    // approximate path checks `ignored` too.
+    expect(reason({ resolution: changed, git: { kind: 'repo', tracked: true, ignored: true, headText: 'password:' }, quoteAtHead: true })).toBe('ignored');
   });
 
   it('lost, too large, and ignored files are refused', () => {
@@ -212,6 +238,27 @@ describe('activation evidence (§5.3)', () => {
     expect(e.allows(box, 1100, vp)).toBe(true);
     e.gesture(1200);
     expect(e.allows(box, 1300, vp)).toBe(false);
+  });
+
+  it('a key in the panel with the pointer resting on the widget all along is accepted; one the widget moved under is unsure', () => {
+    const frame = {};
+    const e = new ActivationEvidence();
+    e.sample({ x: 150, y: 150, t: 900, hit: frame }); // the pointer arrived on the widget
+    e.gesture(1000); // a key pressed in the panel
+    expect(e.judge(box, 1100, vp, frame)).toBe('allow');
+    expect(e.judge({ ...box, top: 160 }, 1100, vp, frame)).toBe('refuse'); // no longer under the pointer
+    const f = new ActivationEvidence();
+    f.sample({ x: 150, y: 150, t: 900 }); // on the prose; the widget then moved or grew under it
+    f.gesture(1000);
+    expect(f.judge(box, 1100, vp, frame)).toBe('unsure');
+    expect(f.allows(box, 1100, vp, frame)).toBe(false);
+  });
+
+  it('a widget that isn’t visible is never credited', () => {
+    const e = new ActivationEvidence();
+    e.gesture(1000, { x: 200, y: 50 });
+    e.sample({ x: 200, y: 80, t: 1050 });
+    expect(e.allows(null, 1100, vp, {})).toBe(false);
   });
 
   it('rays: a fast move that skips past the edge still hits', () => {

@@ -61,14 +61,15 @@ window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
 
 // ---- notices (in the box) ----
 const notices = new Set<string>();
-function notice(text: string) {
-  if (notices.has(text)) return;
+function notice(text: string): HTMLElement | undefined {
+  if (notices.has(text)) return undefined;
   notices.add(text);
   const el = document.createElement('div');
   el.className = 'cx-notice';
   el.setAttribute('role', 'status');
   el.textContent = text;
   document.body.append(el);
+  return el;
 }
 
 // ---- document setup ----
@@ -84,7 +85,7 @@ installFocus(post);
 
 // ---- theme ----
 let themeVars: string[] = [];
-function applyTheme(t: { kind: Init['theme']['kind']; vars: Record<string, string>; bodyClass: string }) {
+function applyTheme(t: { kind: Init['theme']['kind']; vars: Record<string, string>; bodyClass: string; reducedMotion?: boolean }) {
   const html = document.documentElement;
   for (const k of themeVars) html.style.removeProperty(k);
   themeVars = [];
@@ -100,7 +101,7 @@ function applyTheme(t: { kind: Init['theme']['kind']; vars: Record<string, strin
   html.classList.toggle('hc', t.kind === 'high-contrast' || t.kind === 'high-contrast-light');
   html.style.colorScheme = dark ? 'dark' : 'light';
   document.body.className = String(t.bodyClass ?? '').replace(/[^\w -]/g, '');
-  store.set({ themeKind: t.kind, themeVersion: store.value.themeVersion + 1 });
+  store.set({ themeKind: t.kind, themeVersion: store.value.themeVersion + 1, ...(typeof t.reducedMotion === 'boolean' ? { reducedMotion: t.reducedMotion } : {}) });
 }
 
 // ---- visibility: pause timers, frames and animations while off-screen ----
@@ -110,7 +111,13 @@ function setVisible(visible: boolean) {
   document.documentElement.classList.toggle('cx-paused', !visible);
   if (!visible) {
     env.suspend();
-    for (const a of document.getAnimations()) if (a.playState === 'running') { a.pause(); pausedAnimations.add(a); }
+    // Web Animations only: CSS animations and transitions are paused by the .cx-paused class, and calling
+    // pause()/play() on them would override the widget's own animation-play-state from then on.
+    for (const a of document.getAnimations()) {
+      if (a.playState !== 'running' || a instanceof CSSAnimation || a instanceof CSSTransition) continue;
+      a.pause();
+      pausedAnimations.add(a);
+    }
     flushState(false);
   } else {
     env.resume();
@@ -122,40 +129,69 @@ function setVisible(visible: boolean) {
 
 // ---- height ----
 const HEIGHT_INTERVAL_MS = 100;
-const GROWTH_REPORTS = 5;
-const GROWTH_WINDOW_MS = 1000;
+/**
+ * A widget sized to its own frame (100vh, h-full on html) grows by the same amount past the frame's height
+ * every time the panel resizes the frame: a feedback loop. This many reports in a row of that shape freeze
+ * the height; an expand animation (growth that eases, then stops) doesn't look like it for that long.
+ */
+const LOOP_REPORTS = 15;
+/** px of slack when comparing the excess over the frame's height between reports. */
+const LOOP_SLACK = 2;
 export const GROWTH_MESSAGE = 'This widget sizes itself to the window, so its height was frozen. Give it a height (h-80, or style={{height: 320}}).';
 let lastHeight = -1;
 let lastSent = -Infinity;
 let heightTimer: number | undefined;
 let frozen = false;
-let growth: number[] = [];
+/** The loop being watched: the excess of the content over the frame's height, and how many reports had it. */
+let loop = { excess: Number.NaN, reports: 0 };
+let growthNotice: HTMLElement | undefined;
+const clientHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight')!.get!;
+const frameHeight = () => clientHeight.call(document.documentElement) as number;
+/** Tailwind's browser build marks and measures every build; only those are cleared (not the widget's own). */
+const TAILWIND_ENTRY = /^((Build #\d+ \(.*\)|Build|Build utilities|Collect classes|Compile CSS|Create compiler|Reading Stylesheets)( \((start|end)\))?|Loaded stylesheet|Failed to load stylesheet|\(error\))$/;
+function clearTailwindEntries() {
+  for (const type of ['mark', 'measure'] as const) {
+    const names = new Set(performance.getEntriesByType(type).map((e) => e.name).filter((n) => TAILWIND_ENTRY.test(n)));
+    for (const n of names) (type === 'mark' ? performance.clearMarks(n) : performance.clearMeasures(n));
+  }
+}
 
 let committed = false; // no heights before the widget's first render: an empty root would report 0
 function sendHeight() {
   heightTimer = undefined;
-  if (frozen || !committed) return;
+  if (!committed) return;
   // Never 0: Chromium stops rendering (and resize-observing) a zero-height cross-origin frame, so a
   // widget that rendered nothing could never grow back.
   const px = Math.max(1, Math.min(MAX_WIDGET_HEIGHT, Math.ceil(rootEl.getBoundingClientRect().height)));
+  const excess = px - frameHeight();
+  if (frozen) {
+    // Still in the loop (the same excess over the frozen frame): stay frozen. Anything else (it shrank, or
+    // settled at another height) means it wasn't sizing itself to the frame after all.
+    if (Math.abs(excess - loop.excess) <= LOOP_SLACK) return;
+    frozen = false;
+    loop = { excess: Number.NaN, reports: 0 };
+    growthNotice?.remove();
+    growthNotice = undefined;
+    notices.delete(GROWTH_MESSAGE);
+  }
   if (px === lastHeight) return;
   const now = performance.now();
-  if (px > lastHeight && lastHeight >= 0) {
-    growth.push(now);
-    if (growth.length >= GROWTH_REPORTS && now - growth[growth.length - GROWTH_REPORTS]! <= GROWTH_WINDOW_MS) {
+  // In the loop, the frame already has the last height sent, and the content exceeds it by a constant.
+  if (px > lastHeight && lastHeight >= 0 && excess > 0 && frameHeight() >= lastHeight - LOOP_SLACK) {
+    loop = Math.abs(excess - loop.excess) <= LOOP_SLACK ? { excess: loop.excess, reports: loop.reports + 1 } : { excess, reports: 1 };
+    if (loop.reports >= LOOP_REPORTS) {
       frozen = true;
-      notice(GROWTH_MESSAGE);
+      growthNotice = notice(GROWTH_MESSAGE);
       return;
     }
   } else {
-    growth = [];
+    loop = { excess: Number.NaN, reports: 0 };
   }
   lastHeight = px;
   lastSent = now;
   post({ type: 'height', px });
   // Tailwind's browser build marks every build; don't let the entries pile up.
-  performance.clearMarks();
-  performance.clearMeasures();
+  clearTailwindEntries();
 }
 function scheduleHeight() {
   if (heightTimer !== undefined) return;
@@ -351,7 +387,10 @@ function onInit(init: Init) {
   current = init;
   frozen = false;
   committed = false;
-  growth = [];
+  loop = { excess: Number.NaN, reports: 0 };
+  growthNotice?.remove();
+  growthNotice = undefined;
+  notices.delete(GROWTH_MESSAGE);
   lastHeight = -1;
   store.set({
     activeStep: init.activeStep ?? null, myAnchor: init.myAnchor ?? null, anchors: init.anchors ?? [],

@@ -2,12 +2,17 @@
 // panel sees no input inside a widget, so it refuses only on evidence it has: during the current activation
 // window, a gesture of its own (pointerdown, touch or keydown in the panel or the content frame) that wasn't
 // followed by pointer travel toward the widget. No gesture of its own means the activating gesture happened
-// in a frame the panel can't see, which is then accepted. Pure geometry and bookkeeping, unit tested.
+// in a frame the panel can't see, which is then accepted. One more case is accepted: the pointer already
+// rested on the widget when the gesture happened (a key pressed in the panel, then a click on the widget
+// under the pointer), provided it was on that widget when the panel last saw it, not only after the widget
+// moved or grew under it. Pure geometry and bookkeeping, unit tested.
 
 export interface Point {
   x: number;
   y: number;
   t: number;
+  /** The widget (frame) whose visible box held the point when it was sampled, if any. */
+  hit?: unknown;
 }
 
 export interface Box {
@@ -24,6 +29,9 @@ export const EDGE_PX = 24;
 const MAX_SAMPLES = 8;
 const MAX_GESTURES = 16;
 
+/** `refuse`: evidence against; `unsure`: refused, but the pointer is on the widget now (not counted as theft). */
+export type Verdict = 'allow' | 'refuse' | 'unsure';
+
 export class ActivationEvidence {
   private gestures: number[] = [];
   private samples: Point[] = [];
@@ -34,7 +42,7 @@ export class ActivationEvidence {
   gesture(t: number, at?: { x: number; y: number }): void {
     this.gestures.push(t);
     if (this.gestures.length > MAX_GESTURES) this.gestures.shift();
-    if (at) this.sample({ ...at, t });
+    if (at) this.sample({ ...at, t, hit: undefined });
   }
 
   /** A pointer position the panel saw (pointermove, pointerout, …), in panel viewport coordinates. */
@@ -59,21 +67,32 @@ export class ActivationEvidence {
   }
 
   /**
-   * Whether an activation at `now` may be credited to the widget at `box`. `viewport` is the panel's size,
-   * for the edge rule.
+   * Whether an activation at `now` may be credited to the widget `target`, whose visible box is `box` (null:
+   * not visible, never credited). `viewport` is the panel's size, for the edge rule.
    */
-  allows(box: Box, now: number, viewport: { width: number; height: number }): boolean {
+  allows(box: Box | null, now: number, viewport: { width: number; height: number }, target?: unknown): boolean {
+    return this.judge(box, now, viewport, target) === 'allow';
+  }
+
+  judge(box: Box | null, now: number, viewport: { width: number; height: number }, target?: unknown): Verdict {
     const since = Math.max(now - ACTIVATION_WINDOW_MS, this.consumedAt);
     const last = this.gestures.filter((t) => t > since && t <= now).at(-1);
-    if (last === undefined) return true; // the gesture happened where the panel can't see: in a widget
-    // Travel after the gesture: the latest sample must come after it.
+    if (last === undefined) return 'allow'; // the gesture happened where the panel can't see: in a widget
+    if (!box) return 'refuse';
     const p2 = this.samples.at(-1);
-    if (!p2 || p2.t <= last) return false;
-    if (p2.x < EDGE_PX || p2.y < EDGE_PX || p2.x > viewport.width - EDGE_PX || p2.y > viewport.height - EDGE_PX) return false;
-    if (inside(box, p2)) return true;
+    if (!p2) return 'refuse';
+    const edge = p2.x < EDGE_PX || p2.y < EDGE_PX || p2.x > viewport.width - EDGE_PX || p2.y > viewport.height - EDGE_PX;
+    if (p2.t <= last) {
+      // No travel since the gesture. The pointer resting on this widget all along (it was on it when sampled,
+      // and is still inside its box) counts; one the widget only moved or grew under doesn't.
+      if (edge || !inside(box, p2)) return 'refuse';
+      return target !== undefined && p2.hit === target ? 'allow' : 'unsure';
+    }
+    // Travel after the gesture toward the widget.
+    if (edge) return 'refuse';
+    if (inside(box, p2)) return 'allow';
     const p1 = this.samples.at(-2);
-    if (!p1) return false;
-    return rayHits(p1, p2, box);
+    return p1 && rayHits(p1, p2, box) ? 'allow' : 'refuse';
   }
 }
 

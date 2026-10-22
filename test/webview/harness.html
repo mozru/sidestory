@@ -31,7 +31,7 @@
         setTimeout(() => window.__send({ type: 'widget', src: m.src, build: window.__builds[m.src] }));
       }
       if (m.type === 'widgetCode' && window.__codes) {
-        setTimeout(() => window.__send({ type: 'widgetCode', code: window.__codes[m.anchor] ?? { anchor: m.anchor, status: 'unavailable', reason: 'not-pinned' } }));
+        setTimeout(() => window.__send({ type: 'widgetCode', src: m.src, code: window.__codes[m.anchor] ?? { anchor: m.anchor, status: 'unavailable', reason: 'not-pinned' } }));
       }
     },
     getState: () => window.__state,

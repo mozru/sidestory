@@ -7,7 +7,7 @@ import contentCssText from './content.css';
 import { Assets } from './assets.ts';
 import { sanitize } from './sanitize.ts';
 import { staticHtml } from './trusted.ts';
-import { type SavedWidgets, WidgetFrames } from './widgets.ts';
+import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -57,7 +57,6 @@ const app = document.getElementById('app')!;
 // Normalized the way the URL parser does it: in remote windows VS Code's resource host contains a
 // percent-encoded '+', which resolved URLs spell decoded, so the raw string wouldn't prefix-match them.
 let baseUrl = new URL(app.dataset.base!).href;
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const pendingAssets = new Map<number, (b: Blob | null) => void>();
 let assetId = 0;
 function requestAsset(path: string): Promise<Blob | null> {
@@ -234,9 +233,18 @@ function syncTheme(): void {
   if (!frame) return;
   frame.root.setAttribute('style', document.documentElement.getAttribute('style') ?? '');
   frame.body.className = document.body.className;
-  frame.root.style.setProperty('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
-  frame.root.style.setProperty('--cx-gutter', getComputedStyle($('.cx-header')).getPropertyValue('--cx-gutter') || '20px');
+  syncTail();
   widgets?.onTheme();
+}
+
+/** The space below the last section and the gutter, which follow the panel's size (not a theme change). */
+function syncTail(): void {
+  if (!frame) return;
+  const set = (k: string, v: string) => {
+    if (frame.root.style.getPropertyValue(k) !== v) frame.root.style.setProperty(k, v);
+  };
+  set('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
+  set('--cx-gutter', getComputedStyle($('.cx-header')).getPropertyValue('--cx-gutter').trim() || '20px');
 }
 
 // The frame is as tall as its content, so the panel's scroller does the scrolling. Measured from the
@@ -334,7 +342,7 @@ widgets = new WidgetFrames({
 widgets.bindContent(frame.root.ownerDocument);
 new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-new ResizeObserver(syncTheme).observe(scroller);
+new ResizeObserver(syncTail).observe(scroller);
 new ResizeObserver(onPanelResize).observe(scroller);
 new ResizeObserver(() => fitSteps()).observe(headerEl);
 
@@ -456,7 +464,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       widgets?.onLibs(m.libs);
       break;
     case 'widgetCode':
-      widgets?.onCode(m.code);
+      widgets?.onCode(m.src, m.code);
       break;
     case 'widgetsReset':
       widgets?.reset(m.phase);
@@ -916,7 +924,7 @@ function scrollToSection(id: string): void {
 
 /** Scrolls the panel so that a point (in panel coordinates) sits just below the top. */
 function scrollToTop(top: number): void {
-  scroller.scrollTo({ top: scroller.scrollTop + top - scroller.getBoundingClientRect().top - 12, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  scroller.scrollTo({ top: scroller.scrollTop + top - scroller.getBoundingClientRect().top - 12, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
 
 function step(delta: 1 | -1): void {
@@ -1164,7 +1172,7 @@ function onContentKey(e: KeyboardEvent): void {
   if (e.key === ' ' && !onControl && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     readerInput();
-    scroller.scrollBy({ top: (e.shiftKey ? -1 : 1) * scroller.clientHeight * 0.9, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    scroller.scrollBy({ top: (e.shiftKey ? -1 : 1) * scroller.clientHeight * 0.9, behavior: reducedMotion() ? 'auto' : 'smooth' });
     return;
   }
   onKey(e);

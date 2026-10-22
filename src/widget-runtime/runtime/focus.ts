@@ -85,6 +85,7 @@ export function installFocus(post: (m: FromWidget) => void): { interacting: () =
   // working; posted in a task after `click`, so the widget's handler (and any reveal() it calls) runs first.
   let pointerDown = false;
   window.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+  window.addEventListener('pointercancel', () => { pointerDown = false; }, true);
   window.addEventListener('click', (e) => {
     const byPointer = e.detail > 0 || pointerDown;
     pointerDown = false;

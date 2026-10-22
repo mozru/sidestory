@@ -199,7 +199,7 @@ A widget knows the explainer it's in: the current step, the anchors and their co
 | `useStep()` | `{ id, index, count, next(), prev() }` for the current step. |
 | `useStepValue({ stepId: value, … }, fallback)` | The value for the current step: the simplest way to make a widget follow the steps. |
 | `useAnchors()` | Every anchor: `{ id, title, step, file, range, state, color }`, live. `step` is −1 for nested anchors. |
-| `useAnchorCode(id)` | `null` while loading, then `{ status: 'ok', text, startLine, language, state }` (live, unsaved edits included) or `{ status: 'unavailable', reason }`. |
+| `useAnchorCode(id)` | `null` while loading, then `{ status: 'ok', text, startLine, language, state }` (live, unsaved edits included) or `{ status: 'unavailable', reason }`. Call it directly with a literal id (`useAnchorCode('refill')`): a widget gets the code only of the anchors it names that way (any anchor if the id is computed, which makes Pin and the reader confirm every anchor). |
 | `highlight(lines, { anchor?, identifiers? })` | Highlights lines in the editor, **relative to the anchor's current first line** (1 = its first line; `[2, 4]` = its lines 2–4). Default anchor: the widget's own; another anchor works if it is the current step or nested in it. `highlight()` clears. |
 | `reveal(id, { lines?, highlight? })` | Shows an anchor's code in the editor. Returns `Promise<boolean>`. |
 | `goToStep(id)` | Makes a step current. Returns `Promise<boolean>`. |
@@ -207,6 +207,8 @@ A widget knows the explainer it's in: the current step, the anchors and their co
 | `useWidgetState(key, initial)` | State that survives remounts (§9). |
 | `useTheme()`, `useVisible()`, `useReducedMotion()` | Theme kind and colors; whether the widget is on screen; whether the reader wants less motion. |
 | `asset(path)` | A data URL for an image the widget also imports; prefer `import url from './x.png'`. |
+
+Arguments the panel can't use (line numbers below 1 or not whole, an id that isn't an anchor id, identifiers that aren't identifiers) aren't sent: the call does nothing (`reveal` and `goToStep` return `false`), and the error is shown on the widget and in Output.
 
 To turn a line of `useAnchorCode` text into a `highlight` line: line *i* of `code.text.split('\n')` (0-based) is `highlight(i + 1)`. Its line in the file is `code.startLine + i`.
 
@@ -324,9 +326,9 @@ Widget frames are laid over their placeholders by the panel, so the panel must b
 
 ## 8. Focus and keyboard
 
-- **Never take focus.** `autoFocus` is stripped (the checker warns) and `focus()` does nothing unless the reader is interacting with the widget: focus taken from the editor would steal the reader's typing. Repeated attempts unmount the widget.
+- **Never take focus.** `autoFocus` is stripped (the checker warns) and `focus()` does nothing unless the reader is interacting with the widget (or focus is already inside it): focus taken from the editor would steal the reader's typing. Focus that arrives without the reader's click is given back, and a widget that keeps doing it is unmounted.
 - Readers reach a widget with Tab (its placeholder is a tab stop) and enter it with Enter or a click. **Esc leaves** the widget, and so do Tab past its last control and Shift+Tab past its first. Don't use Escape for your own UI unless you call `preventDefault()` on it, and then only while something (a menu, an edit) is open.
-- A **pointer** click on a button hands focus back to the panel right after your handler runs, so explainer shortcuts keep working; text inputs, selects and ranges keep focus. Keyboard activation (Enter or Space) keeps focus in the widget.
+- A **pointer** click anywhere in the widget hands focus back to the panel right after your handler runs, so explainer shortcuts keep working; clicks in text inputs, selects and ranges (or their labels) keep focus, as does a handler that moves focus into one. Keyboard activation (Enter or Space) keeps focus in the widget.
 - While focus is inside a widget, VS Code's shortcuts don't reach VS Code. A key press with Ctrl, Cmd or Alt that the widget doesn't handle hands focus back to the panel, so the next shortcut works (copy, paste, cut, undo, redo and select-all stay with the widget, as does anything typed into a text field).
 - Make every control a real `<button>`, `<input>` or `<select>` (or a component from `@/components/ui`), not a `<div onClick>`.
 
@@ -357,7 +359,7 @@ Widget frames are laid over their placeholders by the panel, so the panel must b
 | Forms | Forms never submit, and `onSubmit` never fires: handle the button's `onClick` (and Enter in an input with `onKeyDown`). |
 | Web Workers, WebAssembly | Not supported. |
 | Clipboard, camera, microphone, geolocation | Not available. |
-| `window.innerHeight`, `100vh`, `h-screen` | Mean the panel, not the widget (§3). |
+| `window.innerHeight`, `100vh`, `h-screen` | `window.innerHeight` is the panel's height; `h-screen` and `min-h-screen` size to the content; a raw `100vh` is the widget's own frame, so a widget sized with it keeps growing and its height is frozen with a message (§3). Give widgets a fixed height. |
 
 ## 12. Accessibility
 
@@ -394,7 +396,7 @@ Checking compiles the widgets but runs nothing, so it needs no consent.
 - **Pinning.** `--pin` records each anchor's current code from the files on disk into `manifest.json`, like **Pin Anchors** in VS Code: only anchors whose code it finds with confidence, never for secret-looking files, keeping the manifest's formatting. Anchors that widgets read with `useAnchorCode` are **not** pinned by `--pin` alone, because pinning lets widgets read that code: the checker lists those files and line ranges instead. **Never pass `--yes-widgets-may-read` on your own.** Show the user the files and line ranges the checker printed, say that widgets in this explainer will be able to read that code, and run `--pin --yes-widgets-may-read` only after they agree. Quotes pinned this way still show as `unconfirmed` to widgets until the manifest is committed or the reader confirms them in VS Code ("Let widgets read N anchors…").
 - **Types.** **Code Explainer: Add Widget Types** writes `.explain/tsconfig.json` and declaration files for React, the libraries, the components and `explainer`, so `tsc` and IntelliSense work on widget files without installing packages.
 
-**Consent.** Widgets are code from the repository, so they run only when VS Code trusts the workspace, the `codeExplainer.widgets.enabled` setting is on (a user setting; a repository can't turn it on), and the reader agrees. The first time, the panel shows "This explainer has N interactive widgets" with **Run widgets…**, which opens a VS Code dialog saying what widgets can do; until then readers see the fallbacks. When you add widgets to an explainer, **tell the user they'll be asked to run them** when they open it. They're asked again when widget code arrives through git (a checkout, pull or merge), not after their own edits (or yours); edits made while VS Code was closed may ask once more. **Code Explainer: Revoke Widget Consent** undoes it.
+**Consent.** Widgets are code from the repository, so they run only when VS Code trusts the workspace, the `codeExplainer.widgets.enabled` setting is on (a user setting; a repository can't turn it on), and the reader agrees. The first time, the panel shows "This explainer has N interactive widgets" with **Run widgets…**, which opens a VS Code dialog saying what widgets can do; until then readers see the fallbacks. When you add widgets to an explainer, **tell the user they'll be asked to run them** when they open it. Their answer covers the code they agreed to run. Their own edits (or yours) keep running without a question; code that arrives through git asks again: changed widget code after a checkout, pull or merge, and widget files they never agreed to that git brought (another explainer's widgets after a clone or pull). Without git, the answer lasts for the workspace. Edits made while VS Code was closed may ask once more. **Code Explainer: Revoke Widget Consent** undoes it, and also forgets which anchors the reader let widgets read (including those confirmed when pinning).
 
 ## 14. Gallery
 

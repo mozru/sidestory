@@ -511,3 +511,154 @@ exports.default = function W() {
   await harness.send(id, { type: 'theme', ...theme('light') });
   await expect(env).toHaveText(/^light\|.*\|false\|true\|true\|true\|/);
 });
+
+test('an expand animation that grows for a while isn’t frozen; a frozen widget that shrinks starts reporting again', async ({ harness }) => {
+  // Grows in ten eased steps a frame apart (a typical accordion or Motion layout animation), then stops.
+  const id = await harness.mount({
+    libs: REACT, init: one(`var _react = require("react");
+exports.default = function W() {
+  var [h, setH] = (0, _react.useState)(40);
+  (0, _react.useEffect)(() => {
+    var i = 0;
+    var t = setInterval(() => { i++; setH(40 + Math.round(400 * (1 - Math.pow(1 - i / 12, 3)))); if (i >= 12) clearInterval(t); }, 110);
+    return () => clearInterval(t);
+  }, []);
+  return _jsxruntime.jsx("div", { "data-testid": "box", style: { height: h } });
+};`),
+  });
+  await harness.waitFor(id, 'height', (m) => m.px === 440, 8000);
+  await expect(harness.frame(id).locator('.cx-notice')).toHaveCount(0);
+
+  // A real loop (sized to its frame, plus a footer) is frozen; when it stops sizing itself to the frame, it reports again.
+  const b = await harness.mount({
+    libs: REACT, init: one(`var _react = require("react");
+exports.default = function W() {
+  var [loop, setLoop] = (0, _react.useState)(true);
+  window.stop = () => setLoop(false);
+  return _jsxruntime.jsxs("div", { children: [_jsxruntime.jsx("div", { style: { minHeight: loop ? "100vh" : 50 }, children: "x" }), _jsxruntime.jsx("p", { children: "footer" })] });
+};`),
+  });
+  await expect(harness.frame(b).locator('.cx-notice')).toContainText('sizes itself to the window', { timeout: 10_000 });
+  const frame = await harness.frameHandle(b);
+  await frame.evaluate(() => (window as any).stop());
+  await harness.waitFor(b, 'height', (m) => m.px < 150);
+  await expect(harness.frame(b).locator('.cx-notice')).toHaveCount(0);
+});
+
+test('a widget’s own animation-play-state still works after it was hidden and shown', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: REACT, init: one(`exports.default = function W() {
+  return _jsxruntime.jsxs("div", { children: [_jsxruntime.jsx("style", { children: "@keyframes cxspin { to { transform: rotate(1turn) } } .s { animation: cxspin 1s linear infinite; width: 10px; height: 10px; }" }), _jsxruntime.jsx("div", { "data-testid": "s", className: "s" })] });
+};`),
+  });
+  const frame = await harness.frameHandle(id);
+  const state = () => frame.evaluate(() => document.getAnimations().map((a) => a.playState).join());
+  await expect.poll(state).toBe('running');
+  await harness.send(id, { type: 'visible', visible: false });
+  await expect.poll(state).toBe('paused');
+  await harness.send(id, { type: 'visible', visible: true });
+  await expect.poll(state).toBe('running');
+  // The widget pauses its own animation with CSS (here while off screen): it stays paused when shown.
+  await harness.send(id, { type: 'visible', visible: false });
+  await frame.evaluate(() => ((document.querySelector('.s') as HTMLElement).style.animationPlayState = 'paused'));
+  await harness.send(id, { type: 'visible', visible: true });
+  await frame.waitForTimeout(200);
+  expect(await state()).toBe('paused');
+  await frame.evaluate(() => ((document.querySelector('.s') as HTMLElement).style.animationPlayState = 'running'));
+  await expect.poll(state).toBe('running');
+});
+
+test('ResponsiveContainer with a percentage height inside a padded parent gets the fallback height', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: libsFor(['react', 'recharts']), init: one(`var R = require("recharts");
+var data = [{ x: 1, y: 3 }, { x: 2, y: 5 }];
+exports.default = function W() {
+  return _jsxruntime.jsx("div", { style: { padding: 12, border: "2px solid gray" }, children: _jsxruntime.jsx(R.ResponsiveContainer, { width: "100%", height: "100%", children:
+    _jsxruntime.jsx(R.LineChart, { data, children: _jsxruntime.jsx(R.Line, { dataKey: "y", isAnimationActive: false }) }) }) });
+};`),
+  });
+  await expect.poll(async () => (await harness.frame(id).locator('.recharts-responsive-container').boundingBox())?.height ?? 0).toBe(300);
+  await expect(harness.frame(id).locator('svg.recharts-surface')).toHaveAttribute('height', '300');
+});
+
+test('SDK calls with arguments the panel would drop are reported, not sent', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: REACT, init: one(`var X = require("explainer");
+exports.default = function W() {
+  window.calls = { hl0: () => X.highlight(0), hlFloat: () => X.highlight([1.5, 3]), hlIds: () => X.highlight(2, { identifiers: ["a-b"] }), revealBad: () => X.reveal("1bad"), stepBad: () => X.goToStep({}), ok: () => X.highlight([2, 4], { anchor: "refill" }) };
+  return _jsxruntime.jsx("p", { children: "x" });
+};`),
+  });
+  const frame = await harness.frameHandle(id);
+  await harness.waitFor(id, 'height');
+  for (const c of ['hl0', 'hlFloat', 'hlIds', 'ok']) await frame.evaluate((c) => (window as any).calls[c](), c);
+  expect(await frame.evaluate(() => (window as any).calls.revealBad())).toBe(false);
+  expect(await frame.evaluate(() => (window as any).calls.stepBad())).toBe(false);
+  await expect.poll(async () => (await harness.messages(id, 'error')).length).toBe(5);
+  const errors = (await harness.messages(id, 'error')).map((m) => m.message).join('\n');
+  expect(errors).toContain('highlight(): lines must be');
+  expect(errors).toContain('highlight(): identifiers must be');
+  expect(errors).toContain('reveal(): "1bad" isn\'t an anchor id');
+  expect(errors).toContain('goToStep():');
+  expect((await harness.messages(id, 'highlight')).map((m) => [m.lines, m.anchor])).toEqual([[[2, 4], 'refill']]);
+  expect(await harness.messages(id, 'reveal')).toEqual([]);
+  expect(await harness.messages(id, 'step')).toEqual([]);
+});
+
+test('reduced motion follows theme messages (VS Code’s workbench.reduceMotion)', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: REACT, init: one(`var X = require("explainer");
+exports.default = function W() { return _jsxruntime.jsx("p", { "data-testid": "rm", children: String(X.useReducedMotion()) }); };`),
+  });
+  const rm = harness.frame(id).getByTestId('rm');
+  await expect(rm).toHaveText('false');
+  await harness.send(id, { type: 'theme', ...theme('dark'), reducedMotion: true });
+  await expect(rm).toHaveText('true');
+  await harness.send(id, { type: 'theme', ...theme('dark'), reducedMotion: false });
+  await expect(rm).toHaveText('false');
+});
+
+test('ui: an onClick or onChange of the widget’s own runs alongside the shim’s; Slider takes a number value', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: libsFor(['react', 'ui']), init: one(`var _react = require("react");
+var T = require("@/components/ui/tabs"), Sw = require("@/components/ui/switch"), C = require("@/components/ui/checkbox"), Sl = require("@/components/ui/slider");
+var j = _jsxruntime.jsx, js = _jsxruntime.jsxs;
+exports.default = function W() {
+  var [log, setLog] = (0, _react.useState)([]);
+  var add = (s) => setLog((l) => l.concat(s));
+  return js("div", { children: [
+    js(T.Tabs, { defaultValue: "a", children: [js(T.TabsList, { children: [j(T.TabsTrigger, { value: "a", children: "A" }), j(T.TabsTrigger, { value: "b", onClick: () => add("tab"), children: "B" })] }),
+      j(T.TabsContent, { value: "b", children: "content B" })] }),
+    j(Sw.Switch, { onClick: () => add("switch") }),
+    j(C.Checkbox, { "aria-label": "check", onChange: () => add("check") }),
+    j(Sl.Slider, { "aria-label": "slider", defaultValue: 40, max: 100 }),
+    j("p", { "data-testid": "log", children: log.join(",") }),
+  ] });
+};`),
+  });
+  const f = harness.frame(id);
+  await f.getByRole('tab', { name: 'B' }).click();
+  await expect(f.getByText('content B')).toBeVisible();
+  await f.getByRole('switch').click();
+  await expect(f.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+  await f.getByLabel('check').click();
+  await expect(f.getByLabel('check')).toBeChecked();
+  await expect(f.getByTestId('log')).toHaveText('tab,switch,check');
+  await expect(f.getByLabel('slider')).toHaveValue('40');
+});
+
+test('Tailwind’s performance entries are cleared, the widget’s own marks are kept', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: libsFor(['react']), init: one(`var _react = require("react");
+exports.default = function W() {
+  var [n, setN] = (0, _react.useState)(0);
+  window.grow = () => setN((x) => x + 1);
+  return _jsxruntime.jsx("div", { className: n ? "p-" + n : "", children: "x" });
+};`),
+  });
+  const frame = await harness.frameHandle(id);
+  await harness.waitFor(id, 'height');
+  await frame.evaluate(() => { performance.mark('mine'); (window as any).grow(); });
+  await harness.waitFor(id, 'height', (m) => m.px > 30);
+  expect(await frame.evaluate(() => performance.getEntriesByType('mark').map((e) => e.name))).toEqual(['mine']);
+});

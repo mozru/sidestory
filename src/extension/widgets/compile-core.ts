@@ -2,8 +2,8 @@
 // closure inside its explainer folder, transforms and checks each module, and assembles what the widget
 // runtime loads. Runs inside the compile worker (compile-worker.ts); compile.ts is the host side.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { lstat, open, realpath } from 'node:fs/promises';
+import { constants, readFileSync } from 'node:fs';
+import { lstat, open, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
   EXPLAINER_SDK_EXPORTS,
@@ -175,7 +175,10 @@ export class WidgetCompilerCore {
       }
       if (isSecretFileName(basename(real))) return { code: 'secret-file', message: 'the file links to a file with a secret-looking name; widgets never get those' };
       const max = kind === 'image' ? LIMITS.imageBytes : LIMITS.totalSourceBytes - sourceBytes;
-      const handle = await open(real, 'r');
+      // Not a regular file (a FIFO would block open() forever): refused before opening, and opened without
+      // blocking in case it is swapped in between.
+      if (!(await stat(real).then((s) => s.isFile(), () => false))) return { code: 'not-found', message: 'not a file' };
+      const handle = await open(real, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
       try {
         const st = await handle.stat();
         if (!st.isFile()) return { code: 'not-found', message: 'not a file' };

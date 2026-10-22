@@ -4,7 +4,7 @@
 // watchdogs, and diagnostics for authors. Everything a panel asks for is checked here again: the panel
 // renders untrusted content, so its requests are only requests.
 import { createHash } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest, Quote } from '../../core/manifest.ts';
@@ -34,6 +34,18 @@ const MAX_FILE_BYTES = 5_000_000;
 const CODE_DELAY = 200;
 const MAX_LOGS_PER_MINUTE = 100;
 const REMOUNT_DELAY = 1000;
+/** Reports of unresponsive widgets from every panel within this long are one incident (one shared process). */
+const UNRESPONSIVE_DEBOUNCE = 500;
+const MAX_DISABLED = 200;
+const COLD_COMPILE_MS = 10_000;
+/** Compile failures that aren't the code's fault for certain. */
+const TRANSIENT = new Set(['timeout', 'crashed', 'internal']);
+/** Text from the explainer (its title) in a native modal: one line, no control characters, quoted. */
+export function modalText(s: string, max = 80): string {
+  // eslint-disable-next-line no-control-regex
+  const one = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+}
 
 /** What the widget host needs from an explainer session. */
 export interface WidgetSessionPort {
@@ -48,6 +60,10 @@ export interface WidgetSessionPort {
   html(): string;
   title(): string;
   resolution(id: string): Resolution | undefined;
+  /** The id of the latest focus question (answers to older ones are ignored). */
+  focusQuery?(): number;
+  /** The panel recovered from a hang works again: a later hang may be recovered from too. */
+  healthy?(): void;
   /** A widget's reveal(): show the anchor's code and put the cursor there, as an inline reference does. */
   reveal(anchor: string, lines?: [number, number], identifiers?: string[]): void;
   /** Lines (absolute, inside the anchor) and identifiers to highlight; undefined clears. */
@@ -64,6 +80,8 @@ export interface PinWidgetHooks {
   record(entries: { file: string; quote: Quote; range: LineRange }[]): void;
   /** Already confirmed in this workspace (the same quote at the same range). */
   isConfirmed(file: string, quote: Quote, range: LineRange): boolean;
+  /** The anchor's current quote is in the manifest committed at HEAD (widgets may read it anyway). */
+  isCommitted(a: Anchor): Promise<boolean>;
 }
 
 const quoteKey = (file: string, quote: Quote, range: LineRange) => `${file}\n${createHash('sha256').update(quote.exact).digest('hex')}\n${range.start}-${range.end}`;
@@ -82,11 +100,14 @@ export class WidgetHost implements vscode.Disposable {
   private readonly heights = new Map<string, Record<string, number>>();
   private readonly headManifests = new Map<string, Promise<Map<string, Quote | undefined> | null>>();
   private readonly escalations = new Escalations();
+  private warm = false;
   private readonly diagnostics = vscode.languages.createDiagnosticCollection('code-explainer-widgets');
   private readonly diagnosed = new Map<string, vscode.Uri[]>();
   private readonly checkTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly subscriptions: vscode.Disposable[] = [];
   private tickTimer: ReturnType<typeof setInterval> | undefined;
+  /** Unresponsive reports gathered across panels for one incident. */
+  private incident: { reports: { p: PanelWidgets; crumbs: Crumbs }[]; timer: ReturnType<typeof setTimeout> } | undefined;
   /** Recreates a panel in the same column at the same place (watchdog recovery); set by the extension. */
   recreate: (port: WidgetSessionPort) => void = () => {};
 
@@ -174,8 +195,27 @@ export class WidgetHost implements vscode.Disposable {
 
   async disable(ref: ExplainerRef, srcs: { src: string; hash: string }[]): Promise<void> {
     const map = { ...this.disabledMap() };
-    for (const s of srcs) map[`${ref.dir.toString()}\n${s.src}`] = s.hash;
+    for (const s of srcs) {
+      delete map[`${ref.dir.toString()}\n${s.src}`];
+      map[`${ref.dir.toString()}\n${s.src}`] = s.hash;
+    }
+    const keys = Object.keys(map);
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_DISABLED))) delete map[k];
     await this.context.workspaceState.update(DISABLED_KEY, map);
+  }
+
+  /** Entries whose code changed since (enabled again by that) are forgotten. */
+  async pruneDisabled(ref: ExplainerRef, hashes: ReadonlyMap<string, string>): Promise<void> {
+    const next = { ...this.disabledMap() };
+    let changed = false;
+    for (const [src, hash] of hashes) {
+      const k = `${ref.dir.toString()}\n${src}`;
+      if (next[k] !== undefined && next[k] !== hash) {
+        delete next[k];
+        changed = true;
+      }
+    }
+    if (changed) await this.context.workspaceState.update(DISABLED_KEY, next);
   }
 
   async enableAll(): Promise<void> {
@@ -200,8 +240,16 @@ export class WidgetHost implements vscode.Disposable {
     const key = `${ref.dir.toString()}\n${src}`;
     let p = this.compiles.get(key);
     if (!p) {
-      p = compileWidget(ref.dir.fsPath, src);
-      this.compiles.set(key, p);
+      // The first compile also starts the worker and loads the compiler: give it longer.
+      const timeoutMs = this.warm ? undefined : COLD_COMPILE_MS;
+      this.warm = true;
+      const q = compileWidget(ref.dir.fsPath, src, timeoutMs ? { timeoutMs } : undefined);
+      p = q;
+      this.compiles.set(key, q);
+      // A timeout or a crash says nothing about the code for certain (a busy machine): not kept.
+      void q.then((r) => {
+        if (r.errors.some((e) => TRANSIENT.has(e.code ?? '')) && this.compiles.get(key) === q) this.compiles.delete(key);
+      });
     }
     return p;
   }
@@ -229,27 +277,42 @@ export class WidgetHost implements vscode.Disposable {
 
   // ---- consent ----
 
-  async fileGit(uri: vscode.Uri): Promise<FileGit> {
+  /**
+   * Git's view of a widget file for consent, after the repository settled following an event at `since`. A
+   * symlink, or a repository that doesn't settle (a long rebase), is `unknown`: changed code asks.
+   */
+  async fileGit(uri: vscode.Uri, since = Date.now()): Promise<FileGit> {
+    if (uri.scheme === 'file' && (await lstat(uri.fsPath).then((st) => st.isSymbolicLink(), () => false))) return { kind: 'unknown' };
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return l;
-    const text = await this.git.headText(l.repo, uri);
-    return { kind: 'repo', head: this.git.head(l.repo), headHash: text === null ? null : contentHash(text) };
+    if (!(await this.git.settle(l.repo, since))) return { kind: 'unknown' };
+    const [headBlob, text] = await Promise.all([this.git.headBlob(l.repo, uri), this.git.headText(l.repo, uri)]);
+    return { kind: 'repo', headBlob, headHash: text === null ? null : contentHash(text) };
+  }
+
+  /** How consent names a file: workspace-relative (the record survives moving the workspace). */
+  consentPath(uri: vscode.Uri): string {
+    return vscode.workspace.asRelativePath(uri, true);
   }
 
   /** The files of these widgets' import closures, hashed from their bytes now, with git's view of each. */
-  async widgetFiles(ref: ExplainerRef, results: readonly CompileResult[]): Promise<WidgetFile[]> {
+  async widgetFiles(ref: ExplainerRef, results: readonly CompileResult[], since = Date.now()): Promise<WidgetFile[]> {
     const paths = [...new Set(results.flatMap((r) => r.files))];
     const out: WidgetFile[] = [];
     for (const rel of paths) {
       const uri = vscode.Uri.joinPath(ref.dir, rel);
       const bytes = await readBytesInside(uri, ref.dir, MAX_FILE_BYTES);
-      out.push({ path: uri.toString(), hash: bytes ? contentHash(bytes) : 'missing', git: await this.fileGit(uri) });
+      out.push({ path: this.consentPath(uri), hash: bytes ? contentHash(bytes) : 'missing', git: await this.fileGit(uri, since) });
     }
     return out;
   }
 
-  /** The workspace watcher: record edits as the user's own (unless they arrived through git), re-check diagnostics. */
+  /**
+   * The workspace watcher: record edits of acknowledged widget files as the user's own (unless they arrived
+   * through git), re-check diagnostics. Files consent never saw are judged when an explainer uses them.
+   */
   private onWorkspaceFile(uri: vscode.Uri): void {
+    const at = Date.now();
     const m = /^(.*\/\.explain\/[^/]+)(\/.*)$/.exec(uri.path);
     if (!m) return;
     const ref = refFromDir(uri.with({ path: m[1]! }));
@@ -262,10 +325,12 @@ export class WidgetHost implements vscode.Disposable {
       void this.check(ref);
     }, 300));
     if (!vscode.workspace.isTrusted || !this.consent().granted || /\/(manifest\.json|explainer\.html)$/.test(uri.path)) return;
+    const path = this.consentPath(uri);
+    if (!Object.hasOwn(this.consent().files, path)) return;
     void (async () => {
       const bytes = await readBytesInside(uri, ref.dir, MAX_FILE_BYTES);
       if (!bytes) return;
-      const file: WidgetFile = { path: uri.toString(), hash: contentHash(bytes), git: await this.fileGit(uri) };
+      const file: WidgetFile = { path, hash: contentHash(bytes), git: await this.fileGit(uri, at) };
       const d = decideConsent(this.consent(), [file]);
       if (d.observed.length) await this.acknowledge(d.observed, false);
     })();
@@ -340,11 +405,15 @@ export class WidgetHost implements vscode.Disposable {
     const uri = vscode.Uri.joinPath(ref.root, a.file);
     const text = isSecretPath(a.file) ? undefined : await readInside(uri, ref.root, MAX_CODE_BYTES);
     const real = uri.scheme === 'file' ? await realpath(uri.fsPath).catch(() => undefined) : undefined;
+    // Git is asked about the file the text is read from: through a symlink, `git show` would give the link's
+    // target path and the ignore check would judge the link, not the file behind it.
+    const target = real ? vscode.Uri.file(real) : uri;
     let git: GitFacts = { kind: 'none' };
-    const l = await this.git.lookup(uri);
+    const l = await this.git.lookup(target);
     if (l.kind === 'unknown') git = { kind: 'unknown' };
     else if (l.kind === 'repo') {
-      git = { kind: 'repo', tracked: await this.git.tracked(l.repo, uri), ignored: await this.git.ignored(l.repo, uri), headText: await this.git.headText(l.repo, uri) };
+      const [tracked, ignored, headText] = await Promise.all([this.git.tracked(l.repo, target), this.git.ignored(l.repo, target), this.git.headText(l.repo, target)]);
+      git = { kind: 'repo', tracked, ignored, headText };
     }
     return decideCodeAccess({
       anchor: a,
@@ -386,7 +455,7 @@ export class WidgetHost implements vscode.Disposable {
     const lines = [...byFile].map(([f, r]) => `${f}: ${r.join(', ')}`);
     const ok = 'Let Widgets Read';
     const choice = await vscode.window.showWarningMessage(
-      `Let the widgets in “${title}” read this code?`,
+      `Let the widgets in “${modalText(title)}” read this code?`,
       { modal: true, detail: `${lines.join('\n')}\n\nWidgets would see these lines as they are in the editor, including unsaved edits.` },
       ok,
     );
@@ -409,6 +478,7 @@ export class WidgetHost implements vscode.Disposable {
       confirm: (entries) => this.confirmReading(ref.name, entries),
       record: (entries) => void this.confirm(entries).then(() => this.refreshAll()),
       isConfirmed: (file, quote, range) => this.confirmed(file, quote, range),
+      isCommitted: (a) => this.quoteAtHead(ref, a),
     };
   }
 
@@ -416,7 +486,7 @@ export class WidgetHost implements vscode.Disposable {
 
   private notifyDisabled(port: WidgetSessionPort, what: string): void {
     const enable = 'Enable Widgets';
-    void vscode.window.showWarningMessage(`${what} in “${port.title() || port.ref().name}” stopped responding, so ${what === 'A widget' ? 'it is' : 'they are'} turned off until the code changes.`, enable).then((c) => {
+    void vscode.window.showWarningMessage(`${what} in “${modalText(port.title() || port.ref().name)}” stopped responding, so ${what === 'A widget' ? 'it is' : 'they are'} turned off until the code changes.`, enable).then((c) => {
       if (c === enable) void vscode.commands.executeCommand('codeExplainer.enableWidgets');
     });
   }
@@ -427,7 +497,7 @@ export class WidgetHost implements vscode.Disposable {
     const step = this.escalations.record(ref.dir.toString(), Date.now());
     if (step === 'stop') {
       log.error(`${ref.name}: widgets keep freezing the panel; the watchdog stopped acting. Close the panel, or run "Code Explainer: Revoke Widget Consent".`);
-      void vscode.window.showErrorMessage(`Widgets in “${p.port.title() || ref.name}” keep freezing the panel. Close it, or revoke widget consent.`);
+      void vscode.window.showErrorMessage(`Widgets in “${modalText(p.port.title() || ref.name)}” keep freezing the panel. Close it, or revoke widget consent.`);
       return false;
     }
     const srcs = step === 'suspect' && suspect ? [suspect] : p.sources();
@@ -442,17 +512,39 @@ export class WidgetHost implements vscode.Disposable {
    * so every panel unmounts all its frames (with none left, Chromium replaces the process), the suspect is
    * disabled, and the rest mount again.
    */
-  async unresponsive(p: PanelWidgets, crumbs: { mounted: string[]; mounting: string | null; recent: string | null }): Promise<void> {
-    for (const x of this.panels) x.port.post({ type: 'widgetsReset', phase: 'unmount' });
-    const suspect = crumbs.mounting ?? crumbs.recent ?? crumbs.mounted.at(-1);
-    log.warn(`${p.port.ref().name}: widgets stopped responding (mounted: ${crumbs.mounted.join(', ') || 'none'}; mounting: ${crumbs.mounting ?? 'none'}).`);
-    await this.escalate(p, suspect);
-    setTimeout(() => {
-      for (const x of this.panels) {
-        void x.refreshGate();
-        x.port.post({ type: 'widgetsReset', phase: 'remount' });
-      }
-    }, REMOUNT_DELAY);
+  unresponsive(p: PanelWidgets, crumbs: Crumbs): void {
+    // Every panel whose widgets share the hung process reports it: one incident, one suspect, one escalation.
+    if (!this.incident) {
+      for (const x of this.panels) x.port.post({ type: 'widgetsReset', phase: 'unmount' });
+      this.incident = { reports: [], timer: setTimeout(() => void this.settleIncident(), UNRESPONSIVE_DEBOUNCE) };
+    }
+    this.incident.reports.push({ p, crumbs });
+  }
+
+  private async settleIncident(): Promise<void> {
+    const reports = this.incident?.reports ?? [];
+    // The suspect: a widget that was mounting when it happened (in any panel), else the first report's most
+    // recently active one.
+    const pick = reports.find((r) => r.crumbs.mounting) ?? reports[0];
+    let resume = true;
+    if (pick) {
+      const { p, crumbs } = pick;
+      const suspect = crumbs.mounting ?? crumbs.recent ?? crumbs.mounted.at(-1);
+      log.warn(`${p.port.ref().name}: widgets stopped responding (mounted: ${crumbs.mounted.join(', ') || 'none'}; mounting: ${crumbs.mounting ?? 'none'}; ${reports.length} panel${reports.length === 1 ? '' : 's'} reported it).`);
+      resume = await this.escalate(p, suspect);
+    }
+    if (!resume) {
+      // The watchdog stopped acting: the panels stay suspended (no remount loop).
+      this.incident = undefined;
+      return;
+    }
+    await new Promise((r) => setTimeout(r, REMOUNT_DELAY));
+    this.incident = undefined;
+    // Each panel learns what is turned off before it mounts anything again.
+    await Promise.all([...this.panels].map(async (x) => {
+      await x.refreshGate();
+      x.port.post({ type: 'widgetsReset', phase: 'remount' });
+    }));
   }
 
   /**
@@ -466,7 +558,7 @@ export class WidgetHost implements vscode.Disposable {
     // No reset loop: a recreated panel that still misses beats is left alone.
     if (p.port.recovered) {
       p.stopped = true;
-      void vscode.window.showErrorMessage(`The explainer panel “${p.port.title() || ref.name}” is still not responding. Close it to recover.`);
+      void vscode.window.showErrorMessage(`The explainer panel “${modalText(p.port.title() || ref.name)}” is still not responding. Close it to recover.`);
       return;
     }
     if (!(await this.escalate(p, p.watchdog.suspect()))) {
@@ -478,10 +570,13 @@ export class WidgetHost implements vscode.Disposable {
 
   dispose(): void {
     clearInterval(this.tickTimer);
+    clearTimeout(this.incident?.timer);
     for (const t of this.checkTimers.values()) clearTimeout(t);
     for (const d of this.subscriptions) d.dispose();
   }
 }
+
+type Crumbs = { mounted: string[]; mounting: string | null; recent: string | null };
 
 /** One panel's widgets: its gate, the builds it was sent, the code it subscribed to, its watchdog. */
 export class PanelWidgets {
@@ -493,9 +588,15 @@ export class PanelWidgets {
   private results = new Map<string, CompileResult>();
   private gate: WidgetGate | undefined;
   private changed: string[] = [];
+  private added: string[] = [];
   private gateSeq = 0;
+  /** The gate being computed, for requests that arrive before it is done. */
+  private pending: Promise<void> | undefined;
+  /** When beats from a recovered panel first came back on time. */
+  private healthySince: number | undefined;
   /** What the panel was sent, by src (hash), so live edits push new builds. */
   private readonly served = new Map<string, string>();
+  /** `${src}\n${anchor}` pairs widgets subscribed to. */
   private readonly codeAnchors = new Set<string>();
   private readonly loggedReasons = new Set<string>();
   private codeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -535,8 +636,23 @@ export class PanelWidgets {
   }
 
   /** The HTML changed, or something the gate depends on did. */
-  async refreshGate(): Promise<void> {
+  refreshGate(): Promise<void> {
+    const p = this.computeGate();
+    this.pending = p;
+    void p.finally(() => {
+      if (this.pending === p) this.pending = undefined;
+    });
+    return p;
+  }
+
+  /** The gate is current: no computation running (one that started later is waited for too). */
+  private async gateSettled(): Promise<void> {
+    for (let i = 0; i < 10 && this.pending; i++) await this.pending.catch(() => undefined);
+  }
+
+  private async computeGate(): Promise<void> {
     if (this.disposed) return;
+    const at = Date.now();
     const seq = ++this.gateSeq;
     const generation = this.port.generation();
     const ref = this.port.ref();
@@ -551,13 +667,15 @@ export class PanelWidgets {
       results = await this.host.check(ref, html);
       if (stale()) return;
       this.results = new Map(this.srcs.map((s, i) => [s, results[i]!]));
-      const files = await this.host.widgetFiles(ref, results);
+      const files = await this.host.widgetFiles(ref, results, at);
       if (stale()) return;
       const record = this.host.consent();
       const d = decideConsent(record, files);
       if (record.granted && d.observed.length) await this.host.acknowledge(d.observed, false);
       this.changed = record.granted ? d.changed : [];
+      this.added = record.granted ? d.added : [];
       status = d.ask ? 'ask' : 'on';
+      await this.host.pruneDisabled(ref, new Map([...this.results].map(([src, r]) => [src, r.hash])));
     }
     const disabled = this.srcs.filter((s) => this.host.isDisabled(ref, s, this.results.get(s)?.hash));
     let unconfirmed: WidgetGate['unconfirmed'] = null;
@@ -596,11 +714,31 @@ export class PanelWidgets {
     const m = this.port.manifest();
     const ref = this.port.ref();
     if (!m || this.codeAnchors.size === 0) return;
-    if (![...this.codeAnchors].some((id) => { const a = m.anchors.get(id); return a && vscode.Uri.joinPath(ref.root, a.file).toString() === fileUri; })) return;
+    const inFile = (key: string) => {
+      const a = m.anchors.get(key.slice(key.indexOf('\n') + 1));
+      return a && vscode.Uri.joinPath(ref.root, a.file).toString() === fileUri;
+    };
+    if (![...this.codeAnchors].some(inFile)) return;
     clearTimeout(this.codeTimer);
-    this.codeTimer = setTimeout(() => {
-      for (const id of this.codeAnchors) void this.sendCode(id);
-    }, CODE_DELAY);
+    this.codeTimer = setTimeout(() => this.sendAllCode(), CODE_DELAY);
+  }
+
+  private sendAllCode(): void {
+    for (const key of this.codeAnchors) {
+      const i = key.indexOf('\n');
+      void this.sendCode(key.slice(0, i), key.slice(i + 1));
+    }
+  }
+
+  /**
+   * Whether this widget reads the anchor, as its compiled code says (literal useAnchorCode ids, or any anchor
+   * when an id is computed): a widget is served nothing else, however it asks.
+   */
+  private reads(src: string, id: string): boolean {
+    const r = this.results.get(src);
+    if (!r) return false;
+    const ids = anchorsRead(r.modules);
+    return ids === 'all' || ids.has(id);
   }
 
   /** Allowed to run widgets now (checked on every request, not only when the gate was computed). */
@@ -608,15 +746,23 @@ export class PanelWidgets {
     return this.gate?.status === 'on' && this.host.enabled() && vscode.workspace.isTrusted;
   }
 
-  private async sendCode(id: string): Promise<void> {
+  private async sendCode(src: string, id: string): Promise<void> {
     const generation = this.port.generation();
+    if (!this.reads(src, id)) {
+      if (!this.loggedReasons.has(`${src}:${id}:not-read`)) {
+        this.loggedReasons.add(`${src}:${id}:not-read`);
+        log.warn(`${this.port.ref().name}: ${src} asked for the code of anchor '${id}', which it doesn't read with useAnchorCode('${id}'); it gets none.`);
+      }
+      this.port.post({ type: 'widgetCode', src, code: { anchor: id, status: 'unavailable', reason: 'unconfirmed' } });
+      return;
+    }
     const code = await this.host.codeFor(this.port, id);
     if (this.disposed || generation !== this.port.generation() || !this.allowed()) return;
     if (code.status === 'unavailable' && !this.loggedReasons.has(`${id}:${code.reason}`)) {
       this.loggedReasons.add(`${id}:${code.reason}`);
       log.info(`${this.port.ref().name}: useAnchorCode('${id}') is unavailable to widgets: ${code.reason}. ${REASON_FIX[code.reason!] ?? ''}`);
     }
-    this.port.post({ type: 'widgetCode', code });
+    this.port.post({ type: 'widgetCode', src, code });
   }
 
   /** Handles the widget messages from the panel; false for anything else. */
@@ -632,13 +778,9 @@ export class PanelWidgets {
       case 'widgetConfirmAnchors':
         void this.confirmAnchors();
         return true;
-      case 'widgetCompile': {
-        const r = this.results.get(m.src);
-        const ok = this.allowed() && r && !this.gate!.disabled.includes(m.src);
-        if (ok) this.served.set(m.src, r.hash);
-        this.port.post({ type: 'widget', src: m.src, build: ok ? toBuild(r) : null });
+      case 'widgetCompile':
+        void this.answerCompile(m.src);
         return true;
-      }
       case 'widgetLibs':
         if (!this.allowed()) return true;
         void Promise.all(m.ids.map(async (id) => [id, await this.host.library(id)] as const)).then((entries) => {
@@ -647,9 +789,9 @@ export class PanelWidgets {
         });
         return true;
       case 'widgetCode':
-        if (!this.allowed() || !this.port.manifest()?.anchors.has(m.anchor)) return true;
-        this.codeAnchors.add(m.anchor);
-        void this.sendCode(m.anchor);
+        if (!this.allowed() || !this.srcs.includes(m.src) || !this.port.manifest()?.anchors.has(m.anchor)) return true;
+        this.codeAnchors.add(`${m.src}\n${m.anchor}`);
+        void this.sendCode(m.src, m.anchor);
         return true;
       case 'widgetHighlight': {
         if (!m.anchor) {
@@ -681,19 +823,41 @@ export class PanelWidgets {
       case 'widgetHeights':
         this.host.setHeights(ref, m.heights);
         return true;
-      case 'heartbeat':
-        if (this.watchdog.beat({ delay: m.delay, visible: m.visible, mounted: m.mounted, mounting: m.mounting, recent: m.recent }, Date.now()) === 'trip') void this.host.trip(this);
+      case 'heartbeat': {
+        const at = Date.now();
+        if (this.watchdog.beat({ delay: m.delay, visible: m.visible, mounted: m.mounted, mounting: m.mounting, recent: m.recent }, at) === 'trip') void this.host.trip(this);
+        else if (this.port.recovered && m.visible && m.delay < 1000) {
+          // A recovered panel that has beaten on time for a minute works again: a later hang gets recovered too.
+          this.healthySince ??= at;
+          if (at - this.healthySince > 60_000) this.port.healthy?.();
+        } else this.healthySince = undefined;
         return true;
+      }
       case 'widgetsUnresponsive':
-        if (!this.stopped) void this.host.unresponsive(this, m);
+        if (!this.stopped) this.host.unresponsive(this, m);
         return true;
       case 'focusAnswer':
+        // Only the answer to the latest question counts (a late answer to an older one says nothing now).
+        if (!m.legit && (this.port.focusQuery?.() ?? m.id) === m.id) void vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+        return true;
       case 'focusTheft':
-        if (m.type === 'focusTheft' || !m.legit) void vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+        void vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
         return true;
       default:
         return false;
     }
+  }
+
+  /** A build for the panel, or null; a src the gate being computed will know about is answered after it. */
+  private async answerCompile(src: string): Promise<void> {
+    const generation = this.port.generation();
+    if (!this.results.has(src) && this.pending) await this.gateSettled();
+    if (this.disposed || generation !== this.port.generation()) return;
+    const ref = this.port.ref();
+    const r = this.results.get(src);
+    const ok = this.allowed() && r && !this.gate!.disabled.includes(src) && !this.host.isDisabled(ref, src, r.hash);
+    if (ok) this.served.set(src, r.hash);
+    this.port.post({ type: 'widget', src, build: ok ? toBuild(r) : null });
   }
 
   private async askConsent(): Promise<void> {
@@ -704,14 +868,16 @@ export class PanelWidgets {
       const generation = this.port.generation();
       const results = [...this.results.values()];
       const files = await this.host.widgetFiles(ref, results);
-      const changed = this.changed.map((u) => vscode.workspace.asRelativePath(vscode.Uri.parse(u)));
       const run = 'Run Widgets';
+      const list = (xs: string[]) => xs.slice(0, 10).join(', ') + (xs.length > 10 ? `, and ${xs.length - 10} more` : '');
       const detail = [
-        `Explainer: ${this.port.title() || ref.name} (${plural(this.srcs.length, 'widget')}: ${this.srcs.join(', ')})`,
-        changed.length ? `Changed since you last agreed (arrived through git): ${changed.join(', ')}` : '',
+        `Explainer: “${modalText(this.port.title() || ref.name)}” (${plural(this.srcs.length, 'widget')}: ${list(this.srcs)})`,
+        this.changed.length ? `Changed through git since you last agreed: ${list(this.changed)}` : '',
+        this.added.length ? `New from git (not agreed to before): ${list(this.added)}` : '',
+        'Your answer covers this code. Your own edits to it keep running; code that arrives through git (a pull, a checkout) asks again.',
       ].filter(Boolean).join('\n');
       const choice = await vscode.window.showWarningMessage(
-        'Widgets are code from this repository. They can read the code this explainer points at (including unsaved edits) and may be able to reach the network. Run widgets in this workspace?',
+        "Widgets are code from this repository. They can read the code this explainer points at (including unsaved edits) and may be able to reach the network. Run this explainer's widgets?",
         { modal: true, detail },
         run,
       );
@@ -730,7 +896,7 @@ export class PanelWidgets {
     if (!ok) return;
     await this.host.confirm(list.map((a) => ({ file: a.file, quote: a.quote!, range: a.range })));
     await this.refreshGate();
-    for (const id of this.codeAnchors) void this.sendCode(id);
+    this.sendAllCode();
   }
 
   dispose(): void {

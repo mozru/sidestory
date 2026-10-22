@@ -96,8 +96,8 @@ export type ToWebview =
   | { type: 'widget'; src: string; build: WidgetBuild | null }
   /** Library texts by id (reply to `widgetLibs`). */
   | { type: 'widgetLibs'; libs: Record<string, string> }
-  /** An anchor's code for widgets (reply to `widgetCode`, and again when it changes). */
-  | { type: 'widgetCode'; code: WidgetCode }
+  /** An anchor's code for the widgets with this src (reply to `widgetCode`, and again when it changes). */
+  | { type: 'widgetCode'; src: string; code: WidgetCode }
   /** The watchdog: remove every widget frame now (`unmount`), or mount them again (`remount`). */
   | { type: 'widgetsReset'; phase: 'unmount' | 'remount' }
   /** The panel just became active: did focus arrive legitimately? Answered with `focusAnswer`. */
@@ -134,7 +134,7 @@ export type FromWebview =
   /** Library texts for widget frames. */
   | { type: 'widgetLibs'; ids: string[] }
   /** A widget wants an anchor's code (`useAnchorCode`); the panel forwards the answer to the widgets that asked. */
-  | { type: 'widgetCode'; anchor: string }
+  | { type: 'widgetCode'; src: string; anchor: string }
   /** Decorate lines of an anchor (relative to its first line) while its step is current; no anchor clears. */
   | { type: 'widgetHighlight'; anchor?: string; lines?: [number, number]; identifiers?: string[] }
   /** A widget's `reveal`, already checked by the panel (a click in that widget). */
@@ -192,7 +192,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('widgetConfirmAnchors') }),
   z.object({ type: z.literal('widgetCompile'), src: widgetSrcSchema }),
   z.object({ type: z.literal('widgetLibs'), ids: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(20) }),
-  z.object({ type: z.literal('widgetCode'), anchor: anchorIdSchema }),
+  z.object({ type: z.literal('widgetCode'), src: widgetSrcSchema, anchor: anchorIdSchema }),
   z.object({ type: z.literal('widgetHighlight'), anchor: anchorIdSchema.optional(), lines: lineRangeSchema.optional(), identifiers: z.array(identifierSchema).max(20).optional() }),
   z.object({ type: z.literal('widgetReveal'), anchor: anchorIdSchema, lines: lineRangeSchema.optional(), highlight: z.array(identifierSchema).max(20).optional() }),
   z.object({ type: z.literal('widgetLog'), src: z.string().max(512), level: z.enum(['error', 'warn', 'info']), message: z.string().max(4096) }),

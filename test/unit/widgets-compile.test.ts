@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { WidgetCompiler, type CompileResult } from '../../src/extension/widgets/compile.ts';
+import { relativize, WidgetCompiler, type CompileResult } from '../../src/extension/widgets/compile.ts';
 import { orderLibraries, WidgetCompilerCore } from '../../src/extension/widgets/compile-core.ts';
 import { SizeLru } from '../../src/extension/widgets/lru.ts';
 import { isSecretFileName } from '../../src/extension/widgets/secret-files.ts';
@@ -210,6 +210,14 @@ describe('compileWidget: rejections', () => {
     });
     expect(codes(r)).toEqual([code]);
     expect(r.errors[0]).toMatchObject({ file: 'w.tsx', line: 1 });
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a FIFO (or anything but a regular file) without blocking on it', async () => {
+    const dir = explainer({ 'w.tsx': "import x from './pipe.json';\nexport default function W() { return <div>{String(x)}</div>; }\n" });
+    execFileSync('mkfifo', [join(dir, 'pipe.json')]);
+    const r = await compiler.compile(dir, 'w.tsx');
+    expect(r.errors.map((e) => e.code)).not.toContain('timeout');
+    expect(r.errors.length).toBeGreaterThan(0);
   });
 
   it('refuses symlinks that lead outside the folder', async () => {
@@ -454,6 +462,11 @@ describe('compileWidget: hashing, worker limits and caching', () => {
 });
 
 describe('widget compiler helpers', () => {
+  it('worker failure messages carry no absolute paths', () => {
+    const dir = join(tmpdir(), 'repo', '.explain', 'x');
+    expect(relativize(`Cannot read ${join(dir, 'w', 'a.tsx')} at ${join(tmpdir(), 'node_modules', 'sucrase', 'dist', 'index.js')}:1:2`, dir)).toBe(`Cannot read w${process.platform === 'win32' ? '\\' : '/'}a.tsx at …/index.js:1:2`);
+  });
+
   it('SizeLru evicts least recently used entries past its bound', () => {
     const lru = new SizeLru<string>(10);
     lru.set('a', 'a', 4);

@@ -6,6 +6,8 @@ import { expect, test } from './fixtures.ts';
 import { gcAndHeap, iframeTargets, mb, mountAndWait, processes } from './perf-shared.ts';
 
 test.use({ launchOptions: { args: ['--site-per-process', '--enable-features=IsolateSandboxedIframes'] } });
+// Process RSS comes from `ps`, which Windows doesn't have.
+test.skip(process.platform === 'win32', 'measures process memory with ps');
 
 
 test('8 React + Recharts widgets: renderer processes, RSS and JS heap per frame', async ({ harness, page }) => {

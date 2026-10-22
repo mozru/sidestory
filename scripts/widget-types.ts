@@ -117,7 +117,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       try {
         current = readFileSync(path, 'utf8');
       } catch { /* missing */ }
-      if (current !== text) {
+      // A Windows checkout may have converted the committed files to CRLF.
+      if (current.replace(/\r\n/g, '\n') !== text) {
         console.error(`${path} is out of date: run node scripts/widget-types.ts`);
         stale = true;
       }

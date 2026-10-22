@@ -16,14 +16,16 @@ function ResponsiveContainer(props: Props) {
   const percent = typeof height === 'string' && height.trim().endsWith('%') && !aspect;
   useLayoutEffect(() => {
     if (!percent || fallback !== null) return;
-    const parent = probe.current?.parentElement;
-    if (parent && parent.clientHeight < 2) {
+    // Recharts' own container, which has the percentage height: whatever the parent's padding, borders or
+    // display, this is the box the chart gets.
+    const container = probe.current?.firstElementChild;
+    if (container && container.clientHeight < 2) {
       const min = typeof minHeight === 'number' ? minHeight : Number.parseFloat(String(minHeight ?? ''));
       setFallback(Number.isFinite(min) && min > 0 ? min : FALLBACK_HEIGHT);
     }
   }, [percent, fallback, minHeight]);
   // `display: contents` keeps the probe out of layout, so the chart's percentage still resolves against
-  // the real parent, which the probe can measure.
+  // the real parent.
   return createElement(
     'span',
     { ref: probe, style: { display: 'contents' } },

@@ -71,7 +71,9 @@ export function decideCodeAccess(i: CodeAccessInput): WidgetCode {
     if (g.kind === 'unknown') return unavailable(a.id, 'ignored');
     if (g.kind === 'repo' && !g.tracked && g.ignored) return unavailable(a.id, 'ignored');
   } else {
-    // Matched approximately: only in tracked files, and only when the quote is exactly the HEAD text.
+    // Matched approximately: only in tracked files git doesn't ignore, and only when the quote is exactly the
+    // HEAD text.
+    if (g.kind === 'repo' && g.ignored) return unavailable(a.id, 'ignored');
     if (g.kind !== 'repo' || !g.tracked) return unavailable(a.id, 'changed-untracked');
     if (g.headText === null || !quoteIn(g.headText, a.quote.exact)) return unavailable(a.id, 'changed-since-commit');
   }

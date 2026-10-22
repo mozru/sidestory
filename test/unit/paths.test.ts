@@ -22,11 +22,11 @@ describe('realPathInside', () => {
   });
 
   it('accepts files inside the root', async () => {
-    expect(await realPathInside(join(base, 'repo/src/a.ts'), join(base, 'repo'))).toMatch(/repo\/src\/a\.ts$/);
+    expect(await realPathInside(join(base, 'repo/src/a.ts'), join(base, 'repo'))).toMatch(/repo[\\/]src[\\/]a\.ts$/);
   });
 
   it('follows symlinks that stay inside', async () => {
-    expect(await realPathInside(join(base, 'repo/src/link-in'), join(base, 'repo'))).toMatch(/repo\/src\/a\.ts$/);
+    expect(await realPathInside(join(base, 'repo/src/link-in'), join(base, 'repo'))).toMatch(/repo[\\/]src[\\/]a\.ts$/);
   });
 
   it('refuses symlinks that point outside', async () => {
@@ -38,7 +38,7 @@ describe('realPathInside', () => {
   });
 
   it('works when the root itself is a symlink', async () => {
-    expect(await realPathInside(join(base, 'repo-link/src/a.ts'), join(base, 'repo-link'))).toMatch(/repo\/src\/a\.ts$/);
+    expect(await realPathInside(join(base, 'repo-link/src/a.ts'), join(base, 'repo-link'))).toMatch(/repo[\\/]src[\\/]a\.ts$/);
   });
 
   it('returns null for missing files', async () => {

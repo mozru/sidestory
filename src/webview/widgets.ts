@@ -70,6 +70,8 @@ interface Limit {
 
 interface Widget {
   key: string;
+  /** The explainer it belongs to (its state and heights are filed under it, also while it leaves). */
+  dir: string;
   src: string;
   title: string;
   props: string | null;
@@ -106,6 +108,10 @@ interface Widget {
   messages: number[];
   lastStep?: string | null;
   lastAnchors?: string;
+  /** The frame's visible box (frame ∩ clipping ∩ the scroller's viewport), panel coordinates; null: not visible. */
+  vis?: Box | null;
+  /** Placement and clipping, measured on layout changes (not on every scroll frame); content-frame coordinates. */
+  layout?: { place: Placement; clip: Box; box: { left: number; top: number; width: number; height: number }; rect: { top: number; bottom: number } };
 }
 
 const MAX_MOUNTED = 8;
@@ -126,6 +132,9 @@ const MAX_FOCUS_THEFTS = 3;
 const MAX_RESETS = 2;
 const MAX_LOGS_PER_WIDGET = 20;
 const HINT_MS = 4000;
+/** A ping interval firing this much later than due means the panel itself was paused (sleep, debugger). */
+const PING_DRIFT_MS = 2000;
+const BAR_PX = 22;
 /** Calls per second: highlight is coalesced (the latest is delivered); navigation over the limit fails. */
 const RATE = { highlight: 10, nav: 2, requestCode: 20 };
 /** CSS properties whose animation or transition moves an element: the frame would lag behind. */
@@ -155,6 +164,12 @@ export class WidgetFrames {
   private highlighted = false;
   private lastActive: string | null | undefined;
   private frameScheduled = 0;
+  /** Layout may have changed since placement was last measured (anything but a plain scroll). */
+  private layoutDirty = true;
+  private lastPingAt = 0;
+  private themeKey = '';
+  /** Widgets of the explainer the panel just left, still saving their state. */
+  private readonly departing = new Set<Widget>();
   private measureTimer: ReturnType<typeof setInterval> | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private focusTimer: ReturnType<typeof setInterval> | undefined;
@@ -189,10 +204,16 @@ export class WidgetFrames {
       ['pointerout', (e: Event) => this.onPointer(e as PointerEvent, document, false)],
       ['pointerup', () => this.onPointerUp()],
       ['pointercancel', () => this.onPointerUp()],
+      // The pointer left the webview (pointerleave of the root; other elements' leaves also pass by here).
+      ['pointerleave', (e: Event) => { if (e.target === document.documentElement && this.pointerDown) this.onPointerUp(); }],
       ['touchstart', () => this.evidence.gesture(now())],
       ['keydown', () => this.evidence.gesture(now())],
     ] as const) document.addEventListener(type, fn, { capture: true, passive: true });
-    window.addEventListener('blur', () => setTimeout(() => this.checkFocus()));
+    window.addEventListener('blur', () => setTimeout(() => {
+      // Focus left the webview (not just into a frame of it): a pointer released out there sends no pointerup.
+      if (this.pointerDown && !document.hasFocus()) this.onPointerUp();
+      this.checkFocus();
+    }));
     window.addEventListener('focus', () => {
       this.hadFocus = true;
     });
@@ -201,6 +222,7 @@ export class WidgetFrames {
       for (const w of this.widgets.values()) if (w.initSent) this.send(w, { type: 'viewport', height: this.panel.scroller.clientHeight });
       this.schedule();
     }).observe(panel.scroller);
+    matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => this.onTheme());
     panel.bar.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-act]');
       if (!b) return;
@@ -245,7 +267,16 @@ export class WidgetFrames {
     if (down) {
       this.pointerDown = true;
       this.evidence.gesture(now(), { x, y });
-    } else this.evidence.sample({ x, y, t: now() });
+    } else this.evidence.sample({ x, y, t: now(), hit: this.frameAt(x, y) });
+  }
+
+  /** The mounted widget frame whose visible box holds this panel point (as last positioned). */
+  private frameAt(x: number, y: number): HTMLIFrameElement | undefined {
+    for (const w of this.widgets.values()) {
+      const b = w.vis;
+      if (w.frame && b && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return w.frame;
+    }
+    return undefined;
   }
 
   private onPointerUp(): void {
@@ -263,12 +294,12 @@ export class WidgetFrames {
       const anchor = el.closest<HTMLElement>('[data-explain-anchor]')?.dataset.explainAnchor ?? null;
       const id = el.getAttribute('id');
       let key: string;
-      if (id) key = `#${id}`;
+      if (id) key = `#${id.length > 100 ? `${id.slice(0, 60)}~${hash(id)}` : id}`;
       else {
         const base = `${anchor ?? ''}|${src}`;
         const n = seen.get(base) ?? 0;
         seen.set(base, n + 1);
-        key = `${base}|${n}`;
+        key = `${base.length > 200 ? `${base.slice(0, 160)}~${hash(base)}` : base}|${n}`;
         if (n === 1 && !this.dupWarned.has(base)) {
           this.dupWarned.add(base);
           this.panel.post({ type: 'widgetLog', src, level: 'warn', message: `Two widgets with src "${src}" in "${anchor ?? '(no section)'}" have no id: give each an id so their state stays with them.` });
@@ -292,6 +323,7 @@ export class WidgetFrames {
       el.setAttribute('data-cx-wstate', status);
       el.toggleAttribute('data-cx-showfb', w?.showFallback ?? false);
       el.style.setProperty('--cx-wh', `${w?.height ?? this.initialHeight(el, key)}px`);
+      pinBox(el, status);
       const own = (cls: string) => [...el.children].find((c) => c.getAttribute('data-cx-box') === this.panel.boxToken && c.classList.contains(cls)) as HTMLElement | undefined;
       const make = (tag: string, cls: string) => {
         const x = doc.createElement(tag);
@@ -306,6 +338,7 @@ export class WidgetFrames {
         for (const cls of ['cx-widget-tag', 'cx-widget-name', 'cx-widget-note']) bar.append(make('span', cls));
         el.prepend(bar);
       }
+      pinLabel(bar);
       setText(bar.querySelector('.cx-widget-tag')!, 'Interactive');
       setText(bar.querySelector('.cx-widget-name')!, title);
       setText(bar.querySelector('.cx-widget-note')!, w?.badge ?? (status === 'off' ? this.offNote() : ''));
@@ -373,7 +406,7 @@ export class WidgetFrames {
       let w = this.widgets.get(key);
       if (!w) {
         w = {
-          key, src, title, props, anchor, index, el, height: this.initialHeight(el, key), status: 'idle', showFallback: false,
+          key, dir: this.panel.dir(), src, title, props, anchor, index, el, height: this.initialHeight(el, key), status: 'idle', showFallback: false,
           loads: 0, resets: 0, booted: false, initSent: false, live: false, lastPong: 0, pingN: 0, thefts: 0, lastHeightAt: 0,
           remount: false, limits: new Map(), codeAnchors: new Set(), logged: new Set(), messages: [],
         };
@@ -385,6 +418,8 @@ export class WidgetFrames {
         w.error = undefined;
         w.badge = undefined;
         w.resets = 0;
+        w.thefts = 0;
+        if (w.status === 'error') w.status = 'idle';
         if (w.frame) {
           w.remount = true;
           this.unmount(w, true);
@@ -397,6 +432,7 @@ export class WidgetFrames {
       if (w.frame) w.frame.title = title;
       this.placeholderObserver.observe(el);
     });
+    this.layoutDirty = true;
     this.renderBar();
     this.decorate(this.panel.contentRoot());
     this.schedule();
@@ -414,6 +450,9 @@ export class WidgetFrames {
     this.gate = gate;
     for (const [k, v] of Object.entries(gate.heights)) if (!this.heights.has(`${this.panel.dir()}\n${k}`)) this.heights.set(`${this.panel.dir()}\n${k}`, v);
     if (gate.status !== 'on' && was.status === 'on') for (const w of this.widgets.values()) this.unmount(w, true);
+    // A refusal answered a request made under an older gate (say, the extension hadn't seen a live edit's new
+    // widget yet): ask again under this one.
+    for (const [src, b] of this.builds) if (b === null) this.builds.delete(src);
     for (const w of this.widgets.values()) {
       if (gate.disabled.includes(w.src)) {
         this.unmount(w, true);
@@ -465,23 +504,39 @@ export class WidgetFrames {
     this.schedule();
   }
 
-  onCode(code: WidgetCode): void {
-    this.codes.set(code.anchor, code);
-    for (const w of this.widgets.values()) if (w.codeAnchors.has(code.anchor)) this.send(w, { type: 'code', code });
+  /** Code is answered per widget source: the extension serves each widget only the anchors it reads. */
+  onCode(src: string, code: WidgetCode): void {
+    this.codes.set(`${src}\n${code.anchor}`, code);
+    for (const w of this.widgets.values()) if (w.src === src && w.codeAnchors.has(code.anchor)) this.send(w, { type: 'code', code });
   }
 
   /** The watchdog: remove every frame now (no state is asked of a hung widget), or mount again. */
   reset(phase: 'unmount' | 'remount'): void {
     this.suspended = phase === 'unmount';
     this.unresponsiveReported = false;
-    if (this.suspended) for (const w of this.widgets.values()) this.unmount(w, false);
-    else this.schedule();
+    if (this.suspended) {
+      for (const w of this.widgets.values()) this.unmount(w, false);
+      // Mounting again asks for every build afresh, so the extension can refuse the ones it turned off.
+      this.builds.clear();
+      this.compiling.clear();
+    } else {
+      for (const w of this.widgets.values()) w.lastPong = now();
+      this.schedule();
+    }
   }
 
   /** Another explainer is shown (dive or back): unmount everything (asking for state) and forget its builds. */
   switchExplainer(): void {
-    for (const w of this.widgets.values()) this.unmount(w, true);
+    for (const w of this.widgets.values()) {
+      this.unmount(w, true);
+      // Still saving its state (filed under its own explainer): its reply is accepted until it is removed.
+      if (w.frame) this.departing.add(w);
+    }
     this.widgets.clear();
+    // Heights are filed by the extension under the explainer shown when they arrive: that's the new one now.
+    clearTimeout(this.heightsTimer);
+    this.heightsTimer = undefined;
+    this.heightsToSend.clear();
     this.builds.clear();
     this.compiling.clear();
     this.codes.clear();
@@ -501,6 +556,11 @@ export class WidgetFrames {
     const a = active ?? null;
     if (a === this.lastActive) return;
     this.lastActive = a;
+    // A highlight still waiting in the rate limit belongs to the step being left.
+    for (const w of this.widgets.values()) {
+      const l = w.limits.get('highlight');
+      if (l) l.latest = undefined;
+    }
     if (this.highlighted) {
       this.highlighted = false;
       this.panel.post({ type: 'widgetHighlight' });
@@ -521,8 +581,12 @@ export class WidgetFrames {
     }
   }
 
+  /** Theme variables, classes or reduced motion may have changed: widgets hear only of real changes. */
   onTheme(): void {
     const t = theme();
+    const key = JSON.stringify(t);
+    if (key === this.themeKey) return;
+    this.themeKey = key;
     for (const w of this.widgets.values()) if (w.initSent) this.send(w, { type: 'theme', ...t });
   }
 
@@ -578,6 +642,7 @@ export class WidgetFrames {
 
   /** One measuring pass per animation frame, whatever asked for it. */
   schedule(): void {
+    this.layoutDirty = true;
     if (this.frameScheduled) return;
     this.frameScheduled = requestAnimationFrame(() => {
       this.frameScheduled = 0;
@@ -586,9 +651,14 @@ export class WidgetFrames {
   }
 
   private update(): void {
+    // Placement and clipping are in content-frame coordinates, which scrolling doesn't change: a plain scroll
+    // frame only does arithmetic.
+    const remeasure = this.layoutDirty;
+    this.layoutDirty = false;
     const scroller = this.panel.scroller;
     const view = scroller.getBoundingClientRect();
-    const contentTop = this.panel.contentFrame().getBoundingClientRect().top;
+    const content = this.panel.contentFrame().getBoundingClientRect();
+    const contentTop = content.top;
     const near: { w: Widget; distance: number }[] = [];
     const win = this.panel.contentDoc().defaultView!;
     for (const w of this.widgets.values()) {
@@ -608,7 +678,8 @@ export class WidgetFrames {
         if (w.status !== 'error') this.fail(w, `This explainer has more than ${MAX_WIDGETS} widgets; only the first ${MAX_WIDGETS} run.`);
         continue;
       }
-      const place = placement(w.el, win);
+      if (remeasure || !w.layout) w.layout = this.measure(w, win);
+      const place = w.layout.place;
       if (place.kind === 'hidden') {
         this.unmount(w, true);
         if (w.status !== 'error') this.setStatus(w, 'hidden');
@@ -628,9 +699,8 @@ export class WidgetFrames {
       }
       if (w.status === 'error') continue;
       if (w.status === 'hidden' || w.status === 'off') this.setStatus(w, 'idle');
-      const r = w.el.getBoundingClientRect();
-      const top = contentTop + r.top;
-      const bottom = contentTop + r.bottom;
+      const top = contentTop + w.layout.rect.top;
+      const bottom = contentTop + w.layout.rect.bottom;
       const distance = bottom < view.top ? view.top - bottom : top > view.bottom ? top - view.bottom : 0;
       if (distance <= view.height) near.push({ w, distance });
       else this.unmount(w, true);
@@ -639,19 +709,37 @@ export class WidgetFrames {
     near.slice(MAX_MOUNTED).forEach(({ w }) => this.unmount(w, true));
     for (const { w } of near.slice(0, MAX_MOUNTED)) {
       if (!w.frame) this.mount(w);
-      if (w.frame) this.position(w, win, view);
+      if (w.frame) this.position(w, content, view);
     }
+    for (const w of this.widgets.values()) if (!w.frame) w.vis = undefined;
     this.timers();
   }
 
-  /** The frame over the placeholder's content box, clipped to clipping ancestors and the content frame. */
-  private position(w: Widget, win: Window, view: DOMRect): void {
-    const f = w.frame!;
+  /** Placement, the placeholder's box and the frame's clip, in content-frame coordinates. */
+  private measure(w: Widget, win: Window): NonNullable<Widget['layout']> {
+    const place = placement(w.el, win);
     const r = w.el.getBoundingClientRect();
+    const rect = { top: r.top, bottom: r.bottom };
+    const none = { left: 0, top: 0, right: 0, bottom: 0 };
+    if (place.kind !== 'ok') return { place, clip: none, box: { left: 0, top: 0, width: 0, height: 0 }, rect };
     const cs = win.getComputedStyle(w.el);
     const left = r.left + px(cs.borderLeftWidth) + px(cs.paddingLeft);
     const top = r.top + px(cs.borderTopWidth) + px(cs.paddingTop);
-    const width = Math.max(0, r.right - px(cs.borderRightWidth) - px(cs.paddingRight) - left);
+    const right = r.right - px(cs.borderRightWidth) - px(cs.paddingRight);
+    const bottom = r.bottom - px(cs.borderBottomWidth) - px(cs.paddingBottom);
+    const doc = this.panel.contentDoc().documentElement;
+    // Never outside the placeholder's own content box (author CSS may shrink the placeholder), the clipping
+    // ancestors, or the content frame.
+    let clip: Box = { left: Math.max(0, left), top: Math.max(0, top), right: Math.min(doc.clientWidth, right), bottom: Math.min(this.panel.contentFrame().clientHeight, bottom) };
+    for (const c of clipBoxes(w.el, win)) clip = { left: Math.max(clip.left, c.left), top: Math.max(clip.top, c.top), right: Math.min(clip.right, c.right), bottom: Math.min(clip.bottom, c.bottom) };
+    return { place, clip, box: { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }, rect };
+  }
+
+  /** The frame over the placeholder's content box, clipped to it, to clipping ancestors and the content frame. */
+  private position(w: Widget, content: DOMRect, view: DOMRect): void {
+    const f = w.frame!;
+    const { box, clip } = w.layout!;
+    const { left, top, width } = box;
     const height = w.height;
     const set = (k: string, v: string) => {
       if (f.style.getPropertyValue(k) !== v) f.style.setProperty(k, v);
@@ -660,16 +748,19 @@ export class WidgetFrames {
     set('top', `${top}px`);
     set('width', `${width}px`);
     set('height', `${height}px`);
-    const doc = this.panel.contentDoc().documentElement;
-    let clip: Box = { left: 0, top: 0, right: doc.clientWidth, bottom: this.panel.contentFrame().clientHeight };
-    for (const c of clipBoxes(w.el, win)) clip = { left: Math.max(clip.left, c.left), top: Math.max(clip.top, c.top), right: Math.min(clip.right, c.right), bottom: Math.min(clip.bottom, c.bottom) };
     const inset = [Math.max(0, clip.top - top), Math.max(0, left + width - clip.right), Math.max(0, top + height - clip.bottom), Math.max(0, clip.left - left)];
     const empty = clip.right <= clip.left || clip.bottom <= clip.top || inset[0]! >= height || inset[3]! >= width;
     set('clip-path', inset.every((x) => x === 0) ? '' : `inset(${inset.map((x) => `${x}px`).join(' ')})`);
     set('visibility', empty ? 'hidden' : '');
-    // Visible to the reader: within the scroller's viewport.
-    const fr = f.getBoundingClientRect();
-    const visible = !empty && fr.bottom > view.top && fr.top < view.bottom && document.visibilityState === 'visible';
+    // What the reader can see of it, in panel coordinates (activation is credited only there).
+    const vis: Box = {
+      left: Math.max(view.left, content.left + Math.max(left, clip.left)),
+      top: Math.max(view.top, content.top + Math.max(top, clip.top)),
+      right: Math.min(view.right, content.left + Math.min(left + width, clip.right)),
+      bottom: Math.min(view.bottom, content.top + Math.min(top + height, clip.bottom)),
+    };
+    w.vis = !empty && vis.right > vis.left && vis.bottom > vis.top ? vis : null;
+    const visible = w.vis !== null && document.visibilityState === 'visible';
     if (visible !== w.visible) {
       w.visible = visible;
       if (w.initSent) this.send(w, { type: 'visible', visible });
@@ -773,7 +864,9 @@ export class WidgetFrames {
     w.initSent = false;
     w.live = false;
     w.visible = undefined;
+    w.vis = undefined;
     w.codeAnchors.clear();
+    this.departing.delete(w);
     if (this.mounting === w) this.mounting = undefined;
     if (this.recent === w) this.recent = undefined;
     if (w.status === 'live' || w.status === 'loading') this.setStatus(w, 'idle');
@@ -789,6 +882,7 @@ export class WidgetFrames {
     if (w.status === status) return;
     w.status = status;
     w.el.setAttribute('data-cx-wstate', status);
+    pinBox(w.el, status);
     const note = w.el.querySelector<HTMLElement>(':scope > .cx-widget-bar .cx-widget-note');
     if (note && !w.badge) setText(note, status === 'off' ? this.offNote() : '');
   }
@@ -807,7 +901,7 @@ export class WidgetFrames {
     // Widgets have the opaque origin; the host's messages (on the panel's origin) are main.ts's.
     if (e.origin !== 'null' || !e.source) return;
     let w: Widget | undefined;
-    for (const x of this.widgets.values()) if (x.win && x.win === e.source) w = x;
+    for (const x of [...this.widgets.values(), ...this.departing]) if (x.win && x.win === e.source) w = x;
     if (!w || !w.frame || w.loads > 1) return;
     const t = now();
     w.messages = w.messages.filter((m) => t - m < 1000);
@@ -916,7 +1010,7 @@ export class WidgetFrames {
       activeStep: active,
       myAnchor: w.anchor,
       anchors,
-      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reducedMotion: reducedMotion(),
       entry: build.entry,
       modules: build.modules,
       icons: build.icons,
@@ -935,7 +1029,7 @@ export class WidgetFrames {
   }
 
   private stateKey(w: Widget): string {
-    return `${this.panel.dir()}\n${w.key}`;
+    return `${w.dir}\n${w.key}`;
   }
 
   // ---- heights ----
@@ -956,10 +1050,12 @@ export class WidgetFrames {
     if (px === undefined || px === w.height) return;
     w.lastHeightAt = now();
     const delta = px - w.height;
-    const top = this.panel.contentFrame().getBoundingClientRect().top + w.el.getBoundingClientRect().top;
+    // Only a widget wholly above the reading line keeps the reader's place by scrolling; one the reader is
+    // using (it holds the reading line, or lies below it) stays where it is.
+    const bottom = this.panel.contentFrame().getBoundingClientRect().top + w.el.getBoundingClientRect().bottom;
     w.height = px;
     w.el.style.setProperty('--cx-wh', `${px}px`);
-    if (top < this.panel.readingLine()) this.panel.compensate(delta);
+    if (bottom < this.panel.readingLine()) this.panel.compensate(delta);
     const key = this.stateKey(w);
     this.heights.delete(key);
     this.heights.set(key, px);
@@ -1031,11 +1127,12 @@ export class WidgetFrames {
       return;
     }
     w.codeAnchors.add(anchor);
-    const cached = this.codes.get(anchor);
+    const key = `${w.src}\n${anchor}`;
+    const cached = this.codes.get(key);
     if (cached) this.send(w, { type: 'code', code: cached });
-    if (!this.codeRequested.has(anchor)) {
-      this.codeRequested.add(anchor);
-      this.panel.post({ type: 'widgetCode', anchor });
+    if (!this.codeRequested.has(key)) {
+      this.codeRequested.add(key);
+      this.panel.post({ type: 'widgetCode', src: w.src, anchor });
     }
   }
 
@@ -1069,7 +1166,7 @@ export class WidgetFrames {
     const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
     if (!ua?.isActive || !w.frame || document.activeElement !== w.frame) return false;
     if (this.owner?.frame !== w.frame || !this.owner.legit) return false;
-    return this.evidence.allows(w.frame.getBoundingClientRect(), now(), this.vp());
+    return this.evidence.allows(w.vis ?? null, now(), this.vp(), w.frame);
   }
 
   // ---- focus ----
@@ -1095,20 +1192,27 @@ export class WidgetFrames {
     }
     if (this.owner?.frame === a) return;
     const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
-    const legit = !!ua?.isActive && this.evidence.allows(w.frame!.getBoundingClientRect(), now(), this.vp());
+    const verdict = ua?.isActive ? this.evidence.judge(w.vis ?? null, now(), this.vp(), w.frame) : 'refuse';
+    const legit = verdict === 'allow';
     this.owner = { frame: w.frame!, legit };
     if (legit) {
       if (w.anchor) this.panel.touchSection(w.anchor);
       return;
     }
-    this.theft(w, !had);
+    this.theft(w, !had, verdict === 'unsure');
   }
 
-  private theft(w: Widget, fromOutside: boolean): void {
-    w.thefts++;
+  /**
+   * Focus arrived without evidence of the reader's interaction: given back. `unsure`: the pointer is on the
+   * widget (it just can't be told apart from one that moved under it), so it isn't counted against the widget.
+   */
+  private theft(w: Widget, fromOutside: boolean, unsure = false): void {
     this.lastTheftAt = now();
     this.owner = undefined;
-    this.logOnce(w, 'focus', `${w.src}: took focus without a click in it; focus was given back.`);
+    if (!unsure) {
+      w.thefts++;
+      this.logOnce(w, 'focus', `${w.src}: took focus without a click in it; focus was given back.`);
+    }
     this.panel.focusSelf(w.el);
     // From the editor: the extension puts focus back there.
     if (fromOutside) this.panel.post({ type: 'focusTheft' });
@@ -1192,7 +1296,10 @@ export class WidgetFrames {
       clearInterval(this.measureTimer);
       this.measureTimer = undefined;
     }
-    if (mounted && !this.pingTimer) this.pingTimer = setInterval(() => this.ping(), PING_MS);
+    if (mounted && !this.pingTimer) {
+      this.lastPingAt = 0;
+      this.pingTimer = setInterval(() => this.ping(), PING_MS);
+    }
     if (!mounted && this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = undefined;
@@ -1229,13 +1336,30 @@ export class WidgetFrames {
     this.heartbeatDue = t + HEARTBEAT_MS;
     this.heartbeatTimer = setTimeout(() => this.heartbeat(), HEARTBEAT_MS);
     this.checkFocus();
-    if (document.visibilityState !== 'visible') return;
-    this.panel.post({ type: 'heartbeat', delay: Math.round(delay), visible: true, ...this.breadcrumbs() });
+    // Also while hidden (the extension's watchdog disarms on visible: false; silence would look like a hang).
+    // A hidden page's timers are throttled, so its lateness says nothing.
+    const visible = document.visibilityState === 'visible';
+    this.panel.post({ type: 'heartbeat', delay: visible ? Math.round(delay) : 0, visible, ...this.breadcrumbs() });
+  }
+
+  /** A beat now, on time (visibility changed): the timer starts over. */
+  private beatNow(): void {
+    if (this.heartbeatTimer === undefined) return;
+    clearTimeout(this.heartbeatTimer);
+    this.heartbeatDue = now();
+    this.heartbeat();
   }
 
   /** Pongs stopping for 3 s while visible: tell the extension, which coordinates every panel (§4). */
   private ping(): void {
     const t = now();
+    const late = this.lastPingAt > 0 && t - this.lastPingAt > PING_MS + PING_DRIFT_MS;
+    this.lastPingAt = t;
+    if (late) {
+      // This timer was paused too (sleep, a debugger, a busy panel): the silence is ours, start counting again.
+      for (const w of this.widgets.values()) w.lastPong = t;
+      return;
+    }
     let stuck = false;
     for (const w of this.widgets.values()) {
       if (!w.frame || !w.booted || w.unmounting) continue;
@@ -1257,8 +1381,10 @@ export class WidgetFrames {
     if (hidden) this.persistStates(false);
     else {
       for (const w of this.widgets.values()) w.lastPong = now(); // a hidden page's pongs wait; don't count that
+      this.lastPingAt = 0;
       this.schedule();
     }
+    this.beatNow();
   }
 
   // ---- state and logs ----
@@ -1297,6 +1423,13 @@ export class WidgetFrames {
 
 // ---- helpers ----
 
+/** A short, stable hash (FNV-1a) for capping long placeholder keys (ids, sources) in messages. */
+function hash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+}
+
 function setText(el: Element, text: string): void {
   if (el.textContent !== text) el.textContent = text;
 }
@@ -1333,7 +1466,35 @@ function nullProto(v: unknown): unknown {
   return v;
 }
 
-function theme(): { kind: ThemeKind; vars: Record<string, string>; bodyClass: string } {
+/** The OS setting or VS Code's `workbench.reduceMotion` (the `vscode-reduce-motion` body class). */
+export function reducedMotion(): boolean {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches || document.body.classList.contains('vscode-reduce-motion');
+}
+
+/**
+ * Placeholder geometry and the label, inline and !important: author CSS (even !important, more specific)
+ * can't shrink the box the frame lies over or hide the "Interactive" label.
+ */
+function pinBox(el: HTMLElement, status: Status): void {
+  const off = status === 'off';
+  const props: [string, string][] = [
+    ['display', 'block'], ['box-sizing', 'content-box'], ['height', off ? 'auto' : 'var(--cx-wh, 240px)'], ['min-height', '0'],
+    ['max-height', 'none'], ['padding', `${BAR_PX}px 0 0`], ['overflow', off ? 'visible' : 'hidden'], ['visibility', 'visible'],
+  ];
+  for (const [k, v] of props) if (el.style.getPropertyValue(k) !== v || el.style.getPropertyPriority(k) !== 'important') el.style.setProperty(k, v, 'important');
+}
+
+function pinLabel(bar: HTMLElement): void {
+  const set = (e: HTMLElement, props: [string, string][]) => {
+    for (const [k, v] of props) if (e.style.getPropertyValue(k) !== v || e.style.getPropertyPriority(k) !== 'important') e.style.setProperty(k, v, 'important');
+  };
+  const shown: [string, string][] = [['visibility', 'visible'], ['opacity', '1'], ['transform', 'none'], ['clip-path', 'none'], ['filter', 'none']];
+  set(bar, [...shown, ['display', 'flex'], ['position', 'absolute'], ['top', '0'], ['left', '0'], ['right', '0'], ['height', `${BAR_PX}px`], ['font-size', '11px'], ['z-index', '1']]);
+  const tag = bar.querySelector<HTMLElement>('.cx-widget-tag');
+  if (tag) set(tag, [...shown, ['display', 'block'], ['font-size', '11px'], ['color', 'var(--vscode-badge-foreground)'], ['background', 'var(--vscode-badge-background)']]);
+}
+
+function theme(): { kind: ThemeKind; vars: Record<string, string>; bodyClass: string; reducedMotion: boolean } {
   const vars: Record<string, string> = {};
   const style = document.documentElement.style;
   for (let i = 0; i < style.length; i++) {
@@ -1342,7 +1503,7 @@ function theme(): { kind: ThemeKind; vars: Record<string, string>; bodyClass: st
   }
   const c = document.body.classList;
   const kind: ThemeKind = c.contains('vscode-high-contrast-light') ? 'high-contrast-light' : c.contains('vscode-high-contrast') ? 'high-contrast' : c.contains('vscode-light') ? 'light' : 'dark';
-  return { kind, vars, bodyClass: document.body.className };
+  return { kind, vars, bodyClass: document.body.className, reducedMotion: reducedMotion() };
 }
 
 type Placement = { kind: 'ok' } | { kind: 'hidden' } | { kind: 'unsupported'; reader: string; author: string };
