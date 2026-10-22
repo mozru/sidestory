@@ -4,7 +4,8 @@
 
 | Suite | Command | What it covers |
 |---|---|---|
-| Unit | `npm test` | Manifest parsing and limits, anchor resolution (moves, edits, duplicates, renames, huge files), live range tracking, quote pinning, symlink containment |
+| Unit | `npm test` | Manifest parsing and limits, anchor resolution (moves, edits, duplicates, renames, huge files), live range tracking, quote pinning, symlink containment; the widget compiler and loop guards; the standalone widget checker (`check-cli.test.ts`: HTML and CSS scanning, props, anchor ids, `--pin` and its consent rule); every widget in `docs/WIDGETS.md` compiling and typechecking against `src/widget-types` (`widgets-guide.test.ts`) |
+| Widgets | `npm run build && npm run test:widgets` | The widget runtime and libraries in real sandboxed frames: SDK, shims, theme, height, loop guard, performance |
 | Panel | `npm run build && npm run test:webview` | The explainer panel in Chromium with VS Code's theme variables and the panel's CSP: sync both ways, live updates keeping the reader's place and focus, the cursor pill, anchor states, sanitizing, containment, keyboard, accessibility scans (dark, light, high contrast), screenshots at 340/600/1000px |
 | End to end | `npm run test:e2e` | The packaged extension in browser VS Code, with the server in a Linux container (the same split as Remote-SSH: extension on the remote host, panel in the client). Restricted Mode, step → code, cursor → step, live explainer and code edits, images in the content frame, theme screenshots. Needs Docker. |
 
@@ -28,6 +29,46 @@
    - [ ] Delete the body of `backoffDelay`: its section offers **Re-anchor to the selected code**; select other lines, click it, confirm: the section links to them.
    - [ ] Open a v1 manifest (no `quote`): a one-time notice offers **Pin Anchors**.
 6. Repeat steps 4–5 in desktop VS Code locally (F5 in this repo opens an Extension Development Host).
+
+## Manual: widgets (about 20 minutes)
+
+Use an explainer with a widget: the sample workspace's, or the minimal example from `docs/WIDGETS.md` §2 added to `bit-reader`. For the hang checks, add a second widget whose button runs a regular expression that never finishes (loop guards don't stop regex backtracking):
+
+```tsx
+export default function Hang() {
+  return <button onClick={() => /(a+)+$/.test('a'.repeat(40) + 'b')}>Hang</button>;
+}
+```
+
+1. Consent and trust:
+   - [ ] With `codeExplainer.widgets.enabled` off, the panel shows each widget's fallback and no consent bar.
+   - [ ] Turn it on in User settings; then in the repository's `.vscode/settings.json` turn it off and on again: the workspace value is ignored.
+   - [ ] The bar says how many widgets the explainer has; **Run widgets…** opens a native VS Code dialog naming the explainer and what widgets can do. **Cancel** keeps the fallbacks; agreeing mounts the widgets without reopening the panel.
+   - [ ] Edit the widget file and save: it updates in place, and the slider/counter state set with `useWidgetState` survives. No dialog.
+   - [ ] Commit, switch to a branch where the widget file differs, switch back with VS Code open: the panel asks again.
+   - [ ] **Code Explainer: Revoke Widget Consent**: the widgets go back to their fallbacks.
+   - [ ] In Restricted Mode (**Workspaces: Manage Workspace Trust** → don't trust): fallbacks and a "Trust workspace…" bar; trusting mounts the widgets.
+2. Linking:
+   - [ ] Step through the explainer: the widget follows (`useStepValue`), and highlights its lines while its step is current.
+   - [ ] A click on a `<Ref>` or a button calling `reveal` shows the code in the editor; the same call from a timer does nothing and is logged in **Output › Code Explainer**.
+   - [ ] `useAnchorCode` on an unpinned anchor gives the widget's empty state; the Problems panel says `not-pinned`. **Pin Anchors** lists the files and line ranges widgets would read and asks before pinning them.
+3. Focus and keyboard:
+   - [ ] Tab reaches the widget's placeholder; Enter moves into the widget; Esc leaves it; Tab past the last control leaves it.
+   - [ ] Click a widget button, then press <kbd>Alt</kbd>+<kbd>]</kbd>: the shortcut works (focus went back to the panel).
+   - [ ] Type in the editor while a widget that calls `focus()` on a timer is on screen: the editor keeps (or quickly gets back) focus.
+4. Look:
+   - [ ] Dark, light, high contrast dark and light: the widget uses the theme's colors and borders, and focus is visible.
+   - [ ] Narrow the panel to about 340 px: the widget fits its column; no horizontal scrollbar.
+   - [ ] Turn on **Reduce Motion** (`workbench.reduceMotion`): Motion animations stop.
+5. Process isolation (VS Code desktop, Electron; the e2e suite can't model this, see `docs/WIDGETS-PLAN.md` §12). Open **Developer: Open Process Explorer** next to the panel:
+   - [ ] With a widget mounted, note whether the widget frames run in a renderer process separate from the webview's (Process Explorer lists the webview and any out-of-process frames).
+   - [ ] Click **Hang**. VS Code's window stays responsive (menus, editor typing).
+   - [ ] Record whether the panel itself stays responsive (scrolling, step buttons) while the widget hangs: yes means Electron isolates sandboxed frames (the panel-side watchdog handles it); no means they share the panel's process (the extension-side watchdog handles it).
+   - [ ] Within about 10 s the hung widget is disabled, the panel recovers (recreated if it had frozen) at the same step, and a notification names the widget file and offers **Enable widgets**. With the regex removed and the file saved, the widget runs again.
+   - [ ] Repeat with two explainer panels open side by side: a hang in one panel's widget doesn't leave the other panel's widgets unrecoverable.
+6. Standalone checker, from a terminal in the sample workspace:
+   - [ ] `node "$(ls ~/.vscode*/extensions/*code-explainer*/dist/check.cjs | tail -n 1)" .explain/bit-reader` lists problems as `file:line: severity code: message` and exits 1 when there are errors.
+   - [ ] `--pin` pins anchors widgets don't read, lists the files and line ranges of those they do, and pins those only with `--yes-widgets-may-read`.
 
 ## Manual: things to watch for
 

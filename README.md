@@ -8,6 +8,7 @@ Rich, free-form HTML explainers that sit beside your code in VS Code and stay li
 - **Native to your theme**, including high contrast.
 - **Works locally and remotely:** Remote-SSH, WSL, Dev Containers, Codespaces, and browser VS Code backed by a server (code-server, openvscode-server, `code tunnel`). Not on vscode.dev or github.dev alone, which have no server to run it.
 - **Safe with untrusted repositories**, so it runs in Restricted Mode. Explainer content can't run script, reach the network or read files outside the repository. See `SECURITY.md`.
+- **Interactive widgets** (opt-in): live charts, simulations and diagrams written as React components, run in sandboxed frames only after you agree.
 
 Open one with **Code Explainer: Open Explainer** from the Command Palette, or right-click a folder under `.explain/` in the Explorer. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.
 
@@ -130,6 +131,43 @@ Removed or ignored, for safety (see `SECURITY.md`):
 
 Limits: `explainer.html` up to 5 MB, `manifest.json` up to 1 MB, 500 anchors, each quote up to 2,000 lines, each asset up to 5 MB (20 MB per open explainer).
 
+### Interactive widgets
+
+For what CSS can't do (a chart that responds to a control, a simulation that runs, a table parsed from the real code), an explainer can hold **widgets**: React components written the way Claude writes artifacts, with Tailwind, shadcn/ui-style components, Recharts, D3, Motion, lucide-react and lodash. Each runs in its own sandboxed frame in the panel; the prose stays plain HTML. A widget knows the current step, can read the code its explainer points at, highlights lines in the editor, and shows code when clicked.
+
+Place one in `explainer.html` with a fallback for readers who don't run widgets, and put the component next to it:
+
+```html
+<section data-explain-anchor="refill">
+  <h2>Refill</h2>
+  <explain-widget src="widgets/refill.tsx" title="Refill simulator" height="200">
+    <script type="application/json">{"width": 64}</script>
+    <img src="assets/refill.svg" alt="The window before and after a refill">
+  </explain-widget>
+</section>
+```
+
+```tsx
+// .explain/bit-reader/widgets/refill.tsx
+import { useStepValue, useWidgetState } from 'explainer';
+import { Button } from '@/components/ui/button';
+
+export default function Refill({ width = 64 }: { width?: number }) {
+  const [valid, setValid] = useWidgetState('valid', 20);
+  const color = useStepValue({ refill: 'var(--chart-1)' }, 'var(--muted-foreground)');
+  return (
+    <div className="flex items-center gap-3">
+      <Button size="sm" onClick={() => setValid((v) => Math.min(width, v + 8))}>Refill a byte</Button>
+      <span style={{ color }}>{valid} of {width} bits valid</span>
+    </div>
+  );
+}
+```
+
+**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, `codeExplainer.widgets.enabled` is on in your user settings (a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked again when widget code arrives through git (checkout, pull, merge), not after your own edits. **Code Explainer: Revoke Widget Consent** takes it back. What widgets can and can't reach is in `SECURITY.md`.
+
+**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Code Explainer: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Code Explainer: Add Widget Types** adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
+
 ### Settings
 
 | Setting | Default | |
@@ -148,6 +186,8 @@ npm run check          # typecheck, unit tests, build
 npm run test:webview   # the panel in Chromium (first: npx playwright install chromium)
 npm run test:e2e       # browser VS Code with the server in Docker
 npm run package        # dist/code-explainer.vsix
+node dist/check.cjs fixtures/sample-workspace/.explain/bit-reader   # the standalone widget checker (after a build)
+node scripts/widget-types.ts           # regenerate src/widget-types/*.d.ts after updating a widget library
 ```
 
 Press <kbd>F5</kbd> to open an Extension Development Host on `fixtures/sample-workspace`. Test plan for remote setups: `docs/TEST-PLAN.md`. Design notes (a draft that includes features not built yet): `docs/DESIGN.md`.
