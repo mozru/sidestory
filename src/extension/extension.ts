@@ -7,8 +7,10 @@ import { findExplainers, refFromDir } from './explainers.ts';
 import { log } from './log.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection } from './pin.ts';
-import type { SessionHost } from './session.ts';
+import type { SessionHost, SessionOptions } from './session.ts';
 import { ExplainerSession } from './session.ts';
+import { disposeWidgetCompiler } from './widgets/compile.ts';
+import { WidgetHost } from './widgets/host.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -44,14 +46,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const widgets = new WidgetHost(context);
+  context.subscriptions.push(widgets);
+
   const host: SessionHost = {
     memento: context.workspaceState,
     reanchor: (ref, anchorId) => void reanchor(ref, anchorId, true),
+    widgets,
   };
 
-  const start = async (trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel) => {
+  const start = async (trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, opts: SessionOptions = {}) => {
     const decorations = new Decorations();
-    const s = new ExplainerSession(trail, panel, context.extensionUri, decorations, host);
+    const s = new ExplainerSession(trail, panel, context.extensionUri, decorations, host, opts);
     sessions.add(s);
     current = s;
     s.onDidDispose(() => {
@@ -61,11 +67,25 @@ export function activate(context: vscode.ExtensionContext): void {
       updateContext();
     });
     panel.onDidChangeViewState((e) => {
-      if (e.webviewPanel.active) current = s;
+      if (e.webviewPanel.active) {
+        current = s;
+        // Focus may have been pulled in from the editor by a widget (docs/WIDGETS-PLAN.md §5.3).
+        s.queryFocus();
+      }
       updateContext();
     });
     updateContext();
     await s.load();
+  };
+
+  // The widget watchdog's recovery: a fresh panel in the same column, at the same place.
+  widgets.recreate = (port) => {
+    const old = [...sessions].find((s) => s.panel === port.panel);
+    if (!old) return;
+    const { trail, active } = old.place();
+    const column = old.panel.viewColumn ?? vscode.ViewColumn.Beside;
+    old.panel.dispose();
+    void start(trail, createPanel(context.extensionUri, trail.at(-1)!, column), { active, recovered: true });
   };
 
   /** The panel showing this explainer now: the active one if it does, else any. */
@@ -129,7 +149,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!ref) return;
       const open = showing(ref);
       try {
-        await pinAnchors(ref, (id) => open?.liveHint(id));
+        await pinAnchors(ref, (id) => open?.liveHint(id), widgets.pinHooks(ref));
       } catch (e) {
         log.error(`Pin Anchors failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't pin anchors: ${(e as Error).message}`);
@@ -149,6 +169,19 @@ export function activate(context: vscode.ExtensionContext): void {
         log.error(`Re-anchor failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't re-anchor: ${(e as Error).message}`);
       }
+    }),
+    vscode.commands.registerCommand('codeExplainer.revokeWidgetConsent', async () => {
+      await widgets.revokeConsent();
+      void vscode.window.showInformationMessage('Widget consent revoked: explainers ask again before running widgets in this workspace.');
+    }),
+    vscode.commands.registerCommand('codeExplainer.enableWidgets', async () => {
+      if (!widgets.enabled()) {
+        const on = 'Turn On';
+        const choice = await vscode.window.showInformationMessage('Widgets are turned off in settings (codeExplainer.widgets.enabled). Turn them on?', { modal: true, detail: 'Each workspace still asks before running its widgets.' }, on);
+        if (choice !== on) return;
+        await vscode.workspace.getConfiguration('codeExplainer').update('widgets.enabled', true, vscode.ConfigurationTarget.Global);
+      }
+      await widgets.enableAll();
     }),
     vscode.commands.registerCommand('codeExplainer.nextStep', () => target()?.navigate(1)),
     vscode.commands.registerCommand('codeExplainer.prevStep', () => target()?.navigate(-1)),
@@ -219,4 +252,5 @@ async function pickExplainer(): Promise<ExplainerRef | undefined> {
 
 export function deactivate(): void {
   for (const s of sessions) s.dispose();
+  disposeWidgetCompiler();
 }

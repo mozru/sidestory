@@ -68,17 +68,60 @@ export const events = {
   documentChanged: new EventEmitter<unknown>(),
   selectionChanged: new EventEmitter<unknown>(),
   visibleEditorsChanged: new EventEmitter<unknown>(),
+  configurationChanged: new EventEmitter<unknown>(),
+  trustGranted: new EventEmitter<void>(),
 };
+
+export class Range {
+  readonly start: { line: number; character: number };
+  readonly end: { line: number; character: number };
+  constructor(sl: number, sc: number, el: number, ec: number) {
+    this.start = { line: sl, character: sc };
+    this.end = { line: el, character: ec };
+  }
+  isEqual(o: Range): boolean {
+    return this.start.line === o.start.line && this.start.character === o.start.character && this.end.line === o.end.line && this.end.character === o.end.character;
+  }
+}
+export const DiagnosticSeverity = { Error: 0, Warning: 1 };
+export class Diagnostic {
+  readonly range: Range;
+  readonly message: string;
+  readonly severity: number;
+  source?: string;
+  code?: string;
+  constructor(range: Range, message: string, severity: number) {
+    this.range = range;
+    this.message = message;
+    this.severity = severity;
+  }
+}
+/** Diagnostics published, by URI string. */
+export const diagnostics = new Map<string, Diagnostic[]>();
+export const languages = {
+  createDiagnosticCollection: () => ({
+    set: (uri: Uri, list: Diagnostic[]) => diagnostics.set(uri.toString(), list),
+    delete: (uri: Uri) => diagnostics.delete(uri.toString()),
+    dispose() {},
+  }),
+};
+export const extensions = { getExtension: () => undefined };
+/** What modal questions answer (the button to "click"), set by the test; and the questions asked. */
+export const modal = { answer: undefined as string | undefined, asked: [] as string[] };
 
 export const workspace = {
   /** The folder workspace URIs resolve against; set by the test. */
   root: undefined as Uri | undefined,
+  isTrusted: true,
+  onDidChangeConfiguration: events.configurationChanged.event,
+  onDidGrantWorkspaceTrust: events.trustGranted.event,
+  asRelativePath: (u: Uri) => u.path,
   textDocuments: [] as unknown[],
   onDidChangeTextDocument: events.documentChanged.event,
   fs: { readFile: async (uri: Uri) => new Uint8Array(await readFile(uri.fsPath)) },
   getWorkspaceFolder: (uri: Uri) => (workspace.root && uri.path.startsWith(`${workspace.root.path}/`) ? { uri: workspace.root } : undefined),
   getConfiguration: () => ({ get: <T>(_key: string, fallback: T) => fallback }),
-  createFileSystemWatcher: () => {
+  createFileSystemWatcher: (_pattern?: unknown) => {
     counts.watchers++;
     const e = new EventEmitter<Uri>();
     let disposed = false;
@@ -102,7 +145,12 @@ export const window = {
   activeColorTheme: { kind: ColorThemeKind.Dark },
   createOutputChannel: () => ({ info() {}, warn() {}, error() {}, dispose() {} }),
   showInformationMessage: async () => undefined,
-  showWarningMessage: async () => undefined,
+  showWarningMessage: async (message: string, ...rest: unknown[]) => {
+    const opts = rest[0] as { modal?: boolean } | undefined;
+    if (!opts?.modal) return undefined;
+    modal.asked.push(message);
+    return modal.answer;
+  },
   showErrorMessage: async () => undefined,
   setStatusBarMessage: () => ({ dispose() {} }),
 };

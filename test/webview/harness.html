@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness' 'strict-dynamic'; require-trusted-types-for 'script'; trusted-types cx-static cx-sanitize cx-widget default cx-test; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
+<!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin.
+     The bootstrap's hash is checked against src/shared/widget-bootstrap.ts by test/unit/widgets-host.test.ts. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness' 'sha256-9/cCe0BkoEmMIMlnzualYMporpsGZHUNWwFbHOI/00w=' 'strict-dynamic'; require-trusted-types-for 'script'; trusted-types cx-static cx-sanitize cx-widget default cx-test; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
 <title>Explainer webview harness</title>
 <link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
 <link rel="stylesheet" href="/dist/webview/main.css">
@@ -20,6 +21,17 @@
         fetch((window.__base ?? document.getElementById('app').dataset.base) + m.path)
           .then((r) => (r.ok ? r.arrayBuffer() : null))
           .then((b) => window.__send({ type: 'asset', id: m.id, mime: types[m.path.split('.').pop()] ?? '', data: b && btoa(String.fromCharCode(...new Uint8Array(b))) }));
+      }
+      // And for widgets: library texts from dist/widget-libs, compiled widgets and anchor code set by the test.
+      if (m.type === 'widgetLibs') {
+        Promise.all(m.ids.map((id) => fetch(`/dist/widget-libs/${id}.js`).then((r) => r.text()).then((t) => [id, t])))
+          .then((entries) => window.__send({ type: 'widgetLibs', libs: Object.fromEntries(entries) }));
+      }
+      if (m.type === 'widgetCompile' && window.__builds && m.src in window.__builds) {
+        setTimeout(() => window.__send({ type: 'widget', src: m.src, build: window.__builds[m.src] }));
+      }
+      if (m.type === 'widgetCode' && window.__codes) {
+        setTimeout(() => window.__send({ type: 'widgetCode', code: window.__codes[m.anchor] ?? { anchor: m.anchor, status: 'unavailable', reason: 'not-pinned' } }));
       }
     },
     getState: () => window.__state,

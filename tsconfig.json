@@ -17,5 +17,5 @@
     "noEmit": true
   },
   "include": ["src", "test", "scripts"],
-  "exclude": ["src/widget-runtime"]
+  "exclude": ["src/widget-runtime", "src/widget-types/*.d.ts"]
 }

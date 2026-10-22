@@ -251,3 +251,123 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
 [data-cx-off] *::after {
   animation-play-state: paused !important;
 }
+
+/* ---- widget placeholders (docs/WIDGETS-PLAN.md §2, §8): the panel lays the widget's frame over the box ---- */
+
+explain-widget {
+  display: block !important;
+  position: relative;
+  box-sizing: content-box !important;
+  height: var(--cx-wh, 240px) !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 22px 0 0 !important;
+  margin: 12px 0;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
+  border-radius: 4px;
+  overflow: hidden !important;
+}
+
+/* Widgets can't run (setting, Restricted Mode, no consent yet): the fallback at its own height. */
+explain-widget[data-cx-wstate='off'] {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+explain-widget:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+explain-widget > .cx-widget-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 22px;
+  color: var(--vscode-descriptionForeground);
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
+  cursor: default;
+}
+
+explain-widget .cx-widget-tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 16px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+explain-widget .cx-widget-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+explain-widget .cx-widget-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+explain-widget[data-cx-wstate='error'] .cx-widget-note {
+  color: var(--vscode-errorForeground);
+}
+
+/* While the widget runs, the fallback is for screen readers only (the placeholder's aria-describedby). */
+explain-widget[data-cx-wstate='live'] > :not([data-cx-box]) {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+explain-widget > .cx-widget-error {
+  position: absolute;
+  inset: 22px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-errorForeground);
+}
+
+explain-widget > .cx-widget-error[hidden] {
+  display: none;
+}
+
+explain-widget .cx-widget-error-where {
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-descriptionForeground);
+}
+
+explain-widget .cx-widget-fallback {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+explain-widget .cx-widget-fallback:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}

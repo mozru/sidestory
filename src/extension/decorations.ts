@@ -12,6 +12,13 @@ export interface Focus {
   dim: boolean;
 }
 
+/** Lines (and identifiers) a widget highlights inside the current step's anchor (docs/WIDGETS-PLAN.md §5.3). */
+export interface WidgetHighlight {
+  uri: vscode.Uri;
+  range: LineRange;
+  identifiers: readonly string[];
+}
+
 export class Decorations implements vscode.Disposable {
   private readonly focusTypes = new Map<string, vscode.TextEditorDecorationType>();
   private readonly chip = vscode.window.createTextEditorDecorationType({
@@ -28,8 +35,29 @@ export class Decorations implements vscode.Disposable {
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Center,
   });
+  private readonly widgetType = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'),
+    overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.wordHighlightForeground'),
+    overviewRulerLane: vscode.OverviewRulerLane.Right,
+  });
+  private readonly widgetIds = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('codeExplainer.highlightBackground'),
+    borderColor: new vscode.ThemeColor('focusBorder'),
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderRadius: '3px',
+  });
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
   private current: Focus | undefined;
+  private widget: WidgetHighlight | undefined;
+
+  /** A widget's highlight; undefined clears it. Never scrolls, opens files or moves focus. */
+  setWidget(h: WidgetHighlight | undefined): void {
+    if (!h && !this.widget) return;
+    this.widget = h;
+    this.refresh();
+  }
 
   /** Briefly marks lines (an inline reference's target) without changing the active step. */
   flash(editor: vscode.TextEditor, range: vscode.Range): void {
@@ -54,6 +82,17 @@ export class Decorations implements vscode.Disposable {
   }
 
   private apply(editor: vscode.TextEditor): void {
+    const w = this.widget;
+    if (w && editor.document.uri.toString() === w.uri.toString()) {
+      const last = editor.document.lineCount - 1;
+      const range = new vscode.Range(Math.min(w.range.start - 1, last), 0, Math.min(w.range.end - 1, last), 0);
+      const ids = identifierRanges(editor.document, w.identifiers).filter((r) => range.start.line <= r.start.line && r.start.line <= range.end.line);
+      editor.setDecorations(this.widgetType, [range]);
+      editor.setDecorations(this.widgetIds, ids);
+    } else {
+      editor.setDecorations(this.widgetType, []);
+      editor.setDecorations(this.widgetIds, []);
+    }
     const f = this.current;
     const mine = f !== undefined && editor.document.uri.toString() === f.uri.toString();
     const focusType = f ? this.focusType(f.color) : undefined;
@@ -100,6 +139,8 @@ export class Decorations implements vscode.Disposable {
     this.chip.dispose();
     this.dim.dispose();
     this.flashType.dispose();
+    this.widgetType.dispose();
+    this.widgetIds.dispose();
   }
 }
 

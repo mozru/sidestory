@@ -3,6 +3,7 @@
 import { type CDPSession, expect, type Page, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import type { AnchorView, ToWebview } from '../../src/shared/protocol.ts';
+import { compile, ON, serve } from './widget-helpers.ts';
 
 const FIXTURE = 'fixtures/sample-workspace/.explain/bit-reader';
 const HTML = readFileSync(`${FIXTURE}/explainer.html`, 'utf8');
@@ -181,6 +182,57 @@ test.describe('memory', () => {
     const end = await sample(page, cdp);
     report('50 asset invalidations', warm!, end);
     expectBounded(warm!, end);
+  });
+});
+
+test.describe('widget memory', () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  test('50 widget mount/unmount cycles return to baseline: frames, listeners, blob URLs, targets', async ({ page }) => {
+    const builds = await compile({
+      'w/chart.tsx': `import { useState } from 'react';
+import { Bar, BarChart, XAxis } from 'recharts';
+import { Button } from '@/components/ui/button';
+import { useWidgetState } from 'explainer';
+export default function C() {
+  const [n, setN] = useWidgetState('n', 1);
+  const [t] = useState(() => setInterval(() => {}, 1000));
+  void t;
+  return <div><BarChart width={300} height={120} data={[{ a: 'x', v: n }, { a: 'y', v: 2 }]}><XAxis dataKey="a" /><Bar dataKey="v" /></BarChart><Button onClick={() => setN(n + 1)}>inc</Button></div>;
+}`,
+    });
+    await load(page);
+    await serve(page, builds);
+    const html = HTML.replace('</h2>', '</h2><explain-widget src="w/chart.tsx" id="c"><p>fallback</p></explain-widget>');
+    await send(page, { type: 'init', title: MANIFEST.title, html, anchors: ANCHORS, dir: DIR, base: await base(page, 'bit-reader'), trail: ROOT_TRAIL });
+    await expect(page.locator('.cx-position')).toHaveText(/Step \d of/);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Performance.enable');
+    const targets = async () => (await cdp.send('Target.getTargets')).targetInfos.filter((t) => t.type === 'iframe').length;
+    const live = () => frame(page).locator('explain-widget[data-cx-wstate="live"]');
+    const cycle = async () => {
+      await send(page, { type: 'widgets', gate: ON });
+      await expect(live()).toHaveCount(1);
+      await send(page, { type: 'widgets', gate: { ...ON, status: 'ask' } });
+      await expect(page.locator('iframe.cx-widget-frame')).toHaveCount(0);
+    };
+    // With no widget mounted yet, the baseline: no widget frames, no extra targets.
+    await send(page, { type: 'widgets', gate: { ...ON, status: 'ask' } });
+    const base0 = { frames: await page.locator('iframe.cx-widget-frame').count(), targets: await targets() };
+    let warm: Sample | undefined;
+    for (let i = 1; i <= 50; i++) {
+      await cycle();
+      if (i === 10) {
+        await page.waitForTimeout(1500); // the state save timer and the last pings run out
+        warm = await sample(page, cdp);
+      }
+    }
+    await page.waitForTimeout(1500);
+    const end = await sample(page, cdp);
+    report('50 widget mount/unmount cycles', warm!, end);
+    expectBounded(warm!, end);
+    expect(await page.locator('iframe.cx-widget-frame').count()).toBe(base0.frames);
+    expect(await targets()).toBeLessThanOrEqual(base0.targets);
   });
 });
 

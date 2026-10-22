@@ -1,6 +1,9 @@
 **
 !dist/extension.cjs
 !dist/webview/**
+!dist/compile-worker.cjs
+!dist/widget-data/**
+!dist/widget-libs/**
 !package.json
 !README.md
 !LICENSE

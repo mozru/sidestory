@@ -37,6 +37,10 @@
   </div>
   <img src="assets/backoff.svg" alt="Waits grow: short, longer, longest" width="240" height="80">
   <div class="labels"><span>100</span><span>200</span><span>400</span><span>800</span><span>1600</span><span>2000 ms</span></div>
+  <explain-widget src="widgets/backoff.tsx" title="Backoff, attempt by attempt" height="250">
+    <script type="application/json">{"baseMs": 100, "maxMs": 2000, "retries": 5}</script>
+    <p>Each attempt waits a random time below a ceiling that doubles: 100, 200, 400, 800, 1600, then 2000 ms (the cap).</p>
+  </explain-widget>
 </section>
 
 <section data-explain-anchor="loop" data-explain-title="The loop">

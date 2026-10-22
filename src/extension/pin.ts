@@ -20,9 +20,11 @@ import { manifestUri, MAX_CODE_BYTES, MAX_MANIFEST_BYTES, readInside } from './e
 import type { AnchorPatch } from './manifest-edit.ts';
 import { minimalReplacement, patchManifest } from './manifest-edit.ts';
 import { realPathInside, writeFileAtomic } from './paths.ts';
+import type { PinWidgetHooks } from './widgets/host.ts';
+import { isSecretPath } from './widgets/secret-files.ts';
 
 /** Why an anchor wasn't pinned outright. */
-type Refusal = 'changed' | 'stale' | 'lost' | 'ambiguous' | 'missing' | 'unpinnable';
+type Refusal = 'changed' | 'stale' | 'lost' | 'ambiguous' | 'missing' | 'unpinnable' | 'widgets-declined' | 'widgets-secret';
 
 const REASON: Record<Refusal, string> = {
   changed: 'code changed',
@@ -31,6 +33,8 @@ const REASON: Record<Refusal, string> = {
   ambiguous: 'ambiguous',
   missing: 'file missing',
   unpinnable: 'lines blank or too long',
+  'widgets-declined': 'widgets would read it; not confirmed',
+  'widgets-secret': 'widgets read it, and the file looks like it holds secrets',
 };
 
 /** A place an anchor could be re-pinned to, offered to the author. */
@@ -88,8 +92,12 @@ async function snapshot(ref: ExplainerRef): Promise<Snapshot | undefined> {
   return { manifestText, anchors, files, dirty };
 }
 
-/** `liveHint` gives where an open explainer last saw an anchor's code (live-tracked through edits). */
-export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => LineRange | undefined = () => undefined): Promise<void> {
+/**
+ * `liveHint` gives where an open explainer last saw an anchor's code (live-tracked through edits). With
+ * `widgets`, anchors that widgets read are pinned only after the user confirms what widgets could then read
+ * (docs/WIDGETS-PLAN.md §5.2), and never in secret-looking files.
+ */
+export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => LineRange | undefined = () => undefined, widgets?: PinWidgetHooks): Promise<void> {
   const snap = await snapshot(ref);
   if (!snap) return;
   const patches = new Map<string, AnchorPatch>();
@@ -115,7 +123,31 @@ export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => Li
     candidates.push(...candidatesFor(a, reason, r, doc));
   }
 
+  const confirmed: { file: string; quote: Quote; range: LineRange }[] = [];
+  const read = widgets && patches.size ? await widgets.readAnchors() : undefined;
+  if (widgets && read) {
+    const byWidgets = snap.anchors.filter((a) => patches.has(a.id) && (read === 'all' || read.has(a.id)));
+    for (const a of byWidgets.filter((x) => isSecretPath(x.file))) {
+      patches.delete(a.id);
+      refused.push({ anchor: a, reason: 'widgets-secret' });
+    }
+    // Quotes that stay as they were and were confirmed before need no second confirmation.
+    const ask = byWidgets.filter((a) => patches.has(a.id) && !widgets.isConfirmed(a.file, patches.get(a.id)!.quote, patches.get(a.id)!.range));
+    if (ask.length) {
+      const ok = await widgets.confirm(ask.map((a) => ({ id: a.id, file: a.file, range: patches.get(a.id)!.range })));
+      for (const a of ask) {
+        const p = patches.get(a.id)!;
+        if (ok) confirmed.push({ file: a.file, quote: p.quote, range: p.range });
+        else {
+          patches.delete(a.id);
+          refused.push({ anchor: a, reason: 'widgets-declined' });
+        }
+      }
+    }
+  }
+
   if (patches.size) await writeManifest(ref, snap.manifestText, patchManifest(snap.manifestText, patches));
+  if (confirmed.length) widgets?.record(confirmed);
   const parts: string[] = [];
   parts.push(patches.size ? `Pinned ${plural(patches.size, 'anchor')} in ${ref.name}.` : `Nothing pinned in ${ref.name}: no anchor's code was found with confidence.`);
   if (slightlyChanged.length) parts.push(`Accepted small changes in: ${slightlyChanged.join(', ')}.`);

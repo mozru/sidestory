@@ -2,6 +2,7 @@
 // Trusted Types (inherited by the content frame and widget frames), and lists exactly these names plus
 // `default`, which belongs to widget frames: the panel must never create a `default` policy here.
 // See docs/WIDGETS-PLAN.md §3.
+import { WIDGET_BOOTSTRAP } from '../shared/widget-bootstrap.ts';
 
 interface Policy {
   createHTML(s: string): TrustedHTML;
@@ -20,6 +21,20 @@ const make = (name: string): Policy => globalThis.trustedTypes?.createPolicy(nam
 
 const staticPolicy = make('cx-static');
 const sanitizePolicy = make('cx-sanitize');
+
+/**
+ * A widget frame's whole document: its own stricter CSP (docs/WIDGETS-PLAN.md §5.4) and the bootstrap,
+ * nothing else; everything a widget runs arrives later by message. A constant: the bootstrap's hash is
+ * computed at build time (scripts/build.mjs), and the policy ignores its input.
+ */
+const WIDGET_CSP = `default-src 'none'; script-src '${__CX_BOOTSTRAP_HASH__}' 'strict-dynamic'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; require-trusted-types-for 'script'; trusted-types default`;
+const WIDGET_DOC = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="x-dns-prefetch-control" content="off"><meta http-equiv="Content-Security-Policy" content="${WIDGET_CSP}"><script>${WIDGET_BOOTSTRAP}</script></head><body></body></html>`;
+const widgetPolicy = globalThis.trustedTypes?.createPolicy('cx-widget', { createHTML: () => WIDGET_DOC }) ?? { createHTML: () => WIDGET_DOC as TrustedHTML };
+
+/** The srcdoc of every widget frame (the only HTML the cx-widget policy makes). */
+export function widgetSrcdoc(): TrustedHTML {
+  return widgetPolicy.createHTML('');
+}
 
 /**
  * Markup written in this source code. A tagged template with no substitutions, so it can only ever be a

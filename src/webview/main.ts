@@ -2,10 +2,12 @@
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '../shared/protocol.ts';
+import type { WidgetAnchor } from '../shared/widget-protocol.ts';
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
 import { sanitize } from './sanitize.ts';
 import { staticHtml } from './trusted.ts';
+import { type SavedWidgets, WidgetFrames } from './widgets.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -27,6 +29,8 @@ interface SavedState extends Place {
   places?: Record<string, Place>;
   /** The trail's explainer names, root first, so a restart can restore the way back. */
   trail?: string[];
+  /** Widget state (`useWidgetState`), last heights, hints shown. */
+  widgets?: SavedWidgets;
 }
 
 interface Step {
@@ -100,6 +104,10 @@ let lastFocused: HTMLElement | undefined;
 let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
 let pendingInit: { active?: string; after?: () => void } | undefined;
+/** Widget frames over their placeholders (created once the content frame exists). */
+let widgets: WidgetFrames | undefined;
+/** Sanitizer warnings already sent to Output for the explainer shown. */
+const warned = new Set<string>();
 /** Places kept per explainer; the oldest are dropped past this. */
 const MAX_PLACES = 32;
 const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -121,7 +129,8 @@ app.innerHTML = staticHtml`
   </div>
 </header>
 <div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span><button class="cx-banner-open" type="button" hidden>Open manifest.json</button></div>
-<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"></div></main>
+<div class="cx-consent" role="region" aria-label="Interactive widgets" hidden></div>
+<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"><div class="cx-widget-layer"></div></div></main>
 <div class="cx-pill" hidden>
   <button class="cx-pill-show" type="button"></button>
   <button class="cx-pill-close" type="button" aria-label="Dismiss"><span class="codicon codicon-close" aria-hidden="true"></span></button>
@@ -154,6 +163,8 @@ const trailEl = $('.cx-trail');
 const bannerOpen = $<HTMLButtonElement>('.cx-banner-open');
 const headerEl = $('.cx-header');
 const backEl = $<HTMLButtonElement>('.cx-back');
+/** Widget frames live here, over the content, scrolling with it (docs/WIDGETS-PLAN.md §3). */
+const layerEl = $('.cx-widget-layer');
 
 /*
  * Explainer content lives in a sandboxed iframe: no scripts run in it (only this script, from
@@ -182,7 +193,7 @@ async function buildFrame(): Promise<void> {
   el.title = 'Explainer content';
   el.setAttribute('sandbox', 'allow-same-origin');
   el.srcdoc = staticHtml`<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>` as unknown as string;
-  $('.cx-frame').replaceChildren(el);
+  $('.cx-frame').replaceChildren(el, layerEl);
   await new Promise<void>((resolve) => el.addEventListener('load', () => resolve(), { once: true }));
   const d = el.contentDocument!;
   frame = {
@@ -201,6 +212,7 @@ async function buildFrame(): Promise<void> {
   content.className = 'cx-content';
   frame.body.append(content);
   bindFrameEvents(d);
+  widgets?.bindContent(d);
   syncTheme();
   new ResizeObserver(fitFrame).observe(frame.body);
   // Nothing in the content can navigate the frame (links are intercepted, forms removed), but if
@@ -224,6 +236,7 @@ function syncTheme(): void {
   frame.body.className = document.body.className;
   frame.root.style.setProperty('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
   frame.root.style.setProperty('--cx-gutter', getComputedStyle($('.cx-header')).getPropertyValue('--cx-gutter') || '20px');
+  widgets?.onTheme();
 }
 
 // The frame is as tall as its content, so the panel's scroller does the scrolling. Measured from the
@@ -234,6 +247,7 @@ function fitFrame(): void {
   const h = `${Math.ceil(content.getBoundingClientRect().bottom)}px`;
   if (frame.el.style.height !== h) frame.el.style.height = h;
   if (Date.now() - resizedAt < 1000) holdPlace();
+  widgets?.schedule();
 }
 
 /*
@@ -263,6 +277,61 @@ function holdPlace(): void {
 }
 
 await buildFrame();
+widgets = new WidgetFrames({
+  post: (m) => vscode.postMessage(m),
+  contentFrame: () => frame.el,
+  contentDoc: () => frame.root.ownerDocument,
+  contentRoot: () => content,
+  scroller,
+  layer: layerEl,
+  bar: $('.cx-consent'),
+  boxToken: BOX_TOKEN,
+  dir: () => state.dir,
+  active: () => active,
+  activeStepEl: () => steps.find((s) => s.id === activeStepId())?.el,
+  anchors: widgetAnchors,
+  sectionEl: (id) => sectionEl(id),
+  touchSection: (id) => {
+    if (id !== active && sectionEl(id)?.dataset.cxState !== 'lost') setActive(id, 'click');
+  },
+  goToStep: (id) => {
+    if (!anchors.has(id) || !sectionEl(id)) return false;
+    hidePill();
+    setActive(id, 'step');
+    scrollToSection(id);
+    return true;
+  },
+  step,
+  back: () => {
+    if (trail.length < 2) return false;
+    goTo(trail.length - 2);
+    return true;
+  },
+  readerInput,
+  compensate: (dy) => {
+    programmaticUntil = Date.now() + 200;
+    scroller.scrollTop += dy;
+  },
+  focusSelf: (el) => {
+    focusingSelf = true;
+    // The content frame first: after the panel focused a widget frame itself, focusing an element inside the
+    // content frame alone moves that frame's own focus but not the page's.
+    if (document.activeElement !== frame.el) frame.el.contentWindow?.focus();
+    el.focus({ preventScroll: true });
+    focusingSelf = false;
+  },
+  announce,
+  saved: () => state.widgets,
+  save: (w) => {
+    state = { ...state, widgets: w };
+    vscode.setState(state);
+  },
+  readingLine: () => {
+    const view = scroller.getBoundingClientRect();
+    return view.top + view.height * READING_LINE;
+  },
+});
+widgets.bindContent(frame.root.ownerDocument);
 new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 new ResizeObserver(syncTheme).observe(scroller);
@@ -272,6 +341,23 @@ new ResizeObserver(() => fitSteps()).observe(headerEl);
 const sectionEl = (id: string) => content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
 /** An element's top, in the panel's coordinates. */
 const topOf = (el: Element) => el.getBoundingClientRect().top + frame.el.getBoundingClientRect().top;
+
+/** Anchors as widgets see them (`useAnchors`): title, step index (−1 when nested), where, state, color. */
+function widgetAnchors(): WidgetAnchor[] {
+  const css = getComputedStyle(document.documentElement);
+  return [...anchors.values()].map((a) => {
+    const el = sectionEl(a.id);
+    return {
+      id: a.id,
+      title: el ? stepLabel(el, a.id) : a.id,
+      step: steps.findIndex((s) => s.id === a.id),
+      file: a.file,
+      range: a.range,
+      state: a.state,
+      color: a.colorVar ? css.getPropertyValue(a.colorVar).trim() || undefined : undefined,
+    };
+  });
+}
 
 // ---- messages ----
 
@@ -295,6 +381,8 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
         details.clear();
         describing.clear();
         peeked.clear();
+        warned.clear();
+        widgets?.switchExplainer();
         lastRender = undefined;
         hidePill();
         try {
@@ -358,6 +446,24 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       resolve?.(m.data && m.mime ? new Blob([Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0))], { type: m.mime }) : null);
       break;
     }
+    case 'widgets':
+      widgets?.setGate(m.gate);
+      break;
+    case 'widget':
+      widgets?.onBuild(m.src, m.build);
+      break;
+    case 'widgetLibs':
+      widgets?.onLibs(m.libs);
+      break;
+    case 'widgetCode':
+      widgets?.onCode(m.code);
+      break;
+    case 'widgetsReset':
+      widgets?.reset(m.phase);
+      break;
+    case 'focusQuery':
+      widgets?.focusAnswer(m.id);
+      break;
     case 'error':
       bannerEl.hidden = m.message === null;
       bannerText.textContent = m.message ?? '';
@@ -375,6 +481,11 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   const seq = ++renderSeq;
   lastRender = { title, html };
   const parsed = sanitize(html, baseUrl, frame.importNode);
+  for (const w of parsed.warnings) {
+    if (warned.has(w) || warned.size > 50) continue;
+    warned.add(w);
+    vscode.postMessage({ type: 'widgetLog', src: '', level: 'warn', message: `explainer.html: ${w}` });
+  }
   const next = frame.createElement('div');
   next.append(...parsed.styles, ...parsed.body);
   await assets.localize(next, frame.createElement);
@@ -464,7 +575,11 @@ function snapshot(): Map<string, string> {
 /** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
   const c = el.cloneNode(true) as HTMLElement;
-  for (const d of c.querySelectorAll('.cx-detail, .cx-fix')) d.remove();
+  for (const d of c.querySelectorAll('.cx-detail, .cx-fix, .cx-widget-bar, .cx-widget-desc, .cx-widget-error')) d.remove();
+  for (const w of c.querySelectorAll<HTMLElement>('explain-widget')) {
+    for (const a of ['data-cx-w', 'data-cx-wstate', 'data-cx-showfb', 'tabindex', 'role', 'aria-label', 'aria-describedby']) w.removeAttribute(a);
+    w.style.removeProperty('--cx-wh');
+  }
   // Compare what the author wrote, not what the reader opened or closed.
   for (const d of c.querySelectorAll<HTMLElement>('[data-cx-open]')) {
     d.toggleAttribute('open', d.dataset.cxOpen === '1');
@@ -538,6 +653,7 @@ function decorateTree(root: HTMLElement): void {
   // The author's `open`, before the reader toggles it (see keepReaderState).
   for (const el of root.querySelectorAll<HTMLElement>('details, dialog')) if (el.dataset.cxOpen === undefined) el.dataset.cxOpen = el.hasAttribute('open') ? '1' : '0';
   decorateDetails(root);
+  widgets?.decorate(root);
 }
 
 /**
@@ -655,6 +771,8 @@ function decorate(): void {
   renderNavigator();
   renderStatus();
   markActive();
+  widgets?.refresh();
+  widgets?.onAnchors();
 }
 
 function stepLabel(el: HTMLElement, id: string): string {
@@ -760,6 +878,7 @@ function markActive(): void {
   for (const b of app.querySelectorAll<HTMLButtonElement>('.cx-nav')) {
     b.disabled = steps.length === 0 || (b.dataset.delta === '-1' ? index <= 0 : index === steps.length - 1);
   }
+  widgets?.onActive(active);
 }
 
 /** The step containing the active anchor (which may be nested inside a step). */
@@ -876,6 +995,7 @@ scroller.addEventListener('scroll', () => {
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = 0;
+    widgets?.onScroll();
     saveState();
     // Where the reader is, however they got there, so a resize can put it back (not mid-resize).
     if (Date.now() - resizedAt > 1000) heldPlace = readingPosition();
@@ -927,7 +1047,8 @@ function onContentFocus(e: FocusEvent): void {
  * was rather than to the top of the page.
  */
 document.addEventListener('focusin', (e) => {
-  if (e.target !== frame.el) lastFocused = e.target as HTMLElement;
+  // Not a widget frame: the panel only ever moves focus into a widget on the reader's Enter or click.
+  if (e.target !== frame.el && !(e.target as Element).classList?.contains('cx-widget-frame')) lastFocused = e.target as HTMLElement;
 });
 window.addEventListener('focus', () => {
   setTimeout(() => {

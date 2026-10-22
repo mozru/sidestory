@@ -19,6 +19,7 @@ import { log } from './log.ts';
 import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
 import type { AnchorStates } from './pin.ts';
+import type { PanelWidgets, WidgetHost, WidgetSessionPort } from './widgets/host.ts';
 
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
@@ -41,6 +42,15 @@ export interface SessionHost {
   memento: vscode.Memento;
   /** The panel asked to point a section at the code selected in the editor. */
   reanchor(ref: ExplainerRef, anchorId: string): void;
+  /** Widgets (docs/WIDGETS-PLAN.md); without it, widget placeholders show their fallback. */
+  widgets?: WidgetHost;
+}
+
+export interface SessionOptions {
+  /** The section to show first. */
+  active?: string;
+  /** Recreated by the widget watchdog: no second recovery. */
+  recovered?: boolean;
 }
 
 export class ExplainerSession implements vscode.Disposable {
@@ -103,14 +113,25 @@ export class ExplainerSession implements vscode.Disposable {
   readonly onDidDispose = this.onDisposeEmitter.event;
 
   private readonly host: SessionHost;
+  private readonly widgets: PanelWidgets | undefined;
+  /** Bumped by every widget focus question, so a late answer to an old one is ignored. */
+  private focusQueries = 0;
 
   /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
-  constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost) {
+  constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost, opts: SessionOptions = {}) {
     this.trail = [...trail];
     this.panel = panel;
     this.decorations = decorations;
     this.host = host;
+    this.active = opts.active;
     panel.webview.html = shellHtml(panel.webview, extensionUri, this.ref);
+    if (host.widgets) {
+      this.widgets = host.widgets.attach(this.widgetPort(opts.recovered === true));
+      // A hidden panel's frames are gone (retainContextWhenHidden is off): nothing to watch until it is shown.
+      this.subscriptions.push(panel.onDidChangeViewState(() => {
+        if (!panel.visible) this.widgets?.watchdog.disarm();
+      }));
+    }
     this.watchExplainer();
     this.subscriptions.push(
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
@@ -124,6 +145,40 @@ export class ExplainerSession implements vscode.Disposable {
   /** The explainer shown now. */
   get ref(): ExplainerRef {
     return this.trail[this.trail.length - 1]!;
+  }
+
+  /** The trail (root first) and the active section, to recreate this panel elsewhere. */
+  place(): { trail: [ExplainerRef, ...ExplainerRef[]]; active: string | undefined } {
+    return { trail: this.trail as [ExplainerRef, ...ExplainerRef[]], active: this.active };
+  }
+
+  /** What the widget host sees of this session. */
+  private widgetPort(recovered: boolean): WidgetSessionPort {
+    return {
+      panel: this.panel,
+      recovered,
+      ref: () => this.ref,
+      generation: () => this.generation,
+      post: (m) => this.post(m),
+      manifest: () => this.manifest,
+      html: () => this.html,
+      title: () => this.title,
+      resolution: (id) => this.resolutions.get(id),
+      reveal: (anchor, lines, identifiers) => {
+        this.requestReveal(anchor, true);
+        if (lines || identifiers?.length) this.widgets?.handle({ type: 'widgetHighlight', anchor, lines, identifiers });
+      },
+      highlight: (h) => {
+        const a = h ? this.manifest?.anchors.get(h.anchor) : undefined;
+        this.decorations.setWidget(a && h ? { uri: this.fileUri(a.file), range: h.range, identifiers: h.identifiers } : undefined);
+      },
+    };
+  }
+
+  /** The panel just became active: if a widget holds focus, ask whether it got there legitimately (§5.3). */
+  queryFocus(): void {
+    if (!this.widgets?.watchdog.last?.mounted.length) return;
+    this.post({ type: 'focusQuery', id: ++this.focusQueries });
   }
 
   async load(): Promise<void> {
@@ -173,6 +228,7 @@ export class ExplainerSession implements vscode.Disposable {
   /** Shows another explainer in this panel: resets everything that belongs to the current one. */
   private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
     const generation = ++this.generation;
+    this.widgets?.onSwitch();
     this.positions.set(this.ref.dir.toString(), this.active);
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
@@ -218,6 +274,7 @@ export class ExplainerSession implements vscode.Disposable {
       trail: this.trail.map((t) => ({ name: t.name, title: this.titles.get(t.dir.toString()) || t.name })),
     });
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
+    this.widgets?.onInit();
   }
 
   /** Title, summary and size of detail explainers, for the parent's "peek" and "+N steps". */
@@ -273,6 +330,8 @@ export class ExplainerSession implements vscode.Disposable {
       this.assetBytes = 0; // the panel re-requests what it still uses
       this.assetRequests = 0;
       this.post({ type: 'assetsChanged', paths });
+      // Widget code may be among them: compile again, and send live widgets their new code.
+      this.widgets?.onFileChanged();
     });
   }
 
@@ -308,6 +367,7 @@ export class ExplainerSession implements vscode.Disposable {
         this.assetBytes = 0;
         this.assetRequests = 0;
         this.post({ type: 'content', title: this.title, html });
+        void this.widgets?.refreshGate();
       }
       return;
     }
@@ -344,6 +404,7 @@ export class ExplainerSession implements vscode.Disposable {
       this.assetBytes = 0;
       this.assetRequests = 0;
       this.post({ type: 'content', title: this.title, html: this.html });
+      void this.widgets?.refreshGate();
     }
     this.watchAnchorFiles();
     if ([...parsed.manifest.anchors.values()].some((a) => !a.quote)) this.noteUnpinned();
@@ -449,6 +510,7 @@ export class ExplainerSession implements vscode.Disposable {
     }
     if (changed && publish) this.publishAnchors();
     if (changed && this.active && this.anchorsIn(uri).some((a) => a.id === this.active)) this.decorateActive(this.decorations.isDimmed());
+    this.widgets?.onResolved(uri);
   }
 
   private publishAnchors(): void {
@@ -535,6 +597,7 @@ export class ExplainerSession implements vscode.Disposable {
     const parsed = fromWebviewSchema.safeParse(raw);
     if (!parsed.success) return; // the webview renders untrusted HTML; ignore anything malformed
     const m: FromWebview = parsed.data;
+    if (this.widgets?.handle(m)) return;
     switch (m.type) {
       case 'ready':
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
@@ -593,6 +656,7 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private setActive(id: string | undefined): void {
+    if (id !== this.active) this.decorations.setWidget(undefined); // widget highlights belong to the step they were made in
     this.active = id;
     if (!id) this.decorations.set(undefined);
   }
@@ -735,6 +799,7 @@ export class ExplainerSession implements vscode.Disposable {
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
     for (const d of [...this.subscriptions, ...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
+    this.widgets?.dispose();
     this.decorations.set(undefined);
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();

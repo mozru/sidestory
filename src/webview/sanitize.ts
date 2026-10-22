@@ -2,6 +2,9 @@
 // The CSP already blocks scripts and remote loads; this also removes anything that could
 // navigate, embed or phone home, and rewrites relative URLs to the explainer folder.
 // The result is handed over as nodes, never re-serialized and re-parsed (which invites mXSS).
+// Widget placeholders (<explain-widget>) are kept with their own attributes; their JSON props child is
+// lifted into an attribute before scripts are dropped (docs/WIDGETS-PLAN.md §2).
+import { isWidgetSrc } from '../shared/protocol.ts';
 import { parseInert } from './trusted.ts';
 
 // SVG animation elements can rewrite a sanitized attribute (such as href) after the fact.
@@ -18,15 +21,69 @@ export interface Sanitized {
   /** `<style>` and local `<link rel="stylesheet">` elements from anywhere in the page. */
   styles: Node[];
   body: Node[];
+  /** Problems an author should hear about (shown in Output, never to readers). */
+  warnings: string[];
+}
+
+/** The attributes a widget placeholder keeps (besides class and style). */
+const WIDGET_ATTRS = new Set(['src', 'props', 'height', 'aspect', 'title', 'id', 'class', 'style']);
+/** Where the sanitizer puts a widget's props JSON (from the `props` attribute or the JSON child). */
+export const WIDGET_PROPS_ATTR = 'data-cx-props';
+export const MAX_WIDGET_PROPS = 16 * 1024;
+const WIDGET_TAG = /<explain-widget(?=[\s/>])/gi;
+
+/**
+ * Rewrites `<explain-widget …/>` (HTML has no self-closing custom elements, so it would swallow the rest of
+ * the section) to `<explain-widget …></explain-widget>`. Each tag is scanned only up to the next one, so
+ * the work stays linear in the input whatever its quotes.
+ */
+export function closeWidgetTags(html: string): { html: string; count: number } {
+  const starts = [...html.matchAll(WIDGET_TAG)].map((m) => m.index);
+  if (starts.length === 0) return { html, count: 0 };
+  let out = '';
+  let from = 0;
+  let count = 0;
+  starts.forEach((start, n) => {
+    const limit = starts[n + 1] ?? html.length;
+    let quote = '';
+    let i = start + 15;
+    for (; i < limit; i++) {
+      const c = html[i]!;
+      if (quote) {
+        if (c === quote) quote = '';
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === '>') break;
+    }
+    if (i >= limit) return; // unterminated: leave it to the parser
+    let j = i - 1;
+    while (j > start && /\s/.test(html[j]!)) j--;
+    if (html[j] !== '/') return;
+    out += `${html.slice(from, j)}></explain-widget>`;
+    from = i + 1;
+    count++;
+  });
+  return { html: out + html.slice(from), count };
 }
 
 /** `importNode` adopts nodes into the target document (passed bound, so clobbered documents can't interfere). */
 export function sanitize(html: string, baseUrl: string, importNode: (node: Node, deep: boolean) => Node = (n, deep) => document.importNode(n, deep)): Sanitized {
+  const warnings: string[] = [];
+  const closed = closeWidgetTags(html);
+  html = closed.html;
+  if (closed.count) warnings.push(`${closed.count} <explain-widget …/> written as self-closing; HTML has no self-closing custom elements, so they were read as <explain-widget …></explain-widget>.`);
   const doc = parseInert(html);
+  for (const el of doc.querySelectorAll('explain-widget')) widgetPlaceholder(el, warnings);
   for (const el of doc.querySelectorAll(DROP)) el.remove();
   for (const el of doc.querySelectorAll('*')) {
+    const widget = el.localName === 'explain-widget';
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
+      if (widget) {
+        // Its own attributes only; `src` is resolved by the extension, never loaded as a URL.
+        if (!WIDGET_ATTRS.has(name) && name !== WIDGET_PROPS_ATTR) el.removeAttribute(attr.name);
+        else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
+        continue;
+      }
       if (name.startsWith('on') || DROP_ATTRS.has(name) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
       else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
@@ -46,7 +103,36 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
   return {
     styles: keep.map((el) => importNode(el, true)),
     body: [...doc.body.childNodes].map((n) => importNode(n, true)),
+    warnings,
   };
+}
+
+/**
+ * A widget placeholder: its props (the JSON child wins over the attribute) go into WIDGET_PROPS_ATTR, before
+ * the sanitizer drops scripts; a `src` that isn't a widget file in the explainer folder is removed.
+ */
+function widgetPlaceholder(el: Element, warnings: string[]): void {
+  const src = el.getAttribute('src') ?? '';
+  const name = src || '(no src)';
+  if (!isWidgetSrc(src)) {
+    warnings.push(`<explain-widget src="${src.slice(0, 100)}">: src must be a .tsx, .ts, .jsx or .js file inside the explainer folder.`);
+    el.removeAttribute('src');
+  }
+  el.removeAttribute(WIDGET_PROPS_ATTR); // only ever set here
+  const json = [...el.children].find((c) => c.localName === 'script' && (c.getAttribute('type') ?? '').trim().toLowerCase() === 'application/json');
+  let props = el.getAttribute('props');
+  if (json) {
+    if (props !== null) warnings.push(`${name}: both a props attribute and a JSON <script> child; the JSON child is used.`);
+    props = json.textContent ?? '';
+    json.remove();
+  }
+  el.removeAttribute('props');
+  if (props === null || props.trim() === '') return;
+  if (props.length > MAX_WIDGET_PROPS) {
+    warnings.push(`${name}: props are larger than ${MAX_WIDGET_PROPS / 1024} KB and were ignored.`);
+    return;
+  }
+  el.setAttribute(WIDGET_PROPS_ATTR, props);
 }
 
 /**

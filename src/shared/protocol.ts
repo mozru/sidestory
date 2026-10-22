@@ -3,6 +3,8 @@
 import { z } from 'zod';
 import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
+import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
+import type { WidgetCode } from './widget-protocol.ts';
 
 export interface AnchorView {
   id: string;
@@ -29,6 +31,31 @@ export interface DetailInfo {
   summary: string;
   /** How many steps diving would add. */
   steps: number;
+}
+
+/** What the panel may do with the widgets of the explainer shown (docs/WIDGETS-PLAN.md §5.1). */
+export interface WidgetGate {
+  /** `off`: the setting; `untrusted`: Restricted Mode; `ask`: the reader hasn't agreed (or code arrived through git); `on`: widgets run. */
+  status: 'off' | 'untrusted' | 'ask' | 'on';
+  /** Anchors widgets read whose quotes the reader hasn't confirmed: the consent bar offers to confirm them. */
+  unconfirmed: { anchors: number; summary: string } | null;
+  /** Widget sources (relative to the explainer folder) the watchdog disabled until their code changes. */
+  disabled: string[];
+  /** Last known heights by widget key, so remounts don't shift the page. */
+  heights: Record<string, number>;
+}
+
+/** A compiled widget as the panel needs it (docs/WIDGETS-PLAN.md §3 "Compile"). */
+export interface WidgetBuild {
+  entry: string;
+  modules: Record<string, string>;
+  /** Library ids in load order. */
+  libraries: string[];
+  icons: Record<string, unknown>;
+  /** Problems, relative paths only; the first error is shown in the widget's box. */
+  errors: { file: string; line?: number; message: string }[];
+  /** Over the import closure: tells versions apart. */
+  hash: string;
 }
 
 export type ToWebview =
@@ -62,7 +89,19 @@ export type ToWebview =
   /** Files in the explainer folder changed (paths relative to it): reload them. */
   | { type: 'assetsChanged'; paths: string[] }
   /** Reply to `requestAsset`: the file's bytes as base64 (binary doesn't survive every remote setup), or null. */
-  | { type: 'asset'; id: number; mime: string; data: string | null };
+  | { type: 'asset'; id: number; mime: string; data: string | null }
+  /** Whether widgets may run in the explainer shown, and what the consent bar offers. */
+  | { type: 'widgets'; gate: WidgetGate }
+  /** A widget's compiled code (reply to `widgetCompile`, and again whenever its files change); null when refused. */
+  | { type: 'widget'; src: string; build: WidgetBuild | null }
+  /** Library texts by id (reply to `widgetLibs`). */
+  | { type: 'widgetLibs'; libs: Record<string, string> }
+  /** An anchor's code for widgets (reply to `widgetCode`, and again when it changes). */
+  | { type: 'widgetCode'; code: WidgetCode }
+  /** The watchdog: remove every widget frame now (`unmount`), or mount them again (`remount`). */
+  | { type: 'widgetsReset'; phase: 'unmount' | 'remount' }
+  /** The panel just became active: did focus arrive legitimately? Answered with `focusAnswer`. */
+  | { type: 'focusQuery'; id: number };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -83,7 +122,35 @@ export type FromWebview =
   /** Describe these detail explainers (title, summary, size). */
   | { type: 'describe'; names: string[] }
   /** Point this section at the code selected in the editor (asks the user to confirm first). */
-  | { type: 'reanchor'; anchorId: string };
+  | { type: 'reanchor'; anchorId: string }
+  /** The consent bar: ask the reader (in a native modal) whether to run this explainer's widgets. */
+  | { type: 'widgetConsent' }
+  /** The consent bar in Restricted Mode: start VS Code's own "Trust workspace" flow. */
+  | { type: 'widgetTrust' }
+  /** The consent bar: let widgets read anchors whose quotes nobody confirmed (a native modal asks). */
+  | { type: 'widgetConfirmAnchors' }
+  /** Compiled code for a widget source (refused without trust, the setting and consent). */
+  | { type: 'widgetCompile'; src: string }
+  /** Library texts for widget frames. */
+  | { type: 'widgetLibs'; ids: string[] }
+  /** A widget wants an anchor's code (`useAnchorCode`); the panel forwards the answer to the widgets that asked. */
+  | { type: 'widgetCode'; anchor: string }
+  /** Decorate lines of an anchor (relative to its first line) while its step is current; no anchor clears. */
+  | { type: 'widgetHighlight'; anchor?: string; lines?: [number, number]; identifiers?: string[] }
+  /** A widget's `reveal`, already checked by the panel (a click in that widget). */
+  | { type: 'widgetReveal'; anchor: string; lines?: [number, number]; highlight?: string[] }
+  /** For Output (authors): a widget's error, a dropped call, a placement problem. */
+  | { type: 'widgetLog'; src: string; level: 'error' | 'warn' | 'info'; message: string }
+  /** Last heights by widget key, coalesced. */
+  | { type: 'widgetHeights'; heights: Record<string, number> }
+  /** Every second while visible: the extension-side watchdog (docs/WIDGETS-PLAN.md §4). */
+  | { type: 'heartbeat'; delay: number; visible: boolean; mounted: string[]; mounting: string | null; recent: string | null }
+  /** The panel-side watchdog: mounted widgets stopped answering pings. */
+  | { type: 'widgetsUnresponsive'; mounted: string[]; mounting: string | null; recent: string | null }
+  /** Answers `focusQuery`. */
+  | { type: 'focusAnswer'; id: number; legit: boolean }
+  /** A widget took focus while the panel didn't have it (from the editor): give focus back to the editor. */
+  | { type: 'focusTheft' };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -92,6 +159,21 @@ export function themeColorVar(colorId: string): string {
 
 /** How deep detours can nest. */
 export const MAX_TRAIL = 16;
+
+/** The most widgets an explainer may have; the rest show their fallback. */
+export const MAX_WIDGETS = 24;
+
+/** A widget's `src`: a relative path inside the explainer folder with a source extension. */
+export const isWidgetSrc = (s: string) => isSafeRelativePath(s) && WIDGET_SOURCE_EXTENSIONS.some((e) => s.toLowerCase().endsWith(e));
+const widgetSrcSchema = z.string().max(512).refine(isWidgetSrc);
+const lineRangeSchema = z.tuple([z.number().int().min(1).max(100_000), z.number().int().min(1).max(100_000)]);
+const identifierSchema = z.string().regex(/^[A-Za-z_$][\w$]{0,99}$/);
+const widgetKeySchema = z.string().max(300);
+const breadcrumbs = {
+  mounted: z.array(widgetSrcSchema).max(MAX_WIDGETS),
+  mounting: widgetSrcSchema.nullable(),
+  recent: widgetSrcSchema.nullable(),
+};
 
 /** Runtime check for messages from the webview, which renders untrusted HTML. */
 export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('type', [
@@ -105,6 +187,20 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL) }),
   z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),
   z.object({ type: z.literal('reanchor'), anchorId: anchorIdSchema }),
+  z.object({ type: z.literal('widgetConsent') }),
+  z.object({ type: z.literal('widgetTrust') }),
+  z.object({ type: z.literal('widgetConfirmAnchors') }),
+  z.object({ type: z.literal('widgetCompile'), src: widgetSrcSchema }),
+  z.object({ type: z.literal('widgetLibs'), ids: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(20) }),
+  z.object({ type: z.literal('widgetCode'), anchor: anchorIdSchema }),
+  z.object({ type: z.literal('widgetHighlight'), anchor: anchorIdSchema.optional(), lines: lineRangeSchema.optional(), identifiers: z.array(identifierSchema).max(20).optional() }),
+  z.object({ type: z.literal('widgetReveal'), anchor: anchorIdSchema, lines: lineRangeSchema.optional(), highlight: z.array(identifierSchema).max(20).optional() }),
+  z.object({ type: z.literal('widgetLog'), src: z.string().max(512), level: z.enum(['error', 'warn', 'info']), message: z.string().max(4096) }),
+  z.object({ type: z.literal('widgetHeights'), heights: z.record(widgetKeySchema, z.number().int().min(0).max(20_000)).refine((h) => Object.keys(h).length <= 200) }),
+  z.object({ type: z.literal('heartbeat'), delay: z.number().finite().min(0).max(3_600_000), visible: z.boolean(), ...breadcrumbs }),
+  z.object({ type: z.literal('widgetsUnresponsive'), ...breadcrumbs }),
+  z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
+  z.object({ type: z.literal('focusTheft') }),
 ]);
 
 

@@ -19,11 +19,11 @@ export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscod
   };
 }
 
-export function createPanel(extensionUri: vscode.Uri, ref: ExplainerRef): vscode.WebviewPanel {
+export function createPanel(extensionUri: vscode.Uri, ref: ExplainerRef, column: vscode.ViewColumn = vscode.ViewColumn.Beside): vscode.WebviewPanel {
   return vscode.window.createWebviewPanel(
     VIEW_TYPE,
     `Explainer: ${ref.name}`,
-    { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+    { viewColumn: column, preserveFocus: true },
     panelOptions(extensionUri, ref),
   );
 }

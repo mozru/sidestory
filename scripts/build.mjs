@@ -1,6 +1,8 @@
 // Bundles the extension host code and the webview script, and copies codicons.
 import * as esbuild from 'esbuild';
+import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
+import { WIDGET_BOOTSTRAP } from '../src/shared/widget-bootstrap.ts';
 import { buildWidgetLibs } from './build-widget-libs.mjs';
 import { generateWidgetData } from './widget-data.ts';
 
@@ -15,10 +17,14 @@ const builds = [
     mainFields: ['module', 'main'] },
   // content.css is bundled into the script as text: the sandboxed content frame isn't served by the
   // webview's resource loader, so it can't fetch stylesheets itself.
-  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm', loader: { '.css': 'text' } },
+  // The widget frame's CSP names the bootstrap by hash; computed here so the srcdoc is a constant.
+  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm', loader: { '.css': 'text' },
+    define: { __CX_BOOTSTRAP_HASH__: JSON.stringify(`sha256-${createHash('sha256').update(WIDGET_BOOTSTRAP, 'utf8').digest('base64')}`) } },
   { ...common, entryPoints: ['src/webview/main.css'], outfile: 'dist/webview/main.css' },
   // The widget compiler's worker (Sucrase, acorn); widget code is compiled there, never in the host thread.
   { ...common, entryPoints: ['src/extension/widgets/compile-worker.ts'], outfile: 'dist/compile-worker.cjs', platform: 'node', format: 'cjs' },
+  // The standalone widget checker (node dist/check.cjs <explainer-dir>); uses the worker and widget-data beside it.
+  { ...common, entryPoints: ['src/cli/check-widgets.ts'], outfile: 'dist/check.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
 ];
 
 if (production) rmSync('dist', { recursive: true, force: true });

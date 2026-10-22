@@ -73,6 +73,16 @@
         "command": "codeExplainer.reanchor",
         "title": "Re-anchor Section to Selection",
         "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.revokeWidgetConsent",
+        "title": "Revoke Widget Consent",
+        "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.enableWidgets",
+        "title": "Enable Widgets",
+        "category": "Code Explainer"
       }
     ],
     "keybindings": [
@@ -94,6 +104,12 @@
           "type": "boolean",
           "default": true,
           "description": "Dim code outside the active step when you move through the explainer."
+        },
+        "codeExplainer.widgets.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "markdownDescription": "Run interactive widgets in explainers. Widgets are code from the repository: they never run in Restricted Mode, and each workspace asks before running them. A repository's own settings can't turn this on."
         }
       }
     },
@@ -195,7 +211,7 @@
     "test:widgets": "playwright test -c test/widgets/playwright.config.ts",
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
     "pin": "node scripts/pin.ts",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository -o dist/code-explainer.vsix",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links -o dist/code-explainer.vsix",
     "check": "npm run typecheck && npm test && npm run build",
     "test:desktop": "npm run build && node test/desktop/run.mjs"
   },
