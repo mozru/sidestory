@@ -6,7 +6,7 @@ Rich, free-form HTML explainers that sit beside your code in VS Code and stay li
 - **Move your cursor in the code** and the explainer jumps to the section about it.
 - **Everything updates live.** Edit the code (saved or not) or the explainer and the panel follows at once, keeping your place, your focus and anything you're typing. Sections follow code that moves, and tell you when the code changed, needs a look, or can't be found.
 - **Native to your theme**, including high contrast.
-- **Works everywhere VS Code does:** locally, over Remote-SSH, WSL, Dev Containers, Codespaces and VS Code in the browser.
+- **Works locally and remotely:** Remote-SSH, WSL, Dev Containers, Codespaces, and browser VS Code backed by a server (code-server, openvscode-server, `code tunnel`). Not on vscode.dev or github.dev alone, which have no server to run it.
 - **Safe with untrusted repositories**, so it runs in Restricted Mode. Explainer content can't run script, reach the network or read files outside the repository. See `SECURITY.md`.
 
 Open one with **Code Explainer: Open Explainer** from the Command Palette, or right-click a folder under `.explain/` in the Explorer. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.

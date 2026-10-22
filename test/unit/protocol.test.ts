@@ -66,3 +66,19 @@ describe('safeExternalUrl: security audit regressions', () => {
     expect(safeExternalUrl('mailto:team@example.com?subject=Hello&body=Hi')).not.toBeNull();
   });
 });
+
+describe('safeExternalUrl: public hosts that look like private address prefixes', () => {
+  it.each(['https://ffmpeg.org/', 'https://fdroid.org/', 'https://fedoraproject.org/', 'https://feedly.com/', 'https://10.example.com/', 'https://100.example.com/'])('allows %s', (u) => {
+    expect(safeExternalUrl(u)).not.toBeNull();
+  });
+
+  it.each(['http://0x7f.1/', 'http://2130706433/', 'http://100.64.0.1/', 'http://224.0.0.1/', 'http://[ff02::1]/'])('still refuses %s', (u) => {
+    expect(safeExternalUrl(u)).toBeNull();
+  });
+});
+
+describe('safeExternalUrl: encoded nested URLs (round 2 audit)', () => {
+  it.each(['https://a.example/?a=x%26u=%68ttp://localhost:8080', 'https://a.example/?a=x%26u=%68ttp%3a//localhost:8080', 'https://a.example/?next=%2F%2Flocalhost%3A9000'])('refuses %s', (u) => {
+    expect(safeExternalUrl(u)).toBeNull();
+  });
+});

@@ -4,7 +4,6 @@
 // Only anchors whose code is found with confidence are pinned. An anchor that is out of date, lost
 // or ambiguous keeps its old quote: that quote is the only record of what the section was about,
 // and re-pinning it to whatever now sits at the old lines would hide the problem.
-import { rename, writeFile } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { LineRange } from '../core/manifest.ts';
 import { parseManifest } from '../core/manifest.ts';
@@ -13,7 +12,7 @@ import { resolveAnchor } from '../core/resolve.ts';
 import { PreparedText } from '../core/text.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { manifestUri, MAX_CODE_BYTES, MAX_MANIFEST_BYTES, readInside } from './explainers.ts';
-import { realPathInside } from './paths.ts';
+import { realPathInside, writeFileAtomic } from './paths.ts';
 
 /** `liveHint` gives where an open explainer last saw an anchor's code (live-tracked through edits). */
 export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => LineRange | undefined = () => undefined): Promise<void> {
@@ -77,7 +76,5 @@ async function writeManifest(ref: ExplainerRef, text: string): Promise<void> {
   }
   const real = await realPathInside(uri.fsPath, ref.root.fsPath);
   if (!real) throw new Error('manifest.json is not inside the repository');
-  const tmp = `${real}.${process.pid}.tmp`;
-  await writeFile(tmp, text, 'utf8');
-  await rename(tmp, real);
+  await writeFileAtomic(real, text);
 }

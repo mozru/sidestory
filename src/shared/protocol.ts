@@ -91,18 +91,29 @@ export function safeExternalUrl(raw: string): string | null {
   if (u.username || u.password) return null;
   // On a remote window VS Code also opens port forwards for localhost URLs found *inside* the query
   // (e.g. an OAuth redirect_uri). Refuse any query or fragment value that is itself a web URL.
-  const nested = [...u.searchParams.values(), decodeURIComponentSafe(u.hash.slice(1))];
-  if (nested.some((v) => /^\s*https?:/i.test(v)) || /https?(:|%3a)/i.test(u.search + u.hash)) return null;
+  // Mirror VS Code: it percent-decodes the whole query first, then splits on & and =. Check every
+  // value both that way and the standard way, and refuse local hosts anywhere in the decoded text.
+  const decodedQuery = decodeURIComponentSafe(u.search.slice(1));
+  const decodedHash = decodeURIComponentSafe(u.hash.slice(1));
+  const values = [
+    ...decodedQuery.split('&').map((p) => p.slice(p.indexOf('=') + 1)),
+    ...u.searchParams.values(),
+    decodedHash,
+  ];
+  if (values.some((v) => /^\s*https?:/i.test(v))) return null;
+  if (/https?:|localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\]/i.test(decodedQuery + decodedHash)) return null;
   const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  // The URL parser has already turned every IPv4 spelling (hex, decimal, short) into a dotted quad.
+  const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  const ipv6 = host.includes(':');
   const privateHost =
     host === 'localhost' ||
     host.endsWith('.localhost') ||
     host.endsWith('.local') ||
-    !host.includes('.') && !host.includes(':') ||
-    /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
-    host === '::1' || host === '::' || /^(fc|fd|fe[89ab]|fec|fed|fee|fef|ff)/.test(host) || host.startsWith('::ffff:') ||
-    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) || // CGNAT, Tailscale
-    /\.(internal|home\.arpa|lan|corp)$/.test(host);
+    /\.(internal|home\.arpa|lan|corp)$/.test(host) ||
+    (!ipv4 && !ipv6 && !host.includes('.')) || // single-label names resolve on the local network
+    (ipv4 && /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|2(2[4-9]|[3-5]\d)\.)/.test(host)) ||
+    (ipv6 && (host === '::1' || host === '::' || /^(fc|fd|fe[89ab]|fe[c-f]|ff)/.test(host) || host.startsWith('::ffff:')));
   return privateHost ? null : u.href;
 }
 

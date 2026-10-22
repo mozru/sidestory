@@ -142,9 +142,13 @@ export class Assets {
   private async css(text: string): Promise<string> {
     const urls = [...new Set([...text.matchAll(URL_IN_CSS)].map((m) => m[1]!).filter((u) => u.startsWith(this.baseUrl)))];
     const blobs = await Promise.all(urls.map((u) => this.load(u)));
-    let out = text;
-    urls.forEach((u, i) => (out = out.split(`url("${u}")`).join(blobs[i] ? `url("${blobs[i]}")` : 'none')));
-    return out;
+    const map = new Map(urls.map((u, i) => [u, blobs[i]]));
+    // One pass over the text, however many distinct URLs it has.
+    return text.replace(URL_IN_CSS, (m, u: string) => {
+      if (!map.has(u)) return m;
+      const blob = map.get(u);
+      return blob ? `url("${blob}")` : 'none';
+    });
   }
 
   private async srcset(value: string): Promise<string | null> {

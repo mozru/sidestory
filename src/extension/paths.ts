@@ -1,5 +1,6 @@
 // File-system checks that don't need the VS Code API, so they can be unit tested.
-import { realpath, stat } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { lstat, open, realpath, rename, stat } from 'node:fs/promises';
 import { sep } from 'node:path';
 
 /**
@@ -22,4 +23,22 @@ export class TooLargeError extends Error {}
 export async function assertSize(file: string, maxBytes: number): Promise<void> {
   const s = await stat(file);
   if (s.size > maxBytes) throw new TooLargeError(`${file} is larger than ${Math.round(maxBytes / 1e6)} MB`);
+}
+
+/**
+ * Replaces a file's contents atomically, without following links: the file must not be a link, and the
+ * temporary file gets a fresh, unguessable name created exclusively ('wx' fails on anything already
+ * there, links included), so a link planted next to it can't redirect the write.
+ */
+export async function writeFileAtomic(file: string, text: string): Promise<void> {
+  const info = await lstat(file);
+  if (info.isSymbolicLink()) throw new Error(`${file} is a link`);
+  const tmp = `${file}.${randomBytes(16).toString('hex')}.tmp`;
+  const handle = await open(tmp, 'wx', info.mode);
+  try {
+    await handle.writeFile(text, 'utf8');
+  } finally {
+    await handle.close();
+  }
+  await rename(tmp, file);
 }

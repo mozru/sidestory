@@ -68,8 +68,8 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Couldn't pin anchors: ${(e as Error).message}`);
       }
     }),
-    vscode.commands.registerCommand('codeExplainer.nextStep', () => current?.navigate(1)),
-    vscode.commands.registerCommand('codeExplainer.prevStep', () => current?.navigate(-1)),
+    vscode.commands.registerCommand('codeExplainer.nextStep', () => target()?.navigate(1)),
+    vscode.commands.registerCommand('codeExplainer.prevStep', () => target()?.navigate(-1)),
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
       async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PanelState | undefined) {
         const ref = typeof state?.dir === 'string' ? refFromDir(vscode.Uri.parse(state.dir)) : undefined;
@@ -85,8 +85,13 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
+/** The explainer step commands act on: the last active one if it's visible, else any visible one. */
+function target(): ExplainerSession | undefined {
+  if (current?.panel.visible) return current;
+  return [...sessions.values()].find((s) => s.panel.visible) ?? current;
+}
+
 async function pickExplainer(): Promise<ExplainerRef | undefined> {
-  // Skip dependency and build folders; search.exclude doesn't apply to findFiles with an explicit pattern.
   const all = await findExplainers();
   if (all.length === 0) {
     void vscode.window.showInformationMessage('No explainers found. An explainer is a folder like .explain/<name>/ with explainer.html and manifest.json.');

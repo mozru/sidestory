@@ -397,7 +397,8 @@ test('a content update that arrives while the first render loads its assets is n
 test('hostile CSS can neither stall the panel nor sneak URLs past the rewriter', async ({ page }) => {
   await open(page, {
     html: `<style>.a{background:${'url('.repeat(100_000)}}</style>
-      <style>.b{background:\\75 rl(https://example.com/x.png)} @\\69mport "https://example.com/y.css"; .c{background:image-set("https://example.com/z.png" 1x)}</style>
+      <style>.b{background:\\75 rl(https://example.com/x.png)} @\\69mport "https://example.com/y.css"; .c{background:image-set("https://example.com/z.png" 1x)}
+        .d{background:\\u\\r\\l(https://example.com/w.png)} @\\i\\m\\p\\o\\r\\t "https://example.com/v.css";</style>
       <section data-explain-anchor="state"><h2>still here</h2></section>`,
   });
   await expect(section(page, 'state').locator('h2')).toHaveText('still here', { timeout: 1000 });

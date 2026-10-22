@@ -178,17 +178,22 @@ function resolveHead(text: PreparedText, anchor: Anchor, snippet: string, hint: 
   const s = normalizeLines(splitLines(snippet)).filter((l) => l !== '').slice(0, 5);
   const span = anchor.range.end - anchor.range.start;
   let best = -1;
+  let matches = 0;
   const from = Math.max(0, hint.start - 1 - SCAN_RADIUS);
   const to = Math.min(n.length, hint.start - 1 + SCAN_RADIUS);
   for (let i = from; i + s.length <= to; i++) {
-    if (s.every((l, j) => n[i + j]!.includes(l)) && (best < 0 || Math.abs(i + 1 - hint.start) < Math.abs(best + 1 - hint.start))) best = i;
+    if (!s.every((l, j) => n[i + j]!.includes(l))) continue;
+    matches++;
+    if (best < 0 || Math.abs(i + 1 - hint.start) < Math.abs(best + 1 - hint.start)) best = i;
   }
   if (best < 0) {
     const fallback = resolveRange(n.length, hint);
     return fallback.range ? { ...fallback, state: 'stale', location: 0.6, similarity: 0 } : fallback;
   }
   const range = { start: best + 1, end: Math.min(n.length, best + 1 + span) };
-  return { state: best + 1 === hint.start ? 'exact' : 'moved', range, location: 1, similarity: 1, ambiguous: false, method: 'head' };
+  // A snippet that occurs more than once only tells us the nearest copy, not which one is meant.
+  const ambiguous = matches > 1;
+  return { state: best + 1 === hint.start ? 'exact' : 'moved', range, location: ambiguous ? 0.75 : 1, similarity: 1, ambiguous, method: 'head' };
 }
 
 /** No text to check against: trust the range if it still fits in the file. */

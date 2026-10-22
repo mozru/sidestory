@@ -59,12 +59,14 @@ export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl)
       // Undo hex escapes of ASCII letters and punctuation (e.g. \75 rl( is url( ), so they can't hide
       // url( or @import from the rules below. Letters never need escaping, so nothing legitimate changes.
       .replace(/\\0{0,4}(4[0-9a-f]|5[0-9a]|6[0-9a-f]|7[0-9a]|28|29|40)\s?/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+      // A backslash before any other non-hex letter or "(" / "@" just means that character (u\rl( is url( ).
+      .replace(/\\([g-zG-Z(@])/g, '$1')
       .replace(/@import[^;]*;?/gi, '')
       // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
       .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(')
       // Linear-time: each alternative stops at its own delimiter, and the unquoted form can't run on
       // past another "(" (otherwise "url(url(url(…" backtracks quadratically).
-      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^()'"\s]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
+      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^()'"\s\\]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
       const u = d ?? s ?? b ?? '';
       const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl, from);
       return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';

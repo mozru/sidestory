@@ -374,3 +374,12 @@ describe('resolveAnchor: security audit regressions', () => {
     expect(performance.now() - t0).toBeLessThan(100);
   });
 });
+
+describe('resolveAnchor: v1 snippets that occur more than once', () => {
+  it('are ambiguous, so they are not pinned from a guess', () => {
+    const lines = ['x', 'if (en) begin', '  a;', 'end', 'y', 'if (en) begin', '  b;', 'end'];
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 6, end: 8 }, snippet: 'if (en) begin', highlight: [] };
+    expect(resolve(lines, anchor)).toMatchObject({ ambiguous: true, range: { start: 6, end: 8 } });
+    expect(resolve(lines.slice(4), anchor)).toMatchObject({ ambiguous: false });
+  });
+});

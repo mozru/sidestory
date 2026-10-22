@@ -38,6 +38,8 @@ export class ExplainerSession implements vscode.Disposable {
   private manifestText = '';
   /** The current error (or warnings) banner, resent when a hidden panel is rebuilt. */
   private lastError: string | null = null;
+  /** Warnings from the last successful parse: shown again once a transient read failure clears. */
+  private warnings: string | null = null;
   private title = '';
   private html = '';
   private readonly resolutions = new Map<string, Resolution>();
@@ -138,6 +140,8 @@ export class ExplainerSession implements vscode.Disposable {
     }
     const manifestChanged = manifestText !== this.manifestText;
     if (!manifestChanged && this.manifest) {
+      // Both files read fine again: replace any "can't read" banner with the manifest's own warnings.
+      if (this.lastError !== this.warnings) this.showError(this.warnings);
       // Only the HTML changed: no need to re-read every anchored file or rebuild watchers.
       if (html !== this.html) {
         this.html = html;
@@ -173,7 +177,8 @@ export class ExplainerSession implements vscode.Disposable {
     this.html = html;
     this.title = parsed.manifest.title;
     this.panel.title = `Explainer: ${this.title || this.ref.name}`;
-    this.showError(warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null);
+    this.warnings = warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null;
+    this.showError(this.warnings);
     if (contentChanged) {
       this.assetBytes = 0;
       this.assetRequests = 0;
@@ -318,6 +323,9 @@ export class ExplainerSession implements vscode.Disposable {
     const m: FromWebview = parsed.data;
     switch (m.type) {
       case 'ready':
+        // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
+        this.assetBytes = 0;
+        this.assetRequests = 0;
         this.post({ type: 'init', title: this.title, html: this.html, anchors: this.anchorViews(), active: this.active });
         if (this.lastError) this.post({ type: 'error', message: this.lastError });
         break;
