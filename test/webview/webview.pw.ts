@@ -606,6 +606,9 @@ test('CSS the rewriter passes on loads no remote url(), as the browser itself pa
     "/ /**/* ' */ a{background:url(https://evil.example/d.png)} /* ' */",
     'a{background:url("x\\") ;background:url(https://evil.example/e.png) ")}',
     "a{content:'x\f;background-image:url(https://evil.example/b.png)} b{content:'}",
+    'div{background-image:@import"x;url(https://evil.example/f.png)}/*"*/',
+    '@imp@import"x;ort "https://evil.example/x.css"; div{color:red}',
+    'div{background-image:@\\69mport"x;url(https://evil.example/g.png)}/*"*/',
   ];
   for (const css of cases) {
     await send(page, { type: 'init', title: css, html: `<style>${css}</style><section data-explain-anchor="state"><h2>S</h2></section>`, anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL });
@@ -614,6 +617,8 @@ test('CSS the rewriter passes on loads no remote url(), as the browser itself pa
       [...b.ownerDocument.styleSheets].flatMap((s) => [...s.cssRules].map((r) => r.cssText)).join('\n').match(/url\([^)]*/g) ?? [],
     );
     for (const u of urls) expect(u, css).not.toMatch(/^url\("?https?:\/\/(?!localhost)/);
+    const imports = await frame(page).locator('body').evaluate((b) => [...b.ownerDocument.styleSheets].flatMap((s) => [...s.cssRules]).filter((r) => r.constructor.name === 'CSSImportRule').length);
+    expect(imports, css).toBe(0);
   }
 });
 

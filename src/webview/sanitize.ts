@@ -62,10 +62,11 @@ export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl)
   // As the CSS tokenizer does first: every newline form is \n (they all end strings), NUL is U+FFFD.
   const normalized = css.replace(/\r\n?|\f/g, '\n').replace(/\0/g, '\uFFFD');
   const decoded = decodeEscapesOutsideStrings(normalized);
+  // Renamed, never deleted: deleting text after the scan could move string boundaries and expose a url().
   return rewriteUrlFunctions(decoded, baseUrl, from)
-    .replace(/@import[^;]*;?/gi, '')
-    // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
-    .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(');
+    .replace(/@import/gi, '@cx-blocked')
+    // image-set(), image() and src() take bare strings as URLs; make them invalid rather than parse them.
+    .replace(/(-webkit-)?image(-set)?\(|\bsrc\(/gi, 'cx-blocked(');
 }
 
 const isHex = (c: string) => /^[0-9a-f]$/i.test(c);

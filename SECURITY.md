@@ -24,5 +24,5 @@ What it can't do, and how that is enforced:
 
 ## Known limits
 
-- `localResourceRoots` includes the explainer folder. VS Code checks resource paths by prefix, not by real path, so a symlink inside `.explain/<name>/` could in principle expose another readable file to the panel's own resource loader. Explainer content itself can't load such URLs (assets go through the extension, which checks real paths), and the panel can't send data anywhere.
+- `localResourceRoots` includes the `.explain/` folder (a panel can move between the explainers in it). VS Code checks resource paths by prefix, not by real path, so a symlink inside `.explain/` could in principle expose another readable file to the panel's own resource loader. Explainer content itself can't load such URLs (assets go through the extension, which checks real paths), and the panel can't send data anywhere.
 - Explainer authors can't run their own scripts. That's deliberate; interactive explainers would need a separate, opt-in design.
