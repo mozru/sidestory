@@ -3,6 +3,7 @@ import { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { findExplainers, refFromDir } from './explainers.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
+import { pinAnchors } from './pin.ts';
 import { ExplainerSession } from './session.ts';
 
 /** State the webview panel serializer keeps across restarts. */
@@ -39,6 +40,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const panel = createPanel(context.extensionUri, ref);
       await start(ref, panel);
+    }),
+    vscode.commands.registerCommand('codeExplainer.pin', async () => {
+      const ref = session?.ref ?? (await pickExplainer());
+      const open = session && ref && session.ref.dir.toString() === ref.dir.toString() ? session : undefined;
+      if (ref) await pinAnchors(ref, (id) => open?.confidentRange(id));
     }),
     vscode.commands.registerCommand('codeExplainer.nextStep', () => session?.navigate(1)),
     vscode.commands.registerCommand('codeExplainer.prevStep', () => session?.navigate(-1)),

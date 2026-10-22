@@ -77,6 +77,12 @@ export class ExplainerSession implements vscode.Disposable {
     await this.reload();
   }
 
+  /** Where an anchor's code is now, if it was found with confidence. */
+  confidentRange(id: string): LineRange | undefined {
+    const r = this.resolutions.get(id);
+    return r?.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || r.state === 'changed') ? r.range : undefined;
+  }
+
   navigate(delta: 1 | -1): void {
     this.post({ type: 'navigate', delta });
   }

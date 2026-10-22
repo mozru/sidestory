@@ -2,7 +2,7 @@
   "name": "code-explainer",
   "displayName": "Code Explainer",
   "description": "Rich HTML explainers beside your code, linked both ways, updated live.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "code-explainer",
   "license": "MIT",
   "private": true,
@@ -46,6 +46,11 @@
       {
         "command": "codeExplainer.prevStep",
         "title": "Previous Step",
+        "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.pin",
+        "title": "Pin Anchors to the Current Code",
         "category": "Code Explainer"
       }
     ],
