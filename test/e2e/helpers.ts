@@ -34,6 +34,12 @@ export async function openWorkbench(page: Page): Promise<void> {
     await page.waitForTimeout(2_000);
     expect(await page.locator('.tab').count()).toBe(0);
   }).toPass({ timeout: 45_000 });
+  // The Chat side bar can open despite workbench.secondarySideBar.defaultVisibility; it narrows the
+  // panel enough to reflow the step tabs while a test clicks them.
+  if (await page.locator('.part.auxiliarybar').isVisible()) {
+    await command(page, 'View: Toggle Secondary Side Bar Visibility');
+    await expect(page.locator('.part.auxiliarybar')).toBeHidden();
+  }
 }
 
 export async function openExplainer(page: Page, name: string): Promise<FrameLocator> {
