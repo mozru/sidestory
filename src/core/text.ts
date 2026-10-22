@@ -31,6 +31,7 @@ export function codeTokens(text: string): string[] {
  */
 export class PreparedText {
   private readonly cache = new Map<Norm, string[]>();
+  private readonly index = new Map<Norm, Map<string, number[]>>();
   readonly lines: readonly string[];
 
   constructor(lines: readonly string[]) {
@@ -39,6 +40,21 @@ export class PreparedText {
 
   static from(text: string): PreparedText {
     return new PreparedText(splitLines(text));
+  }
+
+  /** Where each normalized line occurs (0-based), built once per mode. */
+  positions(norm: Norm): ReadonlyMap<string, readonly number[]> {
+    let idx = this.index.get(norm);
+    if (!idx) {
+      idx = new Map();
+      this.normalized(norm).forEach((l, i) => {
+        const at = idx!.get(l);
+        if (at) at.push(i);
+        else idx!.set(l, [i]);
+      });
+      this.index.set(norm, idx);
+    }
+    return idx;
   }
 
   normalized(norm: Norm): readonly string[] {

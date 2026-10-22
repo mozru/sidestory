@@ -281,3 +281,41 @@ describe('resolveAnchor: round 2 regressions', () => {
     expect(r.range).toEqual({ start: 5001, end: 5200 });
   });
 });
+
+describe('resolveAnchor: round 3 regressions', () => {
+  const fn = ['function twice(a) {', '  const b = a * 2;', '  log(b);', '  check(b);', '  return b;', '}'];
+
+  it.each([50, 100, 300, 1000])('code moved %i lines into new surroundings, slightly edited, is not lost', (shift) => {
+    const lines = ['// top', ...fn, '// bottom', ...Array.from({ length: 1200 }, (_, i) => `// filler ${i}`)];
+    const anchor = anchorFor(lines, { start: 2, end: 7 });
+    const moved = ['// top', '// bottom', ...Array.from({ length: shift }, (_, i) => `// filler ${i}`), ...fn.map((l) => l.replace('a * 2', 'a * 3')), ...Array.from({ length: 1200 - shift }, (_, i) => `// more ${i}`)];
+    const r = resolve(moved, anchor);
+    expect(r.state).not.toBe('lost');
+    expect(r.range).toEqual({ start: 3 + shift, end: 8 + shift });
+  });
+
+  it('an edited block at a trusted hint is not silently replaced by a context-free copy elsewhere', () => {
+    const block = ['  x = compute(a);', '  y = x + 1;'];
+    const lines = ['// a', ...block, ...Array.from({ length: 50 }, (_, i) => `// ${i}`), ...block];
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 2, end: 3 }, quote: { exact: block.join('\n'), prefix: '', suffix: '', norm: 'ws' }, highlight: [] };
+    const edited = [...lines];
+    edited[2] = '  y = x + 2;';
+    expect(resolve(edited, anchor, { hint: { start: 2, end: 3 } }).ambiguous).toBe(true);
+  });
+
+  it('finds exact copies in a huge file quickly, and treats very many copies as ambiguous', () => {
+    const big = new PreparedText(Array.from({ length: 1_000_000 }, () => 'a'));
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 10, end: 12 }, quote: { exact: 'a\na\nb', prefix: 'z', suffix: 'z', norm: 'ws' }, highlight: [] };
+    let t0 = performance.now();
+    expect(resolveAnchor(big, anchor).state).not.toBe('exact');
+    expect(performance.now() - t0).toBeLessThan(1500); // dominated by building the line index once
+    t0 = performance.now();
+    resolveAnchor(big, anchor);
+    expect(performance.now() - t0).toBeLessThan(150);
+
+    const braces: Anchor = { id: 'b', file: 'x', range: { start: 5, end: 5 }, quote: { exact: 'a', prefix: 'q', suffix: 'q', norm: 'ws' }, highlight: [] };
+    t0 = performance.now();
+    expect(resolveAnchor(big, braces).ambiguous).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(150);
+  });
+});

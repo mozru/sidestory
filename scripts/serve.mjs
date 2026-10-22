@@ -11,9 +11,11 @@ const types = {
 };
 
 createServer((req, res) => {
+  // Only answer requests addressed to this server, so a web page can't reach it by DNS rebinding.
+  if (req.headers.host !== `127.0.0.1:${port}` && req.headers.host !== `localhost:${port}`) return void res.writeHead(421).end();
   const path = normalize(decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname));
   const file = join(root, path);
-  if (!file.startsWith(root)) return void res.writeHead(403).end();
+  if (file !== root && !file.startsWith(root + '/')) return void res.writeHead(403).end();
   try {
     if (!statSync(file).isFile()) throw new Error('not a file');
   } catch {

@@ -108,7 +108,7 @@
         "description": "Explainer sections whose code changed a lot.",
         "defaults": {
           "dark": "editorWarning.foreground",
-          "light": "editorWarning.foreground",
+          "light": "#8a6100",
           "highContrast": "editorWarning.foreground",
           "highContrastLight": "editorWarning.foreground"
         }

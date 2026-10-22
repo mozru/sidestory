@@ -14,7 +14,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 interface SavedState {
   dir: string;
   active?: string;
-  /** The section at the top of the viewport and how far into it the reader was. */
+  /** The section at the reading line and how far from the top of the viewport it was. */
   scroll?: { anchor: string; offset: number };
 }
 
@@ -24,10 +24,18 @@ interface Step {
   label: string;
 }
 
+type Source = 'scroll' | 'click' | 'step';
+
 const READING_LINE = 0.3; // fraction of the viewport height
 const USER_LEAD_MS = 1500; // after the reader scrolls, the editor doesn't move the page for this long
+const PILL_MS = 8000;
 const UPDATED_MS = 1800;
-const LABELS: Record<string, string> = { changed: 'Code changed', stale: 'Out of date', lost: 'Code not found', unknown: 'Not linked' };
+const STATE_TEXT: Record<string, { badge: string; spoken: string; title: string }> = {
+  changed: { badge: 'Code changed', spoken: 'code changed', title: 'The code this section explains was edited a little. The text is probably still right.' },
+  stale: { badge: 'Out of date', spoken: 'out of date', title: 'The code this section explains changed a lot. The text may no longer be right.' },
+  lost: { badge: 'Code not found', spoken: 'code not found', title: "The code this section explains can't be found in the file any more." },
+  unknown: { badge: 'Not linked', spoken: 'not linked', title: 'This section names an anchor that the manifest does not define.' },
+};
 
 const vscode = acquireVsCodeApi();
 const app = document.getElementById('app')!;
@@ -41,6 +49,7 @@ let active: string | undefined = state.active;
 let lastUserScroll = 0;
 let programmaticUntil = 0;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
+let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
 
 // ---- skeleton ----
@@ -49,7 +58,7 @@ app.innerHTML = `
 <header class="cx-header">
   <div class="cx-titlerow">
     <h1 class="cx-title"></h1>
-    <span class="cx-status" role="status"></span>
+    <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>
   </div>
   <nav class="cx-steps" aria-label="Steps"></nav>
   <div class="cx-steps-compact">
@@ -58,26 +67,33 @@ app.innerHTML = `
     <div class="cx-progress" aria-hidden="true"></div>
   </div>
 </header>
-<div class="cx-banner" role="alert" hidden></div>
-<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-host"></div></main>
-<button class="cx-pill" type="button" hidden></button>
+<div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span></div>
+<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"><div class="cx-host"></div></div></main>
+<div class="cx-pill" hidden>
+  <button class="cx-pill-show" type="button"></button>
+  <button class="cx-pill-close" type="button" aria-label="Dismiss"><span class="codicon codicon-close" aria-hidden="true"></span></button>
+</div>
 <footer class="cx-footer">
-  <button class="cx-nav" type="button" data-delta="-1" aria-label="Previous step"><span class="codicon codicon-chevron-left"></span></button>
-  <button class="cx-nav" type="button" data-delta="1" aria-label="Next step"><span class="codicon codicon-chevron-right"></span></button>
+  <button class="cx-nav" type="button" data-delta="-1" aria-label="Previous step"><span class="codicon codicon-chevron-left" aria-hidden="true"></span></button>
+  <button class="cx-nav" type="button" data-delta="1" aria-label="Next step"><span class="codicon codicon-chevron-right" aria-hidden="true"></span></button>
   <span class="cx-position"></span>
-  <span class="cx-hint">J / K</span>
+  <span class="cx-hint">J / K steps</span>
 </footer>
-<div class="cx-sr" aria-live="polite"></div>`;
+<div class="cx-sr" role="status" aria-live="polite"></div>`;
 
 const $ = <T extends HTMLElement>(sel: string) => app.querySelector<T>(sel)!;
 const titleEl = $('.cx-title');
 const statusEl = $('.cx-status');
+const statusText = $('.cx-status-text');
+const statusIcon = $('.cx-status .codicon');
 const stepsEl = $('.cx-steps');
 const selectEl = $<HTMLSelectElement>('.cx-step-select');
 const progressEl = $('.cx-progress');
 const bannerEl = $('.cx-banner');
+const bannerText = $('.cx-banner-text');
 const scroller = $('.cx-scroll');
-const pillEl = $<HTMLButtonElement>('.cx-pill');
+const pillEl = $('.cx-pill');
+const pillShow = $<HTMLButtonElement>('.cx-pill-show');
 const positionEl = $('.cx-position');
 const liveEl = $('[aria-live]');
 
@@ -89,6 +105,8 @@ const content = document.createElement('div');
 content.className = 'cx-content';
 shadow.append(contentCss, content);
 
+const sectionEl = (id: string) => content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
+
 // ---- messages ----
 
 window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
@@ -98,8 +116,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
       render(m.title, m.html, false);
       active = m.active ?? active;
-      decorate();
       restoreScroll();
+      // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
+      if (!active) active = sectionAtReadingLine()?.id;
+      markActive();
       initialized = true;
       break;
     case 'content':
@@ -117,7 +137,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       break;
     case 'error':
       bannerEl.hidden = m.message === null;
-      bannerEl.textContent = m.message ?? '';
+      bannerText.textContent = m.message ?? '';
       break;
   }
 });
@@ -145,13 +165,18 @@ function snapshot(): Map<string, string> {
   return new Map([...content.querySelectorAll<HTMLElement>('[data-explain-anchor]')].map((el) => [el.dataset.explainAnchor!, cleanHtml(el)]));
 }
 
+/** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
   const c = el.cloneNode(true) as HTMLElement;
   for (const x of [c, ...c.querySelectorAll<HTMLElement>('*')]) {
     x.classList.remove('cx-active', 'cx-updated');
     if (x.classList.length === 0) x.removeAttribute('class');
-    x.removeAttribute('data-cx-state');
-    x.removeAttribute('data-cx-label');
+    for (const a of ['data-cx-state', 'data-cx-label', 'data-cx-title']) x.removeAttribute(a);
+    if (x.hasAttribute('data-cx-ref')) for (const a of ['data-cx-ref', 'tabindex', 'role']) x.removeAttribute(a);
+    if (x.dataset.cxTitled) {
+      x.removeAttribute('title');
+      x.removeAttribute('data-cx-titled');
+    }
     x.style.removeProperty('--cx-accent');
     if (x.getAttribute('style') === '') x.removeAttribute('style');
   }
@@ -167,7 +192,7 @@ function markUpdated(before: Map<string, string>): void {
     el.classList.add('cx-updated');
     setTimeout(() => el.classList.remove('cx-updated'), UPDATED_MS);
   }
-  if (changed.length) announce(`Updated: ${changed.join(', ')}`);
+  if (changed.length) announce(`${changed.join(', ')} updated`);
 }
 
 /** Applies anchor states, accents and the active section, then rebuilds the navigator. */
@@ -175,10 +200,26 @@ function decorate(): void {
   const all = [...content.querySelectorAll<HTMLElement>('[data-explain-anchor]')];
   for (const el of all) {
     const a = anchors.get(el.dataset.explainAnchor!);
-    el.dataset.cxState = a?.state ?? 'unknown';
-    el.setAttribute('data-cx-label', LABELS[el.dataset.cxState] ?? '');
+    const s = a?.state ?? 'unknown';
+    el.dataset.cxState = s;
+    const text = STATE_TEXT[s];
+    el.setAttribute('data-cx-label', text?.badge ?? '');
+    // Explain the state on hover, without clobbering a title the author wrote.
+    if (text && (!el.hasAttribute('title') || el.dataset.cxTitled)) {
+      el.title = text.title;
+      el.dataset.cxTitled = '1';
+    } else if (!text && el.dataset.cxTitled) {
+      el.removeAttribute('title');
+      delete el.dataset.cxTitled;
+    }
     if (a?.colorVar) el.style.setProperty('--cx-accent', `var(${a.colorVar})`);
     else el.style.removeProperty('--cx-accent');
+  }
+  // Inline references behave like links for the keyboard and screen readers.
+  for (const ref of content.querySelectorAll<HTMLElement>('[data-explain-ref]')) {
+    ref.dataset.cxRef = '1';
+    if (!ref.hasAttribute('tabindex')) ref.tabIndex = 0;
+    if (!ref.hasAttribute('role') && !(ref.localName === 'a' && ref.hasAttribute('href'))) ref.setAttribute('role', 'link');
   }
   steps = all
     .filter((el) => !el.parentElement?.closest('[data-explain-anchor]'))
@@ -193,6 +234,12 @@ function stepLabel(el: HTMLElement, id: string): string {
   return el.dataset.explainTitle ?? el.querySelector('h1, h2, h3, h4')?.textContent?.trim() ?? id;
 }
 
+function spokenState(id: string): string {
+  const s = anchors.get(id)?.state ?? 'unknown';
+  const t = STATE_TEXT[s];
+  return t ? `, ${t.spoken}` : '';
+}
+
 function renderNavigator(): void {
   const signature = steps.map((s) => `${s.id}:${s.label}`).join('|');
   if (stepsEl.dataset.signature !== signature) {
@@ -203,47 +250,47 @@ function renderNavigator(): void {
         b.type = 'button';
         b.className = 'cx-step';
         b.dataset.anchor = s.id;
-        b.innerHTML = `<span class="cx-step-num">${i + 1}</span><span class="cx-step-label"></span>`;
+        // Visible: "1  Interface". Spoken: "Step 1: Interface, out of date" (the hidden parts carry the rest).
+        b.innerHTML = `<span class="cx-sr">Step ${i + 1}: </span><span class="cx-step-num" aria-hidden="true">${i + 1}</span><span class="cx-step-label"></span><span class="cx-sr cx-step-state"></span>`;
         b.querySelector('.cx-step-label')!.textContent = s.label;
         b.title = s.label;
         return b;
       }),
     );
-    selectEl.replaceChildren(
-      ...steps.map((s, i) => {
-        const o = document.createElement('option');
-        o.value = s.id;
-        o.textContent = `${i + 1}. ${s.label}`;
-        return o;
-      }),
-    );
+    selectEl.replaceChildren(...steps.map((s) => Object.assign(document.createElement('option'), { value: s.id })));
     progressEl.replaceChildren(...steps.map(() => document.createElement('span')));
   }
   steps.forEach((s, i) => {
     const accent = anchors.get(s.id)?.colorVar;
+    const stateName = anchors.get(s.id)?.state ?? 'unknown';
     for (const el of [stepsEl.children[i], progressEl.children[i]] as HTMLElement[]) {
       if (accent) el.style.setProperty('--cx-accent', `var(${accent})`);
       else el.style.removeProperty('--cx-accent');
-      el.dataset.cxState = anchors.get(s.id)?.state ?? 'unknown';
+      el.dataset.cxState = stateName;
     }
+    stepsEl.children[i]!.querySelector('.cx-step-state')!.textContent = spokenState(s.id);
+    (selectEl.options[i] as HTMLOptionElement).textContent = `${i + 1}. ${s.label}${spokenState(s.id) ? ` (${spokenState(s.id).slice(2)})` : ''}`;
   });
 }
 
 function renderStatus(): void {
   const counts = { stale: 0, lost: 0 };
   for (const a of anchors.values()) if (a.state === 'stale' || a.state === 'lost') counts[a.state]++;
-  const parts = [counts.stale && `${counts.stale} out of date`, counts.lost && `${counts.lost} not found`].filter(Boolean);
+  const parts = [counts.stale && `${counts.stale} out of date`, counts.lost && `${counts.lost} not found`].filter(Boolean) as string[];
+  const text = parts.length ? parts.join(' · ') : 'Linked';
+  // Only touch the DOM when something changed: this runs on every keystroke in linked code.
+  if (statusText.textContent === text) return;
+  statusText.textContent = text;
   statusEl.dataset.ok = String(parts.length === 0);
-  statusEl.innerHTML = parts.length
-    ? `<span class="codicon codicon-warning" aria-hidden="true"></span><span></span>`
-    : `<span class="codicon codicon-link" aria-hidden="true"></span><span>Linked</span>`;
-  if (parts.length) statusEl.lastElementChild!.textContent = parts.join(' · ');
+  statusEl.title = parts.length ? 'Some sections no longer match their code' : 'Every section matches its code';
+  statusIcon.className = `codicon ${parts.length ? 'codicon-warning' : 'codicon-link'}`;
+  if (initialized && parts.length) announce(text);
 }
 
 function markActive(): void {
   const index = steps.findIndex((s) => s.id === activeStepId());
   for (const el of content.querySelectorAll<HTMLElement>('.cx-active')) el.classList.remove('cx-active');
-  if (active) content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(active)}"]`)?.classList.add('cx-active');
+  if (active) sectionEl(active)?.classList.add('cx-active');
   [...stepsEl.children].forEach((b, i) => {
     if (i === index) b.setAttribute('aria-current', 'step');
     else b.removeAttribute('aria-current');
@@ -260,13 +307,13 @@ function markActive(): void {
 /** The step containing the active anchor (which may be nested inside a step). */
 function activeStepId(): string | undefined {
   if (!active) return undefined;
-  const el = content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(active)}"]`);
+  const el = sectionEl(active);
   return steps.find((s) => el && s.el.contains(el))?.id;
 }
 
 // ---- moving between sections ----
 
-function setActive(id: string | undefined, notify?: 'scroll' | 'click' | 'step'): void {
+function setActive(id: string | undefined, notify?: Source): void {
   if (id === active) return;
   active = id;
   markActive();
@@ -279,7 +326,7 @@ function setActive(id: string | undefined, notify?: 'scroll' | 'click' | 'step')
 }
 
 function scrollToSection(id: string): void {
-  const el = content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
+  const el = sectionEl(id);
   if (!el) return;
   programmaticUntil = Date.now() + 1000;
   el.scrollIntoView({ block: 'start', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
@@ -289,32 +336,50 @@ function step(delta: 1 | -1): void {
   if (steps.length === 0) return;
   const i = steps.findIndex((s) => s.id === activeStepId());
   const target = steps[Math.min(steps.length - 1, Math.max(0, i < 0 ? 0 : i + delta))]!;
-  pillEl.hidden = true;
+  hidePill();
   setActive(target.id, 'step');
   scrollToSection(target.id);
 }
 
-/** The editor cursor moved into a section: follow it unless the reader is scrolling. */
+const readerLeads = () => Date.now() - lastUserScroll < USER_LEAD_MS;
+
+/**
+ * The editor cursor moved into a section. Follow it, unless the reader is scrolling the page:
+ * then leave everything where it is and offer a pill instead.
+ */
 function followEditor(id: string): void {
   if (!anchors.has(id)) return;
-  const el = content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
-  setActive(id);
+  const el = sectionEl(id);
   if (!el) return;
-  if (Date.now() - lastUserScroll < USER_LEAD_MS) {
-    pillEl.textContent = `Cursor is in “${stepLabel(el, id)}” · Show`;
-    pillEl.dataset.anchor = id;
-    pillEl.hidden = false;
+  if (readerLeads()) {
+    showPill(id, el);
     return;
   }
+  hidePill();
+  setActive(id);
   const r = el.getBoundingClientRect();
   const view = scroller.getBoundingClientRect();
   const visible = r.top >= view.top && r.top <= view.top + view.height * 0.6;
   if (!visible) scrollToSection(id);
 }
 
+function showPill(id: string, el: HTMLElement): void {
+  pillShow.textContent = `Cursor is in “${stepLabel(el, id)}” · Show`;
+  pillEl.dataset.anchor = id;
+  pillEl.hidden = false;
+  clearTimeout(pillTimer);
+  pillTimer = setTimeout(hidePill, PILL_MS);
+}
+
+function hidePill(): void {
+  clearTimeout(pillTimer);
+  pillEl.hidden = true;
+  delete pillEl.dataset.anchor;
+}
+
 function sectionAtReadingLine(): Step | undefined {
   const view = scroller.getBoundingClientRect();
-  if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return steps[steps.length - 1];
+  if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return steps[steps.length - 1];
   const y = view.top + view.height * READING_LINE;
   let found: Step | undefined;
   for (const s of steps) if (s.el.getBoundingClientRect().top <= y) found = s;
@@ -329,23 +394,31 @@ scroller.addEventListener('scroll', () => {
     saveState();
     if (Date.now() < programmaticUntil) return;
     const s = sectionAtReadingLine();
+    if (s && pillEl.dataset.anchor === s.id) hidePill(); // the reader got there on their own
     if (s && s.id !== activeStepId()) setActive(s.id, 'scroll');
   });
 });
 scroller.addEventListener('scrollend', () => {
   programmaticUntil = 0;
 });
-for (const ev of ['wheel', 'touchmove'] as const) scroller.addEventListener(ev, () => (lastUserScroll = Date.now()), { passive: true });
+const readerInput = () => (lastUserScroll = Date.now());
+for (const ev of ['wheel', 'touchmove'] as const) scroller.addEventListener(ev, readerInput, { passive: true });
+// Covers dragging the scrollbar, which fires no wheel events.
+scroller.addEventListener('pointerdown', readerInput, { passive: true });
 
 // ---- input ----
+
+function openRef(ref: HTMLElement): void {
+  const id = ref.dataset.explainRef!;
+  if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
+}
 
 shadow.addEventListener('click', (e) => {
   const target = e.target as HTMLElement;
   const ref = target.closest<HTMLElement>('[data-explain-ref]');
   if (ref) {
     e.preventDefault();
-    const id = ref.dataset.explainRef!;
-    if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
+    openRef(ref);
     return;
   }
   const link = target.closest('a');
@@ -356,36 +429,54 @@ shadow.addEventListener('click', (e) => {
   }
   if (target.closest('button, input, select, textarea, summary, label') || (getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
-  if (section) setActive(section.dataset.explainAnchor!, 'click');
-  else return;
-  // Clicking the active section again still reveals its code.
-  vscode.postMessage({ type: 'focusAnchor', anchorId: section.dataset.explainAnchor!, source: 'click' });
+  if (!section || section.dataset.cxState === 'lost') return;
+  const id = section.dataset.explainAnchor!;
+  // Always reveal, even when the section is already active.
+  if (id === active) vscode.postMessage({ type: 'focusAnchor', anchorId: id, source: 'click' });
+  else setActive(id, 'click');
+});
+
+shadow.addEventListener('keydown', (e) => {
+  const ke = e as KeyboardEvent;
+  const ref = (ke.target as HTMLElement).closest?.<HTMLElement>('[data-explain-ref]');
+  if (ref && (ke.key === 'Enter' || ke.key === ' ')) {
+    ke.preventDefault();
+    ke.stopPropagation();
+    openRef(ref);
+  }
 });
 
 stepsEl.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.cx-step');
   if (!b) return;
   const id = b.dataset.anchor!;
+  hidePill();
   setActive(id, 'step');
   scrollToSection(id);
 });
 
 selectEl.addEventListener('change', () => {
+  hidePill();
   setActive(selectEl.value, 'step');
   scrollToSection(selectEl.value);
 });
 
 for (const b of app.querySelectorAll<HTMLButtonElement>('.cx-nav')) b.addEventListener('click', () => step(Number(b.dataset.delta) as 1 | -1));
 
-pillEl.addEventListener('click', () => {
-  pillEl.hidden = true;
-  if (pillEl.dataset.anchor) scrollToSection(pillEl.dataset.anchor);
+pillShow.addEventListener('click', () => {
+  const id = pillEl.dataset.anchor;
+  hidePill();
+  if (!id) return;
+  setActive(id);
+  scrollToSection(id);
 });
+$('.cx-pill-close').addEventListener('click', hidePill);
 
 document.addEventListener('keydown', (e) => {
   const t = e.composedPath()[0] as HTMLElement | undefined;
+  if (e.key === 'Escape') hidePill();
   if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) return;
-  if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) lastUserScroll = Date.now();
+  if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) readerInput();
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
 });
@@ -404,7 +495,7 @@ function readingPosition(): Position | undefined {
 }
 
 function restorePosition(p: Position): void {
-  const el = content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(p.anchor)}"]`);
+  const el = sectionEl(p.anchor);
   if (!el) return;
   const now = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
   if (Math.abs(now - p.offset) > 1) {
@@ -428,7 +519,9 @@ function saveState(): void {
 }
 
 function announce(text: string): void {
-  liveEl.textContent = text;
+  // Clear first so the same message twice is announced twice.
+  liveEl.textContent = '';
+  requestAnimationFrame(() => (liveEl.textContent = text));
 }
 
 vscode.setState(state);

@@ -210,12 +210,17 @@ export class ExplainerSession implements vscode.Disposable {
     }
     const anchors = this.anchorsIn(uri);
     if (anchors.length === 0 || e.contentChanges.length === 0) return;
+    // Any resolve still running for this file is now working on old text: stop it at its next slice.
+    this.fileSeq.set(uri, (this.fileSeq.get(uri) ?? 0) + 1);
+    if (this.decorations.isDimmed()) this.decorateActive(false); // typing: stop fading the rest of the file
     const tails = endTails(e.document, e.contentChanges);
     // Positions in one event refer to the document before the event and don't overlap,
     // so applying them bottom-up keeps each later one valid.
     const changes = [...e.contentChanges].sort((x, y) => y.range.start.compareTo(x.range.start));
     for (const a of anchors) {
-      let hint = this.hints.get(a.id) ?? this.resolutions.get(a.id)?.range ?? a.range;
+      // Only trusted positions are tracked: tracking a guess would turn it into evidence.
+      let hint = this.hints.get(a.id);
+      if (!hint) continue;
       for (const c of changes) {
         const tracked = trackRange(hint, {
           start: { line: c.range.start.line + 1, col: c.range.start.character },
@@ -236,6 +241,9 @@ export class ExplainerSession implements vscode.Disposable {
     const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
     if (ids.size === 0) return;
     const line = e.selections[0]!.active.line + 1;
+    // The reader clicked or typed in the code: stop fading the rest of the file.
+    const byUser = e.kind === vscode.TextEditorSelectionChangeKind.Keyboard || e.kind === vscode.TextEditorSelectionChangeKind.Mouse;
+    if (byUser && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
       const id = anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line);
       if (!id || id === this.active) return;
@@ -302,7 +310,10 @@ export class ExplainerSession implements vscode.Disposable {
       this.decorateActive(false);
       return;
     }
-    const dim = !moveCursor && vscode.workspace.getConfiguration('codeExplainer').get<boolean>('dimUnfocused', true);
+    const kind = vscode.window.activeColorTheme.kind;
+    const highContrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
+    // No fading in high contrast themes, where it would cut contrast below what the theme promises.
+    const dim = !moveCursor && !highContrast && vscode.workspace.getConfiguration('codeExplainer').get<boolean>('dimUnfocused', true);
     const uri = this.fileUri(a.file);
     const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
     try {

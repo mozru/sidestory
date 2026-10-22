@@ -39,7 +39,9 @@ const MAX_CLUSTERS = 12;
 /** A hint window this good means the code is right there; skip the whole-file search. */
 const GOOD_ENOUGH = 0.9;
 /** Cap on comparison work per anchor (line or token pairs), so hostile manifests can't stall the editor. */
-const WORK_BUDGET = 20_000_000;
+const WORK_BUDGET = 3_000_000;
+/** Exact copies considered, nearest to the hint first. More than this is itself ambiguous. */
+const MAX_EXACT = 50;
 
 export function resolveAnchor(text: PreparedText, anchor: Anchor, opts: ResolveOptions = {}): Resolution {
   const hint = opts.hint ?? anchor.range;
@@ -89,16 +91,32 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     const T = c.exact ? 1 : jaccard(quoteIds, identifiers(text.lines.slice(c.i, c.i + c.len).join('\n'), quote.norm));
     // After a whole-region replacement the hint is only a guess, so it earns no proximity.
     const P = opts.orphaned ? 0 : Math.exp(-Math.abs(c.i - h) / 200);
-    const L = C === null ? (0.45 * S + 0.1 * T + 0.1 * P) / 0.65 : 0.45 * S + 0.35 * C + 0.1 * T + 0.1 * P;
+    // Code that moved keeps its body but loses its neighbours. For a nearly identical body, unfamiliar
+    // surroundings are no evidence against the place, so count them as neutral rather than zero.
+    // (Exact copies keep the real context score: it is what tells duplicates apart.)
+    const Ceff = C !== null && !c.exact && S >= 0.9 ? Math.max(C, 0.5) : C;
+    const L = Ceff === null ? (0.45 * S + 0.1 * T + 0.1 * P) / 0.65 : 0.45 * S + 0.35 * Ceff + 0.1 * T + 0.1 * P;
     scored.push({ ...c, S, L });
   };
 
   // Exact copies and the windows at the hint first; the whole-file search only if they aren't convincing.
-  for (let i = 0; i + k <= n.length; i++) if (matchesAt(n, q, i)) consider({ i, len: k, exact: true });
+  // Exact copies are found through the quote's rarest line, so the scan is cheap even in huge files.
+  const starts = exactStarts(text, quote.norm, q);
+  starts.sort((a, b) => Math.abs(a - h) - Math.abs(b - h));
+  let checked = 0;
+  for (const i of starts) {
+    if (checked === MAX_EXACT || budget < k) break;
+    budget -= k;
+    if (matchesAt(n, q, i)) {
+      consider({ i, len: k, exact: true });
+      checked++;
+    }
+  }
+  const tooManyCopies = checked === MAX_EXACT;
   for (const len of windowLengths(k, n.length)) consider({ i: clamp(h, 0, n.length - len), len, exact: false });
   // An exact copy only settles it when its surroundings match too; otherwise an edited copy
   // elsewhere (the real one) may score higher.
-  const convincing = scored.some((c) => (c.exact ? (context(c.i, c.len) ?? 1) === 1 : c.L >= GOOD_ENOUGH));
+  const convincing = scored.some((c) => (c.exact ? context(c.i, c.len) === 1 : c.L >= GOOD_ENOUGH));
   if (!convincing) for (const c of shortlist(n, q, h)) consider({ ...c, exact: false });
   if (scored.length === 0) return lost();
 
@@ -107,7 +125,9 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
   const rival = scored.find((c) => c.i + c.len <= best.i || c.i >= best.i + best.len);
   // A trusted hint (live-tracked, or confidently resolved before) is strong evidence: a close
   // rival elsewhere only makes the result ambiguous when the winner is somewhere else.
-  const ambiguous = rival !== undefined && best.L - rival.L < AMBIGUITY && !(trustHint && best.i === h);
+  // A near-copy at a trusted hint is also a rival: the code the reader is editing may be the real one.
+  const hintRival = trustHint && best.i !== h && scored.some((c) => c.i === h && c.S >= 0.8);
+  const ambiguous = tooManyCopies || hintRival || (rival !== undefined && best.L - rival.L < AMBIGUITY && !(trustHint && best.i === h));
 
   // Same text, ignoring whitespace: the prose still holds.
   if (best.S === 1) {
@@ -187,6 +207,23 @@ function contextSimilarity(n: readonly string[], i: number, len: number, pre: re
   if (pre.length) parts.push(lcsRatio(pre, n.slice(Math.max(0, i - pre.length), i)));
   if (suf.length) parts.push(lcsRatio(suf, n.slice(i + len, i + len + suf.length)));
   return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : null;
+}
+
+/** Possible start lines of an exact copy: where the quote's rarest non-blank line occurs, shifted back. */
+function exactStarts(text: PreparedText, norm: Quote['norm'], q: readonly string[]): number[] {
+  const index = text.positions(norm);
+  let rarest = -1;
+  let rarestCount = Infinity;
+  q.forEach((l, j) => {
+    if (l === '') return;
+    const count = index.get(l)?.length ?? 0;
+    if (count < rarestCount) {
+      rarest = j;
+      rarestCount = count;
+    }
+  });
+  if (rarest < 0) return []; // a quote of blank lines only can't be pinned
+  return (index.get(q[rarest]!) ?? []).map((p) => p - rarest).filter((i) => i >= 0 && i + q.length <= text.lines.length);
 }
 
 function clamp(x: number, lo: number, hi: number): number {

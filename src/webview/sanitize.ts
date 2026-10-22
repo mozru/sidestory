@@ -3,8 +3,11 @@
 // navigate, embed or phone home, and rewrites relative URLs to the explainer folder.
 // The result is handed over as nodes, never re-serialized and re-parsed (which invites mXSS).
 
-const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form';
+// SVG animation elements can rewrite a sanitized attribute (such as href) after the fact.
+const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
+/** Attributes that are dropped outright: popovers render in the top layer, above any containment. */
+const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping']);
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */
 const LINKS = new Set(['a', 'area']);
 
@@ -20,7 +23,8 @@ export function sanitize(html: string, baseUrl: string, into: Document = documen
   for (const el of doc.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      if (name.startsWith('on')) el.removeAttribute(attr.name);
+      if (name.startsWith('on') || DROP_ATTRS.has(name)) el.removeAttribute(attr.name);
+      else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
         const fixed = rewriteUrl(el.localName, name, attr.value, baseUrl);
         if (fixed === null) el.removeAttribute(attr.name);
@@ -30,6 +34,7 @@ export function sanitize(html: string, baseUrl: string, into: Document = documen
   }
   const styles = [...doc.querySelectorAll('style, link')].map((el) => {
     el.remove();
+    if (el.localName === 'style') el.textContent = rewriteCss(el.textContent ?? '', baseUrl);
     return el;
   });
   // Keep <style>, and stylesheet links whose URL survived the rewrite (local files only).
@@ -38,6 +43,16 @@ export function sanitize(html: string, baseUrl: string, into: Document = documen
     styles: keep.map((el) => into.importNode(el, true)),
     body: [...doc.body.childNodes].map((n) => into.importNode(n, true)),
   };
+}
+
+/** Points `url()` references at the explainer folder (or nowhere) and drops `@import`. */
+function rewriteCss(css: string, baseUrl: string): string {
+  return css
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (_, _q: string, u: string) => {
+      const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl);
+      return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';
+    });
 }
 
 /** Resolves a URL attribute. Returns null for URLs that must not load. */

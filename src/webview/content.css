@@ -77,6 +77,23 @@
   cursor: auto;
 }
 
+[data-explain-anchor][data-cx-state='lost'] {
+  cursor: default;
+}
+
+[data-explain-ref] {
+  cursor: pointer;
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+[data-explain-ref]:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 [data-explain-anchor].cx-active {
   box-shadow: inset 3px 0 0 var(--cx-accent);
   background: color-mix(in srgb, var(--cx-accent) 7%, transparent);
@@ -132,11 +149,19 @@
   [data-explain-anchor] { transition: none; }
   [data-explain-anchor].cx-updated {
     animation: none;
-    outline: 1px solid var(--vscode-editorInfo-foreground);
+    box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 1px var(--vscode-editorInfo-foreground);
   }
 }
 
+/* High contrast: no tints; mark things with borders. Box shadows leave the state outlines visible. */
 :host-context(body.vscode-high-contrast) [data-explain-anchor].cx-active,
 :host-context(body.vscode-high-contrast-light) [data-explain-anchor].cx-active {
-  outline: 1px solid var(--vscode-contrastActiveBorder);
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder);
+}
+
+:host-context(body.vscode-high-contrast) [data-explain-anchor].cx-updated,
+:host-context(body.vscode-high-contrast-light) [data-explain-anchor].cx-updated {
+  animation: none;
+  box-shadow: 0 0 0 1px var(--vscode-editorInfo-foreground);
 }

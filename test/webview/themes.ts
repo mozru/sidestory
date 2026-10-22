@@ -42,7 +42,7 @@ export const THEMES: Record<ThemeName, { bodyClass: string; vars: Record<string,
       'textCodeBlock-background': '#f8f8f8', 'textBlockQuote-background': '#f8f8f8', 'editorWidget-background': '#f8f8f8',
       'editorWarning-foreground': '#bf8803', 'editorError-foreground': '#e51400', 'editorInfo-foreground': '#1a85ff',
       'charts-blue': '#1a85ff', 'charts-green': '#388a34', 'charts-yellow': '#bf8803', 'charts-orange': '#d18616', 'charts-purple': '#652d90', 'charts-red': '#e51400',
-      'codeExplainer-focusBorder': '#005fb8', 'codeExplainer-staleForeground': '#bf8803', 'codeExplainer-lostForeground': '#e51400',
+      'codeExplainer-focusBorder': '#005fb8', 'codeExplainer-staleForeground': '#8a6100', 'codeExplainer-lostForeground': '#e51400',
     },
   },
   hc: {

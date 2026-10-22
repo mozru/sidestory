@@ -40,10 +40,12 @@ const section = (page: Page, id: string) => page.locator(`[data-explain-anchor="
 test('renders the title, the steps and the sections', async ({ page }) => {
   await open(page);
   await expect(page.locator('.cx-title')).toHaveText(MANIFEST.title);
-  await expect(page.locator('.cx-step')).toHaveText(['1Interface', '2State', '3Handshakes', '4Consume', '5Refill']);
+  for (const [i, name] of ['Interface', 'State', 'Handshakes', 'Consume', 'Refill'].entries()) {
+    await expect(page.getByRole('button', { name: `Step ${i + 1}: ${name}`, exact: true })).toBeVisible();
+  }
   await expect(page.locator('.cx-status')).toHaveText('Linked');
   await expect(section(page, 'refill')).toBeAttached();
-  await expect(page.locator('.cx-position')).toHaveText('Step – of 5');
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 5');
 });
 
 test('clicking a step activates it and reveals its code', async ({ page }) => {
@@ -101,7 +103,7 @@ test('an edit above the reader keeps their place and flags the changed section',
   await expect(section(page, 'interface')).toHaveClass(/cx-updated/);
   await expect(section(page, 'consume')).not.toHaveClass(/cx-updated/);
   await expect(section(page, 'consume')).toHaveClass(/cx-active/);
-  await expect(page.locator('[aria-live]')).toHaveText('Updated: Interface');
+  await expect(page.locator('[aria-live]')).toHaveText('Interface updated');
 });
 
 test('a content update keeps the step picker focused', async ({ page }) => {
@@ -178,6 +180,33 @@ test('the sanitizer refuses every way out of the explainer folder', async ({ pag
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });
 
+test('explainer CSS cannot cover the panel controls', async ({ page }) => {
+  await open(page, {
+    html: `<style>:host{position:fixed!important;inset:0!important;z-index:2147483647!important;contain:none!important;transform:none!important}
+      .cover{position:fixed;inset:0;background:red}</style>
+      <section data-explain-anchor="state"><div class="cover"></div><div id="pop" popover>covering</div><button popovertarget="pop">x</button></section>`,
+  });
+  const hit = await page.evaluate(() => {
+    const t = document.querySelector('.cx-title')!.getBoundingClientRect();
+    return (document.elementFromPoint(t.left + 5, t.top + 5) as HTMLElement | null)?.className;
+  });
+  expect(hit).toBe('cx-title');
+  await expect(page.locator('.cx-host').locator('[popover], [popovertarget]')).toHaveCount(0);
+});
+
+test('relative URLs in explainer CSS point at the explainer folder; remote ones are dropped', async ({ page }) => {
+  await open(page, {
+    html: `<style>@import url(https://example.com/x.css); .a{background:url(img/a.png)} .b{background:url("https://example.com/b.png")}</style>
+      <section data-explain-anchor="state"><div id="inline" style="background-image:url('img/c.png')"></div>
+      <svg><a id="svglink" href="#ok"><set attributeName="href" to="javascript:alert(1)"/></a></svg></section>`,
+  });
+  const css = await page.locator('.cx-host').evaluate((host) => [...host.shadowRoot!.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
+  expect(css).toContain('url("http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/img/a.png")');
+  expect(css).not.toContain('example.com');
+  await expect(page.locator('.cx-host #inline')).toHaveAttribute('style', /bit-reader\/img\/c\.png/);
+  await expect(page.locator('.cx-host set')).toHaveCount(0);
+});
+
 test('inline references jump the editor', async ({ page }) => {
   await open(page);
   await clearPosted(page);
@@ -195,13 +224,14 @@ test('clicking inside a section focuses its code', async ({ page }) => {
 test('J and K step through sections; the editor command does too', async ({ page }) => {
   await open(page);
   await page.locator('.cx-scroll').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('j');
-  await page.keyboard.press('j');
-  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 5');
-  await page.keyboard.press('k');
   await expect(page.locator('.cx-position')).toHaveText('Step 1 of 5');
-  await send(page, { type: 'navigate', delta: 1 });
+  await page.keyboard.press('j');
+  await page.keyboard.press('j');
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
+  await page.keyboard.press('k');
   await expect(page.locator('.cx-position')).toHaveText('Step 2 of 5');
+  await send(page, { type: 'navigate', delta: 1 });
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
 });
 
 test('narrow panes get a step picker instead of tabs', async ({ page }) => {
@@ -230,6 +260,7 @@ for (const theme of ['dark', 'light', 'hc'] as const) {
   test(`no accessibility violations (${theme})`, async ({ page }) => {
     await open(page, { theme });
     await page.locator('.cx-step', { hasText: 'State' }).click();
+    await send(page, { type: 'anchors', anchors: anchors({ consume: 'stale', refill: 'lost', handshakes: 'changed' }) });
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
   });

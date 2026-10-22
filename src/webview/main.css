@@ -116,12 +116,11 @@ body {
 .cx-step[aria-current='step'] {
   border-color: var(--cx-accent);
   color: var(--vscode-foreground);
-  background: var(--vscode-list-inactiveSelectionBackground);
+  background: color-mix(in srgb, var(--cx-accent) 14%, transparent);
 }
 
 .cx-step:focus-visible,
 .cx-nav:focus-visible,
-.cx-pill:focus-visible,
 .cx-step-select:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
@@ -137,11 +136,17 @@ body {
   justify-content: center;
   font-size: 0.85em;
   font-weight: 700;
-  border: 1px solid var(--cx-accent);
+  border: 1px solid var(--vscode-descriptionForeground);
+  color: var(--vscode-descriptionForeground);
+}
+
+.cx-step.cx-done .cx-step-num {
+  border-color: var(--cx-accent);
   color: var(--vscode-foreground);
 }
 
 .cx-step[aria-current='step'] .cx-step-num {
+  border-color: var(--cx-accent);
   background: var(--cx-accent);
   color: var(--vscode-editor-background);
 }
@@ -193,16 +198,39 @@ body {
   background: var(--cx-accent);
 }
 
+.cx-progress > span:is([data-cx-state='stale'], [data-cx-state='lost']) {
+  background: transparent;
+  border-top: 1px dashed var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+}
+
 @container (max-width: 420px) {
+  :root, #app { --cx-gutter: 16px; }
+  .cx-titlerow { flex-wrap: wrap; row-gap: 4px; }
+  .cx-title {
+    flex-basis: 100%;
+    font-size: 1.15em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
   .cx-steps { display: none; }
   .cx-steps-compact { display: block; }
   .cx-hint { display: none; }
+  .cx-nav { width: 44px; height: 32px; }
 }
 
 /* ---- body ---- */
 
+.cx-banner[hidden] {
+  display: none;
+}
+
 .cx-banner {
   flex: none;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
   margin: 10px var(--cx-gutter) 0;
   padding: 8px 10px;
   border-radius: 4px;
@@ -223,12 +251,17 @@ body {
   outline-offset: -1px;
 }
 
-/* Keep explainer layout inside its box: fixed-position content can't cover the panel's own controls. */
-.cx-host {
+/*
+ * Keep explainer layout inside its box. The containment sits on a wrapper the explainer's CSS
+ * can't reach (not on the shadow host, which `:host { ... !important }` could restyle), so even a
+ * fixed-position host can't cover the panel's own controls. Wide content scrolls sideways.
+ */
+.cx-frame {
   position: relative;
   contain: paint;
   isolation: isolate;
   transform: translateZ(0);
+  overflow-x: auto;
 }
 
 .cx-pill {
@@ -237,21 +270,49 @@ body {
   bottom: 56px;
   transform: translateX(-50%);
   max-width: calc(100% - 2 * var(--cx-gutter));
-  padding: 6px 14px;
-  border: 0;
+  display: flex;
+  border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
   border-radius: 16px;
+  overflow: hidden;
   background: var(--vscode-button-background);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+  z-index: 1;
+}
+
+.cx-pill[hidden] {
+  display: none;
+}
+
+.cx-pill > button {
+  border: 0;
+  background: transparent;
   color: var(--vscode-button-foreground);
   font: inherit;
   cursor: pointer;
-  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.cx-pill > button:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.cx-pill > button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.cx-pill-show {
+  min-width: 0;
+  padding: 6px 6px 6px 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.cx-pill:hover {
-  background: var(--vscode-button-hoverBackground);
+.cx-pill-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px 0 6px;
 }
 
 /* ---- footer ---- */
@@ -272,7 +333,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--vscode-button-secondaryBackground, var(--vscode-input-border, transparent));
+  border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
   border-radius: 4px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
@@ -295,6 +356,12 @@ body {
 
 .cx-hint {
   font-size: 0.9em;
+}
+
+body.vscode-high-contrast .cx-progress > span:not(.cx-on),
+body.vscode-high-contrast-light .cx-progress > span:not(.cx-on) {
+  background: transparent;
+  border-top: 1px dashed var(--vscode-contrastBorder, currentColor);
 }
 
 body.vscode-high-contrast .cx-step[aria-current='step'],

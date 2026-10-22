@@ -1,0 +1,16 @@
+{
+  "security.workspace.trust.enabled": false,
+  "workbench.startupEditor": "none",
+  "workbench.tips.enabled": false,
+  "workbench.enableExperiments": false,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.ignoreRecommendations": true,
+  "editor.minimap.enabled": false,
+  "window.commandCenter": false,
+  "chat.disableAIFeatures": true,
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "workbench.welcomePage.walkthroughs.openOnInstall": false,
+  "git.openRepositoryInParentFolders": "never",
+  "workbench.colorTheme": "Default Dark Modern"
+}
