@@ -272,10 +272,11 @@ const topOf = (el: Element) => el.getBoundingClientRect().top + frame.el.getBoun
 // ---- messages ----
 
 window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
-  // Only VS Code's webview host speaks for the extension. It posts on the panel's own origin, which VS Code
-  // makes unique per webview; sandboxed frames (widgets) have the opaque origin "null", and the one other
-  // frame on this origin, the content frame, runs no script. (The host's message source isn't window.parent,
-  // so the origin is the check.)
+  // Only VS Code's webview host speaks for the extension. It posts on the panel's own origin, which is shared
+  // only by this extension's explainer panels (all running just this script); sandboxed frames (widgets) have
+  // the opaque origin "null", and the content frame on this origin runs no script. If a same-origin frame
+  // that runs script is ever added, this check is no longer enough. (The host's message source isn't
+  // window.parent, so the origin is the check.)
   if (e.origin !== window.origin) return;
   const m = e.data;
   switch (m.type) {
