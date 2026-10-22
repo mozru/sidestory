@@ -193,7 +193,7 @@ Where a hung widget ends up depends on the process model (§12): with isolated s
 - A widget that steals focus from the editor can receive up to ~200 ms of keystrokes before the panel notices.
 - A widget the reader moves the pointer toward (or across, on the way out of the panel) within ~5 s of pressing J or clicking a panel control can navigate or take focus; stopping this would break "press J, then click the widget that came up".
 - A widget can take focus within ~5 s of a click inside another widget (the panel can't see either click).
-- With touch there are no pointer samples, so a tap on the prose followed within ~5 s by a tap on a widget is refused; the reader taps again. A very fast pointer movement into a widget can skip past the 24 px edge band and be refused; the reader clicks again.
+- With touch there are no pointer samples, so a tap on the prose followed within ~5 s by a tap on a widget is refused; the reader taps again.
 - Refocusing after a focus theft targets the active editor group, even if focus came from the terminal or sidebar.
 - Escape and Tab are seen by widget code first; a widget can hold keyboard focus until the reader clicks elsewhere. VS Code shortcuts don't work while focus is in a widget.
 - Side channels within the shared process.
