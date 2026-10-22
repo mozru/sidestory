@@ -21,7 +21,13 @@
    - [ ] On the host, run `sed -i 's/Three one-line rules/Three tiny rules/' .explain/bit-reader/explainer.html`: the heading changes in the panel without a reload, and your place is kept.
    - [ ] `retry-backoff` shows its small diagram image.
    - [ ] Switch theme (dark → light → high contrast): the panel follows each time.
-5. Repeat step 4 in desktop VS Code locally (F5 in this repo opens an Extension Development Host).
+5. Navigation and Pin (the dialogs have no automated tests yet). Open `overview`:
+   - [ ] Step 2, then **Retry with … in brief** opens a summary in place; **Dive into …** shows that explainer with a trail; **Back** (or <kbd>Esc</kbd>) returns to step 2.
+   - [ ] Reload the window while dived: the panel comes back with its trail.
+   - [ ] Rename `backoffDelay` in `src/retry.ts` and save, then **Code Explainer: Pin Anchors**: the result names each anchor it left and why, then offers a checklist; ticking one pins it, and `manifest.json` keeps its formatting.
+   - [ ] Delete the body of `backoffDelay`: its section offers **Re-anchor to the selected code**; select other lines, click it, confirm: the section links to them.
+   - [ ] Open a v1 manifest (no `quote`): a one-time notice offers **Pin Anchors**.
+6. Repeat steps 4–5 in desktop VS Code locally (F5 in this repo opens an Extension Development Host).
 
 ## Manual: things to watch for
 
