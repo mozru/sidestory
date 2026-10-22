@@ -21,7 +21,10 @@ interface Entry {
 }
 
 export class Assets {
-  /** Loaded files by path (relative to the explainer folder). Failures aren't kept, so a file added later loads. */
+  /**
+   * Loaded files by path (relative to the explainer folder). Failures are kept too, so a missing image
+   * isn't requested on every keystroke; the folder watcher's assetsChanged clears them when files appear.
+   */
   private readonly cache = new Map<string, Promise<Entry | null>>();
   private bytes = 0;
   private inFlight = 0;
@@ -68,9 +71,6 @@ export class Assets {
       if (this.cache.size >= MAX_FILES) return null;
       p = this.fetchLimited(path);
       this.cache.set(path, p);
-      void p.then((entry) => {
-        if (!entry && this.cache.get(path) === p) this.cache.delete(path);
-      });
     }
     return p;
   }

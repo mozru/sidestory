@@ -62,8 +62,9 @@ export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl)
       .replace(/@import[^;]*;?/gi, '')
       // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
       .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(')
-      // Linear-time: each alternative stops at its own delimiter (no backtracking over the input).
-      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^)'"\s]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
+      // Linear-time: each alternative stops at its own delimiter, and the unquoted form can't run on
+      // past another "(" (otherwise "url(url(url(…" backtracks quadratically).
+      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^()'"\s]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
       const u = d ?? s ?? b ?? '';
       const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl, from);
       return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';

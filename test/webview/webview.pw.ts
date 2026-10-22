@@ -400,7 +400,7 @@ test('hostile CSS can neither stall the panel nor sneak URLs past the rewriter',
       <style>.b{background:\\75 rl(https://example.com/x.png)} @\\69mport "https://example.com/y.css"; .c{background:image-set("https://example.com/z.png" 1x)}</style>
       <section data-explain-anchor="state"><h2>still here</h2></section>`,
   });
-  await expect(section(page, 'state').locator('h2')).toHaveText('still here', { timeout: 3000 });
+  await expect(section(page, 'state').locator('h2')).toHaveText('still here', { timeout: 1000 });
   const css = await frame(page).locator('body').evaluate((body) => [...body.ownerDocument.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
   expect(css).not.toContain('example.com/x.png');
   expect(css).not.toMatch(/@import/i);
