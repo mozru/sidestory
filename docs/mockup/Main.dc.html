@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Code Explainer in VS Code</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#3794ff}a:hover{color:#6cb0ff}
+.cx-line:focus-visible,.cx-btn:focus-visible{outline:1px solid #0078d4;outline-offset:-1px}
+.cx-line:hover .cx-ln{opacity:1}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; overflow: hidden; background: {{p.edBg}}; color: {{p.fg}}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 13px">
+
+<!-- title bar -->
+<div style="height: 30px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; background: {{p.titleBg}}; border-bottom: 1px solid {{p.border}}; color: {{p.muted}}; font-size: 12px">
+<div style="position: absolute; left: 12px; display: flex; gap: 8px" aria-hidden="true">
+<div style="width: 12px; height: 12px; border-radius: 6px; background: {{p.dots}}"></div>
+<div style="width: 12px; height: 12px; border-radius: 6px; background: {{p.dots}}"></div>
+<div style="width: 12px; height: 12px; border-radius: 6px; background: {{p.dots}}"></div>
+</div>
+<div>bit_reader.sv · fpga-decoder [SSH: fpga-lab]</div>
+</div>
+
+<div style="flex: 1; min-height: 0; display: flex">
+
+<!-- activity bar -->
+<div style="width: 48px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 6px; background: {{p.actBg}}; border-right: 1px solid {{p.border}}">
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: {{p.faint}}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Explorer"><path d="M14 3H6v18h12V7z"></path><path d="M14 3v4h4"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: {{p.faint}}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Search"><circle cx="10.5" cy="10.5" r="6"></circle><path d="M15 15l5 5"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: {{p.faint}}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Source control"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="8" r="2"></circle><path d="M6 7v10M18 10c0 4-6 3-11 7"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: {{p.fgStrong}}; box-shadow: inset 2px 0 0 {{p.focus}}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Code Explainer"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: {{p.faint}}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Extensions"><rect x="4" y="4" width="7" height="7"></rect><rect x="4" y="13" width="7" height="7"></rect><rect x="13" y="13" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7" transform="rotate(10 17 6)"></rect></svg></div>
+</div>
+
+<!-- sidebar: native TreeView -->
+<div style="width: 240px; flex: none; display: flex; flex-direction: column; background: {{p.sideBg}}; border-right: 1px solid {{p.border}}; font-size: 13px">
+<div style="height: 35px; display: flex; align-items: center; padding: 0 20px; font-size: 11px; letter-spacing: .04em; color: {{p.muted}}">CODE EXPLAINER</div>
+
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; font-size: 11px; font-weight: 700; color: {{p.fg}}">⌄ EXPLAINERS</div>
+<div style="height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 22px; background: {{p.listActive}}; color: {{p.fgStrong}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg><span style="flex: 1">bit-reader</span><span style="color: {{p.muted}}; font-size: 11px">5 steps</span></div>
+<div style="height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 22px; color: {{p.fg}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg><span style="flex: 1">retry-backoff</span><span style="color: {{p.muted}}; font-size: 11px">4 steps</span></div>
+
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; margin-top: 6px; font-size: 11px; font-weight: 700; color: {{p.fg}}">⌄ STEPS</div>
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+<button class="cx-btn" type="button" onClick="{{s.pick}}" style="{{s.treeStyle}}"><span style="{{s.dotStyle}}"></span><span style="flex: 1; text-align: left">{{s.n}}. {{s.short}}</span><span style="color: {{p.muted}}; font-size: 11px">{{s.lines}}</span></button>
+</sc-for>
+
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; margin-top: 6px; font-size: 11px; font-weight: 700; color: {{p.fg}}">⌄ OPEN THREADS</div>
+<div style="display: flex; gap: 6px; padding: 3px 8px 3px 22px; align-items: flex-start"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="margin-top: 2px; flex: none"><path d="M4 5h16v11H9l-5 4z"></path></svg><div style="min-width: 0"><div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Why not a FIFO here?</div><div style="font-size: 11px; color: {{p.muted}}">Step 5 · Claude replied</div></div></div>
+<div style="display: flex; gap: 6px; padding: 3px 8px 3px 22px; align-items: flex-start"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="margin-top: 2px; flex: none"><path d="M4 5h16v11H9l-5 4z"></path></svg><div style="min-width: 0"><div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Is cnt_q wide enough for W=64?</div><div style="font-size: 11px; color: {{p.muted}}">L17 · waiting on you</div></div></div>
+
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; margin-top: 6px; font-size: 11px; font-weight: 700; color: {{p.fg}}">⌄ CLAUDE</div>
+<div style="display: flex; gap: 6px; padding: 3px 8px 3px 22px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 4px; background: {{p.muted}}"></span><span>Idle · decoder-refactor</span></div>
+<div style="flex: 1"></div>
+<div style="padding: 10px 14px; font-size: 11px; color: {{p.muted}}; border-top: 1px solid {{p.border}}">.explain/ is watched. Changes from Claude, teammates or git appear here as they land.</div>
+</div>
+
+<!-- editor group -->
+<div style="width: 560px; flex: none; display: flex; flex-direction: column; border-right: 1px solid {{p.border}}">
+<div style="height: 35px; flex: none; display: flex; background: {{p.tabBar}}">
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 14px; background: {{p.edBg}}; color: {{p.fgStrong}}; box-shadow: inset 0 1px 0 {{p.focus}}; border-right: 1px solid {{p.border}}"><span style="color: {{p.charts.green}}; font-size: 11px; font-weight: 700">SV</span>bit_reader.sv</div>
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 14px; color: {{p.muted}}; border-right: 1px solid {{p.border}}"><span style="color: {{p.charts.blue}}; font-size: 11px; font-weight: 700">TS</span>retry.ts</div>
+</div>
+<div style="height: 22px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 16px; font-size: 12px; color: {{p.muted}}">rtl <span>›</span> bit_reader.sv <span>›</span> bit_reader <span>›</span> {{crumb}}</div>
+<div style="flex: 1; min-height: 0; display: flex; position: relative">
+<div style="flex: 1; min-width: 0; overflow: auto; padding-bottom: 12px; font-family: 'JetBrains Mono', Menlo, Consolas, monospace; font-size: 12px">
+<sc-for list="{{lines}}" as="line" hint-placeholder-count="43">
+<sc-if value="{{line.hasLens}}" hint-placeholder-val="{{ false }}">
+<div style="{{line.lensStyle}}">{{line.lensText}}</div>
+</sc-if>
+<button class="cx-line cx-btn" type="button" aria-label="{{line.label}}" onClick="{{line.pick}}" style="{{line.rowStyle}}"><span style="width: 14px; flex: none; display: flex; align-items: center; justify-content: center"><sc-if value="{{line.hasThread}}" hint-placeholder-val="{{ false }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="{{p.link}}" stroke-width="2.4" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg></sc-if></span><span class="cx-ln" style="{{line.numStyle}}">{{line.n}}</span><span style="white-space: pre; padding-left: 14px"><sc-for list="{{line.segs}}" as="seg"><span style="{{seg.style}}">{{seg.t}}</span></sc-for></span></button>
+</sc-for>
+</div>
+<!-- overview ruler -->
+<div style="width: 14px; flex: none; position: relative; border-left: 1px solid {{p.border}}" aria-hidden="true">
+<sc-for list="{{marks}}" as="m"><div style="{{m.style}}"></div></sc-for>
+</div>
+</div>
+</div>
+
+<!-- explainer webview panel -->
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: {{p.edBg}}">
+<div style="height: 35px; flex: none; display: flex; background: {{p.tabBar}}">
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 14px; background: {{p.edBg}}; color: {{p.fgStrong}}; box-shadow: inset 0 1px 0 {{p.focus}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg>Explainer: bit-reader</div>
+</div>
+
+<!-- webview content -->
+<div style="flex: 1; min-height: 0; display: flex; flex-direction: column">
+<!-- header -->
+<div style="flex: none; padding: 14px 24px 0 24px">
+<div style="display: flex; align-items: flex-start; gap: 12px">
+<div style="flex: 1; min-width: 0">
+<div style="font-size: 18px; font-weight: 600; color: {{p.fgStrong}}">A backward bit reader in five moves</div>
+<div style="display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 12px; color: {{p.muted}}">
+<span>rtl/bit_reader.sv</span><span>·</span><span>written with Claude, edited by moshe</span><span>·</span>
+<span style="display: flex; align-items: center; gap: 4px; color: {{p.ok}}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Linked</span>
+</div>
+</div>
+<button class="cx-btn" type="button" aria-pressed="{{followPressed}}" onClick="{{toggleFollow}}" style="{{followStyle}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg>{{followLabel}}</button>
+</div>
+
+<!-- stepper -->
+<div style="display: flex; gap: 4px; margin-top: 14px" role="tablist" aria-label="Steps">
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+<button class="cx-btn" type="button" role="tab" aria-selected="{{s.ariaSel}}" onClick="{{s.pick}}" style="{{s.pillStyle}}"><span style="{{s.pillBar}}"></span><span style="{{s.pillNum}}">{{s.n}}</span><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.short}}</span></button>
+</sc-for>
+</div>
+
+<!-- story strip -->
+<div style="display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 8px 12px; border-radius: 6px; background: {{p.cardBg}}; border: 1px solid {{p.border}}; font-size: 12px">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{p.muted}}" stroke-width="2" aria-hidden="true"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M8.5 15.5L6 18"></path></svg>
+<span style="color: {{p.fgStrong}}; font-weight: 600">Claude</span>
+<span style="color: {{p.muted}}">idle</span>
+<span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: {{p.fg}}">Last: answered “Why not a FIFO here?” and added a note to step 5 · 10m ago</span>
+<button class="cx-btn" type="button" style="border: 0; background: transparent; color: {{p.link}}; font: inherit; cursor: pointer; padding: 4px 2px">Timeline</button>
+</div>
+</div>
+
+<!-- sections -->
+<div style="flex: 1; min-height: 0; overflow: auto; padding: 12px 24px 16px 24px; display: flex; flex-direction: column; gap: 6px" aria-live="polite">
+<sc-for list="{{before}}" as="s">
+<button class="cx-btn" type="button" onClick="{{s.pick}}" style="{{s.rowStyle}}"><span style="{{s.badgeStyle}}">{{s.n}}</span><span style="flex: 1; min-width: 0; text-align: left"><span style="display: block; color: {{p.fgStrong}}; font-weight: 600">{{s.title}}</span><span style="display: block; color: {{p.muted}}; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.sum}}</span></span><span style="color: {{p.muted}}; font-size: 11px">{{s.lines}}</span></button>
+</sc-for>
+
+<!-- active card -->
+<div style="border-radius: 8px; border: 1px solid {{aBorder}}; background: {{p.cardBg}}; padding: 14px 16px 16px 16px; box-shadow: inset 3px 0 0 {{acc}}">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="width: 22px; height: 22px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: {{acc}}; color: {{p.onAcc}}; font-size: 12px; font-weight: 700; flex: none">{{a.n}}</span>
+<div style="flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: {{p.fgStrong}}">{{a.title}}</div>
+<button class="cx-btn" type="button" style="display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 4px; border: 1px solid {{p.border}}; background: transparent; color: {{p.fg}}; font: inherit; font-size: 11px; cursor: pointer; font-family: 'JetBrains Mono', Menlo, monospace">bit_reader.sv {{a.lines}}</button>
+<span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: {{p.ok}}" title="Anchor matched exactly"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12l4 4 10-10"></path></svg>exact</span>
+</div>
+
+<div style="margin-top: 10px; color: {{p.fg}}; line-height: 1.55">
+
+<sc-if value="{{show1}}" hint-placeholder-val="{{ false }}">
+<div>Bytes arrive <b>last-first</b> from a backward stream; the consumer asks for 1–63 bits at a time and always sees the next bits at the top of <button class="cx-btn" type="button" style="{{refStyle}}">peek</button>.</div>
+<div style="display: flex; align-items: center; gap: 0; margin-top: 14px">
+<div style="width: 110px; flex: none; padding: 10px; border-radius: 6px; border: 1px solid {{p.border}}; text-align: center; font-size: 12px"><div style="font-weight: 600; color: {{p.fgStrong}}">Producer</div><div style="color: {{p.muted}}">backward bytes</div></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 0 6px; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px">
+<div style="border-bottom: 1px solid {{acc}}; color: {{acc}}; text-align: center">in_byte[7:0] →</div>
+<div style="border-bottom: 1px solid {{p.faint}}; color: {{p.muted}}; text-align: center">in_valid →</div>
+<div style="border-bottom: 1px dashed {{p.faint}}; color: {{p.muted}}; text-align: center">← in_ready</div>
+</div>
+<div style="width: 108px; flex: none; padding: 16px 10px; border-radius: 6px; border: 2px solid {{acc}}; text-align: center; font-size: 12px; background: {{accSoft}}"><div style="font-weight: 700; color: {{p.fgStrong}}">bit_reader</div><div style="color: {{p.muted}}; font-family: 'JetBrains Mono', Menlo, monospace">W = 64</div></div>
+<div style="flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 0 6px; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px">
+<div style="border-bottom: 1px dashed {{p.faint}}; color: {{p.muted}}; text-align: center">← rd_bits, rd_en</div>
+<div style="border-bottom: 1px solid {{acc}}; color: {{acc}}; text-align: center">peek[W-1:0] →</div>
+<div style="border-bottom: 1px solid {{p.faint}}; color: {{p.muted}}; text-align: center">avail →</div>
+</div>
+<div style="width: 96px; flex: none; padding: 10px; border-radius: 6px; border: 1px solid {{p.border}}; text-align: center; font-size: 12px"><div style="font-weight: 600; color: {{p.fgStrong}}">Consumer</div><div style="color: {{p.muted}}">1–63 bits</div></div>
+</div>
+<div style="margin-top: 12px; font-size: 12px; color: {{p.muted}}">Highlighted in the code: every use of <span style="font-family: 'JetBrains Mono', Menlo, monospace; color: {{acc}}">in_byte</span> and <span style="font-family: 'JetBrains Mono', Menlo, monospace; color: {{acc}}">peek</span>.</div>
+</sc-if>
+
+<sc-if value="{{show2}}" hint-placeholder-val="{{ false }}">
+<div>Everything lives in two registers: <button class="cx-btn" type="button" style="{{refStyle}}">buf_q</button>, a 64-bit window whose valid bits are packed against the top (MSB), and <button class="cx-btn" type="button" style="{{refStyle}}">cnt_q</button>, how many of them are valid.</div>
+<div style="margin-top: 14px; font-size: 11px; color: {{p.muted}}; display: flex; justify-content: space-between; font-family: 'JetBrains Mono', Menlo, monospace"><span>bit 63 (MSB)</span><span>bit 0</span></div>
+<div style="display: flex; gap: 1px; margin-top: 4px" role="img" aria-label="{{cntAria}}">
+<sc-for list="{{cells2}}" as="c" hint-placeholder-count="64"><div style="{{c.style}}"></div></sc-for>
+</div>
+<div style="display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px">
+<span style="font-family: 'JetBrains Mono', Menlo, monospace; color: {{acc}}">cnt_q = {{cnt}}</span><span style="color: {{p.muted}}">valid bits, top-aligned</span>
+<span style="flex: 1"></span>
+<button class="cx-btn" type="button" onClick="{{read5}}" style="{{smallBtn}}">Read 5 bits</button>
+<button class="cx-btn" type="button" onClick="{{refill8}}" style="{{smallBtn}}">Refill a byte</button>
+<button class="cx-btn" type="button" onClick="{{resetCnt}}" style="{{smallBtn}}">Reset</button>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; font-size: 12px">
+<div style="padding: 10px; border-radius: 6px; border: 1px solid {{p.border}}"><div style="font-family: 'JetBrains Mono', Menlo, monospace; color: {{p.fgStrong}}">buf_q [63:0]</div><div style="color: {{p.muted}}">The window. Reads come off the top.</div></div>
+<div style="padding: 10px; border-radius: 6px; border: 1px solid {{p.border}}"><div style="font-family: 'JetBrains Mono', Menlo, monospace; color: {{p.fgStrong}}">cnt_q [6:0]</div><div style="color: {{p.muted}}">0 to 64 needs 7 bits, not 6.</div></div>
+</div>
+</sc-if>
+
+<sc-if value="{{show3}}" hint-placeholder-val="{{ false }}">
+<div>All three outputs fall straight out of the count. They update live with the window from step 2 (cnt_q = {{cnt}}, rd_bits = 5).</div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px">
+<div style="display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 6px; border: 1px solid {{p.border}}"><div style="flex: 1"><div style="font-weight: 600; color: {{p.fgStrong}}">Take a byte only if it fits</div><div style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{p.muted}}">in_ready = cnt_q ≤ W − 8</div></div><div style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{readyColor}}">{{cnt}} ≤ 56 → {{readyVal}}</div></div>
+<div style="display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 6px; border: 1px solid {{p.border}}"><div style="flex: 1"><div style="font-weight: 600; color: {{p.fgStrong}}">Serve a read only if enough bits are valid</div><div style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{p.muted}}">avail = cnt_q ≥ rd_bits</div></div><div style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{availColor}}">{{cnt}} ≥ 5 → {{availVal}}</div></div>
+<div style="display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 6px; border: 1px solid {{p.border}}"><div style="flex: 1"><div style="font-weight: 600; color: {{p.fgStrong}}">The next bits are always at the top</div><div style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{p.muted}}">peek = buf_q</div></div><div style="font-size: 12px; color: {{p.muted}}">no logic</div></div>
+</div>
+</sc-if>
+
+<sc-if value="{{show4}}" hint-placeholder-val="{{ false }}">
+<div>Reading <button class="cx-btn" type="button" style="{{refStyle}}">rd_bits</button> bits is a left shift: the consumed bits fall off the top and the count drops by the same amount.</div>
+<div style="margin-top: 14px; font-size: 11px; color: {{p.muted}}">Before · cnt = 21</div>
+<div style="display: flex; gap: 1px; margin-top: 4px"><sc-for list="{{cells4a}}" as="c" hint-placeholder-count="64"><div style="{{c.style}}"></div></sc-for></div>
+<div style="margin: 8px 0; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: {{acc}}">b = b &lt;&lt; rd_bits  (5)    c = c − 5</div>
+<div style="font-size: 11px; color: {{p.muted}}">After · cnt = 16</div>
+<div style="display: flex; gap: 1px; margin-top: 4px"><sc-for list="{{cells4b}}" as="c" hint-placeholder-count="64"><div style="{{c.style}}"></div></sc-for></div>
+<div style="display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: {{p.muted}}"><span style="display: flex; align-items: center; gap: 5px"><span style="width: 10px; height: 10px; border-radius: 2px; background: {{acc}}"></span>read this cycle</span><span style="display: flex; align-items: center; gap: 5px"><span style="width: 10px; height: 10px; border-radius: 2px; background: {{p.valid}}"></span>still valid</span></div>
+</sc-if>
+
+<sc-if value="{{show5}}" hint-placeholder-val="{{ false }}">
+<div>A new <button class="cx-btn" type="button" style="{{refStyle}}">in_byte</button> is OR-ed in right under the last valid bit: shifted up by <span style="font-family: 'JetBrains Mono', Menlo, monospace">W − 8 − c</span>. Consume runs first, so a read and a refill can share a cycle.</div>
+<div style="display: flex; gap: 1px; margin-top: 14px"><sc-for list="{{cells5}}" as="c" hint-placeholder-count="64"><div style="{{c.style}}"></div></sc-for></div>
+<div style="display: flex; justify-content: space-between; margin-top: 4px; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px; color: {{p.muted}}"><span>16 valid</span><span style="color: {{acc}}">in_byte &lt;&lt; 40</span><span>empty</span></div>
+<div style="margin-top: 14px; border: 1px solid {{p.border}}; border-radius: 6px; overflow: hidden; font-size: 12px">
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 6px 10px; background: {{p.tabBar}}; color: {{p.muted}}; font-size: 11px"><span>cycle</span><span>read</span><span>byte in</span><span>cnt_q</span><span>note</span></div>
+<sc-for list="{{trace}}" as="r" hint-placeholder-count="4"><div style="{{r.style}}"><span>{{r.c}}</span><span>{{r.rd}}</span><span>{{r.inb}}</span><span>{{r.cnt}}</span><span style="color: {{p.muted}}">{{r.note}}</span></div></sc-for>
+</div>
+<!-- inline thread -->
+<div style="margin-top: 14px; border-top: 1px solid {{p.border}}; padding-top: 12px">
+<div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: {{p.muted}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>2 comments on this step</div>
+<div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px; font-size: 12px">
+<div><span style="font-weight: 600; color: {{p.fgStrong}}">moshe</span> <span style="color: {{p.muted}}">12m</span><div>Why not a FIFO here?</div></div>
+<div style="padding-left: 10px; border-left: 2px solid {{p.claude}}"><span style="font-weight: 600; color: {{p.fgStrong}}">Claude</span> <span style="color: {{p.muted}}">10m · edited this step</span><div>A byte FIFO would still need this shifter to serve 1–63-bit reads. The window already is a FIFO, at bit granularity, so I added the trace table above to show it.</div></div>
+</div>
+</div>
+</sc-if>
+
+</div>
+<div style="display: flex; gap: 8px; margin-top: 14px">
+<button class="cx-btn" type="button" style="{{smallBtn}}">Ask Claude about this step</button>
+<button class="cx-btn" type="button" style="{{smallBtn}}">Comment</button>
+<button class="cx-btn" type="button" style="{{smallBtn}}">Every use of the highlighted names</button>
+</div>
+</div>
+
+<sc-for list="{{after}}" as="s">
+<button class="cx-btn" type="button" onClick="{{s.pick}}" style="{{s.rowStyle}}"><span style="{{s.badgeStyle}}">{{s.n}}</span><span style="flex: 1; min-width: 0; text-align: left"><span style="display: block; color: {{p.fgStrong}}; font-weight: 600">{{s.title}}</span><span style="display: block; color: {{p.muted}}; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.sum}}</span></span><span style="color: {{p.muted}}; font-size: 11px">{{s.lines}}</span></button>
+</sc-for>
+</div>
+
+<!-- footer -->
+<div style="flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 24px 12px 24px; border-top: 1px solid {{p.border}}">
+<button class="cx-btn" type="button" onClick="{{prev}}" aria-label="Previous step" style="{{navBtn}}">‹</button>
+<button class="cx-btn" type="button" onClick="{{next}}" aria-label="Next step" style="{{navBtn}}">›</button>
+<label class="sr" for="ask">Ask Claude</label>
+<input id="ask" type="text" placeholder="{{askPh}}" style="flex: 1; min-width: 0; height: 30px; box-sizing: border-box; padding: 0 10px; border-radius: 4px; border: 1px solid {{p.inputBorder}}; background: {{p.inputBg}}; color: {{p.fg}}; font: inherit">
+<span style="font-size: 11px; color: {{p.muted}}; white-space: nowrap">J / K steps</span>
+</div>
+</div>
+</div>
+</div>
+
+<!-- status bar -->
+<div style="height: 22px; flex: none; display: flex; align-items: stretch; font-size: 12px; background: {{p.statusBg}}; color: {{p.statusFg}}; border-top: 1px solid {{p.border}}">
+<div style="display: flex; align-items: center; padding: 0 10px; background: {{p.focus}}; color: #ffffff">SSH: fpga-lab</div>
+<div style="display: flex; align-items: center; padding: 0 10px">main</div>
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 10px; box-shadow: inset 0 -2px 0 {{acc}}"><span style="width: 8px; height: 8px; border-radius: 4px; background: {{acc}}"></span>Step {{a.n}}/5 · {{a.short}}</div>
+<div style="flex: 1"></div>
+<div style="display: flex; align-items: center; padding: 0 10px">Claude: idle</div>
+<div style="display: flex; align-items: center; padding: 0 10px">Follow: {{followShort}}</div>
+<div style="display: flex; align-items: center; padding: 0 10px">Ln {{a.r0}}, Col 3</div>
+<div style="display: flex; align-items: center; padding: 0 10px">SystemVerilog</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"dim":{"editor":"boolean","default":true},"$preview":{"width":1440,"height":900}}'>
+var CODE = [
+"module bit_reader #(",
+"  parameter int W = 64",
+") (",
+"  input  logic         clk,",
+"  input  logic         rst_n,",
+"  // bytes arrive last-first (backward stream)",
+"  input  logic [7:0]   in_byte,",
+"  input  logic         in_valid,",
+"  output logic         in_ready,",
+"  // consumer side",
+"  input  logic [5:0]   rd_bits,",
+"  input  logic         rd_en,",
+"  output logic [W-1:0] peek,",
+"  output logic         avail",
+");",
+"  logic [W-1:0] buf_q;   // MSB-aligned bit window",
+"  logic [6:0]   cnt_q;   // valid bits in buf_q",
+"",
+"  assign in_ready = (cnt_q <= 7'(W - 8));",
+"  assign avail    = (cnt_q >= 7'(rd_bits));",
+"  assign peek     = buf_q;",
+"",
+"  always_ff @(posedge clk or negedge rst_n) begin",
+"    if (!rst_n) begin",
+"      buf_q <= '0;",
+"      cnt_q <= '0;",
+"    end else begin",
+"      logic [W-1:0] b;",
+"      logic [6:0]   c;",
+"      b = buf_q;  c = cnt_q;",
+"      if (rd_en && avail) begin        // consume from the top",
+"        b = b << rd_bits;",
+"        c = c - 7'(rd_bits);",
+"      end",
+"      if (in_valid && in_ready) begin  // refill below valid bits",
+"        b = b | (W'(in_byte) << (W - 8 - c));",
+"        c = c + 7'd8;",
+"      end",
+"      buf_q <= b;",
+"      cnt_q <= c;",
+"    end",
+"  end",
+"endmodule"
+];
+var STEPS = [
+  {n: 1, title: 'The interface', short: 'Interface', sum: 'Bytes in from a backward stream, bits out from the top.', range: [1, 15], color: 'blue', hl: ['in_byte', 'peek'], threads: 0, crumb: 'ports'},
+  {n: 2, title: 'Two registers hold everything', short: 'State', sum: 'A top-aligned window and a count of valid bits.', range: [16, 17], color: 'green', hl: ['buf_q', 'cnt_q'], threads: 1, crumb: 'buf_q'},
+  {n: 3, title: 'Three one-line rules', short: 'Handshakes', sum: 'Ready, available and peek fall straight out of the count.', range: [19, 21], color: 'yellow', hl: ['cnt_q', 'rd_bits'], threads: 0, crumb: 'assign'},
+  {n: 4, title: 'Consume from the top', short: 'Consume', sum: 'Shift left by the bits read; the count drops.', range: [31, 34], color: 'orange', hl: ['rd_bits', 'b', 'c'], threads: 0, crumb: 'always_ff'},
+  {n: 5, title: 'Refill below the valid bits', short: 'Refill', sum: 'A new byte lands right under the last valid bit.', range: [35, 40], color: 'purple', hl: ['in_byte', 'c'], threads: 2, crumb: 'always_ff'}
+];
+var PAL = {
+  dark: {
+    titleBg: '#1f1f1f', actBg: '#181818', sideBg: '#181818', edBg: '#1f1f1f', tabBar: '#181818', border: '#2b2b2b',
+    fg: '#cccccc', fgStrong: '#e7e7e7', muted: '#9d9d9d', faint: '#6e6e6e', dots: '#3c3c3c', focus: '#0078d4',
+    listActive: '#04395e', cardBg: '#252526', inputBg: '#313131', inputBorder: '#3c3c3c', statusBg: '#181818', statusFg: '#cccccc',
+    link: '#4daafc', ok: '#89d185', bad: '#f48771', valid: '#5a5a5a', empty: '#2f2f2f', onAcc: '#1f1f1f', claude: '#d18616',
+    kw: '#569cd6', ty: '#4ec9b0', cmt: '#6a9955', num: '#b5cea8', id: '#9cdcfe', pun: '#cccccc', lineNo: '#6e7681', lineNoActive: '#cccccc',
+    charts: {blue: '#3794ff', green: '#89d185', yellow: '#cca700', orange: '#d18616', purple: '#b180d7', red: '#f14c4c'}
+  },
+  light: {
+    titleBg: '#f8f8f8', actBg: '#f8f8f8', sideBg: '#f8f8f8', edBg: '#ffffff', tabBar: '#f8f8f8', border: '#e5e5e5',
+    fg: '#3b3b3b', fgStrong: '#1f1f1f', muted: '#6b6b6b', faint: '#8a8a8a', dots: '#d6d6d6', focus: '#005fb8',
+    listActive: '#e4e6f1', cardBg: '#fafafa', inputBg: '#ffffff', inputBorder: '#cecece', statusBg: '#f8f8f8', statusFg: '#3b3b3b',
+    link: '#005fb8', ok: '#2c7a2c', bad: '#b3261e', valid: '#b8b8b8', empty: '#ededed', onAcc: '#ffffff', claude: '#b15f00',
+    kw: '#0000ff', ty: '#267f99', cmt: '#008000', num: '#098658', id: '#001080', pun: '#3b3b3b', lineNo: '#8a8a8a', lineNoActive: '#1f1f1f',
+    charts: {blue: '#1a73d9', green: '#388a34', yellow: '#8a6a00', orange: '#b35900', purple: '#7c3fb0', red: '#c72e2e'}
+  }
+};
+var KW = {module: 'kw', parameter: 'kw', input: 'kw', output: 'kw', assign: 'kw', always_ff: 'kw', posedge: 'kw', negedge: 'kw', or: 'kw', if: 'kw', begin: 'kw', end: 'kw', else: 'kw', endmodule: 'kw', int: 'ty', logic: 'ty'};
+function tok(line) {
+  var out = [];
+  var ci = line.indexOf('//');
+  var code = ci >= 0 ? line.slice(0, ci) : line;
+  var re = /([A-Za-z_][A-Za-z0-9_]*)|(\d+'[dbh]?[0-9a-fA-F]+|'0|\d+)|(\s+)|(.)/g;
+  var m;
+  while ((m = re.exec(code))) {
+    if (m[1]) out.push({t: m[1], k: KW[m[1]] || 'id'});
+    else if (m[2]) out.push({t: m[2], k: 'num'});
+    else out.push({t: m[0], k: 'pun'});
+  }
+  if (ci >= 0) out.push({t: line.slice(ci), k: 'cmt'});
+  return out;
+}
+var TOKS = CODE.map(tok);
+function hexA(h, a) {
+  var n = parseInt(h.slice(1), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+function cell(bg, border) {
+  return 'width: 6px; height: 18px; border-radius: 1px; box-sizing: border-box; background: ' + bg + ';' + (border ? ' border: 1px solid ' + border + ';' : '');
+}
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {step: 4, cnt: 21, follow: false};
+  }
+  renderVals() {
+    var self = this;
+    var st = this.state;
+    var p = PAL[this.props.theme === 'light' ? 'light' : 'dark'];
+    var dim = this.props.dim !== false;
+    var i = st.step;
+    var a = STEPS[i];
+    var acc = p.charts[a.color];
+    var hl = {};
+    a.hl.forEach(function (h) { hl[h] = true; });
+    var lensAt = {};
+    STEPS.forEach(function (s, k) { lensAt[s.range[0]] = k; });
+    var threadLines = {17: true, 35: true};
+    var pick = function (k) { return function () { self.setState({step: k}); }; };
+
+    var lines = CODE.map(function (txt, idx) {
+      var n = idx + 1;
+      var inR = n >= a.range[0] && n <= a.range[1];
+      var owner = -1;
+      STEPS.forEach(function (s, k) { if (n >= s.range[0] && n <= s.range[1]) owner = k; });
+      var segs = TOKS[idx].map(function (tk) {
+        var s = 'color: ' + p[tk.k] + ';';
+        if (tk.k === 'id' && hl[tk.t]) s += ' background: ' + hexA(acc, 0.24) + '; box-shadow: 0 0 0 1px ' + hexA(acc, 0.6) + '; border-radius: 3px;';
+        return {t: tk.t, style: s};
+      });
+      var lk = lensAt[n];
+      var ls = lk !== undefined ? STEPS[lk] : null;
+      var row = 'display: flex; align-items: center; width: 100%; height: 18px; border: 0; margin: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: ' + (owner >= 0 ? 'pointer' : 'text') + ';';
+      if (inR) row += ' background: ' + hexA(acc, 0.13) + '; box-shadow: inset 3px 0 0 ' + acc + ';';
+      else row += ' background: transparent;' + (dim ? ' opacity: .42;' : '');
+      return {
+        n: n, segs: segs, rowStyle: row, label: 'Line ' + n + (owner >= 0 ? ', step ' + (owner + 1) : ''),
+        numStyle: 'width: 28px; flex: none; text-align: right; color: ' + (n === a.range[0] ? p.lineNoActive : p.lineNo) + ';',
+        hasLens: !!ls,
+        lensText: ls ? ('Step ' + ls.n + ' · ' + ls.short + (ls.threads ? '   |   ' + ls.threads + ' comment' + (ls.threads > 1 ? 's' : '') : '') + '   |   Ask Claude') : '',
+        lensStyle: 'height: 16px; line-height: 16px; padding-left: 56px; font-family: -apple-system, system-ui, sans-serif; font-size: 11px; color: ' + (lk === i ? acc : p.muted) + ';' + (lk === i || !dim ? '' : ' opacity: .7;'),
+        hasThread: !!threadLines[n],
+        pick: owner >= 0 ? pick(owner) : function () {}
+      };
+    });
+
+    var marks = STEPS.map(function (s) {
+      return {style: 'position: absolute; left: 3px; right: 3px; top: ' + ((s.range[0] - 1) / 43 * 100) + '%; height: ' + Math.max(1.5, (s.range[1] - s.range[0] + 1) / 43 * 100) + '%; border-radius: 1px; background: ' + p.charts[s.color] + '; opacity: ' + (s === a ? 1 : 0.3) + ';'};
+    });
+    marks.push({style: 'position: absolute; right: 1px; width: 3px; height: 3px; top: 38.5%; background: ' + p.link + ';'});
+    marks.push({style: 'position: absolute; right: 1px; width: 3px; height: 3px; top: 79%; background: ' + p.link + ';'});
+
+    var steps = STEPS.map(function (s, k) {
+      var c = p.charts[s.color];
+      var on = k === i;
+      var done = k < i;
+      return {
+        n: s.n, short: s.short, title: s.title, sum: s.sum, lines: 'L' + s.range[0] + '–' + s.range[1], pick: pick(k), ariaSel: on ? 'true' : 'false',
+        treeStyle: 'display: flex; align-items: center; gap: 8px; width: 100%; height: 22px; padding: 0 8px 0 22px; border: 0; font: inherit; cursor: pointer; color: ' + (on ? p.fgStrong : p.fg) + '; background: ' + (on ? p.listActive : 'transparent') + ';',
+        dotStyle: 'width: 8px; height: 8px; border-radius: 4px; flex: none; background: ' + c + ';',
+        pillStyle: 'flex: 1; min-width: 0; position: relative; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 8px; border-radius: 4px; border: 1px solid ' + (on ? hexA(c, 0.6) : p.border) + '; background: ' + (on ? hexA(c, 0.14) : 'transparent') + '; color: ' + (on ? p.fgStrong : p.muted) + '; font: inherit; font-size: 12px; cursor: pointer; overflow: hidden;',
+        pillBar: 'position: absolute; left: 0; right: 0; top: 0; height: 2px; background: ' + (on || done ? c : 'transparent') + ';',
+        pillNum: 'width: 18px; height: 18px; flex: none; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; ' + (on ? 'background: ' + c + '; color: ' + p.onAcc + ';' : 'border: 1px solid ' + (done ? c : p.faint) + '; color: ' + (done ? c : p.muted) + ';'),
+        rowStyle: 'display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid ' + p.border + '; background: transparent; font: inherit; color: inherit; cursor: pointer;',
+        badgeStyle: 'width: 20px; height: 20px; flex: none; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid ' + c + '; color: ' + c + ';'
+      };
+    });
+
+    var cnt = st.cnt;
+    var green = p.charts.green;
+    var cells2 = [], cells4a = [], cells4b = [], cells5 = [];
+    for (var k = 0; k < 64; k++) {
+      cells2.push({style: k < cnt ? cell(acc) : cell(p.empty)});
+      cells4a.push({style: k < 5 ? cell(acc) : (k < 21 ? cell(p.valid) : cell(p.empty))});
+      cells4b.push({style: k < 16 ? cell(p.valid) : cell(p.empty)});
+      cells5.push({style: k < 16 ? cell(p.valid) : (k < 24 ? cell(acc) : cell(p.empty))});
+    }
+    var traceRows = [
+      {c: '0', rd: '—', inb: '0x3A', cnt: '0 → 8', note: 'first byte'},
+      {c: '1', rd: '—', inb: '0x91', cnt: '8 → 16', note: 'fills under'},
+      {c: '2', rd: '5', inb: '0x07', cnt: '16 → 19', note: 'read + refill'},
+      {c: '3', rd: '6', inb: '—', cnt: '19 → 13', note: 'read only'}
+    ];
+    var trace = traceRows.map(function (r, k) {
+      r.style = 'display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 6px 10px; font-family: \'JetBrains Mono\', Menlo, monospace; border-top: 1px solid ' + p.border + ';' + (k === 2 ? ' background: ' + hexA(acc, 0.12) + ';' : '');
+      return r;
+    });
+
+    var ready = cnt <= 56;
+    var avail = cnt >= 5;
+    var btn = 'height: 26px; padding: 0 10px; border-radius: 4px; border: 1px solid ' + p.inputBorder + '; background: ' + p.inputBg + '; color: ' + p.fg + '; font: inherit; font-size: 12px; cursor: pointer;';
+    var follow = st.follow;
+
+    return {
+      p: p, acc: acc, accSoft: hexA(acc, 0.1), aBorder: hexA(acc, 0.45),
+      a: {n: a.n, title: a.title, short: a.short, lines: 'L' + a.range[0] + '–' + a.range[1], r0: a.range[0]},
+      crumb: a.crumb, lines: lines, marks: marks, steps: steps,
+      before: steps.slice(0, i), after: steps.slice(i + 1),
+      show1: i === 0, show2: i === 1, show3: i === 2, show4: i === 3, show5: i === 4,
+      cnt: cnt, cntAria: cnt + ' of 64 bits valid', cells2: cells2, cells4a: cells4a, cells4b: cells4b, cells5: cells5, trace: trace,
+      readyVal: ready ? 'ready' : 'stall', readyColor: ready ? p.ok : p.bad,
+      availVal: avail ? 'avail' : 'wait', availColor: avail ? p.ok : p.bad,
+      read5: function () { self.setState({cnt: Math.max(0, st.cnt - 5)}); },
+      refill8: function () { if (st.cnt <= 56) self.setState({cnt: st.cnt + 8}); },
+      resetCnt: function () { self.setState({cnt: 21}); },
+      smallBtn: btn,
+      navBtn: btn + ' width: 30px; height: 30px; padding: 0; font-size: 16px;',
+      refStyle: 'border: 0; padding: 0 2px; background: ' + hexA(acc, 0.16) + '; border-radius: 3px; color: ' + acc + '; font-family: \'JetBrains Mono\', Menlo, monospace; font-size: 12px; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;',
+      prev: function () { self.setState({step: Math.max(0, st.step - 1)}); },
+      next: function () { self.setState({step: Math.min(4, st.step + 1)}); },
+      askPh: 'Ask Claude about step ' + a.n + ', or select code and press ⌘⇧E',
+      toggleFollow: function () { self.setState({follow: !st.follow}); },
+      followPressed: follow ? 'true' : 'false',
+      followLabel: follow ? 'Following Claude' : 'Follow Claude',
+      followShort: follow ? 'on' : 'off',
+      followStyle: 'display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 4px; font: inherit; font-size: 12px; cursor: pointer; border: 1px solid ' + (follow ? p.focus : p.inputBorder) + '; background: ' + (follow ? hexA(p.focus, 0.18) : 'transparent') + '; color: ' + (follow ? p.fgStrong : p.fg) + ';'
+    };
+  }
+}
+</script>
+</body>
+</html>

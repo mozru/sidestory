@@ -1,0 +1,23 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-21T20:30:00Z"},
+  "title": "Code Explainer Mockup v2",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 900, "title": "VS Code: explainer linked to code (click steps, lines, buttons)", "is_interactive": true},
+    "Working.dc.html": {"x": 0, "y": 1243, "w": 600, "h": 900, "title": "Claude edits the section you are reading"},
+    "Thread.dc.html": {"x": 680, "y": 1243, "w": 600, "h": 900, "title": "Ask Claude from a code selection"},
+    "Stale.dc.html": {"x": 1360, "y": 1243, "w": 600, "h": 900, "title": "Code drifted: anchor states"},
+    "Narrow.dc.html": {"x": 2040, "y": 1243, "w": 340, "h": 900, "title": "Narrow pane (340px)"},
+    "Review.dc.html": {"x": 0, "y": 2486, "w": 1440, "h": 900, "title": "Review in VS Code: native diff editor, Claude picks the base", "is_interactive": true},
+    "PRViewer.dc.html": {"x": 1520, "y": 2486, "w": 1440, "h": 960, "title": "Later: web viewer for reviewers without VS Code", "expand": "fill", "is_interactive": true}
+  },
+  "order": ["Main.dc.html", "Working.dc.html", "Thread.dc.html", "Stale.dc.html", "Narrow.dc.html", "Review.dc.html", "PRViewer.dc.html"],
+  "notes": {
+    "t_main": {"x": 0, "y": -260, "text": "Code Explainer: the linked editor", "kind": "title1", "maxW": 1440},
+    "t_states": {"x": 0, "y": 983, "text": "Live states: nothing ever needs a reload", "kind": "title1", "maxW": 2380},
+    "t_pr": {"x": 0, "y": 2226, "text": "Code review: native VS Code diff now, web viewer later", "kind": "title1", "maxW": 2960}
+  },
+  "designSystems": []
+}

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Anchor states when code drifts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#4daafc}a:hover{color:#80c2ff}
+</style>
+</helmet>
+<div style="width: 600px; height: 900px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; background: #1f1f1f; color: #cccccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 13px">
+
+<div style="height: 35px; flex: none; display: flex; background: #181818"><div style="display: flex; align-items: center; padding: 0 14px; background: #1f1f1f; color: #e7e7e7; box-shadow: inset 0 1px 0 #0078d4">Explainer: bit-reader</div></div>
+
+<div style="flex: 1; min-height: 0; padding: 16px 24px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 12px; color: #9d9d9d; line-height: 1.5">Anchors re-resolve as you type, without saving. Each section shows its own state; nothing needs a refresh command.</div>
+
+<!-- exact -->
+<div style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; border: 1px solid #2b2b2b">
+<span style="width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid #3794ff; color: #3794ff">1</span>
+<div style="flex: 1; color: #e7e7e7; font-weight: 600">The interface</div>
+<span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #89d185"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12l4 4 10-10"></path></svg>exact</span>
+</div>
+
+<!-- moved -->
+<div style="display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; border: 1px solid #2b2b2b">
+<span style="width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid #89d185; color: #89d185">2</span>
+<div style="flex: 1; color: #e7e7e7; font-weight: 600">Two registers hold everything</div>
+<span style="font-size: 11px; color: #9d9d9d">moved L16 → L19 · followed silently</span>
+</div>
+
+<!-- changed -->
+<div style="padding: 10px 12px; border-radius: 6px; border: 1px solid #2b2b2b; box-shadow: inset 3px 0 0 #cca700">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid #cca700; color: #cca700">3</span>
+<div style="flex: 1; color: #e7e7e7; font-weight: 600">Three one-line rules</div>
+<span style="font-size: 11px; color: #cca700">changed · you are editing</span>
+</div>
+<div style="margin-top: 6px; padding-left: 30px; font-size: 12px; color: #9d9d9d">The code under this step has unsaved edits. The text may lag behind until you save.</div>
+</div>
+
+<!-- stale -->
+<div style="padding: 12px; border-radius: 6px; border: 1px dashed #d18616; background: #2a2420">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px dashed #d18616; color: #d18616">4</span>
+<div style="flex: 1; color: #e7e7e7; font-weight: 600">Consume from the top</div>
+<span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: #e8a54a"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17v.5"></path></svg>out of date</span>
+</div>
+<div style="margin-top: 8px; padding-left: 30px; font-size: 12px; line-height: 1.5">The code this step explains changed after you saved. Claude can rewrite the step from the diff.</div>
+<div style="margin: 8px 0 0 30px; border-radius: 4px; border: 1px solid #2b2b2b; background: #1a1a1a; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px; overflow: hidden">
+<div style="padding: 3px 8px; background: rgba(241,76,76,.12); color: #f48771; white-space: pre">-        b = b &lt;&lt; rd_bits;</div>
+<div style="padding: 3px 8px; background: rgba(137,209,133,.12); color: #89d185; white-space: pre">+        b = (b &lt;&lt; rd_bits) &amp; MASK;</div>
+</div>
+<div style="display: flex; gap: 8px; margin: 10px 0 0 30px">
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 4px; border: 0; background: #0078d4; color: #ffffff; font: inherit; font-size: 12px">Ask Claude to refresh</button>
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 4px; border: 1px solid #3c3c3c; background: #313131; color: #cccccc; font: inherit; font-size: 12px">Still accurate</button>
+</div>
+</div>
+
+<!-- lost -->
+<div style="padding: 12px; border-radius: 6px; border: 1px solid #5a1d1d; background: #2b1a1a">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1px solid #f48771; color: #f48771">5</span>
+<div style="flex: 1; color: #e7e7e7; font-weight: 600">Refill below the valid bits</div>
+<span style="font-size: 11px; color: #f48771">code not found</span>
+</div>
+<div style="margin-top: 8px; padding-left: 30px; font-size: 12px; line-height: 1.5">The refill block is gone from bit_reader.sv. Showing the last known version; the 2 comments on it are kept.</div>
+<div style="margin: 8px 0 0 30px; border-radius: 4px; border: 1px solid #2b2b2b; background: #1a1a1a; padding: 6px 8px; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px; color: #6e7681; white-space: pre">if (in_valid &amp;&amp; in_ready) begin  // refill…
+  b = b | (W'(in_byte) &lt;&lt; (W - 8 - c));</div>
+<div style="margin: 8px 0 0 30px; font-size: 12px; color: #cccccc">Best guess: <span style="font-family: 'JetBrains Mono', Menlo, monospace; color: #4daafc">rtl/refill.sv L12–18</span> (71% match)</div>
+<div style="display: flex; gap: 8px; margin: 10px 0 0 30px">
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 4px; border: 0; background: #0078d4; color: #ffffff; font: inherit; font-size: 12px">Re-link here</button>
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 4px; border: 1px solid #3c3c3c; background: #313131; color: #cccccc; font: inherit; font-size: 12px">Ask Claude to repair</button>
+<button type="button" style="height: 26px; padding: 0 10px; border-radius: 4px; border: 1px solid #3c3c3c; background: #313131; color: #cccccc; font: inherit; font-size: 12px">Pick lines…</button>
+</div>
+</div>
+
+<div style="flex: 1"></div>
+<!-- legend -->
+<div style="border-top: 1px solid #2b2b2b; padding-top: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; font-size: 12px">
+<div><span style="color: #89d185">exact</span> <span style="color: #9d9d9d">· same text, same place</span></div>
+<div><span style="color: #cccccc">moved</span> <span style="color: #9d9d9d">· same text, new lines</span></div>
+<div><span style="color: #cca700">changed</span> <span style="color: #9d9d9d">· small edit, still found</span></div>
+<div><span style="color: #e8a54a">out of date</span> <span style="color: #9d9d9d">· big edit, needs a look</span></div>
+<div><span style="color: #f48771">not found</span> <span style="color: #9d9d9d">· shows last known code</span></div>
+<div><span style="color: #9d9d9d">Shapes and labels differ too, not only color.</span></div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":600,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

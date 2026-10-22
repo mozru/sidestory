@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review in VS Code with the native diff editor</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#4daafc}a:hover{color:#80c2ff}
+.rv-btn:focus-visible{outline:1px solid #0078d4;outline-offset:-1px}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; position: relative; display: flex; flex-direction: column; overflow: hidden; background: #1f1f1f; color: #cccccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 13px">
+
+<!-- title bar -->
+<div style="height: 30px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; background: #1f1f1f; border-bottom: 1px solid #2b2b2b; color: #9d9d9d; font-size: 12px">
+<div style="position: absolute; left: 12px; display: flex; gap: 8px" aria-hidden="true"><div style="width: 12px; height: 12px; border-radius: 6px; background: #3c3c3c"></div><div style="width: 12px; height: 12px; border-radius: 6px; background: #3c3c3c"></div><div style="width: 12px; height: 12px; border-radius: 6px; background: #3c3c3c"></div></div>
+<div>Reviewing #142 · fpga-decoder [SSH: fpga-lab]</div>
+</div>
+
+<div style="flex: 1; min-height: 0; display: flex">
+
+<!-- activity bar -->
+<div style="width: 48px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 6px; background: #181818; border-right: 1px solid #2b2b2b">
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: #6e6e6e"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Explorer"><path d="M14 3H6v18h12V7z"></path><path d="M14 3v4h4"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: #6e6e6e"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Source control"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="8" r="2"></circle><path d="M6 7v10M18 10c0 4-6 3-11 7"></path></svg></div>
+<div style="width: 48px; height: 44px; display: flex; align-items: center; justify-content: center; color: #e7e7e7; box-shadow: inset 2px 0 0 #0078d4"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="Code Explainer"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg></div>
+</div>
+
+<!-- sidebar: review tree -->
+<div style="width: 200px; flex: none; display: flex; flex-direction: column; background: #181818; border-right: 1px solid #2b2b2b">
+<div style="height: 35px; display: flex; align-items: center; padding: 0 16px; font-size: 11px; letter-spacing: .04em; color: #9d9d9d">CODE EXPLAINER</div>
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; font-size: 11px; font-weight: 700">⌄ REVIEW #142</div>
+<div style="padding: 2px 8px 6px 22px; font-size: 11px; color: #9d9d9d">{{base}} → a71c0d4 · {{baseShort}}</div>
+<div style="height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 22px; background: #04395e; color: #e7e7e7"><span style="flex: 1">bit_reader.sv</span><span style="font-size: 11px; color: #cca700">M</span></div>
+<sc-if value="{{tbChanged}}" hint-placeholder-val="{{ true }}">
+<div style="height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 22px"><span style="flex: 1">tb_bit_reader.sv</span><span style="font-size: 11px; color: #cca700">M</span></div>
+</sc-if>
+<sc-if value="{{portChanged}}" hint-placeholder-val="{{ true }}">
+<div style="height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 22px"><span style="flex: 1">decoder_top.sv</span><span style="font-size: 11px; color: #cca700">M</span></div>
+</sc-if>
+<div style="height: 22px; display: flex; align-items: center; padding: 0 8px; margin-top: 8px; font-size: 11px; font-weight: 700">⌄ OPEN THREADS</div>
+<div style="padding: 3px 8px 3px 22px"><div>7-bit counter with +16?</div><div style="font-size: 11px; color: #9d9d9d">dana · Claude replied</div></div>
+<div style="flex: 1"></div>
+<div style="padding: 10px 14px; font-size: 11px; color: #9d9d9d; border-top: 1px solid #2b2b2b">The diff is VS Code’s own editor. Code Explainer picks the base, serves old file versions, and adds step colors, end-of-line labels and threads.</div>
+</div>
+
+<!-- native diff editor -->
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid #2b2b2b">
+<div style="height: 35px; flex: none; display: flex; align-items: stretch; background: #181818">
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 14px; background: #1f1f1f; color: #e7e7e7; box-shadow: inset 0 1px 0 #0078d4; white-space: nowrap"><span style="color: #89d185; font-size: 11px; font-weight: 700">SV</span>{{tabTitle}}</div>
+<div style="flex: 1"></div>
+<sc-if value="{{showDiff}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; align-items: center; gap: 2px; padding-right: 8px">
+<button class="rv-btn" type="button" aria-label="Previous change" style="width: 28px; height: 26px; border: 0; border-radius: 4px; background: transparent; color: #cccccc; font: inherit; cursor: pointer">↑</button>
+<button class="rv-btn" type="button" aria-label="Next change" style="width: 28px; height: 26px; border: 0; border-radius: 4px; background: transparent; color: #cccccc; font: inherit; cursor: pointer">↓</button>
+<button class="rv-btn" type="button" aria-label="Toggle inline view" aria-pressed="{{inlinePressed}}" onClick="{{toggleInline}}" style="{{inlineBtn}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><path d="M12 4v16"></path></svg></button>
+</div>
+</sc-if>
+</div>
+
+<sc-if value="{{isCode}}" hint-placeholder-val="{{ false }}">
+<div style="flex: 1; min-height: 0; overflow: auto; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11.5px; line-height: 19px; padding-top: 4px">
+<sc-for list="{{codeLines}}" as="r" hint-placeholder-count="43"><div style="{{r.style}}"><span style="{{r.gut}}"></span><span style="{{r.numStyle}}">{{r.n}}</span><span>{{r.text}}</span><span style="{{r.tagStyle}}">{{r.tag}}</span></div></sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{isSplit}}" hint-placeholder-val="{{ true }}">
+<div style="flex: 1; min-height: 0; overflow: auto; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11.5px; line-height: 19px; padding-top: 4px">
+<sc-for list="{{split}}" as="r" hint-placeholder-count="14">
+<sc-if value="{{r.isPair}}" hint-placeholder-val="{{ true }}"><div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr))"><div style="{{r.l.style}}"><span style="{{r.l.numStyle}}">{{r.l.n}}</span><span>{{r.l.text}}</span></div><div style="{{r.r.style}}"><span style="{{r.r.numStyle}}">{{r.r.n}}</span><span>{{r.r.text}}</span><span style="{{r.r.tagStyle}}">{{r.r.tag}}</span></div></div></sc-if>
+<sc-if value="{{r.isLens}}" hint-placeholder-val="{{ false }}"><div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr))"><div style="border-right: 1px solid #2b2b2b"></div><div style="{{r.style}}">{{r.text}}</div></div></sc-if>
+<sc-if value="{{r.isFold}}" hint-placeholder-val="{{ false }}"><div style="display: flex; align-items: center; justify-content: center; height: 22px; margin: 2px 0; background: #252526; color: #9d9d9d; font-family: -apple-system, system-ui, sans-serif; font-size: 11px">⌄ {{r.text}}</div></sc-if>
+<sc-if value="{{r.isComment}}" hint-placeholder-val="{{ false }}"><div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr))"><div style="border-right: 1px solid #2b2b2b"></div><div style="margin: 4px 10px 6px 40px; border: 1px solid #2b2b2b; border-top: 2px solid #0078d4; border-radius: 4px; background: #252526; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; line-height: 1.5"><div style="padding: 5px 10px; border-bottom: 1px solid #2b2b2b; color: #9d9d9d">PR thread · L36</div><div style="padding: 6px 10px"><b style="color: #e7e7e7">dana</b> Does the 7-bit counter still fit with +16?</div><div style="padding: 0 10px 8px 10px"><div style="padding-left: 8px; border-left: 2px solid #d18616"><b style="color: #e7e7e7">Claude</b> Yes: ready caps cnt_q at 48, so it tops out at 64.</div></div></div></div></sc-if>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{isInline}}" hint-placeholder-val="{{ false }}">
+<div style="flex: 1; min-height: 0; overflow: auto; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11.5px; line-height: 19px; padding-top: 4px">
+<sc-for list="{{uni}}" as="r" hint-placeholder-count="14">
+<sc-if value="{{r.isLine}}" hint-placeholder-val="{{ true }}"><div style="{{r.style}}"><span style="{{r.numStyle}}">{{r.n}}</span><span>{{r.text}}</span><span style="{{r.tagStyle}}">{{r.tag}}</span></div></sc-if>
+<sc-if value="{{r.isLens}}" hint-placeholder-val="{{ false }}"><div style="{{r.style}}">{{r.text}}</div></sc-if>
+<sc-if value="{{r.isFold}}" hint-placeholder-val="{{ false }}"><div style="display: flex; align-items: center; justify-content: center; height: 22px; margin: 2px 0; background: #252526; color: #9d9d9d; font-family: -apple-system, system-ui, sans-serif; font-size: 11px">⌄ {{r.text}}</div></sc-if>
+<sc-if value="{{r.isComment}}" hint-placeholder-val="{{ false }}"><div style="margin: 4px 10px 6px 76px; border: 1px solid #2b2b2b; border-top: 2px solid #0078d4; border-radius: 4px; background: #252526; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; line-height: 1.5"><div style="padding: 5px 10px; border-bottom: 1px solid #2b2b2b; color: #9d9d9d">PR thread · L36</div><div style="padding: 6px 10px"><b style="color: #e7e7e7">dana</b> Does the 7-bit counter still fit with +16?</div><div style="padding: 0 10px 8px 10px"><div style="padding-left: 8px; border-left: 2px solid #d18616"><b style="color: #e7e7e7">Claude</b> Yes: ready caps cnt_q at 48, so it tops out at 64.</div></div></div></sc-if>
+</sc-for>
+</div>
+</sc-if>
+</div>
+
+<!-- explainer pane -->
+<div style="width: 400px; flex: none; display: flex; flex-direction: column; background: #1f1f1f">
+<div style="height: 35px; flex: none; display: flex; background: #181818"><div style="display: flex; align-items: center; padding: 0 14px; background: #1f1f1f; color: #e7e7e7; box-shadow: inset 0 1px 0 #0078d4">Explainer: #142</div></div>
+<div style="flex: 1; min-height: 0; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px">
+
+<!-- compare card -->
+<div style="border: 1px solid #2b2b2b; border-radius: 8px; background: #252526; padding: 12px">
+<div style="display: flex; align-items: center; gap: 8px">
+<span style="font-weight: 600; color: #e7e7e7">Changes</span>
+<span style="flex: 1; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; color: #9d9d9d">{{base}} → a71c0d4</span>
+<div role="group" aria-label="Editor view" style="display: flex; border: 1px solid #3c3c3c; border-radius: 4px; overflow: hidden">
+<button class="rv-btn" type="button" aria-pressed="{{diffPressed}}" onClick="{{viewDiff}}" style="{{diffBtn}}">Diff</button>
+<button class="rv-btn" type="button" aria-pressed="{{codePressed}}" onClick="{{viewCode}}" style="{{codeBtn}}">Code only</button>
+</div>
+</div>
+<div style="margin-top: 6px; font-size: 11px; color: #9d9d9d">{{viewHint}}</div>
+<sc-if value="{{byClaude}}" hint-placeholder-val="{{ true }}">
+<div style="margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.5"><span style="flex: none; padding: 1px 7px; border-radius: 9px; background: rgba(209,134,22,.18); color: #e8a54a; font-size: 11px; font-weight: 600">Claude picked</span><span>{{reason}}</span></div>
+</sc-if>
+<sc-if value="{{byYou}}" hint-placeholder-val="{{ false }}">
+<div style="margin-top: 8px; display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.5"><span style="flex: none; padding: 1px 7px; border-radius: 9px; background: #313131; color: #cccccc; font-size: 11px; font-weight: 600">You picked</span><span style="flex: 1">{{reason}}</span><button class="rv-btn" type="button" onClick="{{letClaude}}" style="flex: none; border: 0; background: transparent; color: #4daafc; font: inherit; font-size: 12px; cursor: pointer; padding: 0">Let Claude pick</button></div>
+</sc-if>
+<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px">
+<button class="rv-btn" type="button" aria-pressed="{{mainPressed}}" onClick="{{pickMain}}" style="{{mainBtn}}">Whole PR vs main</button>
+<button class="rv-btn" type="button" aria-pressed="{{revPressed}}" onClick="{{pickReviewed}}" style="{{revBtn}}">Since my last review</button>
+<button class="rv-btn" type="button" onClick="{{openPick}}" style="{{pickBtn}}">Other commit…</button>
+</div>
+</div>
+
+<div style="font-size: 12px; color: #9d9d9d">{{x.kicker}}</div>
+<div style="font-size: 16px; font-weight: 600; color: #e7e7e7; margin-top: -4px">{{x.title}}</div>
+<div style="line-height: 1.55">{{x.lede}}</div>
+
+<sc-for list="{{x.cards}}" as="c" hint-placeholder-count="3">
+<div style="{{c.style}}">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="{{c.badge}}">{{c.n}}</span>
+<div style="flex: 1; min-width: 0"><div style="font-weight: 600; color: #e7e7e7">{{c.title}}</div><div style="font-size: 12px; color: #9d9d9d">{{c.sub}}</div></div>
+<span style="font-family: 'JetBrains Mono', Menlo, monospace; font-size: 11px; color: #9d9d9d">{{c.lines}}</span>
+</div>
+<sc-if value="{{c.hasBA}}" hint-placeholder-val="{{ false }}">
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 10px; font-size: 12px">
+<div style="padding: 8px; border-radius: 6px; background: rgba(241,76,76,.12)"><div style="font-size: 11px; color: #f48771">Before</div><div style="font-family: 'JetBrains Mono', Menlo, monospace; margin-top: 2px">{{c.before}}</div></div>
+<div style="padding: 8px; border-radius: 6px; background: rgba(137,209,133,.12)"><div style="font-size: 11px; color: #89d185">After</div><div style="font-family: 'JetBrains Mono', Menlo, monospace; margin-top: 2px">{{c.after}}</div></div>
+</div>
+<div style="margin-top: 8px; font-size: 12px; line-height: 1.5">{{c.note}}</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+
+<!-- status bar -->
+<div style="height: 22px; flex: none; display: flex; align-items: stretch; font-size: 12px; background: #181818; border-top: 1px solid #2b2b2b">
+<div style="display: flex; align-items: center; padding: 0 10px; background: #0078d4; color: #ffffff">SSH: fpga-lab</div>
+<div style="display: flex; align-items: center; padding: 0 10px">feature/wide-refill</div>
+<div style="display: flex; align-items: center; padding: 0 10px">{{statusView}}: {{base}} → a71c0d4</div>
+<div style="flex: 1"></div>
+<div style="display: flex; align-items: center; padding: 0 10px">{{changeCount}}</div>
+<div style="display: flex; align-items: center; padding: 0 10px">Claude: idle</div>
+</div>
+
+<!-- native QuickPick -->
+<sc-if value="{{pickOpen}}" hint-placeholder-val="{{ false }}">
+<div style="position: absolute; top: 36px; left: 50%; transform: translateX(-50%); width: 560px; border-radius: 6px; border: 1px solid #3c3c3c; background: #252526; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 6px; font-size: 13px">
+<label for="qp" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Compare a71c0d4 against</label>
+<input id="qp" type="text" placeholder="Compare a71c0d4 against… (branch, tag or commit)" style="width: 100%; box-sizing: border-box; height: 28px; padding: 0 8px; border-radius: 3px; border: 1px solid #0078d4; background: #313131; color: #cccccc; font: inherit">
+<div style="margin-top: 6px; display: flex; flex-direction: column">
+<sc-for list="{{qpItems}}" as="q" hint-placeholder-count="4">
+<button class="rv-btn" type="button" onClick="{{q.pick}}" style="{{q.style}}"><span style="font-family: 'JetBrains Mono', Menlo, monospace; color: #e7e7e7">{{q.id}}</span><span style="flex: 1; text-align: left">{{q.label}}</span><span style="font-size: 11px; color: #9d9d9d">{{q.hint}}</span></button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+var BLUE = '#3794ff', YELLOW = '#cca700', PURPLE = '#b180d7';
+var LENS = {};
+LENS[BLUE] = 'Step 1 · A wider port';
+LENS[YELLOW] = 'Step 2 · Ready needs 16 free bits';
+LENS[PURPLE] = 'Step 3 · Refill · 1 comment';
+// End-of-line decoration text: works in diff editors by default (CodeLens there is off unless diffEditor.codeLens is set).
+function tagOn(row, c) {
+  row.tag = '   ◂ ' + LENS[c];
+  row.tagStyle = 'color: ' + c + '; font-family: -apple-system, system-ui, sans-serif; font-size: 11px; opacity: .9;';
+  return row;
+}
+var READY_OLD = "  assign in_ready = (cnt_q <= 7'(W - 8));";
+var READY_NEW = "  assign in_ready = (cnt_q <= 7'(W - 16));";
+var REFILL_NEW = [[36, "        b = b | (W'(in_word) << (W - 16 - c));"], [37, "        c = c + 7'd16;"]];
+var DIFFS = {
+  '4c1e0b2': {short: 'whole PR', files: 3, blocks: [
+    {t: 'ctx', lines: [[6, 6, '  // bytes arrive last-first (backward stream)']]},
+    {t: 'chg', c: BLUE, del: [[7, '  input  logic [7:0]   in_byte,']], add: [[7, '  input  logic [15:0]  in_word,']]},
+    {t: 'ctx', lines: [[8, 8, '  input  logic         in_valid,']]},
+    {t: 'fold', text: '10 hidden lines'},
+    {t: 'chg', c: YELLOW, del: [[19, READY_OLD]], add: [[19, READY_NEW]]},
+    {t: 'fold', text: '15 hidden lines'},
+    {t: 'ctx', lines: [[35, 35, '      if (in_valid && in_ready) begin']]},
+    {t: 'chg', c: PURPLE, comment: true, del: [[36, "        b = b | (W'(in_byte) << (W - 8 - c));"], [37, "        c = c + 7'd8;"]], add: REFILL_NEW},
+    {t: 'ctx', lines: [[38, 38, '      end'], [39, 39, '      buf_q <= b;']]}
+  ]},
+  '3b9a0f1': {short: 'since 3b9a0f1', files: 2, blocks: [
+    {t: 'ctx', lines: [[18, 18, '']]},
+    {t: 'chg', c: YELLOW, del: [[19, READY_OLD]], add: [[19, READY_NEW]]},
+    {t: 'fold', text: '15 hidden lines'},
+    {t: 'ctx', lines: [[35, 35, '      if (in_valid && in_ready) begin']]},
+    {t: 'chg', c: PURPLE, comment: true, del: [[36, "        b = b | (W'(in_word[7:0]) << (W - 8 - c));"], [37, "        c = c + 7'd8;"]], add: REFILL_NEW},
+    {t: 'ctx', lines: [[38, 38, '      end']]}
+  ]},
+  '9f3e2c1': {short: 'since your review', files: 2, blocks: [
+    {t: 'ctx', lines: [[17, 17, '  logic [6:0]   cnt_q;   // valid bits in buf_q'], [18, 18, '']]},
+    {t: 'chg', c: YELLOW, del: [[19, "  assign in_ready = (cnt_q < 7'(W - 16));"]], add: [[19, READY_NEW]]},
+    {t: 'ctx', lines: [[20, 20, "  assign avail    = (cnt_q >= 7'(rd_bits));"], [21, 21, '  assign peek     = buf_q;']]},
+    {t: 'fold', text: '21 hidden lines'}
+  ]}
+};
+var EXPL = {
+  '4c1e0b2': {kicker: 'The whole PR, in three steps', title: 'The reader now takes two bytes per beat', lede: 'Input bandwidth doubles. The window logic is the same idea with 16 in place of 8.', cards: [
+    {n: 1, c: BLUE, title: 'A wider port', sub: 'in_byte becomes in_word[15:0]', lines: 'L7'},
+    {n: 2, c: YELLOW, title: 'Ready needs 16 free bits', sub: 'The producer stalls 8 bits earlier', lines: 'L19', before: 'cnt_q ≤ 56', after: 'cnt_q ≤ 48', note: 'Throughput still doubles because each accepted beat brings 16 bits.'},
+    {n: 3, c: PURPLE, title: 'Refill lands 16 bits under the top', sub: 'Shift by W − 16 − c · 1 thread', lines: 'L35–38'}
+  ]},
+  '3b9a0f1': {kicker: 'Since 3b9a0f1, in two steps', title: 'Ready and refill catch up with the wider port', lede: '3b9a0f1 widened the port but still used only its low byte. These two steps finish the job.', cards: [
+    {n: 2, c: YELLOW, title: 'Ready needs 16 free bits', sub: 'The producer stalls 8 bits earlier', lines: 'L19', before: 'cnt_q ≤ 56', after: 'cnt_q ≤ 48', note: 'Each accepted beat now brings 16 bits, so it needs 16 bits of room.'},
+    {n: 3, c: PURPLE, title: 'Use the whole word', sub: 'in_word[7:0] becomes in_word · 1 thread', lines: 'L35–38'}
+  ]},
+  '9f3e2c1': {kicker: 'Since your last review', title: 'One fix: ready was one bit too strict', lede: 'Only step 2 changed. Everything else is as you approved it.', cards: [
+    {n: 2, c: YELLOW, title: 'Ready allows exactly 48 bits', sub: 'An off-by-one in the threshold', lines: 'L19', before: 'cnt_q < 48', after: 'cnt_q ≤ 48', note: 'At 48 valid bits there is room for exactly 16 more. The old check stalled one beat early.'}
+  ]}
+};
+var REASONS = {
+  '4c1e0b2': 'Every change in the PR against main.',
+  '3b9a0f1': 'What changed after “Widen input to 16 bits”.',
+  '9f3e2c1': 'You reviewed 9f3e2c1 yesterday. One push landed since, and it touches only step 2.'
+};
+var CLAUDE_PICK = '9f3e2c1';
+var HEAD = [
+"module bit_reader #(", "  parameter int W = 64", ") (", "  input  logic         clk,", "  input  logic         rst_n,",
+"  // bytes arrive last-first (backward stream)", "  input  logic [15:0]  in_word,", "  input  logic         in_valid,", "  output logic         in_ready,",
+"  // consumer side", "  input  logic [5:0]   rd_bits,", "  input  logic         rd_en,", "  output logic [W-1:0] peek,", "  output logic         avail", ");",
+"  logic [W-1:0] buf_q;   // MSB-aligned bit window", "  logic [6:0]   cnt_q;   // valid bits in buf_q", "",
+"  assign in_ready = (cnt_q <= 7'(W - 16));", "  assign avail    = (cnt_q >= 7'(rd_bits));", "  assign peek     = buf_q;", "",
+"  always_ff @(posedge clk or negedge rst_n) begin", "    if (!rst_n) begin", "      buf_q <= '0;", "      cnt_q <= '0;", "    end else begin",
+"      logic [W-1:0] b;", "      logic [6:0]   c;", "      b = buf_q;  c = cnt_q;", "      if (rd_en && avail) begin        // consume from the top",
+"        b = b << rd_bits;", "        c = c - 7'(rd_bits);", "      end", "      if (in_valid && in_ready) begin  // refill below valid bits",
+"        b = b | (W'(in_word) << (W - 16 - c));", "        c = c + 7'd16;", "      end", "      buf_q <= b;", "      cnt_q <= c;", "    end", "  end", "endmodule"
+];
+// Lines changed since each base (gutter marks come from a quick diff provider pointed at that base).
+var CHANGED = {'4c1e0b2': [7, 19, 36, 37], '3b9a0f1': [19, 36, 37], '9f3e2c1': [19]};
+var STEP_OF = {7: BLUE, 19: YELLOW, 36: PURPLE, 37: PURPLE};
+var FIRST_OF_STEP = {7: true, 19: true, 36: true};
+function codeLines(base) {
+  var changed = {};
+  CHANGED[base].forEach(function (n) { changed[n] = true; });
+  return HEAD.map(function (t, i) {
+    var n = i + 1, ch = !!changed[n], c = STEP_OF[n];
+    var row = {n: String(n), text: t, tag: '', tagStyle: '',
+      style: 'display: flex; white-space: pre; overflow: hidden; height: 19px;',
+      gut: 'width: 3px; flex: none; margin-right: 4px; background: ' + (ch ? '#1b81a8' : 'transparent') + ';',
+      numStyle: num(ch ? '#cccccc' : '#6e7681')};
+    if (ch) row.style = 'display: flex; white-space: pre; overflow: hidden; height: 19px; box-shadow: inset 0 0 0 9999px ' + hexA(c, 0.08) + ';';
+    if (ch && FIRST_OF_STEP[n]) tagOn(row, c);
+    return row;
+  });
+}
+function hexA(h, a) {
+  var v = parseInt(h.slice(1), 16);
+  return 'rgba(' + ((v >> 16) & 255) + ',' + ((v >> 8) & 255) + ',' + (v & 255) + ',' + a + ')';
+}
+var ADD = 'rgba(155,185,85,.20)', DEL = 'rgba(255,0,0,.20)';
+var FILL = 'repeating-linear-gradient(135deg, #1f1f1f 0 5px, #2a2a2a 5px 6px)';
+function num(color) { return 'width: 34px; flex: none; text-align: right; padding-right: 10px; color: ' + color + ';'; }
+function cell(kind, n, text, accent, side) {
+  var s = 'display: flex; white-space: pre; overflow: hidden; height: 19px;';
+  if (side === 'l') s += ' border-right: 1px solid #2b2b2b;';
+  if (n === null) return {style: s + ' background: ' + FILL + ';', numStyle: num('#6e7681'), n: '', text: ' ', tag: '', tagStyle: ''};
+  if (kind === 'add') s += ' background: ' + ADD + ';';
+  if (kind === 'del') s += ' background: ' + DEL + ';';
+  if (accent && side === 'r') s += ' box-shadow: inset 3px 0 0 ' + accent + ';';
+  return {style: s, numStyle: num('#6e7681'), n: String(n), text: text, tag: '', tagStyle: ''};
+}
+function lens(c, inline) {
+  return {isPair: false, isLine: false, isLens: true, isFold: false, isComment: false, text: LENS[c],
+    style: 'height: 16px; line-height: 16px; padding-left: ' + (inline ? 78 : 44) + 'px; font-family: -apple-system, system-ui, sans-serif; font-size: 11px; color: ' + c + ';'};
+}
+function split(blocks) {
+  var rows = [];
+  blocks.forEach(function (b) {
+    if (b.t === 'fold') rows.push({isPair: false, isLens: false, isFold: true, isComment: false, text: b.text});
+    else if (b.t === 'ctx') b.lines.forEach(function (l) { rows.push({isPair: true, isLens: false, isFold: false, isComment: false, l: cell('ctx', l[0], l[2], null, 'l'), r: cell('ctx', l[1], l[2], null, 'r')}); });
+    else {
+      for (var i = 0; i < Math.max(b.del.length, b.add.length); i++) {
+        var d = b.del[i], a = b.add[i];
+        var rc = a ? cell('add', a[0], a[1], b.c, 'r') : cell('add', null, '', b.c, 'r');
+        if (i === 0 && a) tagOn(rc, b.c);
+        rows.push({isPair: true, isLens: false, isFold: false, isComment: false,
+          l: d ? cell('del', d[0], d[1], b.c, 'l') : cell('del', null, '', b.c, 'l'),
+          r: rc});
+      }
+      if (b.comment) rows.push({isPair: false, isLens: false, isFold: false, isComment: true});
+    }
+  });
+  return rows;
+}
+function iline(kind, o, n, text, accent) {
+  var s = 'display: flex; white-space: pre; overflow: hidden; height: 19px;';
+  if (kind === 'add') s += ' background: ' + ADD + ';';
+  if (kind === 'del') s += ' background: ' + DEL + ';';
+  if (accent && kind === 'add') s += ' box-shadow: inset 3px 0 0 ' + accent + ';';
+  return {isLine: true, isLens: false, isFold: false, isComment: false, style: s, tag: '', tagStyle: '',
+    numStyle: 'width: 68px; flex: none; display: flex; justify-content: flex-end; gap: 10px; padding-right: 10px; color: #6e7681;',
+    n: (o === null ? '    ' : String(o).padStart(4, ' ')) + ' ' + (n === null ? '   ' : String(n).padStart(3, ' ')), text: text};
+}
+function unified(blocks) {
+  var rows = [];
+  blocks.forEach(function (b) {
+    if (b.t === 'fold') rows.push({isLine: false, isLens: false, isFold: true, isComment: false, text: b.text});
+    else if (b.t === 'ctx') b.lines.forEach(function (l) { rows.push(iline('ctx', l[0], l[1], l[2], null)); });
+    else {
+      b.del.forEach(function (l) { rows.push(iline('del', l[0], null, l[1], b.c)); });
+      b.add.forEach(function (l, k) { var row = iline('add', null, l[0], l[1], b.c); rows.push(k === 0 ? tagOn(row, b.c) : row); });
+      if (b.comment) rows.push({isLine: false, isLens: false, isFold: false, isComment: true});
+    }
+  });
+  return rows;
+}
+function chip(on) {
+  return 'height: 26px; padding: 0 10px; border-radius: 4px; font: inherit; font-size: 12px; cursor: pointer; border: 1px solid ' + (on ? '#0078d4' : '#3c3c3c') + '; background: ' + (on ? 'rgba(0,120,212,.22)' : '#313131') + '; color: ' + (on ? '#e7e7e7' : '#cccccc') + ';';
+}
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {base: CLAUDE_PICK, byClaude: true, inline: false, pickOpen: false, showDiff: true};
+  }
+  renderVals() {
+    var self = this;
+    var st = this.state;
+    var d = DIFFS[st.base];
+    var e = EXPL[st.base];
+    var choose = function (b) { self.setState({base: b, byClaude: false, pickOpen: false}); };
+    var cards = e.cards.map(function (c) {
+      return {
+        n: c.n, title: c.title, sub: c.sub, lines: c.lines,
+        hasBA: !!c.before, before: c.before || '', after: c.after || '', note: c.note || '',
+        style: 'border: 1px solid #2b2b2b; border-radius: 8px; padding: 10px 12px; box-shadow: inset 3px 0 0 ' + c.c + ';',
+        badge: 'width: 20px; height: 20px; flex: none; border-radius: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid ' + c.c + '; color: ' + c.c + '; font-size: 11px; font-weight: 700;'
+      };
+    });
+    var qp = [
+      {id: '4c1e0b2', label: 'main (merge base)', hint: 'whole PR'},
+      {id: '9f3e2c1', label: 'Refill 16 bits per beat', hint: 'your last review · Claude’s pick'},
+      {id: '3b9a0f1', label: 'Widen input to 16 bits', hint: '2 days ago'}
+    ].map(function (q) {
+      q.pick = function () { choose(q.id); };
+      q.style = 'display: flex; align-items: center; gap: 10px; width: 100%; height: 26px; padding: 0 8px; border: 0; border-radius: 3px; font: inherit; color: #cccccc; cursor: pointer; background: ' + (q.id === st.base ? '#04395e' : 'transparent') + ';';
+      return q;
+    });
+    var changes = d.blocks.filter(function (b) { return b.t === 'chg'; }).length;
+    return {
+      base: st.base, baseShort: d.short,
+      tbChanged: true, portChanged: st.base === '4c1e0b2',
+      x: {kicker: e.kicker, title: e.title, lede: e.lede, cards: cards},
+      byClaude: st.byClaude, byYou: !st.byClaude, reason: REASONS[st.base],
+      mainPressed: st.base === '4c1e0b2' ? 'true' : 'false', revPressed: st.base === '9f3e2c1' ? 'true' : 'false',
+      mainBtn: chip(st.base === '4c1e0b2'), revBtn: chip(st.base === '9f3e2c1'), pickBtn: chip(st.base === '3b9a0f1'),
+      pickMain: function () { choose('4c1e0b2'); },
+      pickReviewed: function () { choose('9f3e2c1'); },
+      openPick: function () { self.setState({pickOpen: !st.pickOpen}); },
+      letClaude: function () { self.setState({base: CLAUDE_PICK, byClaude: true, pickOpen: false}); },
+      pickOpen: st.pickOpen, qpItems: qp,
+      showDiff: st.showDiff, isCode: !st.showDiff,
+      isSplit: st.showDiff && !st.inline, isInline: st.showDiff && st.inline,
+      tabTitle: st.showDiff ? 'bit_reader.sv (' + st.base + ' ↔ a71c0d4)' : 'bit_reader.sv',
+      statusView: st.showDiff ? 'Diff' : 'Gutter',
+      viewHint: st.showDiff ? 'Side-by-side or inline with the diff toolbar. Your choice is remembered.' : 'Plain editor. Gutter bars and step colors mark what changed since ' + st.base + '.',
+      diffPressed: st.showDiff ? 'true' : 'false', codePressed: st.showDiff ? 'false' : 'true',
+      diffBtn: 'height: 24px; padding: 0 10px; border: 0; font: inherit; font-size: 12px; cursor: pointer; background: ' + (st.showDiff ? '#0078d4' : '#313131') + '; color: ' + (st.showDiff ? '#ffffff' : '#cccccc') + ';',
+      codeBtn: 'height: 24px; padding: 0 10px; border: 0; border-left: 1px solid #3c3c3c; font: inherit; font-size: 12px; cursor: pointer; background: ' + (!st.showDiff ? '#0078d4' : '#313131') + '; color: ' + (!st.showDiff ? '#ffffff' : '#cccccc') + ';',
+      viewDiff: function () { self.setState({showDiff: true}); },
+      viewCode: function () { self.setState({showDiff: false, pickOpen: false}); },
+      codeLines: codeLines(st.base),
+      inlinePressed: st.inline ? 'true' : 'false',
+      inlineBtn: 'width: 28px; height: 26px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; cursor: pointer; color: #cccccc; background: ' + (st.inline ? '#3c3c3c' : 'transparent') + ';',
+      toggleInline: function () { self.setState({inline: !st.inline}); },
+      split: split(d.blocks), uni: unified(d.blocks),
+      changeCount: changes + (changes === 1 ? ' change' : ' changes') + ' in this file'
+    };
+  }
+}
+</script>
+</body>
+</html>
