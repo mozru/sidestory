@@ -36,6 +36,24 @@ export async function findExplainers(): Promise<ExplainerRef[]> {
 export const manifestUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'manifest.json');
 export const htmlUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'explainer.html');
 
+export const MAX_ASSET_BYTES = 5_000_000;
+
+/** Bytes of a file under `root` (symlinks followed and checked), or undefined if missing, outside or too big. */
+export async function readBytesInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: number): Promise<Uint8Array | undefined> {
+  try {
+    if (uri.scheme === 'file' && root.scheme === 'file') {
+      const real = await realPathInside(uri.fsPath, root.fsPath);
+      if (!real) return undefined;
+      await assertSize(real, maxBytes);
+      return await vscode.workspace.fs.readFile(vscode.Uri.file(real));
+    }
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return bytes.byteLength <= maxBytes ? bytes : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Text of a file under `root`, preferring an open editor's unsaved buffer so edits show without saving.
  * Refuses files outside `root` (after following symlinks) and files over `maxBytes`.

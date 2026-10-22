@@ -6,13 +6,15 @@ import { CONTAINER, WORKSPACE } from './setup.ts';
 /** Runs a shell command inside the container, as the VS Code server's user. */
 const inContainer = (script: string) => execFileSync('docker', ['exec', CONTAINER, 'sh', '-c', script], { encoding: 'utf8' });
 
-async function command(page: Page, title: string): Promise<void> {
+async function command(page: Page, title: string, keepFocus = false): Promise<void> {
+  // Webviews (the walkthrough, our panel) swallow keystrokes when focused: move focus to the workbench.
+  if (!keepFocus) await page.locator('.part.sidebar .composite.title').click();
   await page.keyboard.press('F1');
-  const input = page.locator('.quick-input-widget input');
-  await expect(input).toBeVisible();
-  await input.fill(`>${title}`);
-  await page.locator('.quick-input-list .monaco-list-row').first().waitFor();
-  await page.keyboard.press('Enter');
+  await expect(page.locator('.quick-input-widget')).toBeVisible();
+  await page.keyboard.type(title);
+  // Pick the exact command, not whatever the fuzzy match ranks first.
+  const row = page.locator('.quick-input-list .monaco-list-row', { has: page.locator('.label-name', { hasText: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(\\.\\.\\.|…)?$`) }) }).first();
+  await row.click();
 }
 
 async function openWorkbench(page: Page): Promise<void> {
@@ -20,26 +22,46 @@ async function openWorkbench(page: Page): Promise<void> {
   await page.locator('.monaco-workbench').waitFor({ timeout: 60_000 });
   // Stay in Restricted Mode: the extension declares it is safe there.
   const no = page.getByRole('button', { name: "No, I don't trust the authors" });
-  if (await no.isVisible({ timeout: 5_000 }).catch(() => false)) await no.click();
-  await page.locator('.tab .codicon-close').first().click({ timeout: 3_000 }).catch(() => {});
+  await no.waitFor({ timeout: 15_000 }).then(() => no.click(), () => {});
   await page.locator('.explorer-folders-view').first().click();
+  // Start clean: VS Code restores the previous test's editors, and opens a walkthrough a moment
+  // after load. Close everything until nothing comes back for a couple of seconds.
+  await expect(async () => {
+    for (const tab of await page.locator('.tab').all()) {
+      await tab.hover();
+      await tab.locator('.codicon-close').click({ timeout: 2_000 }).catch(() => {});
+    }
+    await page.waitForTimeout(2_000);
+    expect(await page.locator('.tab').count()).toBe(0);
+  }).toPass({ timeout: 45_000 });
 }
 
 async function openExplainer(page: Page, name: string): Promise<FrameLocator> {
   await command(page, 'Code Explainer: Open Explainer');
-  await page.locator('.quick-input-widget input').fill(name);
+  await expect(page.locator('.quick-input-widget')).toContainText('retry-backoff');
+  await page.keyboard.type(name);
   await page.keyboard.press('Enter');
   const panel = page.frameLocator('iframe.webview.ready').last().frameLocator('#active-frame');
   await expect(panel.locator('.cx-title')).toBeVisible({ timeout: 30_000 });
   return panel;
 }
 
+/** Picks a step whether the panel shows tabs or (when narrow) a picker. */
+async function chooseStep(panel: FrameLocator, id: string): Promise<void> {
+  const tab = panel.locator(`.cx-step[data-anchor="${id}"]`);
+  if (await tab.isVisible()) await tab.click();
+  else await panel.locator('.cx-step-select').selectOption(id);
+}
+
 const content = (panel: FrameLocator) => panel.frameLocator('iframe.cx-content-frame');
-const editorLines = (page: Page) => page.locator('.editor-group-container .monaco-editor .view-lines');
+const codeEditor = (page: Page, file: string) => page.locator(`.monaco-editor[data-uri$="${file}"]`);
+const editorLines = (page: Page) => codeEditor(page, 'bit_reader.sv').locator('.view-lines');
+const activeTab = (page: Page, name: string) => page.locator('.tab.active', { hasText: name });
 
 test.beforeEach(async ({ page }) => {
   // A fresh copy of the fixture for every test.
-  inContainer(`rm -rf ${WORKSPACE} && cp -r /home/workspace/.fixture ${WORKSPACE} 2>/dev/null || true`);
+  // Also forget restored editors and panels from earlier tests (VS Code keeps them per workspace on the server).
+  inContainer(`rm -rf ${WORKSPACE} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.fixture ${WORKSPACE}`);
   await openWorkbench(page);
 });
 
@@ -57,26 +79,26 @@ test('opens beside the editor, styled by the theme', async ({ page }) => {
 
 test('stepping through the explainer reveals and highlights the code', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
-  await panel.getByRole('button', { name: /Step 5: Refill/ }).click();
-  await expect(page.locator('.tab.active')).toContainText('bit_reader.sv');
+  await chooseStep(panel, 'refill');
+  await expect(activeTab(page, 'bit_reader.sv')).toBeVisible();
   await expect(editorLines(page)).toContainText('refill below valid bits');
   await expect(panel.locator('.cx-position')).toHaveText('Step 5 of 5');
 });
 
 test('moving the cursor in the code moves the explainer', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
-  await panel.getByRole('button', { name: /Step 1: Interface/ }).click();
-  await expect(page.locator('.tab.active')).toContainText('bit_reader.sv');
-  await page.locator('.editor-group-container .monaco-editor').first().click();
-  await command(page, 'Go to Line/Column');
+  await chooseStep(panel, 'interface');
+  await expect(activeTab(page, 'bit_reader.sv')).toBeVisible();
+  await editorLines(page).click();
+  await command(page, 'Go to Line/Column', true);
   await page.keyboard.type('32');
   await page.keyboard.press('Enter');
-  await expect(panel.getByRole('button', { name: /Step 4: Consume/ })).toHaveAttribute('aria-current', 'step');
+  await expect(panel.locator('.cx-position')).toHaveText('Step 4 of 5');
 });
 
 test('edits to the explainer file appear live, without a reload', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
-  await panel.getByRole('button', { name: /Step 3: Handshakes/ }).click();
+  await chooseStep(panel, 'handshakes');
   inContainer(`sed -i 's/Three one-line rules/Three tiny rules/' ${WORKSPACE}/.explain/bit-reader/explainer.html`);
   await expect(content(panel).locator('[data-explain-anchor="handshakes"] h2')).toHaveText('Three tiny rules');
   await expect(panel.locator('.cx-position')).toHaveText('Step 3 of 5');
@@ -84,38 +106,48 @@ test('edits to the explainer file appear live, without a reload', async ({ page 
 
 test('unsaved code edits keep sections linked and following the code', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
-  await panel.getByRole('button', { name: /Step 1: Interface/ }).click();
-  await page.locator('.editor-group-container .monaco-editor').first().click();
-  await command(page, 'Go to Line/Column');
+  await chooseStep(panel, 'interface');
+  await editorLines(page).click();
+  await command(page, 'Go to Line/Column', true);
   await page.keyboard.type('1');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Home');
-  await page.keyboard.type('// a new header line\n// and another\n');
+  await page.keyboard.insertText('// a new header line\n// and another\n');
   await expect(panel.locator('.cx-status')).toContainText('Linked');
-  await panel.getByRole('button', { name: /Step 5: Refill/ }).click();
+  await chooseStep(panel, 'refill');
   await expect(editorLines(page)).toContainText('refill below valid bits');
-  // The refill block now starts on line 37: the cursor there selects Refill.
-  await command(page, 'Go to Line/Column');
-  await page.keyboard.type('20');
+  // Two lines were added at the top, so the State registers (lines 16–17) are now 18–19.
+  await command(page, 'Go to Line/Column', true);
+  await page.keyboard.type('19');
   await page.keyboard.press('Enter');
-  await expect(panel.getByRole('button', { name: /Step 2: State/ })).toHaveAttribute('aria-current', 'step');
+  await expect(panel.locator('.cx-position')).toHaveText('Step 2 of 5');
 });
 
 test('images in an explainer load inside the sandboxed frame', async ({ page }) => {
   const panel = await openExplainer(page, 'retry-backoff');
-  const img = content(panel).locator('img[src*="backoff.svg"]');
-  await expect(img).toBeAttached();
+  const img = content(panel).locator('img[alt^="Waits grow"]');
+  await expect(img).toHaveAttribute('src', /^blob:/);
   await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
 });
 
-for (const theme of ['Default Dark Modern', 'Default Light Modern', 'Default High Contrast']) {
-  test(`screenshot: ${theme}`, async ({ page }, info) => {
+const THEMES = [
+  ['Default Dark Modern', 'vscode-dark'],
+  ['Default Light Modern', 'vscode-light'],
+  ['Default High Contrast', 'vscode-high-contrast'],
+] as const;
+
+for (const [theme, bodyClass] of THEMES) {
+  test(`follows the color theme live: ${theme}`, async ({ page }, info) => {
     const panel = await openExplainer(page, 'bit-reader');
+    await chooseStep(panel, 'state');
+    // Change the setting on the server, as a user (or settings sync) would; VS Code applies it live.
     await command(page, 'Preferences: Color Theme');
-    await page.locator('.quick-input-widget input').fill(theme);
-    await page.keyboard.press('Enter');
-    await panel.getByRole('button', { name: /Step 2: State/ }).click();
-    await page.waitForTimeout(1200);
+    await page.keyboard.type(theme);
+    await page.locator('.quick-input-list .monaco-list-row', { hasText: theme }).first().click();
+    await expect(panel.locator('body')).toHaveClass(new RegExp(`(^| )${bodyClass}( |$)`));
+    // The content frame follows too.
+    await expect(content(panel).locator('body')).toHaveClass(new RegExp(`(^| )${bodyClass}( |$)`));
+    await page.waitForTimeout(800);
     await page.screenshot({ path: info.outputPath(`${theme.replace(/\W+/g, '-')}.png`) });
   });
 }

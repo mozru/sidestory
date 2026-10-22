@@ -66,6 +66,14 @@ test('clicking a step activates it and reveals its code', async ({ page }) => {
   await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
 });
 
+test('choosing the step that is already current still reveals its code', async ({ page }) => {
+  await open(page);
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 5');
+  await clearPosted(page);
+  await page.locator('.cx-step').first().click();
+  expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'interface', source: 'step' });
+});
+
 test('the editor cursor moves the page without echoing back', async ({ page }) => {
   await open(page);
   await clearPosted(page);
@@ -155,7 +163,7 @@ test('explainer HTML cannot run scripts, phone home or navigate', async ({ page 
   });
   const host = frame(page).locator('body');
   await expect(host.locator('#remote')).not.toHaveAttribute('src', /.+/);
-  await expect(host.locator('#local')).toHaveAttribute('src', 'http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/assets/diagram.png');
+  await expect(host.locator('#local')).not.toHaveAttribute('src', /.+/); // missing file: nothing to load
   await expect(host.locator('#local')).not.toHaveAttribute('onerror', /.*/);
   await expect(host.locator('#js')).not.toHaveAttribute('href', /.*/);
   await expect(host.locator('iframe, meta, script')).toHaveCount(0);
@@ -205,14 +213,18 @@ test('explainer CSS cannot cover the panel controls', async ({ page }) => {
 
 test('relative URLs in explainer CSS point at the explainer folder; remote ones are dropped', async ({ page }) => {
   await open(page, {
-    html: `<style>@import url(https://example.com/x.css); .a{background:url(img/a.png)} .b{background:url("https://example.com/b.png")}</style>
-      <section data-explain-anchor="state"><div id="inline" style="background-image:url('img/c.png')"></div>
+    html: `<style>@import url(https://example.com/x.css); .a{background:url(assets/dot.svg)} .b{background:url("https://example.com/b.png")} .c{background:url(missing.png)}</style>
+      <section data-explain-anchor="state"><div id="inline" style="background-image:url('assets/dot.svg')"></div><img id="img" src="assets/dot.svg" alt="dot">
       <svg><a id="svglink" href="#ok"><set attributeName="href" to="javascript:alert(1)"/></a></svg></section>`,
   });
   const css = await frame(page).locator('body').evaluate((body) => [...body.ownerDocument.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
-  expect(css).toContain('url("http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/img/a.png")');
+  // Local files reach the sandboxed frame as blob: URLs; missing and remote ones load nothing.
+  expect(css).toMatch(/\.a\{background:url\("blob:/);
+  expect(css).toMatch(/\.c\{background:none\}/);
   expect(css).not.toContain('example.com');
-  await expect(frame(page).locator('#inline')).toHaveAttribute('style', /bit-reader\/img\/c\.png/);
+  await expect(frame(page).locator('#inline')).toHaveAttribute('style', /url\("blob:/);
+  await expect(frame(page).locator('#img')).toHaveAttribute('src', /^blob:/);
+  await expect.poll(() => frame(page).locator('#img').evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(16);
   await expect(frame(page).locator('set')).toHaveCount(0);
 });
 
@@ -229,6 +241,29 @@ test('links never navigate the content: web links go to VS Code, page links scro
   await send(page, { type: 'content', title: 't', html: HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p><a id="jump2" href="#cx-a-refill">to refill</a></p>') });
   await frame(page).locator('#jump2').click();
   await expect(section(page, 'refill')).toBeInViewport();
+});
+
+test('links to files in the explainer folder open in VS Code; page links activate their section', async ({ page }) => {
+  await open(page, {
+    html: HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p><a id="file" href="notes/more.html">more</a> <a id="jump" href="#cx-a-refill">refill</a></p>'),
+  });
+  await clearPosted(page);
+  await frame(page).locator('#file').click();
+  expect(await posted(page)).toContainEqual({ type: 'openFile', path: 'notes/more.html' });
+  expect((await posted(page)).some((m) => m.type === 'openExternal')).toBe(false);
+  await clearPosted(page);
+  await frame(page).locator('#jump').click();
+  await expect(section(page, 'refill')).toHaveClass(/cx-active/);
+  await page.waitForTimeout(1200);
+  const focus = (await posted(page)).filter((m) => m.type === 'focusAnchor');
+  expect(focus).toEqual([{ type: 'focusAnchor', anchorId: 'refill', source: 'click' }]);
+});
+
+test('Space on a control inside the content operates the control', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="state"><details><summary id="sum">More</summary><p>hidden</p></details></section>' });
+  await frame(page).locator('#sum').focus();
+  await page.keyboard.press(' ');
+  await expect(frame(page).locator('details')).toHaveAttribute('open', '');
 });
 
 test('content that names elements after document methods cannot break later updates', async ({ page }) => {

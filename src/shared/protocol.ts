@@ -1,7 +1,7 @@
 // Messages between the extension host and the explainer webview.
 // The webview never reloads: content and anchor states arrive as updates it applies in place.
 import { z } from 'zod';
-import { anchorIdSchema } from '../core/manifest.ts';
+import { anchorIdSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 
 export interface AnchorView {
@@ -27,7 +27,9 @@ export type ToWebview =
   /** Step forward or back (keyboard command from the editor). */
   | { type: 'navigate'; delta: 1 | -1 }
   /** The explainer could not be loaded; keep showing the last good content. */
-  | { type: 'error'; message: string | null };
+  | { type: 'error'; message: string | null }
+  /** Reply to `requestAsset`: the file's bytes as base64 (binary doesn't survive every remote setup), or null. */
+  | { type: 'asset'; id: number; mime: string; data: string | null };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -35,8 +37,12 @@ export type FromWebview =
   | { type: 'focusAnchor'; anchorId: string; source: 'scroll' | 'click' | 'step' }
   /** An inline reference was clicked: jump the cursor there. */
   | { type: 'openRef'; anchorId: string }
-  /** A web or mail link was clicked; VS Code asks before opening it. */
-  | { type: 'openExternal'; url: string };
+  /** A web or mail link was clicked. */
+  | { type: 'openExternal'; url: string }
+  /** A link to another file in the explainer folder was clicked (path relative to that folder). */
+  | { type: 'openFile'; path: string }
+  /** The content frame needs a file from the explainer folder (an image, font or stylesheet). */
+  | { type: 'requestAsset'; id: number; path: string };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -48,17 +54,43 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('focusAnchor'), anchorId: anchorIdSchema, source: z.enum(['scroll', 'click', 'step']) }),
   z.object({ type: z.literal('openRef'), anchorId: anchorIdSchema }),
-  z.object({
-    type: z.literal('openExternal'),
-    url: z
-      .string()
-      .max(2048)
-      .refine((u) => {
-        try {
-          return ['http:', 'https:', 'mailto:'].includes(new URL(u).protocol);
-        } catch {
-          return false;
-        }
-      }),
-  }),
+  z.object({ type: z.literal('openExternal'), url: z.string().max(2048).refine((u) => safeExternalUrl(u) !== null) }),
+  z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),
+  z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
 ]);
+
+const MIME: Record<string, string> = {
+  svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
+  woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', css: 'text/css', mp4: 'video/mp4', webm: 'video/webm',
+};
+
+/** The media type for an explainer asset, or null for file types the content may not load. */
+export function assetMime(path: string): string | null {
+  return MIME[path.split('.').pop()?.toLowerCase() ?? ''] ?? null;
+}
+
+/**
+ * The normalized URL if an explainer may open it in the browser, else null: http(s) or mailto only,
+ * no credentials, and no local or private hosts. (On a remote host, VS Code would tunnel a localhost
+ * link to the remote machine's own services.)
+ */
+export function safeExternalUrl(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol === 'mailto:') return u.href;
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  if (u.username || u.password) return null;
+  const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const privateHost =
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    !host.includes('.') && !host.includes(':') ||
+    /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
+    host === '::1' || host === '::' || /^(fc|fd|fe80:)/.test(host) || host.startsWith('::ffff:');
+  return privateHost ? null : u.href;
+}

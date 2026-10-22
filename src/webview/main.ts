@@ -3,6 +3,7 @@
 import { Idiomorph } from 'idiomorph';
 import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
 import contentCssText from './content.css';
+import { Assets } from './assets.ts';
 import { sanitize } from './sanitize.ts';
 
 interface VsCodeApi {
@@ -40,8 +41,23 @@ const STATE_TEXT: Record<string, { badge: string; spoken: string; title: string 
 
 const vscode = acquireVsCodeApi();
 const app = document.getElementById('app')!;
-const baseUrl = app.dataset.base!;
+// Normalized the way the URL parser does it: in remote windows VS Code's resource host contains a
+// percent-encoded '+', which resolved URLs spell decoded, so the raw string wouldn't prefix-match them.
+const baseUrl = new URL(app.dataset.base!).href;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const pendingAssets = new Map<number, (b: Blob | null) => void>();
+let assetId = 0;
+const assets = new Assets(baseUrl, (path) => {
+  const id = ++assetId;
+  vscode.postMessage({ type: 'requestAsset', id, path });
+  return new Promise<Blob | null>((resolve) => {
+    pendingAssets.set(id, resolve);
+    // Don't hold a render forever if the reply never comes (e.g. the panel was hidden meanwhile).
+    setTimeout(() => {
+      if (pendingAssets.delete(id)) resolve(null);
+    }, 10_000);
+  });
+});
 
 let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
 let anchors = new Map<string, AnchorView>();
@@ -153,7 +169,7 @@ async function buildFrame(): Promise<void> {
 
 async function rebuildFrame(): Promise<void> {
   await buildFrame();
-  if (lastRender) render(lastRender.title, lastRender.html, false);
+  if (lastRender) await render(lastRender.title, lastRender.html, false);
   markActive();
 }
 
@@ -192,16 +208,18 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   switch (m.type) {
     case 'init':
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
-      render(m.title, m.html, false);
-      active = m.active ?? active;
-      restoreScroll();
-      // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
-      if (!active) active = sectionAtReadingLine()?.id;
-      markActive();
-      initialized = true;
+      void render(m.title, m.html, false).then((done) => {
+        if (!done) return;
+        active = m.active ?? active;
+        restoreScroll();
+        // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
+        if (!active) active = sectionAtReadingLine()?.id;
+        markActive();
+        initialized = true;
+      });
       break;
     case 'content':
-      if (initialized) render(m.title, m.html, true);
+      if (initialized) void render(m.title, m.html, true);
       break;
     case 'anchors':
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
@@ -213,6 +231,12 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'navigate':
       step(m.delta);
       break;
+    case 'asset': {
+      const resolve = pendingAssets.get(m.id);
+      pendingAssets.delete(m.id);
+      resolve?.(m.data && m.mime ? new Blob([Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0))], { type: m.mime }) : null);
+      break;
+    }
     case 'error':
       bannerEl.hidden = m.message === null;
       bannerText.textContent = m.message ?? '';
@@ -222,12 +246,18 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
 
 // ---- rendering ----
 
-function render(title: string, html: string, isUpdate: boolean): void {
+let renderSeq = 0;
+
+/** Renders explainer HTML into the frame. Resolves false if a newer render overtook this one. */
+async function render(title: string, html: string, isUpdate: boolean): Promise<boolean> {
+  const seq = ++renderSeq;
   lastRender = { title, html };
-  titleEl.textContent = title;
   const parsed = sanitize(html, baseUrl, frame.importNode);
   const next = frame.createElement('div');
   next.append(...parsed.styles, ...parsed.body);
+  await assets.localize(next, frame.createElement);
+  if (seq !== renderSeq) return false;
+  titleEl.textContent = title;
   // Stable ids let the morph match sections across edits.
   for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (!el.id) el.id = `cx-a-${el.dataset.explainAnchor}`;
   // Give the incoming tree the attributes this script adds, so the morph leaves them alone
@@ -242,6 +272,7 @@ function render(title: string, html: string, isUpdate: boolean): void {
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
   decorate();
+  return true;
 }
 
 /** The HTML of each section, to tell which ones an update changed. */
@@ -419,8 +450,12 @@ function activeStepId(): string | undefined {
 
 // ---- moving between sections ----
 
+/** Makes a section current. Choosing the current one again (a click, a step) still reveals its code. */
 function setActive(id: string | undefined, notify?: Source): void {
-  if (id === active) return;
+  if (id === active) {
+    if (id && notify && notify !== 'scroll') vscode.postMessage({ type: 'focusAnchor', anchorId: id, source: notify });
+    return;
+  }
   active = id;
   markActive();
   saveState();
@@ -549,18 +584,36 @@ function onContentClick(e: MouseEvent): void {
     e.preventDefault();
     const href = link.getAttribute('href') ?? '';
     if (href.startsWith('#')) {
-      const dest = content.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`);
-      if (dest) scrollToTop(topOf(dest));
-    } else if (/^(https?|mailto):/i.test(href)) vscode.postMessage({ type: 'openExternal', url: href });
+      let id = href.slice(1);
+      try {
+        id = decodeURIComponent(id);
+      } catch {
+        // keep it as written
+      }
+      const dest = content.querySelector(`[id="${CSS.escape(id)}"]`);
+      if (dest) {
+        const section = dest.closest<HTMLElement>('[data-explain-anchor]');
+        programmaticUntil = Date.now() + 1000;
+        scrollToTop(topOf(dest));
+        if (section) setActive(section.dataset.explainAnchor!, 'click');
+      }
+    } else if (href.startsWith(baseUrl)) {
+      // Another file in the explainer folder (the sanitizer made it absolute): open it in VS Code.
+      try {
+        vscode.postMessage({ type: 'openFile', path: decodeURI(href.slice(baseUrl.length).split(/[?#]/)[0]!) });
+      } catch {
+        // malformed path: ignore the click
+      }
+    } else if (/^(https?|mailto):/i.test(href)) {
+      vscode.postMessage({ type: 'openExternal', url: href });
+    }
     return;
   }
   if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
   const id = section.dataset.explainAnchor!;
-  // Always reveal, even when the section is already active.
-  if (id === active) vscode.postMessage({ type: 'focusAnchor', anchorId: id, source: 'click' });
-  else setActive(id, 'click');
+  setActive(id, 'click');
 }
 
 function onContentKey(e: KeyboardEvent): void {
@@ -570,8 +623,9 @@ function onContentKey(e: KeyboardEvent): void {
     openRef(ref);
     return;
   }
-  // The frame can't scroll itself, so page-size keys scroll the panel.
-  if (e.key === ' ' && !e.altKey && !e.ctrlKey && !e.metaKey) {
+  // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.
+  const onControl = (e.target as HTMLElement).closest?.('summary, button, input, select, textarea, a[href], [tabindex], [contenteditable]');
+  if (e.key === ' ' && !onControl && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     readerInput();
     scroller.scrollBy({ top: (e.shiftKey ? -1 : 1) * scroller.clientHeight * 0.9, behavior: reducedMotion.matches ? 'auto' : 'smooth' });

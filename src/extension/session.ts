@@ -8,11 +8,12 @@ import { anchorAtLine } from '../core/sections.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
 import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
-import { fromWebviewSchema, themeColorVar } from '../shared/protocol.ts';
+import { assetMime, fromWebviewSchema, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { htmlUri, manifestUri, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readInside } from './explainers.ts';
+import { htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
 import { shellHtml } from './panel.ts';
+import { realPathInside } from './paths.ts';
 
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
@@ -270,9 +271,17 @@ export class ExplainerSession implements vscode.Disposable {
         this.setActive(m.anchorId);
         this.requestReveal(m.anchorId, false);
         break;
-      case 'openExternal':
-        // Goes through VS Code's own link handling, which asks before opening untrusted domains.
-        void vscode.env.openExternal(vscode.Uri.parse(m.url, true));
+      case 'openExternal': {
+        // The schema already refused local hosts and credentials; open the normalized form.
+        const url = safeExternalUrl(m.url);
+        if (url) void vscode.env.openExternal(vscode.Uri.parse(url, true));
+        break;
+      }
+      case 'openFile':
+        void this.openExplainerFile(m.path);
+        break;
+      case 'requestAsset':
+        void this.sendAsset(m.id, m.path);
         break;
       case 'openRef':
         // A reference inside a section jumps to other code; the section being read stays active.
@@ -285,6 +294,20 @@ export class ExplainerSession implements vscode.Disposable {
   private setActive(id: string | undefined): void {
     this.active = id;
     if (!id) this.decorations.set(undefined);
+  }
+
+  /** Sends a file from the explainer folder to the content frame (it can't load files itself). */
+  private async sendAsset(id: number, path: string): Promise<void> {
+    const mime = assetMime(path);
+    const data = mime ? await readBytesInside(vscode.Uri.joinPath(this.ref.dir, path), this.ref.dir, MAX_ASSET_BYTES) : undefined;
+    this.post({ type: 'asset', id, mime: mime ?? '', data: data ? Buffer.from(data).toString('base64') : null });
+  }
+
+  /** Opens a file the explainer links to (relative to its folder), if it is inside the repo. */
+  private async openExplainerFile(path: string): Promise<void> {
+    const uri = vscode.Uri.joinPath(this.ref.dir, path);
+    if (uri.scheme === 'file' && !(await realPathInside(uri.fsPath, this.ref.root.fsPath))) return;
+    await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: this.codeColumn(uri), preview: true });
   }
 
   /** Highlights the active anchor's code; `dim` fades the rest. */

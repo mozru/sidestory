@@ -87,6 +87,8 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     if (seen.has(key) && !c.exact) return;
     seen.add(key);
     let S = 1;
+    // Note: S is token edit distance for short regions and line LCS when that would be too costly;
+    // the scales differ, but misaligned (costly) windows also lose on context, so they rarely compete.
     if (!c.exact) {
       const window = n.slice(c.i, c.i + c.len);
       // Charge what the comparison really costs: only the differing middle is quadratic.
@@ -112,6 +114,7 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     // Live tracking says the code is here and it still mostly matches: we know where it is.
     if (trustHint && c.i === h && S >= 0.7) L = Math.max(L, 0.6);
     // Elsewhere, code whose names mostly differ is some other code that looks alike, not this one.
+    // (Literals don't count as names, so tweaking a constant doesn't trip this.)
     else if (!c.exact && !sameNames) L = Math.min(L, 0.59);
     scored.push({ ...c, S, L });
   };
@@ -136,7 +139,10 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
   if (scored.length === 0) return lost();
 
   scored.sort((a, b) => b.L - a.L || Math.abs(a.len - k) - Math.abs(b.len - k) || Math.abs(a.i - h) - Math.abs(b.i - h));
-  const best = scored[0]!;
+  // An exact copy of the code is better evidence than a lookalike that would be reported lost anyway
+  // (e.g. the region was cut and pasted elsewhere, with new surroundings).
+  const topExact = scored.find((c) => c.exact);
+  const best = topExact && !scored[0]!.exact && rawState(scored[0]!.L, scored[0]!.S) === 'lost' ? topExact : scored[0]!;
   const rival = scored.find((c) => c.i + c.len <= best.i || c.i >= best.i + best.len);
   // A trusted hint (live-tracked, or confidently resolved before) is strong evidence: a close
   // rival elsewhere only makes the result ambiguous when the winner is somewhere else.

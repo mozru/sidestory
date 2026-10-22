@@ -48,12 +48,15 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
   };
 }
 
-/** Points `url()` references at the explainer folder (or nowhere) and drops `@import`. */
-function rewriteCss(css: string, baseUrl: string): string {
+/**
+ * Points `url()` references at the explainer folder (or nowhere) and drops `@import`.
+ * Relative URLs resolve against `from` (a stylesheet's own URL), and must stay inside `baseUrl`.
+ */
+export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl): string {
   return css
     .replace(/@import[^;]*;?/gi, '')
     .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (_, _q: string, u: string) => {
-      const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl);
+      const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl, from);
       return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';
     });
 }
@@ -75,11 +78,11 @@ function rewriteUrl(tag: string, attr: string, value: string, baseUrl: string): 
 }
 
 /** A data: image, or a path that stays inside the explainer folder; anything else is refused. */
-function resolveLocal(value: string, baseUrl: string): string | null {
+function resolveLocal(value: string, baseUrl: string, from: string = baseUrl): string | null {
   if (/^data:image\/(png|gif|jpe?g|webp);/i.test(value)) return value;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//') || value.startsWith('\\')) return null;
   try {
-    const resolved = new URL(value, baseUrl);
+    const resolved = new URL(value, from);
     return resolved.href.startsWith(baseUrl) ? resolved.href : null;
   } catch {
     return null;

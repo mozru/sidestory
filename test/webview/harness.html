@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'nonce-harness'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
 <title>Explainer webview harness</title>
 <link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
 <link rel="stylesheet" href="/dist/webview/main.css">
@@ -12,7 +12,16 @@
   window.__posted = [];
   window.__state = undefined;
   window.acquireVsCodeApi = () => ({
-    postMessage: (m) => window.__posted.push(m),
+    postMessage: (m) => {
+      window.__posted.push(m);
+      // Play the extension's part for assets: read the file and reply with its bytes.
+      if (m.type === 'requestAsset') {
+        const types = { svg: 'image/svg+xml', png: 'image/png', css: 'text/css' };
+        fetch(document.getElementById('app').dataset.base + m.path)
+          .then((r) => (r.ok ? r.arrayBuffer() : null))
+          .then((b) => window.__send({ type: 'asset', id: m.id, mime: types[m.path.split('.').pop()] ?? '', data: b && btoa(String.fromCharCode(...new Uint8Array(b))) }));
+      }
+    },
     getState: () => window.__state,
     setState: (s) => { window.__state = s; },
   });

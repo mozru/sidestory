@@ -342,3 +342,17 @@ describe('resolveAnchor: round 5 regressions', () => {
     expect(resolve(deleted, anchor, { hint: { start: 6, end: 9 } }).state).toBe('stale');
   });
 });
+
+describe('resolveAnchor: round 6 regressions', () => {
+  it.each([
+    ["7'd16", undefined],
+    ["7'h10", undefined],
+    ["7'd16", { start: 2, end: 2 }],
+  ])('a one-literal edit to an HDL line is a change, not a loss (%s, hint %j)', (lit, hint) => {
+    const lines = ['always_ff @(posedge clk) begin', "  cnt_q <= cnt_q + 7'd8;", 'end'];
+    const anchor = anchorFor(lines, { start: 2, end: 2 });
+    const edited = ['always_ff @(posedge clk) begin', `  cnt_q <= cnt_q + ${lit};`, 'end'];
+    expect(resolve(edited, anchor, hint ? { hint } : {}).state).toBe('changed');
+    expect(resolve(edited, anchor, { hint: { start: 2, end: 2 }, orphaned: true }).state).not.toBe('lost');
+  });
+});

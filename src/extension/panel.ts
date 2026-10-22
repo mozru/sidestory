@@ -29,10 +29,11 @@ export function shellHtml(webview: vscode.Webview, extensionUri: vscode.Uri, ref
   const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
   const csp = [
     "default-src 'none'",
-    `img-src ${webview.cspSource} data:`,
-    `media-src ${webview.cspSource}`,
+    // Explainer assets reach the sandboxed content frame as blob: URLs (see src/webview/assets.ts).
+    `img-src ${webview.cspSource} data: blob:`,
+    `media-src ${webview.cspSource} blob:`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `font-src ${webview.cspSource}`,
+    `font-src ${webview.cspSource} blob:`,
     `script-src 'nonce-${nonce}'`,
     "form-action 'none'",
     "frame-src 'none'",

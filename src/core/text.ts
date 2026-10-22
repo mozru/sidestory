@@ -14,9 +14,9 @@ export function normalizeLines(lines: readonly string[], norm: Norm = 'ws'): str
   return lines.map((l) => normalizeLine(l, norm));
 }
 
-/** Identifier-like tokens, for rename-tolerant comparison. */
+/** Identifier tokens, for rename-tolerant comparison. Literals such as 7'd8 or 0xFF are not names. */
 export function identifiers(text: string, norm: Norm = 'ws'): Set<string> {
-  const ids = text.match(/[A-Za-z_$][\w$]*/g) ?? [];
+  const ids = codeTokens(text).filter((t) => /^[A-Za-z_$]/.test(t));
   return new Set(norm === 'ws-ci' ? ids.map((s) => s.toLowerCase()) : ids);
 }
 
