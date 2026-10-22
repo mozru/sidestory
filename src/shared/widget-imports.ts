@@ -73,26 +73,26 @@ export function libraryFor(specifier: string): string | undefined {
 /** Named exports of the `explainer` SDK (§6). The compiler checks named imports against this list. */
 export const EXPLAINER_SDK_EXPORTS = [
   'useActiveStep', 'useMyAnchor', 'useIsMyStepActive', 'useIsActive', 'useStep', 'useStepValue', 'useAnchors', 'useAnchorCode',
-  'highlight', 'reveal', 'goToStep', 'Ref', 'useWidgetState', 'useTheme', 'useVisible', 'useReducedMotion', 'asset',
+  'highlight', 'reveal', 'goToStep', 'next', 'prev', 'Ref', 'useWidgetState', 'useTheme', 'useVisible', 'useReducedMotion', 'asset',
 ] as const;
 
 /** Named exports of each `@/components/ui/<name>` shim, following shadcn/ui's names. */
 export const UI_COMPONENT_EXPORTS: Record<(typeof UI_COMPONENTS)[number], readonly string[]> = {
-  card: ['Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter'],
-  button: ['Button'],
-  badge: ['Badge'],
+  card: ['Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardAction', 'CardContent', 'CardFooter'],
+  button: ['Button', 'buttonVariants'],
+  badge: ['Badge', 'badgeVariants'],
   input: ['Input'],
   label: ['Label'],
   slider: ['Slider'],
   switch: ['Switch'],
   checkbox: ['Checkbox'],
   tabs: ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
-  select: ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
+  select: ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem', 'SelectGroup', 'SelectLabel', 'SelectSeparator'],
   progress: ['Progress'],
   separator: ['Separator'],
   alert: ['Alert', 'AlertTitle', 'AlertDescription'],
   tooltip: ['Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider'],
-  'scroll-area': ['ScrollArea'],
+  'scroll-area': ['ScrollArea', 'ScrollBar'],
 };
 
 /** Named exports of `@/lib/utils`. */

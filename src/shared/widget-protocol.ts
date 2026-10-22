@@ -65,6 +65,10 @@ export type ToWidget =
       reducedMotion: boolean;
       entry: string;
       modules: Record<string, string>;
+      /** lucide-react icon data by imported name (from the compiler), for the generated 'lucide-react' module. */
+      icons: Record<string, unknown>;
+      /** Data URLs for `asset(path)`, by path relative to the explainer folder. */
+      assets?: Record<string, string>;
     }
   | { type: 'step'; activeStep: string | null }
   | { type: 'anchors'; anchors: WidgetAnchor[] }

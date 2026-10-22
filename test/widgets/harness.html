@@ -1,0 +1,75 @@
+<!doctype html>
+<!--
+  Widget frame harness: plays the panel's part for widget frames (docs/WIDGETS-PLAN.md §3, §5.4, §6).
+  Served by the specs through page.route (fixtures.ts), which fills in the NONCE, BOOTSTRAP_HASH,
+  BOOTSTRAP and WIDGET_CSP placeholders. The page CSP matches the panel's script/Trusted Types policy
+  (src/extension/panel.ts); each widget frame gets the plan's meta CSP and only the bootstrap.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; script-src 'nonce-%NONCE%' '%BOOTSTRAP_HASH%' 'strict-dynamic'; require-trusted-types-for 'script'; trusted-types cx-static cx-sanitize cx-widget default; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Widget harness</title>
+<style>
+  body { margin: 0; padding: 16px; background: #1f1f1f; color: #ccc; font: 13px system-ui; }
+  iframe { display: block; width: 560px; border: 0; margin: 0 0 24px; }
+  #outside { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<button id="outside">panel control</button>
+<div id="frames"></div>
+<script nonce="%NONCE%">
+'use strict';
+const BOOTSTRAP = %BOOTSTRAP%;
+const WIDGET_CSP = %WIDGET_CSP%;
+// The panel's constant-srcdoc policy (cx-widget): the only HTML a widget frame is created from.
+const policy = trustedTypes.createPolicy('cx-widget', { createHTML: () => `<!doctype html><html><head><meta http-equiv="x-dns-prefetch-control" content="off"><meta http-equiv="Content-Security-Policy" content="${WIDGET_CSP}"><script>${BOOTSTRAP}<\/script></head><body></body></html>` });
+const libCache = new Map();
+async function lib(id) {
+  if (!libCache.has(id)) libCache.set(id, fetch(`/libs/${id}.js`).then((r) => { if (!r.ok) throw new Error(`no library ${id}`); return r.text(); }));
+  return libCache.get(id);
+}
+
+const frames = new Map();
+let nextId = 1;
+// Each frame's messages, in order, with arrival times; the harness answers like the panel would.
+window.addEventListener('message', (e) => {
+  for (const f of frames.values()) {
+    if (e.source !== f.el.contentWindow) continue;
+    const m = e.data;
+    f.messages.push({ t: performance.now(), ...m });
+    if (m.type === 'height' && !f.fixedHeight) f.el.style.height = `${m.px}px`;
+    if (m.type === 'boot' && !f.loaded) { f.loaded = true; f.tBoot = performance.now(); f.el.contentWindow.postMessage({ type: 'load', scripts: f.scripts }, '*'); }
+    if (m.type === 'ready') { f.tReady = performance.now(); if (f.init) f.el.contentWindow.postMessage({ type: 'init', ...f.init }, '*'); }
+    if (m.type === 'height' && m.px > 0 && f.tFirstHeight === undefined) f.tFirstHeight = performance.now();
+    if (f.autoResult && (m.type === 'reveal' || m.type === 'step' || m.type === 'key')) f.el.contentWindow.postMessage({ type: 'result', id: m.id, ok: f.autoResult(m) }, '*');
+    if (f.codes && m.type === 'requestCode') f.el.contentWindow.postMessage({ type: 'code', code: f.codes[m.anchor] ?? { anchor: m.anchor, status: 'unavailable', reason: 'not-pinned' } }, '*');
+  }
+});
+
+window.cx = {
+  /** Mounts a widget frame: libraries (ids, in order) then init. Returns the frame id. */
+  async mount({ libs, init, height = 240, fixedHeight = false, resultOk = true, codes = null }) {
+    const scripts = await Promise.all(libs.map(lib));
+    const id = nextId++;
+    const el = document.createElement('iframe');
+    el.id = `w${id}`;
+    el.setAttribute('sandbox', 'allow-scripts');
+    el.title = `widget ${id}`;
+    el.style.height = `${height}px`;
+    const f = { el, scripts, init, messages: [], fixedHeight, t0: performance.now(), autoResult: resultOk === null ? null : () => resultOk, codes };
+    frames.set(id, f);
+    el.srcdoc = policy.createHTML('');
+    document.getElementById('frames').append(el);
+    return id;
+  },
+  send(id, msg) { frames.get(id).el.contentWindow.postMessage(msg, '*'); },
+  messages(id, type) { return frames.get(id).messages.filter((m) => !type || m.type === type); },
+  timing(id) { const f = frames.get(id); return { boot: f.tBoot - f.t0, ready: f.tReady - f.t0, firstHeight: f.tFirstHeight - f.t0 }; },
+  remove(id) { const f = frames.get(id); f.el.remove(); frames.delete(id); },
+  setHeight(id, px) { frames.get(id).el.style.height = `${px}px`; },
+};
+</script>
+</body>
+</html>

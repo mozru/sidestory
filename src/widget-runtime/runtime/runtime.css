@@ -1,0 +1,26 @@
+/* The runtime's own UI in a widget frame: notices and the error box. Plain CSS (not Tailwind), so it shows
+   even before Tailwind has compiled, using the same tokens as theme.css. */
+#cx-root { display: flow-root; }
+.cx-paused *, .cx-paused *::before, .cx-paused *::after { animation-play-state: paused !important; }
+.cx-notice {
+  position: fixed; left: 4px; right: 4px; bottom: 4px; z-index: 2147483647;
+  padding: 4px 8px; border-radius: 4px; font: 12px/1.4 var(--vscode-font-family, system-ui, sans-serif);
+  color: var(--vscode-editorWarning-foreground, var(--foreground, CanvasText));
+  background: var(--vscode-editorWidget-background, Canvas);
+  border: 1px solid var(--vscode-editorWarning-foreground, var(--vscode-contrastBorder, currentColor));
+}
+.cx-error {
+  margin: 0; padding: 8px 12px; border-radius: 4px; font: 12px/1.5 var(--vscode-font-family, system-ui, sans-serif);
+  color: var(--vscode-errorForeground, #f14c4c);
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, currentColor));
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cx-error b { display: block; }
+.cx-error code { font-family: var(--vscode-editor-font-family, monospace); }
+.cx-ref {
+  color: var(--vscode-textLink-foreground, LinkText); text-decoration: underline; text-underline-offset: 2px;
+  background: none; border: 0; padding: 0; font: inherit; cursor: pointer;
+}
+.cx-ref:hover { color: var(--vscode-textLink-activeForeground, LinkText); }
+.cx-ref:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 2px; }

@@ -1,0 +1,9 @@
+{
+  // Widget frame code: its own program, because React's types declare globals (TrustedHTML) that clash
+  // with the panel's (src/webview/trusted.ts). Excluded from the root tsconfig.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": []
+  },
+  "include": [".", "../webview/css.d.ts"]
+}
