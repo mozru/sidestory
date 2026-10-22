@@ -55,7 +55,7 @@ const assets = new Assets(baseUrl, (path) => {
     // Don't hold a render forever if the reply never comes (e.g. the panel was hidden meanwhile).
     setTimeout(() => {
       if (pendingAssets.delete(id)) resolve(null);
-    }, 10_000);
+    }, 5_000);
   });
 });
 
@@ -68,6 +68,8 @@ let programmaticUntil = 0;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
 let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
+/** Set by `init`; applied by whichever render completes first after it. */
+let pendingInit: { active?: string } | undefined;
 
 // ---- skeleton ----
 
@@ -208,18 +210,16 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   switch (m.type) {
     case 'init':
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
-      void render(m.title, m.html, false).then((done) => {
-        if (!done) return;
-        active = m.active ?? active;
-        restoreScroll();
-        // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
-        if (!active) active = sectionAtReadingLine()?.id;
-        markActive();
-        initialized = true;
-      });
+      pendingInit = { active: m.active };
+      void render(m.title, m.html, false);
       break;
     case 'content':
-      if (initialized) void render(m.title, m.html, true);
+      // Always render the newest content, even if the first render is still loading its assets.
+      void render(m.title, m.html, initialized);
+      break;
+    case 'assetsChanged':
+      assets.invalidate(m.paths);
+      if (lastRender) void render(lastRender.title, lastRender.html, initialized);
       break;
     case 'anchors':
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
@@ -272,6 +272,16 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
   decorate();
+  if (pendingInit) {
+    const init = pendingInit;
+    pendingInit = undefined;
+    active = init.active ?? active;
+    restoreScroll();
+    // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
+    if (!active) active = sectionAtReadingLine()?.id;
+    markActive();
+    initialized = true;
+  }
   return true;
 }
 
@@ -482,6 +492,7 @@ function step(delta: 1 | -1): void {
   if (steps.length === 0) return;
   const i = steps.findIndex((s) => s.id === activeStepId());
   const target = steps[Math.min(steps.length - 1, Math.max(0, i < 0 ? 0 : i + delta))]!;
+  if (target.id === activeStepId()) return; // already at the first or last step
   hidePill();
   setActive(target.id, 'step');
   scrollToSection(target.id);

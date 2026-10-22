@@ -37,11 +37,14 @@ async function openWorkbench(page: Page): Promise<void> {
 }
 
 async function openExplainer(page: Page, name: string): Promise<FrameLocator> {
+  // Each panel is its own webview frame; remember which one is new.
+  const index = await page.locator('iframe.webview.ready').count();
   await command(page, 'Code Explainer: Open Explainer');
   await expect(page.locator('.quick-input-widget')).toContainText('retry-backoff');
   await page.keyboard.type(name);
   await page.keyboard.press('Enter');
-  const panel = page.frameLocator('iframe.webview.ready').last().frameLocator('#active-frame');
+  await expect(page.locator('iframe.webview.ready')).toHaveCount(index + 1, { timeout: 30_000 });
+  const panel = page.frameLocator('iframe.webview.ready').nth(index).frameLocator('#active-frame');
   await expect(panel.locator('.cx-title')).toBeVisible({ timeout: 30_000 });
   return panel;
 }
@@ -61,7 +64,9 @@ const activeTab = (page: Page, name: string) => page.locator('.tab.active', { ha
 test.beforeEach(async ({ page }) => {
   // A fresh copy of the fixture for every test.
   // Also forget restored editors and panels from earlier tests (VS Code keeps them per workspace on the server).
-  inContainer(`rm -rf ${WORKSPACE} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.fixture ${WORKSPACE}`);
+  inContainer(
+    `rm -rf ${WORKSPACE} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.fixture ${WORKSPACE} && cp /home/workspace/.settings.json ~/.openvscode-server/data/User/settings.json`,
+  );
   await openWorkbench(page);
 });
 
@@ -151,3 +156,13 @@ for (const [theme, bodyClass] of THEMES) {
     await page.screenshot({ path: info.outputPath(`${theme.replace(/\W+/g, '-')}.png`) });
   });
 }
+
+test('two explainers open at once both keep working', async ({ page }) => {
+  const first = await openExplainer(page, 'bit-reader');
+  const second = await openExplainer(page, 'retry-backoff');
+  await expect(second.locator('.cx-title')).toHaveText('Retry with full-jitter backoff');
+  await page.locator('.tab', { hasText: 'A backward bit reader' }).click();
+  await chooseStep(first, 'refill');
+  await expect(editorLines(page)).toContainText('refill below valid bits');
+  await expect(first.locator('.cx-position')).toHaveText('Step 5 of 5');
+});

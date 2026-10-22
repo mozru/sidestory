@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { log } from './log.ts';
 import { assertSize, realPathInside } from './paths.ts';
 
 /** One explainer folder: `<root>/.explain/<name>/`. */
@@ -26,7 +27,8 @@ export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
 }
 
 export async function findExplainers(): Promise<ExplainerRef[]> {
-  const manifests = await vscode.workspace.findFiles('**/.explain/*/manifest.json', undefined, 200);
+  const manifests = await vscode.workspace.findFiles('**/.explain/*/manifest.json', '**/{node_modules,.git,dist,out,build,target}/**', 200);
+  if (manifests.length === 200) log.warn('Found 200 or more explainers; only the first 200 are listed.');
   return manifests
     .map((m) => refFromDir(vscode.Uri.joinPath(m, '..')))
     .filter((r): r is ExplainerRef => r !== undefined)
@@ -43,13 +45,18 @@ export async function readBytesInside(uri: vscode.Uri, root: vscode.Uri, maxByte
   try {
     if (uri.scheme === 'file' && root.scheme === 'file') {
       const real = await realPathInside(uri.fsPath, root.fsPath);
-      if (!real) return undefined;
+      if (!real) {
+        log.warn(`Not reading ${uri.fsPath}: missing, or outside ${root.fsPath} after following links.`);
+        return undefined;
+      }
       await assertSize(real, maxBytes);
       return await vscode.workspace.fs.readFile(vscode.Uri.file(real));
     }
     const bytes = await vscode.workspace.fs.readFile(uri);
+    if (bytes.byteLength > maxBytes) log.warn(`Not reading ${uri.toString()}: larger than ${maxBytes} bytes.`);
     return bytes.byteLength <= maxBytes ? bytes : undefined;
-  } catch {
+  } catch (e) {
+    log.warn(`Can't read ${uri.toString()}: ${(e as Error).message}`);
     return undefined;
   }
 }
@@ -68,12 +75,17 @@ export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: nu
     return bytes && bytes.byteLength <= maxBytes ? new TextDecoder().decode(bytes) : undefined;
   }
   const real = await realPathInside(uri.fsPath, root.fsPath);
-  if (!real) return undefined;
+  if (!real) {
+    log.warn(`Not reading ${uri.fsPath}: missing, or outside ${root.fsPath} after following links.`);
+    return undefined;
+  }
   if (open) return open.getText().length <= maxBytes ? open.getText() : undefined;
   try {
     await assertSize(real, maxBytes);
+    // Files that aren't open are read as UTF-8 (documented limit).
     return new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(real)));
-  } catch {
+  } catch (e) {
+    log.warn(`Can't read ${uri.fsPath}: ${(e as Error).message}`);
     return undefined;
   }
 }

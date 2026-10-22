@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="24" fill="#1f2937"/>
+  <!-- code lines (left) -->
+  <g fill="#94a3b8">
+    <rect x="18" y="30" width="34" height="6" rx="3"/>
+    <rect x="24" y="44" width="28" height="6" rx="3"/>
+    <rect x="24" y="58" width="22" height="6" rx="3" fill="#a78bfa"/>
+    <rect x="24" y="72" width="30" height="6" rx="3" fill="#a78bfa"/>
+    <rect x="18" y="86" width="20" height="6" rx="3"/>
+  </g>
+  <!-- link -->
+  <path d="M56 68 C 66 68, 66 52, 76 52" fill="none" stroke="#a78bfa" stroke-width="4" stroke-linecap="round"/>
+  <!-- explainer page (right) -->
+  <rect x="74" y="26" width="38" height="72" rx="6" fill="#f8fafc"/>
+  <rect x="74" y="44" width="4" height="22" fill="#a78bfa"/>
+  <g fill="#64748b">
+    <rect x="82" y="34" width="22" height="5" rx="2.5"/>
+    <rect x="82" y="48" width="24" height="4" rx="2"/>
+    <rect x="82" y="56" width="18" height="4" rx="2"/>
+    <rect x="82" y="72" width="22" height="4" rx="2"/>
+    <rect x="82" y="80" width="14" height="4" rx="2"/>
+  </g>
+</svg>

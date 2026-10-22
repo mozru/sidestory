@@ -5,3 +5,6 @@
 !README.md
 !LICENSE
 dist/**/*.map
+!media/icon.png
+!CHANGELOG.md
+!SECURITY.md

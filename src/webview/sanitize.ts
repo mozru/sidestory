@@ -53,13 +53,26 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
  * Relative URLs resolve against `from` (a stylesheet's own URL), and must stay inside `baseUrl`.
  */
 export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl): string {
-  return css
-    .replace(/@import[^;]*;?/gi, '')
-    .replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi, (_, _q: string, u: string) => {
+  if (css.length > MAX_CSS) return '';
+  return (
+    css
+      // Undo hex escapes of ASCII letters and punctuation (e.g. \75 rl( is url( ), so they can't hide
+      // url( or @import from the rules below. Letters never need escaping, so nothing legitimate changes.
+      .replace(/\\0{0,4}(4[0-9a-f]|5[0-9a]|6[0-9a-f]|7[0-9a]|28|29|40)\s?/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/@import[^;]*;?/gi, '')
+      // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
+      .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(')
+      // Linear-time: each alternative stops at its own delimiter (no backtracking over the input).
+      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^)'"\s]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
+      const u = d ?? s ?? b ?? '';
       const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl, from);
       return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';
-    });
+    })
+  );
 }
+
+/** Larger stylesheets are dropped: rewriting them would tie up the panel. */
+const MAX_CSS = 500_000;
 
 /** Resolves a URL attribute. Returns null for URLs that must not load. */
 function rewriteUrl(tag: string, attr: string, value: string, baseUrl: string): string | null {

@@ -364,3 +364,45 @@ for (const theme of ['dark', 'light', 'hc'] as const) {
     });
   }
 }
+
+test('an asset edited on disk updates live; query variants of one file are fetched once', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="state">' + Array.from({ length: 50 }, (_, i) => `<img alt="" src="assets/dot.svg?v=${i}">`).join('') + '</section>' });
+  await expect(frame(page).locator('img').first()).toHaveAttribute('src', /^blob:/);
+  const requests = async () => (await posted(page)).filter((m) => m.type === 'requestAsset').length;
+  expect(await requests()).toBe(1);
+  const before = await frame(page).locator('img').first().getAttribute('src');
+  await send(page, { type: 'assetsChanged', paths: ['assets/dot.svg'] });
+  await expect.poll(requests).toBe(2);
+  await expect(frame(page).locator('img').first()).not.toHaveAttribute('src', before!);
+  await expect(frame(page).locator('img').first()).toHaveAttribute('src', /^blob:/);
+});
+
+test('a content update that arrives while the first render loads its assets is not lost', async ({ page }) => {
+  await page.goto('/test/webview/harness.html');
+  // Delay asset replies so the first render is still waiting when the update arrives.
+  await page.evaluate(() => {
+    const w = window as unknown as { __send(m: unknown): void };
+    const real = w.__send;
+    w.__send = (m: unknown) => ((m as { type: string }).type === 'asset' ? setTimeout(() => real(m), 600) : real(m));
+  });
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+  await send(page, { type: 'init', title: 'first', html: '<section data-explain-anchor="state"><h2>old</h2><img alt="" src="assets/dot.svg"></section>', anchors: anchors() });
+  await page.waitForTimeout(100);
+  await send(page, { type: 'content', title: 'second', html: '<section data-explain-anchor="state"><h2>EDITED DURING INIT</h2></section>' });
+  await expect(section(page, 'state').locator('h2')).toHaveText('EDITED DURING INIT');
+  await expect(page.locator('.cx-title')).toHaveText('second');
+  await expect(page.locator('.cx-position')).toHaveText(/Step \d of/);
+});
+
+test('hostile CSS can neither stall the panel nor sneak URLs past the rewriter', async ({ page }) => {
+  await open(page, {
+    html: `<style>.a{background:${'url('.repeat(100_000)}}</style>
+      <style>.b{background:\\75 rl(https://example.com/x.png)} @\\69mport "https://example.com/y.css"; .c{background:image-set("https://example.com/z.png" 1x)}</style>
+      <section data-explain-anchor="state"><h2>still here</h2></section>`,
+  });
+  await expect(section(page, 'state').locator('h2')).toHaveText('still here', { timeout: 3000 });
+  const css = await frame(page).locator('body').evaluate((body) => [...body.ownerDocument.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
+  expect(css).not.toContain('example.com/x.png');
+  expect(css).not.toMatch(/@import/i);
+  expect(css).toContain('cx-blocked(');
+});

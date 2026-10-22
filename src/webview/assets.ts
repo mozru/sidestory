@@ -6,14 +6,26 @@ import { rewriteCss } from './sanitize.ts';
 
 const MAX_TOTAL_BYTES = 20_000_000;
 const MAX_STYLESHEET_BYTES = 1_000_000;
+const MAX_IN_FLIGHT = 4;
+/** Distinct files one explainer may use. */
+const MAX_FILES = 300;
 const URL_IN_CSS = /url\("([^"]+)"\)/g; // the sanitizer writes every url() in this form
 
 /** Fetches a file by its path relative to the explainer folder. */
 export type AssetSource = (path: string) => Promise<Blob | null>;
 
+interface Entry {
+  url: string;
+  size: number;
+  blob: Blob;
+}
+
 export class Assets {
-  private readonly cache = new Map<string, Promise<string | null>>();
+  /** Loaded files by path (relative to the explainer folder). Failures aren't kept, so a file added later loads. */
+  private readonly cache = new Map<string, Promise<Entry | null>>();
   private bytes = 0;
+  private inFlight = 0;
+  private readonly waiting: (() => void)[] = [];
   private readonly baseUrl: string;
   private readonly source: AssetSource;
 
@@ -30,22 +42,53 @@ export class Assets {
     }
   }
 
+  /** Forgets loaded files (all, or the given paths) so the next render loads them again. */
+  invalidate(paths?: readonly string[]): void {
+    for (const [path, p] of this.cache) {
+      if (paths && !paths.includes(path)) continue;
+      this.cache.delete(path);
+      void p.then((entry) => {
+        if (!entry) return;
+        this.bytes -= entry.size;
+        URL.revokeObjectURL(entry.url);
+      });
+    }
+  }
+
   /** A blob: URL for a file in the explainer folder, or null if it can't or shouldn't be loaded. */
-  load(url: string): Promise<string | null> {
+  async load(url: string): Promise<string | null> {
+    return (await this.entry(url))?.url ?? null;
+  }
+
+  private async entry(url: string): Promise<Entry | null> {
     const path = url.startsWith(this.baseUrl) ? this.path(url) : null;
-    if (!path) return Promise.resolve(null);
-    let p = this.cache.get(url);
+    if (!path) return null;
+    let p = this.cache.get(path);
     if (!p) {
-      p = this.source(path)
-        .then((b) => {
-          if (!b || this.bytes + b.size > MAX_TOTAL_BYTES) return null;
-          this.bytes += b.size;
-          return URL.createObjectURL(b);
-        })
-        .catch(() => null);
-      this.cache.set(url, p);
+      if (this.cache.size >= MAX_FILES) return null;
+      p = this.fetchLimited(path);
+      this.cache.set(path, p);
+      void p.then((entry) => {
+        if (!entry && this.cache.get(path) === p) this.cache.delete(path);
+      });
     }
     return p;
+  }
+
+  /** At most MAX_IN_FLIGHT requests at a time, and nothing past the byte budget. */
+  private async fetchLimited(path: string): Promise<Entry | null> {
+    while (this.inFlight >= MAX_IN_FLIGHT) await new Promise<void>((r) => this.waiting.push(r));
+    if (this.bytes >= MAX_TOTAL_BYTES) return null;
+    this.inFlight++;
+    try {
+      const b = await this.source(path);
+      if (!b || this.bytes + b.size > MAX_TOTAL_BYTES) return null;
+      this.bytes += b.size;
+      return { url: URL.createObjectURL(b), size: b.size, blob: b };
+    } finally {
+      this.inFlight--;
+      this.waiting.shift()?.();
+    }
   }
 
   /** Rewrites every local asset reference in a (not yet attached) tree. Linked stylesheets become <style>. */
@@ -87,7 +130,7 @@ export class Assets {
     const path = href.startsWith(this.baseUrl) ? this.path(href) : null;
     if (!path) return null;
     try {
-      const blob = await this.source(path);
+      const blob = (await this.entry(href))?.blob;
       if (!blob || blob.size > MAX_STYLESHEET_BYTES) return null;
       const text = await blob.text();
       return await this.css(rewriteCss(text, this.baseUrl, href));

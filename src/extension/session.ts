@@ -12,6 +12,7 @@ import { assetMime, fromWebviewSchema, safeExternalUrl, themeColorVar } from '..
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
+import { log } from './log.ts';
 import { shellHtml } from './panel.ts';
 import { realPathInside } from './paths.ts';
 
@@ -20,6 +21,11 @@ const RESOLVE_DELAY = 150;
 const CURSOR_DELAY = 100;
 /** Give the extension host back control after this much resolving. */
 const SLICE_MS = 15;
+const MAX_ASSETS_IN_FLIGHT = 4;
+/** Asset bytes one panel may receive before its content or assets change again. */
+const MAX_ASSET_BUDGET = 20_000_000;
+/** Asset requests one panel may make before its content or assets change again. */
+const MAX_ASSET_REQUESTS = 500;
 
 const LOST: Resolution = { state: 'lost', range: null, location: 0, similarity: 0, ambiguous: false, method: 'none' };
 
@@ -29,6 +35,9 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly decorations: Decorations;
 
   private manifest: Manifest | undefined;
+  private manifestText = '';
+  /** The current error (or warnings) banner, resent when a hidden panel is rebuilt. */
+  private lastError: string | null = null;
   private title = '';
   private html = '';
   private readonly resolutions = new Map<string, Resolution>();
@@ -39,6 +48,12 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly hints = new Map<string, LineRange>();
   /** Anchors whose whole region an edit replaced since the last resolve. */
   private readonly orphaned = new Set<string>();
+  private readonly changedAssets = new Set<string>();
+  /** Bytes of assets sent to the panel since the content or its assets last changed. */
+  private assetBytes = 0;
+  private assetsInFlight = 0;
+  private assetRequests = 0;
+  private readonly assetQueue: (() => void)[] = [];
   /** Bumped per file on every resolve, so a slower, older resolve can't overwrite a newer one. */
   private readonly fileSeq = new Map<string, number>();
   private active: string | undefined;
@@ -57,30 +72,29 @@ export class ExplainerSession implements vscode.Disposable {
     this.panel = panel;
     this.decorations = decorations;
     panel.webview.html = shellHtml(panel.webview, extensionUri, ref);
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(ref.dir, '{manifest.json,explainer.html}'));
+    // Everything in the explainer folder: its two files reload the explainer; anything else is an asset.
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(ref.dir, '**/*'));
+    const changed = (uri: vscode.Uri) => this.onExplainerFileChange(uri);
     this.subscriptions.push(
       watcher,
-      watcher.onDidChange(() => this.scheduleReload()),
-      watcher.onDidCreate(() => this.scheduleReload()),
-      watcher.onDidDelete(() => this.scheduleReload()),
+      watcher.onDidChange(changed),
+      watcher.onDidCreate(changed),
+      watcher.onDidDelete(changed),
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
-      panel.onDidChangeViewState(() => this.updateContext()),
       panel.onDidDispose(() => this.dispose()),
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
       vscode.window.onDidChangeTextEditorSelection((e) => this.onSelection(e)),
       vscode.window.onDidChangeVisibleTextEditors(() => this.decorations.refresh()),
     );
-    this.updateContext();
   }
 
   async load(): Promise<void> {
     await this.reload();
   }
 
-  /** Where an anchor's code is now, if it was found with confidence. */
-  confidentRange(id: string): LineRange | undefined {
-    const r = this.resolutions.get(id);
-    return r?.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || r.state === 'changed') ? r.range : undefined;
+  /** Where live tracking last saw an anchor's code (only trusted positions are kept). */
+  liveHint(id: string): LineRange | undefined {
+    return this.hints.get(id);
   }
 
   navigate(delta: 1 | -1): void {
@@ -88,6 +102,24 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   // ---- loading ----
+
+  private onExplainerFileChange(uri: vscode.Uri): void {
+    const own = [manifestUri(this.ref).toString(), htmlUri(this.ref).toString()];
+    if (own.includes(uri.toString())) {
+      this.scheduleReload();
+      return;
+    }
+    const prefix = this.ref.dir.path.replace(/\/?$/, '/');
+    if (!uri.path.startsWith(prefix)) return;
+    this.changedAssets.add(uri.path.slice(prefix.length));
+    this.debounce('assets', RELOAD_DELAY, () => {
+      const paths = [...this.changedAssets];
+      this.changedAssets.clear();
+      this.assetBytes = 0; // the panel re-requests what it still uses
+      this.assetRequests = 0;
+      this.post({ type: 'assetsChanged', paths });
+    });
+  }
 
   private scheduleReload(): void {
     this.debounce('reload', RELOAD_DELAY, () => void this.reload());
@@ -101,12 +133,24 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.disposed) return;
     if (manifestText === undefined || html === undefined) {
       const which = manifestText === undefined ? 'manifest.json' : 'explainer.html';
-      this.post({ type: 'error', message: `Can't read ${which}: it is missing, outside the repo, or too large.` });
+      this.showError(`Can't read ${which}: it is missing, outside the repository, or too large. Details in Output › Code Explainer.`);
       return;
     }
+    const manifestChanged = manifestText !== this.manifestText;
+    if (!manifestChanged && this.manifest) {
+      // Only the HTML changed: no need to re-read every anchored file or rebuild watchers.
+      if (html !== this.html) {
+        this.html = html;
+        this.assetBytes = 0;
+        this.assetRequests = 0;
+        this.post({ type: 'content', title: this.title, html });
+      }
+      return;
+    }
+    this.manifestText = manifestText;
     const parsed = parseManifest(manifestText);
     if (!parsed.ok) {
-      this.post({ type: 'error', message: parsed.error });
+      this.showError(parsed.error);
       return;
     }
     const previous = this.manifest;
@@ -129,8 +173,12 @@ export class ExplainerSession implements vscode.Disposable {
     this.html = html;
     this.title = parsed.manifest.title;
     this.panel.title = `Explainer: ${this.title || this.ref.name}`;
-    this.post({ type: 'error', message: warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null });
-    if (contentChanged) this.post({ type: 'content', title: this.title, html: this.html });
+    this.showError(warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null);
+    if (contentChanged) {
+      this.assetBytes = 0;
+      this.assetRequests = 0;
+      this.post({ type: 'content', title: this.title, html: this.html });
+    }
     this.watchAnchorFiles();
     await this.resolveAll();
   }
@@ -271,18 +319,16 @@ export class ExplainerSession implements vscode.Disposable {
     switch (m.type) {
       case 'ready':
         this.post({ type: 'init', title: this.title, html: this.html, anchors: this.anchorViews(), active: this.active });
+        if (this.lastError) this.post({ type: 'error', message: this.lastError });
         break;
       case 'focusAnchor':
         if (!this.manifest?.anchors.has(m.anchorId)) return;
         this.setActive(m.anchorId);
         this.requestReveal(m.anchorId, false);
         break;
-      case 'openExternal': {
-        // The schema already refused local hosts and credentials; open the normalized form.
-        const url = safeExternalUrl(m.url);
-        if (url) void vscode.env.openExternal(vscode.Uri.parse(url, true));
+      case 'openExternal':
+        void this.openExternal(m.url);
         break;
-      }
       case 'openFile':
         void this.openExplainerFile(m.path);
         break;
@@ -297,16 +343,54 @@ export class ExplainerSession implements vscode.Disposable {
     }
   }
 
+  private showError(message: string | null): void {
+    this.lastError = message;
+    if (message) log.warn(`${this.ref.name}: ${message}`);
+    this.post({ type: 'error', message });
+  }
+
   private setActive(id: string | undefined): void {
     this.active = id;
     if (!id) this.decorations.set(undefined);
   }
 
-  /** Sends a file from the explainer folder to the content frame (it can't load files itself). */
+  /**
+   * Sends a file from the explainer folder to the content frame (it can't load files itself).
+   * A few at a time, and within a per-panel byte budget, so an explainer can't flood the host.
+   */
   private async sendAsset(id: number, path: string): Promise<void> {
-    const mime = assetMime(path);
-    const data = mime ? await readBytesInside(vscode.Uri.joinPath(this.ref.dir, path), this.ref.dir, MAX_ASSET_BYTES) : undefined;
-    this.post({ type: 'asset', id, mime: mime ?? '', data: data ? Buffer.from(data).toString('base64') : null });
+    // A hard cap on requests, so a page can't keep the host busy reading files.
+    if (++this.assetRequests > MAX_ASSET_REQUESTS) {
+      this.post({ type: 'asset', id, mime: '', data: null });
+      return;
+    }
+    while (this.assetsInFlight >= MAX_ASSETS_IN_FLIGHT) await new Promise<void>((r) => this.assetQueue.push(r));
+    this.assetsInFlight++;
+    try {
+      const mime = assetMime(path);
+      const room = MAX_ASSET_BUDGET - this.assetBytes;
+      const uri = vscode.Uri.joinPath(this.ref.dir, path);
+      // Inside the explainer folder *and* the repository (the folder itself could be a link elsewhere).
+      const inside = mime && room > 0 && (uri.scheme !== 'file' || (await realPathInside(uri.fsPath, this.ref.root.fsPath)));
+      const data = inside ? await readBytesInside(uri, this.ref.dir, Math.min(MAX_ASSET_BYTES, room)) : undefined;
+      if (data) this.assetBytes += data.byteLength;
+      this.post({ type: 'asset', id, mime: mime ?? '', data: data ? Buffer.from(data).toString('base64') : null });
+    } finally {
+      this.assetsInFlight--;
+      this.assetQueue.shift()?.();
+    }
+  }
+
+  /**
+   * Opens a web or mail link from the explainer, after the user confirms the full address.
+   * (The schema already refused local and private hosts, credentials and nested URLs.)
+   */
+  private async openExternal(raw: string): Promise<void> {
+    const url = safeExternalUrl(raw);
+    if (!url) return;
+    const open = 'Open';
+    const choice = await vscode.window.showInformationMessage(`The explainer links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open);
+    if (choice === open) await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 
   /** Opens a file the explainer links to (relative to its folder), if it is inside the repo. */
@@ -386,10 +470,6 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.panel.visible && !this.disposed) void this.panel.webview.postMessage(message);
   }
 
-  private updateContext(): void {
-    if (!this.disposed) void vscode.commands.executeCommand('setContext', 'codeExplainer.active', this.panel.visible);
-  }
-
   private debounce(key: string, ms: number, fn: () => void): void {
     clearTimeout(this.timers.get(key));
     this.timers.set(key, setTimeout(() => {
@@ -405,7 +485,6 @@ export class ExplainerSession implements vscode.Disposable {
     this.timers.clear();
     for (const d of [...this.subscriptions, ...this.fileWatchers]) d.dispose();
     this.decorations.set(undefined);
-    void vscode.commands.executeCommand('setContext', 'codeExplainer.active', false);
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();
   }

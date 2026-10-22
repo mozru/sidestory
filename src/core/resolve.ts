@@ -42,6 +42,7 @@ const GOOD_ENOUGH = 0.9;
 const WORK_BUDGET = 3_000_000;
 /** Exact copies considered, nearest to the hint first. More than this is itself ambiguous. */
 const MAX_EXACT = 50;
+const CONTEXT_LINES = 3;
 /**
  * The fuzzy search looks this many lines either side of the hint, to stay within the per-anchor time
  * budget (docs/research/anchors.md §7). Exact copies are found anywhere; code that moved further than
@@ -66,8 +67,9 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
   const n = text.normalized(quote.norm);
   const q = normalizeLines(splitLines(quote.exact), quote.norm);
   const k = q.length;
-  const pre = quote.prefix ? normalizeLines(splitLines(quote.prefix), quote.norm) : [];
-  const suf = quote.suffix ? normalizeLines(splitLines(quote.suffix), quote.norm) : [];
+  // Context is the nearest few lines (pinning records 3); more would only cost time.
+  const pre = quote.prefix ? normalizeLines(splitLines(quote.prefix), quote.norm).slice(-CONTEXT_LINES) : [];
+  const suf = quote.suffix ? normalizeLines(splitLines(quote.suffix), quote.norm).slice(0, CONTEXT_LINES) : [];
   const context = (i: number, len: number) => contextSimilarity(n, i, len, pre, suf);
   const home = (i: number) => i + 1 === hint.start || i + 1 === anchor.range.start;
   const rangeAt = (i: number, len: number): LineRange => ({ start: i + 1, end: i + len });
@@ -172,10 +174,13 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
 /** v1 anchors: a snippet of text near the start of the range. Keeps the range's length. */
 function resolveHead(text: PreparedText, anchor: Anchor, snippet: string, hint: LineRange): Resolution {
   const n = text.normalized('ws');
-  const s = normalizeLines(splitLines(snippet)).filter((l) => l !== '');
+  // At most the first few snippet lines, searched near the hint: bounded work whatever the input.
+  const s = normalizeLines(splitLines(snippet)).filter((l) => l !== '').slice(0, 5);
   const span = anchor.range.end - anchor.range.start;
   let best = -1;
-  for (let i = 0; i + s.length <= n.length; i++) {
+  const from = Math.max(0, hint.start - 1 - SCAN_RADIUS);
+  const to = Math.min(n.length, hint.start - 1 + SCAN_RADIUS);
+  for (let i = from; i + s.length <= to; i++) {
     if (s.every((l, j) => n[i + j]!.includes(l)) && (best < 0 || Math.abs(i + 1 - hint.start) < Math.abs(best + 1 - hint.start))) best = i;
   }
   if (best < 0) {

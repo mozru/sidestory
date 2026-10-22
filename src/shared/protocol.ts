@@ -28,6 +28,8 @@ export type ToWebview =
   | { type: 'navigate'; delta: 1 | -1 }
   /** The explainer could not be loaded; keep showing the last good content. */
   | { type: 'error'; message: string | null }
+  /** Files in the explainer folder changed (paths relative to it): reload them. */
+  | { type: 'assetsChanged'; paths: string[] }
   /** Reply to `requestAsset`: the file's bytes as base64 (binary doesn't survive every remote setup), or null. */
   | { type: 'asset'; id: number; mime: string; data: string | null };
 
@@ -81,16 +83,33 @@ export function safeExternalUrl(raw: string): string | null {
   } catch {
     return null;
   }
-  if (u.protocol === 'mailto:') return u.href;
+  if (u.protocol === 'mailto:') {
+    // Only the plain fields: some mail clients honour others, e.g. attach=/path/to/file.
+    return [...u.searchParams.keys()].every((k) => ['subject', 'body', 'cc', 'bcc'].includes(k.toLowerCase())) ? u.href : null;
+  }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   if (u.username || u.password) return null;
-  const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  // On a remote window VS Code also opens port forwards for localhost URLs found *inside* the query
+  // (e.g. an OAuth redirect_uri). Refuse any query or fragment value that is itself a web URL.
+  const nested = [...u.searchParams.values(), decodeURIComponentSafe(u.hash.slice(1))];
+  if (nested.some((v) => /^\s*https?:/i.test(v)) || /https?(:|%3a)/i.test(u.search + u.hash)) return null;
+  const host = u.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
   const privateHost =
     host === 'localhost' ||
     host.endsWith('.localhost') ||
     host.endsWith('.local') ||
     !host.includes('.') && !host.includes(':') ||
     /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
-    host === '::1' || host === '::' || /^(fc|fd|fe80:)/.test(host) || host.startsWith('::ffff:');
+    host === '::1' || host === '::' || /^(fc|fd|fe[89ab]|fec|fed|fee|fef|ff)/.test(host) || host.startsWith('::ffff:') ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) || // CGNAT, Tailscale
+    /\.(internal|home\.arpa|lan|corp)$/.test(host);
   return privateHost ? null : u.href;
+}
+
+function decodeURIComponentSafe(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }

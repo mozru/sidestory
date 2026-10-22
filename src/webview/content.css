@@ -1,6 +1,6 @@
 /*
- * Defaults for explainer content, inside the shadow root. Authors can override any of this.
- * Theme variables inherit into the shadow root, so authors can use them too.
+ * Defaults for explainer content, inside the sandboxed content frame. Authors can override any of this.
+ * The panel copies VS Code's theme variables into the frame, so authors can use them too.
  */
 
 html, body {

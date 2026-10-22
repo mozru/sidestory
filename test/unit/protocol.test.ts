@@ -49,3 +49,20 @@ describe('fromWebviewSchema', () => {
     expect(fromWebviewSchema.safeParse(m).success).toBe(false);
   });
 });
+
+describe('safeExternalUrl: security audit regressions', () => {
+  it.each([
+    'https://attacker.example/?u=http://127.0.0.1:2375',
+    'https://github.com/login/oauth/authorize?client_id=x&redirect_uri=http://localhost:8888/cb',
+    'https://example.com/?u=http%3A%2F%2Flocalhost%3A9000',
+    'https://example.com/#http://localhost:3000',
+    'mailto:a@b.c?attach=/etc/passwd',
+  ])('refuses %s', (u) => {
+    expect(safeExternalUrl(u)).toBeNull();
+  });
+
+  it('allows ordinary query strings and plain mail links', () => {
+    expect(safeExternalUrl('https://example.com/search?q=bit+reader&page=2')).not.toBeNull();
+    expect(safeExternalUrl('mailto:team@example.com?subject=Hello&body=Hi')).not.toBeNull();
+  });
+});

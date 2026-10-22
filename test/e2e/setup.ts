@@ -3,7 +3,7 @@
 import { execSync } from 'node:child_process';
 
 export const PORT = 3100;
-export const CONTAINER = 'cx-e2e';
+export const CONTAINER = process.env.CX_E2E_CONTAINER ?? 'cx-e2e';
 export const WORKSPACE = '/home/workspace/sample';
 const run = (cmd: string) => execSync(cmd, { stdio: ['ignore', 'pipe', 'inherit'], cwd: new URL('../..', import.meta.url).pathname });
 
@@ -12,13 +12,15 @@ export default async function setup(): Promise<() => void> {
   run('docker build -q -f test/e2e/Dockerfile -t code-explainer-e2e .');
   run(`docker rm -f ${CONTAINER} || true`);
   run(`docker run -d --name ${CONTAINER} -p 127.0.0.1:${PORT}:3000 code-explainer-e2e`);
-  for (let i = 0; i < 60; i++) {
+  let up = false;
+  for (let i = 0; i < 60 && !up; i++) {
     try {
-      if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) break;
+      up = (await fetch(`http://127.0.0.1:${PORT}/`)).ok;
     } catch {
       // not up yet
     }
-    await new Promise((r) => setTimeout(r, 500));
+    if (!up) await new Promise((r) => setTimeout(r, 500));
   }
+  if (!up) throw new Error(`VS Code server in container ${CONTAINER} did not start on port ${PORT}`);
   return () => run(`docker rm -f ${CONTAINER}`);
 }

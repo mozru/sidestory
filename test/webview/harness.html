@@ -29,7 +29,8 @@
 </script>
 </head>
 <body>
-<div id="app" data-base="http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/" data-dir="file:///ws/.explain/bit-reader"></div>
+<div id="app" data-dir="file:///ws/.explain/bit-reader"></div>
+<script nonce="harness">document.getElementById('app').dataset.base = `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`;</script>
 <script type="module" nonce="harness" src="/dist/webview/main.js"></script>
 </body>
 </html>

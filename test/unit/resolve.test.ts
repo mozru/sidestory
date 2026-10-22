@@ -356,3 +356,21 @@ describe('resolveAnchor: round 6 regressions', () => {
     expect(resolve(edited, anchor, { hint: { start: 2, end: 2 }, orphaned: true }).state).not.toBe('lost');
   });
 });
+
+describe('resolveAnchor: security audit regressions', () => {
+  it('a v1 snippet anchor costs little even with a huge snippet and file', () => {
+    const text = new PreparedText(Array.from({ length: 1_000_000 }, () => 'a'));
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 10, end: 500 }, snippet: Array.from({ length: 500 }, () => 'a').join('\n') + '\nb', highlight: [] };
+    const t0 = performance.now();
+    resolveAnchor(text, anchor);
+    expect(performance.now() - t0).toBeLessThan(300);
+  });
+
+  it('long recorded context does not make resolution slow', () => {
+    const lines = Array.from({ length: 2000 }, (_, i) => `line ${i % 7}`);
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 1000, end: 1001 }, quote: { exact: 'unique one\nunique two', prefix: Array.from({ length: 900 }, () => 'p').join('\n'), suffix: Array.from({ length: 900 }, () => 's').join('\n'), norm: 'ws' }, highlight: [] };
+    const t0 = performance.now();
+    resolve(lines, anchor);
+    expect(performance.now() - t0).toBeLessThan(100);
+  });
+});

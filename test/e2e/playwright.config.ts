@@ -10,5 +10,7 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 15_000 },
   reporter: [['list']],
+  retries: process.env.CI ? 2 : 0,
+  forbidOnly: !!process.env.CI,
   use: { baseURL: 'http://127.0.0.1:3100', viewport: { width: 1440, height: 900 }, screenshot: 'only-on-failure' },
 });

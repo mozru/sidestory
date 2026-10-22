@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { parseManifest } from '../src/core/manifest.ts';
 import { pinQuote } from '../src/core/pin.ts';
 import { splitLines } from '../src/core/text.ts';
+import { realPathInside } from '../src/extension/paths.ts';
 
 const [dirArg, ...only] = process.argv.slice(2);
 if (!dirArg) {
@@ -27,7 +28,13 @@ const raw = parsed.manifest.raw as { version: number; anchors: Record<string, Re
 let pinned = 0;
 for (const a of parsed.manifest.anchors.values()) {
   if (only.length && !only.includes(a.id)) continue;
-  const lines = splitLines(readFileSync(join(root, a.file), 'utf8'));
+  // Never follow a link out of the repository: the quote would copy that file's text into the manifest.
+  const real = await realPathInside(join(root, a.file), root);
+  if (!real) {
+    console.warn(`skipped ${a.id}: ${a.file} is missing or outside the repository`);
+    continue;
+  }
+  const lines = splitLines(readFileSync(real, 'utf8'));
   const quote = pinQuote(lines, a.range, a.quote?.norm);
   if (!quote) {
     console.warn(`skipped ${a.id}: lines ${a.range.start}-${a.range.end} of ${a.file} are blank or missing`);

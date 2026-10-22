@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { findExplainers, refFromDir } from './explainers.ts';
+import { log } from './log.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
 import { pinAnchors } from './pin.ts';
 import { ExplainerSession } from './session.ts';
@@ -11,19 +12,34 @@ interface PanelState {
   dir?: string;
 }
 
-let session: ExplainerSession | undefined;
+/** One session per open explainer, keyed by its folder. */
+const sessions = new Map<string, ExplainerSession>();
+/** The explainer the step commands act on: the one whose panel was active most recently. */
+let current: ExplainerSession | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const decorations = new Decorations();
-  context.subscriptions.push(decorations, { dispose: () => session?.dispose() });
+  context.subscriptions.push(log, { dispose: () => [...sessions.values()].forEach((s) => s.dispose()) });
+
+  const updateContext = () =>
+    void vscode.commands.executeCommand('setContext', 'codeExplainer.active', [...sessions.values()].some((s) => s.panel.visible));
 
   const start = async (ref: ExplainerRef, panel: vscode.WebviewPanel) => {
-    session?.dispose();
+    const key = ref.dir.toString();
+    const decorations = new Decorations();
     const s = new ExplainerSession(ref, panel, context.extensionUri, decorations);
-    session = s;
+    sessions.set(key, s);
+    current = s;
     s.onDidDispose(() => {
-      if (session === s) session = undefined;
+      decorations.dispose();
+      if (sessions.get(key) === s) sessions.delete(key);
+      if (current === s) current = [...sessions.values()].at(-1);
+      updateContext();
     });
+    panel.onDidChangeViewState((e) => {
+      if (e.webviewPanel.active) current = s;
+      updateContext();
+    });
+    updateContext();
     await s.load();
   };
 
@@ -34,28 +50,31 @@ export function activate(context: vscode.ExtensionContext): void {
         if (dir) void vscode.window.showWarningMessage('Not an explainer: expected a folder like .explain/<name> inside the workspace.');
         return;
       }
-      if (session && session.ref.dir.toString() === ref.dir.toString()) {
-        session.panel.reveal(undefined, true);
+      const existing = sessions.get(ref.dir.toString());
+      if (existing) {
+        existing.panel.reveal(undefined, true);
         return;
       }
-      const panel = createPanel(context.extensionUri, ref);
-      await start(ref, panel);
+      await start(ref, createPanel(context.extensionUri, ref));
     }),
     vscode.commands.registerCommand('codeExplainer.pin', async () => {
-      const ref = session?.ref ?? (await pickExplainer());
-      const open = session && ref && session.ref.dir.toString() === ref.dir.toString() ? session : undefined;
-      if (ref) await pinAnchors(ref, (id) => open?.confidentRange(id));
+      const ref = current?.ref ?? (await pickExplainer());
+      if (!ref) return;
+      const open = sessions.get(ref.dir.toString());
+      try {
+        await pinAnchors(ref, (id) => open?.liveHint(id));
+      } catch (e) {
+        log.error(`Pin Anchors failed for ${ref.name}: ${(e as Error).message}`);
+        void vscode.window.showErrorMessage(`Couldn't pin anchors: ${(e as Error).message}`);
+      }
     }),
-    vscode.commands.registerCommand('codeExplainer.nextStep', () => session?.navigate(1)),
-    vscode.commands.registerCommand('codeExplainer.prevStep', () => session?.navigate(-1)),
+    vscode.commands.registerCommand('codeExplainer.nextStep', () => current?.navigate(1)),
+    vscode.commands.registerCommand('codeExplainer.prevStep', () => current?.navigate(-1)),
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
       async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PanelState | undefined) {
-        if (typeof state?.dir !== 'string') {
-          panel.dispose();
-          return;
-        }
-        const ref = refFromDir(vscode.Uri.parse(state.dir));
-        if (!ref) {
+        const ref = typeof state?.dir === 'string' ? refFromDir(vscode.Uri.parse(state.dir)) : undefined;
+        // In Restricted Mode, an explainer is shown only when the user opens it, never automatically.
+        if (!ref || sessions.has(ref.dir.toString()) || !vscode.workspace.isTrusted) {
           panel.dispose();
           return;
         }
@@ -67,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 async function pickExplainer(): Promise<ExplainerRef | undefined> {
+  // Skip dependency and build folders; search.exclude doesn't apply to findFiles with an explicit pattern.
   const all = await findExplainers();
   if (all.length === 0) {
     void vscode.window.showInformationMessage('No explainers found. An explainer is a folder like .explain/<name>/ with explainer.html and manifest.json.');
@@ -81,5 +101,5 @@ async function pickExplainer(): Promise<ExplainerRef | undefined> {
 }
 
 export function deactivate(): void {
-  session?.dispose();
+  for (const s of sessions.values()) s.dispose();
 }
