@@ -145,7 +145,8 @@ export class Assets {
     const map = new Map(urls.map((u, i) => [u, blobs[i]]));
     // One pass over the text, however many distinct URLs it has.
     return text.replace(URL_IN_CSS, (m, u: string) => {
-      if (!map.has(u)) return m;
+      // Belt and braces: the sanitizer only lets through local files, fragments and data: images.
+      if (!map.has(u)) return u.startsWith('#') || /^data:image\//i.test(u) ? m : 'none';
       const blob = map.get(u);
       return blob ? `url("${blob}")` : 'none';
     });

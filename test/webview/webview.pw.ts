@@ -148,7 +148,7 @@ test('anchor states show on sections and in the header', async ({ page }) => {
 test('errors show in a banner and keep the last good content', async ({ page }) => {
   await open(page);
   await send(page, { type: 'error', message: 'manifest.json: anchors: bad' });
-  await expect(page.locator('.cx-banner')).toHaveText('manifest.json: anchors: bad');
+  await expect(page.locator('.cx-banner-text')).toHaveText('manifest.json: anchors: bad');
   await expect(section(page, 'refill')).toBeAttached();
   await send(page, { type: 'error', message: null });
   await expect(page.locator('.cx-banner')).toBeHidden();
@@ -499,4 +499,166 @@ test('the cursor in code a detail covers offers to dive into it', async ({ page 
   await page.locator('.cx-pill-show').click();
   expect(await posted(page)).toEqual([{ type: 'dive', name: 'retry-backoff' }]);
   await expect(page.locator('.cx-pill')).toBeHidden();
+});
+
+// ---- user-testing fixes ----
+
+test('switches, tabs and open details survive an edit elsewhere in the explainer', async ({ page }) => {
+  const doc = (word: string, checked = '') => `
+    <section data-explain-anchor="interface"><h2>Interface ${word}</h2></section>
+    <section data-explain-anchor="state"><h2>State</h2>
+      <input type="checkbox" id="sw" ${checked}><label for="sw">lead</label>
+      <input type="radio" name="t" id="t1" checked><input type="radio" name="t" id="t2">
+      <input type="text" id="tx" value="">
+      <details id="d"><summary>Q</summary>A</details></section>`;
+  await open(page, { html: doc('one') });
+  const f = frame(page);
+  await f.locator('#sw').check();
+  await f.locator('#t2').check();
+  await f.locator('#tx').fill('typed');
+  await f.locator('#d summary').click();
+  await page.locator('.cx-step').first().focus(); // nothing in the content has focus
+  await send(page, { type: 'content', title: 't', html: doc('two') });
+  await expect(f.getByText('Interface two')).toBeVisible();
+  await expect(f.locator('#sw')).toBeChecked();
+  await expect(f.locator('#t2')).toBeChecked();
+  await expect(f.locator('#tx')).toHaveValue('typed');
+  await expect(f.locator('#d')).toHaveAttribute('open', '');
+  // The author changing that control's own default still wins.
+  await f.locator('#sw').uncheck();
+  await page.locator('.cx-step').first().focus(); // a focused control keeps what the reader set
+  await send(page, { type: 'content', title: 't', html: doc('three', 'checked') });
+  await expect(f.getByText('Interface three')).toBeVisible();
+  await expect(f.locator('#sw')).toBeChecked();
+  // An open <details> doesn't count as an edit to its section.
+  await expect(section(page, 'state')).not.toHaveClass(/cx-updated/);
+});
+
+test('in-page links make CSS :target work', async ({ page }) => {
+  await open(page, {
+    html: `<style>.pop{display:none}.pop:target{display:block}</style>
+      <section data-explain-anchor="interface"><h2>I</h2><a href="#p2">show</a><div class="pop" id="p2">popped</div></section>`,
+  });
+  await expect(frame(page).getByText('popped')).toBeHidden();
+  await frame(page).getByRole('link', { name: 'show' }).click();
+  await expect(frame(page).getByText('popped')).toBeVisible();
+  await expect(page.locator('.cx-content-frame')).toBeAttached(); // the frame wasn't navigated away
+});
+
+test('many steps in a narrow panel use the picker rather than one-letter tabs', async ({ page }) => {
+  const html = Array.from({ length: 10 }, (_, i) => `<section data-explain-anchor="s${i}"><h2>Section number ${i}</h2></section>`).join('');
+  await page.setViewportSize({ width: 640, height: 700 });
+  await open(page, { html });
+  await expect(page.locator('.cx-step-select')).toBeVisible();
+  await expect(page.locator('.cx-steps')).toBeHidden();
+  await page.setViewportSize({ width: 1600, height: 700 });
+  await expect(page.locator('.cx-steps')).toBeVisible();
+});
+
+test('the step bar is one Tab stop; arrow keys move along it', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-step').nth(0).focus();
+  await expect(page.locator('.cx-step[tabindex="0"]')).toHaveCount(1);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.cx-step').nth(1)).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.locator('.cx-step').nth(4)).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.cx-step:focus')).toHaveCount(0);
+});
+
+test('a detail naming an explainer already on the trail goes back up to it', async ({ page }) => {
+  await page.goto('/test/webview/harness.html');
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+  await send(page, {
+    type: 'init',
+    title: 'Child',
+    html: '<section data-explain-anchor="a"><h2>A</h2><div data-explain-detail="bit-reader"></div><div data-explain-detail="retry-backoff"></div></section>',
+    anchors: [],
+    dir: 'file:///ws/.explain/retry-backoff',
+    base: await base(page, 'retry-backoff'),
+    trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }],
+  });
+  await send(page, { type: 'details', items: [{ name: 'bit-reader', found: true, title: 'Root', summary: '', steps: 5 }, { name: 'retry-backoff', found: true, title: 'Child', summary: '', steps: 1 }] });
+  const up = frame(page).locator('[data-explain-detail="bit-reader"] .cx-dive');
+  await expect(up).toHaveText('‹ Back to Root');
+  await expect(frame(page).locator('[data-explain-detail="retry-backoff"] .cx-dive')).toBeDisabled();
+  await clearPosted(page);
+  await up.click();
+  expect(await posted(page)).toEqual([{ type: 'goTo', depth: 0 }]);
+});
+
+test('author look-alike detail controls neither break rendering nor dive', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="interface"><h2>I</h2><div data-explain-detail="retry-backoff"><div class="cx-detail"><button class="cx-dive">fake</button></div></div></section>' });
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 1');
+  await clearPosted(page);
+  await frame(page).getByRole('button', { name: 'fake' }).click();
+  expect((await posted(page)).filter((m) => m.type === 'dive')).toEqual([]);
+});
+
+test('CSS the rewriter passes on loads no remote url(), as the browser itself parses it', async ({ page }) => {
+  await page.goto('/test/webview/harness.html');
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+  const cases = [
+    "/* ' */ a{background-image:url(https://evil.example/a.png)} /* ' */",
+    "\\/* ' */ a{background:url(https://evil.example/c.png)} /* ' */",
+    "a{x:/\\* ' */ url(https://evil.example/c.png) /* ' */}",
+    "/ /**/* ' */ a{background:url(https://evil.example/d.png)} /* ' */",
+    'a{background:url("x\\") ;background:url(https://evil.example/e.png) ")}',
+    "a{content:'x\f;background-image:url(https://evil.example/b.png)} b{content:'}",
+  ];
+  for (const css of cases) {
+    await send(page, { type: 'init', title: css, html: `<style>${css}</style><section data-explain-anchor="state"><h2>S</h2></section>`, anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL });
+    await expect(page.locator('.cx-title')).toHaveText(css);
+    const urls = await frame(page).locator('body').evaluate((b) =>
+      [...b.ownerDocument.styleSheets].flatMap((s) => [...s.cssRules].map((r) => r.cssText)).join('\n').match(/url\([^)]*/g) ?? [],
+    );
+    for (const u of urls) expect(u, css).not.toMatch(/^url\("?https?:\/\/(?!localhost)/);
+  }
+});
+
+test('tabbing into a section makes it the current step; J/K work from a switch', async ({ page }) => {
+  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2><p style="height:900px">long</p></section>
+    <section data-explain-anchor="state"><h2>S</h2><input type="checkbox" id="sw"><label for="sw">x</label></section>
+    <section data-explain-anchor="refill"><h2>R</h2></section>` });
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 3');
+  await frame(page).locator('#sw').focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
+  await page.keyboard.press('j');
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+});
+
+test('a section with no usable anchor is counted in the header', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="interface"><h2>I</h2></section><section data-explain-anchor="nope"><h2>N</h2></section>' });
+  await expect(page.locator('.cx-status')).toHaveText('1 not linked');
+});
+
+test('animations far off screen are paused', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 500 });
+  await open(page, { html: `<style>@keyframes s{to{opacity:.2}} .spin{animation:s 1s infinite}</style>
+    <section data-explain-anchor="interface"><h2>I</h2><div class="spin">a</div><p style="height:3000px"></p></section>
+    <section data-explain-anchor="refill"><h2>R</h2><div class="spin" id="far">b</div></section>` });
+  const state = (sel: string) => frame(page).locator(sel).evaluate((el) => getComputedStyle(el).animationPlayState);
+  await expect.poll(() => state('#far')).toBe('paused');
+  await expect.poll(() => state('.spin >> nth=0')).toBe('running');
+  await page.locator('.cx-step', { hasText: 'R' }).click();
+  await expect.poll(() => state('#far')).toBe('running');
+});
+
+test('a section whose code is gone offers to re-anchor it; a manifest error offers to open it', async ({ page }) => {
+  await open(page);
+  await send(page, { type: 'anchors', anchors: anchors({ refill: 'lost', consume: 'changed' }) });
+  await expect(section(page, 'consume').locator('.cx-reanchor')).toHaveCount(0);
+  await clearPosted(page);
+  await section(page, 'refill').getByRole('button', { name: 'Re-anchor to the selected code' }).click();
+  expect(await posted(page)).toEqual([{ type: 'reanchor', anchorId: 'refill' }]);
+  // Found again: the control goes, and doesn't count as a change to the section.
+  await send(page, { type: 'anchors', anchors: anchors() });
+  await expect(section(page, 'refill').locator('.cx-reanchor')).toHaveCount(0);
+  await send(page, { type: 'error', message: 'manifest.json is not valid JSON (line 3, column 5).' });
+  await clearPosted(page);
+  await page.getByRole('button', { name: 'Open manifest.json' }).click();
+  expect(await posted(page)).toEqual([{ type: 'openFile', path: 'manifest.json' }]);
 });

@@ -4,7 +4,7 @@ import type { Resolution } from '../../src/core/resolve.ts';
 import { anchorAtLine } from '../../src/core/sections.ts';
 import { contentSimilarity, lcsRatio } from '../../src/core/similarity.ts';
 import { trackRange } from '../../src/core/tracking.ts';
-import { pinQuote } from '../../src/core/pin.ts';
+import { pinQuote, trimBlankLines } from '../../src/core/pin.ts';
 import { PreparedText } from '../../src/core/text.ts';
 
 describe('parseManifest', () => {
@@ -219,6 +219,14 @@ describe('pinQuote', () => {
     expect(pinQuote(['', '  ', 'x'], { start: 1, end: 2 })).toBeNull();
     expect(pinQuote(lines, { start: 9, end: 9 })).toBeNull();
     expect(pinQuote(lines, { start: 0, end: 1 })).toBeNull();
+  });
+
+  it('leaves blank lines at the edges of the range out of the quote (they become context)', () => {
+    const code = ['x', '', 'a', 'b', '', '', 'y'];
+    expect(pinQuote(code, { start: 2, end: 6 })).toEqual({ exact: 'a\nb', prefix: 'x\n', suffix: '\n\ny', norm: 'ws' });
+    expect(trimBlankLines(code, { start: 2, end: 6 })).toEqual({ start: 3, end: 4 });
+    expect(trimBlankLines(code, { start: 5, end: 6 })).toBeNull();
+    expect(trimBlankLines(code, { start: 7, end: 99 })).toEqual({ start: 7, end: 7 });
   });
 
   it('keeps whole context lines, nearest first, within about 160 characters', () => {

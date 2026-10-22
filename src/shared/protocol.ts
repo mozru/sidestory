@@ -81,7 +81,9 @@ export type FromWebview =
   /** Go back up the trail to this level (0 = the root explainer). */
   | { type: 'goTo'; depth: number }
   /** Describe these detail explainers (title, summary, size). */
-  | { type: 'describe'; names: string[] };
+  | { type: 'describe'; names: string[] }
+  /** Point this section at the code selected in the editor (asks the user to confirm first). */
+  | { type: 'reanchor'; anchorId: string };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -102,6 +104,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional() }),
   z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL) }),
   z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),
+  z.object({ type: z.literal('reanchor'), anchorId: anchorIdSchema }),
 ]);
 
 

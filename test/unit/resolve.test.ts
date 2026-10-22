@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Anchor, LineRange } from '../../src/core/manifest.ts';
 import { pinQuote } from '../../src/core/pin.ts';
 import type { ResolveOptions } from '../../src/core/resolve.ts';
 import { classify, resolveAnchor } from '../../src/core/resolve.ts';
-import { PreparedText } from '../../src/core/text.ts';
+import { PreparedText, splitLines } from '../../src/core/text.ts';
 
 const resolve = (lines: readonly string[], a: Anchor, opts?: ResolveOptions) => resolveAnchor(new PreparedText(lines), a, opts);
 
@@ -381,5 +382,84 @@ describe('resolveAnchor: v1 snippets that occur more than once', () => {
     const anchor: Anchor = { id: 'a', file: 'x', range: { start: 6, end: 8 }, snippet: 'if (en) begin', highlight: [] };
     expect(resolve(lines, anchor)).toMatchObject({ ambiguous: true, range: { start: 6, end: 8 } });
     expect(resolve(lines.slice(4), anchor)).toMatchObject({ ambiguous: false });
+  });
+});
+
+describe('resolveAnchor: user test regressions (tinyroute, sync_fifo)', () => {
+  const fixture = (name: string) => splitLines(readFileSync(new URL(`fixtures/${name}`, import.meta.url), 'utf8'));
+  const trie = fixture('trie.v1.go.txt');
+  const header = fixture('license-header.txt').slice(0, 16);
+  const SPLIT: LineRange = { start: 87, end: 93 }; // func splitPath(p string) []string { … }
+  const split = anchorFor(trie, SPLIT);
+  const renamed = trie.map((l) => l.replaceAll('splitPath', 'segments'));
+
+  it('a renamed short function that also moved is changed, and keeps its signature line', () => {
+    expect(resolve(renamed, split)).toMatchObject({ state: 'changed', range: SPLIT });
+    expect(resolve([...header, ...trie], split)).toMatchObject({ state: 'moved', range: { start: 103, end: 109 } });
+    const both = [...header, ...renamed];
+    expect(resolve(both, split)).toMatchObject({ state: 'changed', range: { start: 103, end: 109 } });
+    // A live hint that lost the (replaced) first line still finds the whole function.
+    expect(resolve(both, split, { hint: { start: 104, end: 109 } })).toMatchObject({ state: 'changed', range: { start: 103, end: 109 } });
+  });
+
+  it('after a whole-file replacement the state is what a fresh open gives, whatever came before', () => {
+    const both = [...header, ...renamed];
+    const fresh = resolve(both, split);
+    for (const previous of ['exact', 'stale', 'lost'] as const) {
+      const r = resolve(both, split, { hint: { start: 1, end: both.length }, orphaned: true, previous });
+      expect(r).toEqual(fresh);
+    }
+    // Checking out an older version of the open file: what still resembles the pinned code isn't lost.
+    const v0 = fixture('trie.v0.go.txt');
+    const node = anchorFor(trie, { start: 10, end: 16 });
+    expect(resolve(v0, node, { hint: { start: 1, end: v0.length }, orphaned: true, previous: 'exact' })).toEqual(resolve(v0, node));
+    expect(resolve(v0, node).state).toBe('stale');
+  });
+
+  it('a wrong live hint (a broken edit, then the fix) is never worse than a fresh resolve', () => {
+    const fn = (name: string, k: string) => [`function ${name}(a) {`, `  const b = a * ${k};`, '  log(b);', '  check(b);', '  return b;', '}'];
+    const lines = ['// top', ...fn('twice', '2'), '', ...fn('thrice', '3'), '// end'];
+    const anchor = anchorFor(lines, { start: 2, end: 7 });
+    // twice was edited in place; tracking was left pointing at its look-alike sibling further down.
+    const edited = ['// top', ...fn('twice', '2').map((l) => l.replace('log(b)', 'log(b, 1)')), '', ...Array.from({ length: 30 }, (_, i) => `// ${i}`), ...fn('thrice', '3'), '// end'];
+    const fresh = resolve(edited, anchor);
+    expect(fresh).toMatchObject({ state: 'changed', range: { start: 2, end: 7 } });
+    const r = resolve(edited, anchor, { hint: { start: 39, end: 44 }, previous: 'stale' });
+    expect(r.state).toBe('changed');
+    expect(r.range).toEqual(fresh.range);
+  });
+
+  it('ranges and quotes never start or end on a blank line', () => {
+    // An older pin took in the blank line after the function.
+    const old: Anchor = { ...split, range: { start: 87, end: 94 }, quote: { ...split.quote!, exact: split.quote!.exact + '\n' } };
+    expect(resolve(trie, old)).toMatchObject({ state: 'exact', range: SPLIT });
+    expect(resolve(['// new', ...trie], old)).toMatchObject({ state: 'moved', range: { start: 88, end: 94 } });
+    expect(resolve(renamed, old)).toMatchObject({ state: 'changed', range: SPLIT });
+    // A recorded range that starts on a blank line the quote leaves out is still home.
+    const spaced = [...trie.slice(0, 86), '', ...trie.slice(86)];
+    expect(resolve(spaced, { ...split, range: { start: 87, end: 94 } })).toMatchObject({ state: 'exact', range: { start: 88, end: 94 } });
+    // v1 snippets keep the recorded length, less trailing blank lines.
+    const snip: Anchor = { id: 's', file: 'x', range: { start: 87, end: 94 }, snippet: 'func splitPath(p string) []string {', highlight: [] };
+    expect(resolve(trie, snip).range).toEqual(SPLIT);
+  });
+
+  describe('unchanged code whose neighbours changed stays exact or moved', () => {
+    const fifo = fixture('sync_fifo.sv.txt');
+    const READ: LineRange = { start: 54, end: 65 }; // the read data path generate block
+    const read = anchorFor(fifo, READ);
+
+    it('when the block below it is deleted', () => {
+      const deleted = [...fifo.slice(0, 66), ...fifo.slice(73)]; // lines 67-73
+      for (const opts of [{}, { hint: READ }, { hint: READ, previous: 'exact' as const }]) {
+        expect(resolve(deleted, read, opts)).toMatchObject({ state: 'exact', range: READ, similarity: 1 });
+      }
+    });
+
+    it('when the block above it is moved below it', () => {
+      const moved = [...fifo.slice(0, 46), ...fifo.slice(52, 65), ...fifo.slice(46, 52), ...fifo.slice(65)]; // lines 47-52
+      const now = { start: 48, end: 59 };
+      expect(resolve(moved, read)).toMatchObject({ state: 'moved', range: now, similarity: 1 });
+      expect(resolve(moved, read, { hint: now, previous: 'exact' })).toMatchObject({ state: 'exact', range: now, similarity: 1 });
+    });
   });
 });

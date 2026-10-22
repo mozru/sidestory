@@ -10,12 +10,15 @@ import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
 import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
+import type { GroupView } from './columns.ts';
+import { codeColumnFor } from './columns.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
 import { log } from './log.ts';
-import { shellHtml } from './panel.ts';
+import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
+import type { AnchorStates } from './pin.ts';
 
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
@@ -29,6 +32,16 @@ const MAX_ASSET_BUDGET = 20_000_000;
 const MAX_ASSET_REQUESTS = 500;
 
 const LOST: Resolution = { state: 'lost', range: null, location: 0, similarity: 0, ambiguous: false, method: 'none' };
+/** Workspace state: explainers already told that their anchors aren't pinned. */
+const UNPINNED_NOTICE_KEY = 'codeExplainer.unpinnedNoticeShown';
+
+/** What a session needs from the extension. */
+export interface SessionHost {
+  /** Workspace state, for one-time notices. */
+  memento: vscode.Memento;
+  /** The panel asked to point a section at the code selected in the editor. */
+  reanchor(ref: ExplainerRef, anchorId: string): void;
+}
 
 export class ExplainerSession implements vscode.Disposable {
   /** The root explainer, then each detail dived into; the last one is shown. */
@@ -41,13 +54,19 @@ export class ExplainerSession implements vscode.Disposable {
   /** Files that each described detail explainer covers, for "the cursor is in a detail" hints. */
   private readonly detailFiles = new Map<string, { title: string; files: Set<string> }>();
   private lastHint: string | undefined;
-  /** While moving to another explainer, half-updated state isn't sent; `init` follows. */
-  private switching = false;
+  /** Bumped by every dive or Back, so an older navigation still waiting gives way to the newer one. */
+  private navRequest = 0;
+  /** Bumped whenever the trail changes, so work started for the explainer shown before stops. */
+  private generation = 0;
+  /** The generation the page last got `init` for. Until it's the current one, half-updated state isn't sent. */
+  private initGeneration = 0;
   private explainerWatchers: vscode.Disposable[] = [];
   private readonly decorations: Decorations;
 
   private manifest: Manifest | undefined;
   private manifestText = '';
+  /** manifest.json doesn't parse now: this error stays up, over the last good version's warnings. */
+  private manifestError: string | null = null;
   /** The current error (or warnings) banner, resent when a hidden panel is rebuilt. */
   private lastError: string | null = null;
   /** Warnings from the last successful parse: shown again once a transient read failure clears. */
@@ -81,11 +100,15 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposeEmitter.event;
 
-  constructor(ref: ExplainerRef, panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations) {
-    this.trail = [ref];
+  private readonly host: SessionHost;
+
+  /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
+  constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost) {
+    this.trail = [...trail];
     this.panel = panel;
     this.decorations = decorations;
-    panel.webview.html = shellHtml(panel.webview, extensionUri, ref);
+    this.host = host;
+    panel.webview.html = shellHtml(panel.webview, extensionUri, this.ref);
     this.watchExplainer();
     this.subscriptions.push(
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
@@ -122,9 +145,23 @@ export class ExplainerSession implements vscode.Disposable {
 
   private async dive(name: string, section?: string): Promise<void> {
     const child = this.detailRef(name);
-    if (!child || this.trail.length >= MAX_TRAIL) return;
-    if (this.trail.some((t) => t.dir.toString() === child.dir.toString())) return; // no loops
-    if ((await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES)) === undefined) {
+    if (!child) return;
+    const request = ++this.navRequest;
+    const onTrail = (t: ExplainerRef) => t.dir.toString() === child.dir.toString();
+    // Already on the trail (a detail that links back to its overview): go back up to it, no loops.
+    const at = this.trail.findIndex(onTrail);
+    if (at >= 0) {
+      if (at < this.trail.length - 1) await this.switchTo(this.trail.slice(0, at + 1), section);
+      return;
+    }
+    if (this.trail.length >= MAX_TRAIL) {
+      void vscode.window.showInformationMessage(`Can't open "${name}": details nest at most ${MAX_TRAIL} levels deep.`);
+      return;
+    }
+    const found = (await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES)) !== undefined;
+    // Another dive or Back came in meanwhile (a double click, say): the newer one wins.
+    if (request !== this.navRequest || this.disposed || this.trail.some(onTrail)) return;
+    if (!found) {
       void vscode.window.showWarningMessage(`There's no explainer called "${name}" next to this one.`);
       return;
     }
@@ -133,6 +170,7 @@ export class ExplainerSession implements vscode.Disposable {
 
   /** Shows another explainer in this panel: resets everything that belongs to the current one. */
   private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
+    const generation = ++this.generation;
     this.positions.set(this.ref.dir.toString(), this.active);
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
@@ -141,14 +179,16 @@ export class ExplainerSession implements vscode.Disposable {
     this.trail = trail;
     this.manifest = undefined;
     this.manifestText = '';
+    this.manifestError = null;
     this.html = '';
     this.title = this.titles.get(this.ref.dir.toString()) ?? '';
+    this.panel.title = `Explainer: ${this.title || this.ref.name}`;
     this.lastError = null;
     this.warnings = null;
     this.resolutions.clear();
     this.hints.clear();
     this.orphaned.clear();
-    this.fileSeq.clear();
+    // fileSeq keeps counting up: a resolve still running for the old explainer must never match.
     this.changedAssets.clear();
     this.detailFiles.clear();
     this.lastHint = undefined;
@@ -157,12 +197,10 @@ export class ExplainerSession implements vscode.Disposable {
     this.active = active ?? this.positions.get(this.ref.dir.toString());
     this.decorations.set(undefined);
     this.watchExplainer();
-    this.switching = true;
-    try {
-      await this.reload();
-    } finally {
-      this.switching = false;
-    }
+    await this.reload();
+    // A later switch took over while this one loaded: it sends its own `init`.
+    if (generation !== this.generation || this.disposed) return;
+    this.initGeneration = generation;
     this.sendInit();
   }
 
@@ -199,6 +237,11 @@ export class ExplainerSession implements vscode.Disposable {
     this.post({ type: 'details', items });
   }
 
+  /** Anchor states as the panel shows them, and the active section. */
+  anchorStates(): AnchorStates {
+    return { states: new Map(this.anchorViews().map((a) => [a.id, a.state])), active: this.active };
+  }
+
   /** Where live tracking last saw an anchor's code (only trusted positions are kept). */
   liveHint(id: string): LineRange | undefined {
     return this.hints.get(id);
@@ -233,20 +276,27 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private async reload(): Promise<void> {
+    const generation = this.generation;
     const [manifestText, html] = await Promise.all([
       readInside(manifestUri(this.ref), this.ref.root, MAX_MANIFEST_BYTES),
       readInside(htmlUri(this.ref), this.ref.root, MAX_HTML_BYTES),
     ]);
-    if (this.disposed) return;
+    // Read for an explainer the panel has since left.
+    if (this.disposed || generation !== this.generation) return;
     if (manifestText === undefined || html === undefined) {
       const which = manifestText === undefined ? 'manifest.json' : 'explainer.html';
+      // The title still comes from the manifest, so the tab and trail name the right explainer.
+      const parsed = manifestText === undefined ? undefined : parseManifest(manifestText);
+      if (parsed?.ok) this.setTitle(parsed.manifest.title);
       this.showError(`Can't read ${which}: it is missing, outside the repository, or too large. Details in Output › Code Explainer.`);
       return;
     }
     const manifestChanged = manifestText !== this.manifestText;
     if (!manifestChanged && this.manifest) {
-      // Both files read fine again: replace any "can't read" banner with the manifest's own warnings.
-      if (this.lastError !== this.warnings) this.showError(this.warnings);
+      // Both files read fine again: replace any "can't read" banner with the manifest's own warnings
+      // (or its parse error, if it is still broken and the last good version is showing).
+      const banner = this.manifestError ?? this.warnings;
+      if (this.lastError !== banner) this.showError(banner);
       // Only the HTML changed: no need to re-read every anchored file or rebuild watchers.
       if (html !== this.html) {
         this.html = html;
@@ -259,9 +309,11 @@ export class ExplainerSession implements vscode.Disposable {
     this.manifestText = manifestText;
     const parsed = parseManifest(manifestText);
     if (!parsed.ok) {
-      this.showError(parsed.error);
+      this.manifestError = this.manifest ? `${parsed.error}\nThe panel keeps showing the last good version until manifest.json is fixed.` : parsed.error;
+      this.showError(this.manifestError);
       return;
     }
+    this.manifestError = null;
     const previous = this.manifest;
     this.manifest = parsed.manifest;
     for (const id of [...this.hints.keys()]) {
@@ -280,9 +332,7 @@ export class ExplainerSession implements vscode.Disposable {
     const warnings = parsed.diagnostics.map((d) => (d.anchor ? `Anchor "${d.anchor}": ${d.message}` : d.message));
     const contentChanged = html !== this.html || parsed.manifest.title !== this.title;
     this.html = html;
-    this.title = parsed.manifest.title;
-    this.titles.set(this.ref.dir.toString(), this.title);
-    this.panel.title = `Explainer: ${this.title || this.ref.name}`;
+    this.setTitle(parsed.manifest.title);
     this.warnings = warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null;
     this.showError(this.warnings);
     if (contentChanged) {
@@ -291,7 +341,31 @@ export class ExplainerSession implements vscode.Disposable {
       this.post({ type: 'content', title: this.title, html: this.html });
     }
     this.watchAnchorFiles();
+    if ([...parsed.manifest.anchors.values()].some((a) => !a.quote)) this.noteUnpinned();
     await this.resolveAll();
+  }
+
+  private setTitle(title: string): void {
+    this.title = title;
+    this.titles.set(this.ref.dir.toString(), title);
+    this.panel.title = `Explainer: ${title || this.ref.name}`;
+  }
+
+  /**
+   * Without a quote, an anchor is just a line range: its section can't tell when the code changes.
+   * Says so once per explainer (remembered per workspace), with a way to pin.
+   */
+  private noteUnpinned(): void {
+    const ref = this.ref;
+    const seen = this.host.memento.get<string[]>(UNPINNED_NOTICE_KEY, []);
+    if (seen.includes(ref.dir.toString())) return;
+    void this.host.memento.update(UNPINNED_NOTICE_KEY, [...seen, ref.dir.toString()].slice(-200));
+    const pin = 'Pin Anchors';
+    void vscode.window
+      .showInformationMessage(`Sections of “${this.title || ref.name}” can't tell when their code changes until its anchors are pinned.`, pin)
+      .then((choice) => {
+        if (choice === pin) void vscode.commands.executeCommand('codeExplainer.pin', ref.dir);
+      });
   }
 
   private watchAnchorFiles(): void {
@@ -321,8 +395,12 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private async resolveAll(): Promise<void> {
+    const generation = this.generation;
     const files = new Set(this.anchorList().map((a) => this.fileUri(a.file).toString()));
-    for (const f of files) await this.resolveFile(f, false);
+    for (const f of files) {
+      await this.resolveFile(f, false);
+      if (generation !== this.generation || this.disposed) return;
+    }
     this.publishAnchors();
   }
 
@@ -333,7 +411,8 @@ export class ExplainerSession implements vscode.Disposable {
   private async resolveFile(uri: string, publish: boolean): Promise<void> {
     const seq = (this.fileSeq.get(uri) ?? 0) + 1;
     this.fileSeq.set(uri, seq);
-    const stillCurrent = () => !this.disposed && this.fileSeq.get(uri) === seq;
+    const generation = this.generation;
+    const stillCurrent = () => !this.disposed && this.generation === generation && this.fileSeq.get(uri) === seq;
 
     const source = await readInside(vscode.Uri.parse(uri), this.ref.root, MAX_CODE_BYTES);
     if (!stillCurrent()) return;
@@ -410,7 +489,10 @@ export class ExplainerSession implements vscode.Disposable {
     if (Date.now() < this.ignoreSelectionUntil) return;
     // Code a detail explainer covers: when none of this explainer's sections do, offer to dive.
     const detail = [...this.detailFiles].find(([, d]) => d.files.has(uri));
-    if (ids.size === 0 && !detail) return;
+    if (ids.size === 0 && !detail) {
+      this.lastHint = undefined; // left the detail's code: offer it again when the cursor comes back
+      return;
+    }
     const line = e.selections[0]!.active.line + 1;
     // The reader clicked or typed in the code: stop fading the rest of the file.
     const byUser = e.kind === vscode.TextEditorSelectionChangeKind.Keyboard || e.kind === vscode.TextEditorSelectionChangeKind.Mouse;
@@ -418,9 +500,9 @@ export class ExplainerSession implements vscode.Disposable {
     this.debounce('cursor', CURSOR_DELAY, () => {
       const id = ids.size ? anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line) : undefined;
       if (!id) {
-        if (detail && detail[0] !== this.lastHint) {
+        // Remembered only once the page got it: a hidden panel gets the hint next time.
+        if (detail && detail[0] !== this.lastHint && this.post({ type: 'childHint', name: detail[0], title: detail[1].title })) {
           this.lastHint = detail[0];
-          this.post({ type: 'childHint', name: detail[0], title: detail[1].title });
         }
         return;
       }
@@ -443,13 +525,17 @@ export class ExplainerSession implements vscode.Disposable {
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
         this.assetBytes = 0;
         this.assetRequests = 0;
-        this.sendInit();
+        // While switching explainers, the switch sends `init` when it's done.
+        if (this.initGeneration === this.generation) this.sendInit();
         break;
       case 'dive':
         void this.dive(m.name, m.section);
         break;
       case 'goTo':
-        if (m.depth < this.trail.length - 1) void this.switchTo(this.trail.slice(0, m.depth + 1));
+        if (m.depth < this.trail.length - 1) {
+          this.navRequest++; // a dive still waiting is overtaken
+          void this.switchTo(this.trail.slice(0, m.depth + 1));
+        }
         break;
       case 'describe':
         void this.describe(m.names);
@@ -471,7 +557,16 @@ export class ExplainerSession implements vscode.Disposable {
       case 'openRef':
         // A reference inside a section jumps to other code; the section being read stays active.
         if (!this.manifest?.anchors.has(m.anchorId)) return;
+        if (this.resolutions.get(m.anchorId)?.state === 'lost') {
+          vscode.window.setStatusBarMessage(`“${m.anchorId}” — code not found`, 4000);
+          return;
+        }
         this.requestReveal(m.anchorId, true);
+        break;
+      case 'reanchor':
+        // Only starts the flow: the user confirms in a dialog before anything is written.
+        if (!this.manifest?.anchors.has(m.anchorId)) return;
+        this.host.reanchor(this.ref, m.anchorId);
         break;
     }
   }
@@ -589,18 +684,26 @@ export class ExplainerSession implements vscode.Disposable {
     }
   }
 
-  /** An editor column that isn't the explainer's. */
+  /** An editor column for code that never covers a visible explainer panel, this one or another. */
   private codeColumn(uri: vscode.Uri): vscode.ViewColumn {
-    const editors = vscode.window.visibleTextEditors.filter((e) => e.viewColumn !== undefined && e.viewColumn !== this.panel.viewColumn);
-    const same = editors.find((e) => e.document.uri.toString() === uri.toString());
-    const column = (same ?? editors[0])?.viewColumn;
-    if (column) return column;
-    return this.panel.viewColumn === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+    const groups = vscode.window.tabGroups.all.map((g): GroupView => {
+      const input = g.activeTab?.input;
+      let shows: GroupView['shows'];
+      if (input instanceof vscode.TabInputText) shows = { kind: 'text', uri: input.uri.toString() };
+      else if (input instanceof vscode.TabInputWebview && input.viewType.endsWith(VIEW_TYPE)) shows = { kind: 'explainer' };
+      else if (g.activeTab) shows = { kind: 'other' };
+      return { column: g.viewColumn, shows };
+    });
+    return codeColumnFor(groups, this.panel.viewColumn, uri.toString());
   }
 
-  private post(message: ToWebview): void {
+  /** Whether the message was handed to the page. */
+  private post(message: ToWebview): boolean {
     // Messages to a hidden webview are dropped; it asks for everything again with `ready` when shown.
-    if (this.panel.visible && !this.disposed && !this.switching) void this.panel.webview.postMessage(message);
+    // While switching explainers, half-updated state isn't sent; `init` follows.
+    if (!this.panel.visible || this.disposed || this.initGeneration !== this.generation) return false;
+    void this.panel.webview.postMessage(message);
+    return true;
   }
 
   private debounce(key: string, ms: number, fn: () => void): void {

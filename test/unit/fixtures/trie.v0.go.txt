@@ -1,0 +1,62 @@
+package tinyroute
+
+import (
+	"net/http"
+	"strings"
+)
+
+// node is a trie node keyed by path segment. (v0: no wildcard support.)
+type node struct {
+	children map[string]*node
+	param    *node
+	name     string
+	handler  http.Handler
+}
+
+func (n *node) insert(segs []string, h http.Handler) {
+	cur := n
+	for _, seg := range segs {
+		if strings.HasPrefix(seg, ":") {
+			if cur.param == nil {
+				cur.param = &node{name: seg[1:]}
+			}
+			cur = cur.param
+			continue
+		}
+		if cur.children == nil {
+			cur.children = map[string]*node{}
+		}
+		next, ok := cur.children[seg]
+		if !ok {
+			next = &node{}
+			cur.children[seg] = next
+		}
+		cur = next
+	}
+	cur.handler = h
+}
+
+func (n *node) lookup(segs []string) (http.Handler, Params) {
+	var params Params
+	cur := n
+	for _, seg := range segs {
+		if next, ok := cur.children[seg]; ok {
+			cur = next
+			continue
+		}
+		if cur.param == nil {
+			return nil, nil
+		}
+		params = append(params, Param{Key: cur.param.name, Value: seg})
+		cur = cur.param
+	}
+	return cur.handler, params
+}
+
+func splitPath(p string) []string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}

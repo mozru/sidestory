@@ -265,6 +265,10 @@ button.cx-crumb:focus-visible,
   .cx-nav { width: 44px; height: 32px; }
 }
 
+/* Too many steps for the width to show their names: the picker instead (main.ts fitSteps). */
+.cx-cramped .cx-steps { display: none; }
+.cx-cramped .cx-steps-compact { display: block; }
+
 /* ---- body ---- */
 
 .cx-banner[hidden] {
@@ -283,6 +287,35 @@ button.cx-crumb:focus-visible,
   background: var(--vscode-inputValidation-errorBackground);
   color: var(--vscode-foreground);
   white-space: pre-wrap;
+}
+
+.cx-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cx-banner-open {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cx-banner-open:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.cx-banner-open:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.cx-banner-open[hidden] {
+  display: none;
 }
 
 .cx-scroll {

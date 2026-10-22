@@ -24,6 +24,8 @@ interface SavedState extends Place {
   dir: string;
   /** The reader's place in every explainer visited, so going back up the trail returns there. */
   places?: Record<string, Place>;
+  /** The trail's explainer names, root first, so a restart can restore the way back. */
+  trail?: string[];
 }
 
 interface Step {
@@ -72,6 +74,12 @@ const details = new Map<string, DetailInfo>();
 const describing = new Set<string>();
 /** Details whose summary ("peek") is open. */
 const peeked = new Set<string>();
+/**
+ * Marks the detail boxes this script made: author HTML can contain look-alikes, but can't guess this.
+ * (An attribute, not a WeakSet: the morph may insert copies of the nodes it was given.)
+ */
+const BOX_TOKEN = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+const ownBox = (el: Element | null | undefined): el is HTMLElement => el?.getAttribute('data-cx-box') === BOX_TOKEN;
 
 let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
 let anchors = new Map<string, AnchorView>();
@@ -82,8 +90,11 @@ let programmaticUntil = 0;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
 let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
+// Declared up here: the frame's listeners (attached in buildFrame, before the code below runs) use them.
+let lastKeyAt = 0;
+let lastFocused: HTMLElement | undefined;
 /** Set by `init`; applied by whichever render completes first after it. */
-let pendingInit: { active?: string } | undefined;
+let pendingInit: { active?: string; after?: () => void } | undefined;
 /** Places kept per explainer; the oldest are dropped past this. */
 const MAX_PLACES = 32;
 const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -104,7 +115,7 @@ app.innerHTML = `
     <div class="cx-progress" aria-hidden="true"></div>
   </div>
 </header>
-<div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span></div>
+<div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span><button class="cx-banner-open" type="button" hidden>Open manifest.json</button></div>
 <main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"></div></main>
 <div class="cx-pill" hidden>
   <button class="cx-pill-show" type="button"></button>
@@ -135,6 +146,8 @@ const pillShow = $<HTMLButtonElement>('.cx-pill-show');
 const positionEl = $('.cx-position');
 const liveEl = $('[aria-live]');
 const trailEl = $('.cx-trail');
+const bannerOpen = $<HTMLButtonElement>('.cx-banner-open');
+const headerEl = $('.cx-header');
 const backEl = $<HTMLButtonElement>('.cx-back');
 
 /*
@@ -151,6 +164,7 @@ interface Frame {
   createElement: Document['createElement'];
   importNode: Document['importNode'];
   getSelection: () => Selection | null;
+  location: Location;
 }
 
 let frame!: Frame;
@@ -173,6 +187,7 @@ async function buildFrame(): Promise<void> {
     createElement: Document.prototype.createElement.bind(d) as Document['createElement'],
     importNode: Document.prototype.importNode.bind(d) as Document['importNode'],
     getSelection: () => el.contentWindow?.getSelection() ?? null,
+    location: el.contentWindow!.location,
   };
   const style = frame.createElement('style');
   style.textContent = contentCssText;
@@ -213,12 +228,41 @@ function fitFrame(): void {
   if (!frame) return;
   const h = `${Math.ceil(content.getBoundingClientRect().bottom)}px`;
   if (frame.el.style.height !== h) frame.el.style.height = h;
+  if (Date.now() - resizedAt < 1000) holdPlace();
+}
+
+/*
+ * When the panel changes width (typically: choosing a step opens the code beside it), the content
+ * reflows and everything moves. Put back the section being scrolled to, or else the reader's place.
+ */
+let panelWidth = 0;
+let resizedAt = 0;
+let heldPlace: Position | undefined;
+let scrollTarget: { id: string; until: number } | undefined;
+
+function onPanelResize(): void {
+  if (scroller.clientWidth === panelWidth) return;
+  panelWidth = scroller.clientWidth;
+  resizedAt = Date.now();
+  holdPlace();
+}
+
+function holdPlace(): void {
+  if (!initialized) return;
+  if (scrollTarget && Date.now() < scrollTarget.until) {
+    const el = sectionEl(scrollTarget.id);
+    if (!el) return;
+    programmaticUntil = Date.now() + 300;
+    scroller.scrollTo({ top: scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - 12, behavior: 'auto' });
+  } else if (heldPlace) restorePosition(heldPlace);
 }
 
 await buildFrame();
 new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 new ResizeObserver(syncTheme).observe(scroller);
+new ResizeObserver(onPanelResize).observe(scroller);
+new ResizeObserver(() => fitSteps()).observe(headerEl);
 
 const sectionEl = (id: string) => content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
 /** An element's top, in the panel's coordinates. */
@@ -230,25 +274,38 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   const m = e.data;
   switch (m.type) {
     case 'init': {
-      // A new explainer (first open, or dive / back): forget everything about the previous one.
-      if (m.dir !== state.dir || new URL(m.base).href !== baseUrl) {
-        savePlace();
-        assets.invalidate();
-        baseUrl = new URL(m.base).href;
-        assets = new Assets(baseUrl, requestAsset);
+      const entering = m.dir !== state.dir;
+      // A different explainer (dive / back): remember the reader's place here, forget the rest.
+      if (entering) {
+        if (initialized) savePlace();
         details.clear();
         describing.clear();
         peeked.clear();
         lastRender = undefined;
         hidePill();
+        try {
+          frame.location.replace('about:srcdoc#'); // no :target carried over
+        } catch {
+          // a nicety
+        }
         const place = state.places?.[m.dir];
         active = place?.active;
         state = { ...state, dir: m.dir, active: place?.active, scroll: place?.scroll };
       }
+      // The panel's shell may have been built for another folder (it is rebuilt when hidden and shown).
+      if (new URL(m.base).href !== baseUrl) {
+        assets.invalidate();
+        baseUrl = new URL(m.base).href;
+        assets = new Assets(baseUrl, requestAsset);
+      }
+      const left = trail.length > m.trail.length ? trail[m.trail.length]?.name : undefined;
+      const wasInitialized = initialized;
       trail = m.trail;
+      state = { ...state, trail: trail.map((t) => t.name) };
+      vscode.setState(state);
       renderTrail();
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
-      pendingInit = { active: m.active };
+      pendingInit = { active: m.active, after: entering && wasInitialized ? () => arrived(m.title, left) : undefined };
       void render(m.title, m.html, false);
       break;
     }
@@ -289,6 +346,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'error':
       bannerEl.hidden = m.message === null;
       bannerText.textContent = m.message ?? '';
+      bannerOpen.hidden = !/manifest|linked/.test(m.message ?? '');
       break;
   }
 });
@@ -316,7 +374,13 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
 
   const before = isUpdate ? snapshot() : new Map<string, string>();
   const keep = isUpdate ? readingPosition() : undefined;
-  Idiomorph.morph(content, next, { morphStyle: 'innerHTML', ignoreActiveValue: true, restoreFocus: true });
+  Idiomorph.morph(content, next, {
+    morphStyle: 'innerHTML',
+    ignoreActiveValue: true,
+    restoreFocus: true,
+    // data-cx-off is the visibility observer's: it only says so again when visibility changes.
+    callbacks: { beforeNodeMorphed: keepReaderState, beforeAttributeUpdated: (name) => name !== 'data-cx-off' },
+  });
   fitFrame();
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
@@ -331,6 +395,42 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     if (!active) active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
     markActive();
     initialized = true;
+    init.after?.();
+  }
+  return true;
+}
+
+/**
+ * Switches, tabs, open <details> and typed text are the reader's, not the author's: an edit elsewhere
+ * in the explainer keeps them. Only when the author changes that element's own default (its checked,
+ * value, selected or open attribute) does the new default win.
+ */
+function keepReaderState(old: Node, next: Node): boolean {
+  if (old.nodeType !== 1 || next.nodeType !== 1) return true;
+  const o = old as HTMLElement;
+  const n = next as HTMLElement;
+  if (o.localName !== n.localName) return true;
+  const same = (attr: string) => o.getAttribute(attr) === n.getAttribute(attr);
+  switch (o.localName) {
+    case 'input': {
+      const oi = o as HTMLInputElement;
+      const ni = n as HTMLInputElement;
+      if (oi.type !== ni.type) break;
+      if (same('checked')) ni.checked = oi.checked;
+      if (same('value') && oi.type !== 'file') ni.value = oi.value;
+      break;
+    }
+    case 'option':
+      if (same('selected')) (n as HTMLOptionElement).selected = (o as HTMLOptionElement).selected;
+      break;
+    case 'textarea':
+      if ((o as HTMLTextAreaElement).defaultValue === (n as HTMLTextAreaElement).defaultValue) (n as HTMLTextAreaElement).value = (o as HTMLTextAreaElement).value;
+      break;
+    case 'details':
+    case 'dialog':
+      // `open` is both the author's default and the reader's state; data-cx-open remembers the default.
+      if (o.dataset.cxOpen === n.dataset.cxOpen) n.toggleAttribute('open', o.hasAttribute('open'));
+      break;
   }
   return true;
 }
@@ -343,11 +443,16 @@ function snapshot(): Map<string, string> {
 /** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
   const c = el.cloneNode(true) as HTMLElement;
-  for (const d of c.querySelectorAll('.cx-detail')) d.remove();
+  for (const d of c.querySelectorAll('.cx-detail, .cx-fix')) d.remove();
+  // Compare what the author wrote, not what the reader opened or closed.
+  for (const d of c.querySelectorAll<HTMLElement>('[data-cx-open]')) {
+    d.toggleAttribute('open', d.dataset.cxOpen === '1');
+    d.removeAttribute('data-cx-open');
+  }
   for (const x of [c, ...c.querySelectorAll<HTMLElement>('*')]) {
     x.classList.remove('cx-active', 'cx-updated');
     if (x.classList.length === 0) x.removeAttribute('class');
-    for (const a of ['data-cx-state', 'data-cx-label']) x.removeAttribute(a);
+    for (const a of ['data-cx-state', 'data-cx-label', 'data-cx-off']) x.removeAttribute(a);
     if (x.hasAttribute('data-cx-ref')) for (const a of ['data-cx-ref', 'tabindex', 'role']) x.removeAttribute(a);
     if (x.dataset.cxTitled) {
       x.removeAttribute('title');
@@ -390,6 +495,18 @@ function decorateTree(root: HTMLElement): void {
     }
     if (a?.colorVar) el.style.setProperty('--cx-accent', `var(${a.colorVar})`);
     else el.style.removeProperty('--cx-accent');
+    // A section whose code is gone or much changed offers to point it at the code again.
+    let fix = [...el.children].find((c) => ownBox(c) && c.classList.contains('cx-fix')) as HTMLElement | undefined;
+    if (s === 'stale' || s === 'lost') {
+      if (!fix) {
+        fix = frame.createElement('div');
+        fix.className = 'cx-fix';
+        fix.setAttribute('data-cx-box', BOX_TOKEN);
+        fix.innerHTML = '<button type="button" class="cx-reanchor">Re-anchor to the selected code</button>';
+        fix.querySelector('button')!.title = 'Select the code this section explains in the editor, then click';
+        el.append(fix);
+      }
+    } else fix?.remove();
   }
   // Inline references behave like links for the keyboard and screen readers.
   for (const ref of root.querySelectorAll<HTMLElement>('[data-explain-ref]')) {
@@ -397,6 +514,8 @@ function decorateTree(root: HTMLElement): void {
     if (!ref.hasAttribute('tabindex')) ref.tabIndex = 0;
     if (!ref.hasAttribute('role') && !(ref.localName === 'a' && ref.hasAttribute('href'))) ref.setAttribute('role', 'link');
   }
+  // The author's `open`, before the reader toggles it (see keepReaderState).
+  for (const el of root.querySelectorAll<HTMLElement>('details, dialog')) if (el.dataset.cxOpen === undefined) el.dataset.cxOpen = el.hasAttribute('open') ? '1' : '0';
   decorateDetails(root);
 }
 
@@ -408,8 +527,9 @@ function decorateDetails(root: HTMLElement): void {
   const unknown: string[] = [];
   for (const host of root.querySelectorAll<HTMLElement>('[data-explain-detail]')) {
     const name = host.dataset.explainDetail!;
-    let box = [...host.children].find((c) => c.classList.contains('cx-detail')) as HTMLElement | undefined;
-    if (!DETAIL_NAME.test(name)) {
+    let box = [...host.children].find(ownBox) as HTMLElement | undefined;
+    // Not inside links or controls (a click there means something else), and only real names.
+    if (!DETAIL_NAME.test(name) || host.closest('a, button, label, summary, [data-explain-ref]')) {
       box?.remove();
       continue;
     }
@@ -423,9 +543,11 @@ function decorateDetails(root: HTMLElement): void {
         '<button type="button" class="cx-dive"></button><span class="cx-detail-steps"></span></div>' +
         '<p class="cx-peek-body" hidden></p>';
       host.append(box);
+      box.setAttribute('data-cx-box', BOX_TOKEN);
     }
     const title = info?.title || name;
     const missing = info?.found === false;
+    const depth = trail.findIndex((t) => t.name === name);
     const open = peeked.has(name) && !missing;
     const peek = box.querySelector<HTMLButtonElement>('.cx-peek')!;
     const dive = box.querySelector<HTMLButtonElement>('.cx-dive')!;
@@ -433,15 +555,17 @@ function decorateDetails(root: HTMLElement): void {
     setText(peek, `${open ? '▾' : '▸'} ${title} in brief`);
     peek.setAttribute('aria-expanded', String(open));
     peek.disabled = missing;
-    setText(dive, missing ? `No explainer named “${name}”` : `Dive into ${title} ›`);
-    dive.disabled = missing;
+    setText(dive, missing ? `No explainer named “${name}”` : depth === trail.length - 1 ? 'You are reading it' : depth >= 0 ? `‹ Back to ${title}` : `Dive into ${title} ›`);
+    dive.disabled = missing || depth === trail.length - 1;
     setText(box.querySelector('.cx-detail-steps')!, info?.found ? `${info.steps} step${info.steps === 1 ? '' : 's'}` : '');
     setText(body, info?.summary || (info ? 'No summary.' : 'Loading…'));
     body.hidden = !open;
   }
   if (unknown.length) {
-    for (const n of unknown) describing.add(n);
-    vscode.postMessage({ type: 'describe', names: [...new Set(unknown)].slice(0, 50) });
+    // In batches the extension accepts; the next decorate asks for the rest.
+    const names = [...new Set(unknown)].slice(0, 50);
+    for (const n of names) describing.add(n);
+    vscode.postMessage({ type: 'describe', names });
   }
 }
 
@@ -471,6 +595,19 @@ function renderTrail(): void {
   if (parent) backEl.textContent = `‹ Back to ${parent.title || parent.name}`;
 }
 
+/** After a dive or going back: say where the reader is, and put focus somewhere sensible. */
+function arrived(title: string, leftDetail: string | undefined): void {
+  announce(leftDetail ? `Back to ${title}` : `Opened ${title}`);
+  if (!app.contains(document.activeElement) && document.activeElement !== document.body && !frame.root.contains(frame.root.ownerDocument.activeElement)) return;
+  const dive = leftDetail ? [...content.querySelectorAll<HTMLElement>('[data-explain-detail]')].find((h) => h.dataset.explainDetail === leftDetail)?.querySelector<HTMLElement>('.cx-dive') : undefined;
+  if (dive) {
+    dive.focus({ preventScroll: true });
+    return;
+  }
+  titleEl.tabIndex = -1;
+  titleEl.focus({ preventScroll: true });
+}
+
 function goTo(depth: number): void {
   if (depth >= trail.length - 1) return;
   savePlace();
@@ -478,6 +615,9 @@ function goTo(depth: number): void {
 }
 
 function dive(name: string): void {
+  // Already on the way here (a detail that points back to its overview): go back up instead.
+  const i = trail.findIndex((t) => t.name === name);
+  if (i >= 0) return goTo(i);
   savePlace();
   vscode.postMessage({ type: 'dive', name });
 }
@@ -490,6 +630,7 @@ function decorate(): void {
     .filter((el) => !el.parentElement?.closest('[data-explain-anchor]'))
     .map((el) => ({ id: el.dataset.explainAnchor!, el, label: stepLabel(el, el.dataset.explainAnchor!) }));
   if (active && !steps.some((s) => s.id === active) && !anchors.has(active)) active = undefined;
+  for (const s of steps) offscreen.observe(s.el);
   renderNavigator();
   renderStatus();
   markActive();
@@ -548,6 +689,17 @@ function renderNavigator(): void {
     o.value = s.id;
     setText(o, `${i + 1}. ${s.label}${spokenState(s.id) ? ` (${spokenState(s.id).slice(2)})` : ''}`);
   });
+  fitSteps();
+}
+
+/** Each tab needs room for its number and a few letters of its name; with less, use the picker. */
+const MIN_LABEL_PX = 56;
+const STEP_CHROME_PX = 48; // number, gaps, padding, border
+function fitSteps(): void {
+  const width = headerEl.clientWidth - parseFloat(getComputedStyle(headerEl).paddingLeft) * 2;
+  const n = steps.length;
+  const perLabel = (width - 4 * (n - 1)) / n - STEP_CHROME_PX;
+  app.classList.toggle('cx-cramped', n > 1 && perLabel < MIN_LABEL_PX);
 }
 
 function setText(el: Element, text: string): void {
@@ -557,7 +709,9 @@ function setText(el: Element, text: string): void {
 function renderStatus(): void {
   const counts = { stale: 0, lost: 0 };
   for (const a of anchors.values()) if (a.state === 'stale' || a.state === 'lost') counts[a.state]++;
-  const parts = [counts.stale && `${counts.stale} out of date`, counts.lost && `${counts.lost} not found`].filter(Boolean) as string[];
+  // Sections whose anchor is missing from the manifest or invalid there (the banner says why).
+  const unlinked = new Set([...content.querySelectorAll<HTMLElement>('[data-explain-anchor]')].map((el) => el.dataset.explainAnchor!).filter((id) => !anchors.has(id))).size;
+  const parts = [counts.stale && `${counts.stale} out of date`, counts.lost && `${counts.lost} not found`, unlinked && `${unlinked} not linked`].filter(Boolean) as string[];
   const text = parts.length ? parts.join(' · ') : 'Linked';
   // Only touch the DOM when something changed: this runs on every keystroke in linked code.
   if (statusText.textContent === text) return;
@@ -575,6 +729,8 @@ function markActive(): void {
   [...stepsEl.children].forEach((b, i) => {
     if (i === index) b.setAttribute('aria-current', 'step');
     else b.removeAttribute('aria-current');
+    // One Tab stop for the whole bar (the current step); arrow keys move between steps.
+    (b as HTMLButtonElement).tabIndex = i === Math.max(index, 0) ? 0 : -1;
     b.classList.toggle('cx-done', index >= 0 && i < index);
   });
   [...progressEl.children].forEach((p, i) => p.classList.toggle('cx-on', index >= 0 && i <= index));
@@ -614,6 +770,7 @@ function scrollToSection(id: string): void {
   const el = sectionEl(id);
   if (!el) return;
   programmaticUntil = Date.now() + 1000;
+  scrollTarget = { id, until: Date.now() + 1500 };
   scrollToTop(topOf(el));
 }
 
@@ -700,6 +857,10 @@ scroller.addEventListener('scroll', () => {
     scrollFrame = 0;
     saveState();
     if (Date.now() < programmaticUntil) return;
+    heldPlace = readingPosition();
+    // Only the reader's own scrolling picks the step: not layout (the editor opening beside the panel,
+    // images loading), which would undo a step the reader chose but the page can't scroll to.
+    if (!readerLeads()) return;
     const s = sectionAtReadingLine();
     if (s && pillEl.dataset.anchor === s.id) hidePill(); // the reader got there on their own
     if (s && s.id !== activeStepId()) setActive(s.id, 'scroll');
@@ -719,7 +880,46 @@ function bindFrameEvents(d: Document): void {
   for (const ev of ['wheel', 'touchmove', 'pointerdown']) d.addEventListener(ev, readerInput, { passive: true });
   d.addEventListener('click', onContentClick);
   d.addEventListener('keydown', onContentKey);
+  d.addEventListener('keydown', noteKey, true);
+  d.addEventListener('focusin', onContentFocus);
 }
+
+function noteKey(): void {
+  lastKeyAt = Date.now();
+}
+document.addEventListener('keydown', noteKey, true);
+
+/** Tabbing into a section makes it the current step, as scrolling to it would. */
+function onContentFocus(e: FocusEvent): void {
+  lastFocused = e.target as HTMLElement;
+  if (Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
+  const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
+  if (!section || section.dataset.cxState === 'lost') return;
+  const step = steps.find((s) => s.el === section || s.el.contains(section));
+  if (step && step.id !== activeStepId()) setActive(step.id, 'scroll');
+}
+
+/*
+ * Coming back to the panel (after a reference took focus to the code), focus returns to where it
+ * was rather than to the top of the page.
+ */
+document.addEventListener('focusin', (e) => {
+  if (e.target !== frame.el) lastFocused = e.target as HTMLElement;
+});
+window.addEventListener('focus', () => {
+  setTimeout(() => {
+    const now = document.activeElement;
+    if ((now === document.body || now === null) && lastFocused?.isConnected) lastFocused.focus({ preventScroll: true });
+  });
+});
+
+/* Animations in sections far off screen are paused: an explainer full of them shouldn't keep the CPU busy. */
+const offscreen = new IntersectionObserver(
+  (entries) => {
+    for (const en of entries) (en.target as HTMLElement).toggleAttribute('data-cx-off', !en.isIntersecting);
+  },
+  { rootMargin: '300px 0px' },
+);
 
 // ---- input ----
 
@@ -730,14 +930,17 @@ function openRef(ref: HTMLElement): void {
 
 function onContentClick(e: MouseEvent): void {
   const target = e.target as HTMLElement;
-  const ref = target.closest<HTMLElement>('[data-explain-ref]');
-  if (ref) {
+  const reanchor = target.closest<HTMLElement>('.cx-reanchor');
+  const fixBox = reanchor?.parentElement;
+  const fixFor = ownBox(fixBox) ? fixBox.parentElement?.dataset.explainAnchor : undefined;
+  if (reanchor && fixFor) {
     e.preventDefault();
-    openRef(ref);
+    vscode.postMessage({ type: 'reanchor', anchorId: fixFor });
     return;
   }
   const control = target.closest<HTMLElement>('.cx-peek, .cx-dive');
-  const host = control?.closest('.cx-detail')?.parentElement;
+  const box = control?.closest('.cx-detail');
+  const host = ownBox(box) ? box.parentElement : undefined;
   const name = host?.dataset.explainDetail;
   if (control && name) {
     e.preventDefault();
@@ -748,6 +951,12 @@ function onContentClick(e: MouseEvent): void {
       decorateDetails(content);
       fitFrame();
     }
+    return;
+  }
+  const ref = target.closest<HTMLElement>('[data-explain-ref]');
+  if (ref) {
+    e.preventDefault();
+    openRef(ref);
     return;
   }
   const link = target.closest('a, area');
@@ -765,6 +974,14 @@ function onContentClick(e: MouseEvent): void {
       }
       const dest = content.querySelector(`[id="${CSS.escape(id)}"]`);
       if (dest) {
+        // Set the frame's fragment so CSS :target works (pop-outs, highlighted footnotes); the panel,
+        // not the frame, scrolls, just below.
+        try {
+          // Absolute: a srcdoc frame resolves '#x' against the panel's URL, which would navigate it away.
+          frame.location.replace(`about:srcdoc#${encodeURIComponent(id)}`);
+        } catch {
+          // :target is a nicety
+        }
         const section = dest.closest<HTMLElement>('[data-explain-anchor]');
         programmaticUntil = Date.now() + 1000;
         scrollToTop(topOf(dest));
@@ -807,6 +1024,19 @@ function onContentKey(e: KeyboardEvent): void {
   onKey(e);
 }
 
+stepsEl.addEventListener('keydown', (e) => {
+  const buttons = [...stepsEl.querySelectorAll<HTMLButtonElement>('.cx-step')];
+  const i = buttons.indexOf(e.target as HTMLButtonElement);
+  if (i < 0) return;
+  const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: buttons.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const b = buttons[Math.min(Math.max(to, 0), buttons.length - 1)]!;
+  for (const x of buttons) x.tabIndex = x === b ? 0 : -1;
+  b.focus();
+});
+
 stepsEl.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.cx-step');
   if (!b) return;
@@ -835,18 +1065,23 @@ pillShow.addEventListener('click', () => {
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
 backEl.addEventListener('click', () => goTo(trail.length - 2));
+bannerOpen.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: 'manifest.json' }));
 
 document.addEventListener('keydown', onKey);
 
 function onKey(e: KeyboardEvent): void {
   const t = e.target as HTMLElement | undefined;
-  if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) {
+  // Keys belong to controls that take typing; a switch or radio button doesn't, so J/K still step.
+  const typing = t && (t.isContentEditable || /^(TEXTAREA|SELECT)$/.test(t.tagName) || (t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color)$/.test((t as HTMLInputElement).type)));
+  if (e.altKey || e.ctrlKey || e.metaKey || typing) {
     if (e.key === 'Escape') hidePill();
     return;
   }
   // Escape dismisses the pill; with nothing to dismiss, it goes back up the trail.
   if (e.key === 'Escape') {
+    const selection = frame.getSelection();
     if (!pillEl.hidden) hidePill();
+    else if (selection && !selection.isCollapsed) selection.removeAllRanges();
     else if (trail.length > 1) goTo(trail.length - 2);
     return;
   }
@@ -893,6 +1128,7 @@ function saveState(): void {
 /** Records the reader's place in the explainer shown, now (before switching away from it). */
 function savePlace(): void {
   clearTimeout(saveTimer);
+  if (!initialized) return; // nothing rendered yet: keep what was saved
   const place: Place = { active, scroll: readingPosition() };
   const places = { ...state.places };
   delete places[state.dir]; // re-inserted last: the most recent is kept longest

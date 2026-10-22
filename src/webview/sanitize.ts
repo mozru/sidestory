@@ -59,7 +59,9 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
  */
 export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl): string {
   if (css.length > MAX_CSS) return '';
-  const decoded = decodeEscapesOutsideStrings(css);
+  // As the CSS tokenizer does first: every newline form is \n (they all end strings), NUL is U+FFFD.
+  const normalized = css.replace(/\r\n?|\f/g, '\n').replace(/\0/g, '\uFFFD');
+  const decoded = decodeEscapesOutsideStrings(normalized);
   return rewriteUrlFunctions(decoded, baseUrl, from)
     .replace(/@import[^;]*;?/gi, '')
     // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
@@ -70,7 +72,9 @@ const isHex = (c: string) => /^[0-9a-f]$/i.test(c);
 
 /**
  * Replaces CSS escapes outside strings with the characters they stand for. An escape that decodes to
- * a backslash, a quote or a control character is dropped, so escapes can't be chained or open strings.
+ * a backslash, a quote, "/", "*" or a control character is dropped, so escapes can't be chained, open
+ * strings or comments.
+ * Comments are removed, so a quote inside one can't make the later passes see a string that isn't there.
  */
 function decodeEscapesOutsideStrings(css: string): string {
   let out = '';
@@ -83,6 +87,12 @@ function decodeEscapesOutsideStrings(css: string): string {
       while (j < css.length && css[j] !== c && css[j] !== '\n') j += css[j] === '\\' ? 2 : 1;
       out += css.slice(i, j + 1);
       i = j + 1;
+      continue;
+    }
+    if (c === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end < 0 ? css.length : end + 2;
+      out += ' '; // not nothing: "/" + comment + "*" must not become the start of a new comment
       continue;
     }
     if (c !== '\\') {
@@ -107,7 +117,8 @@ function decodeEscapesOutsideStrings(css: string): string {
       decoded = next;
       i += 2;
     }
-    if (!/[\\"'\x00-\x1f\x7f]/.test(decoded)) out += decoded;
+    // Nor may an escape become "/" or "*": the browser would read the output's "/*" as a comment.
+    if (!/[\\"'/*\x00-\x1f\x7f]/.test(decoded)) out += decoded;
   }
   return out;
 }
@@ -139,7 +150,7 @@ function rewriteUrlFunctions(css: string, baseUrl: string, from: string): string
     const q = css[j];
     if (q === '"' || q === "'") {
       let k = j + 1;
-      while (k < css.length && css[k] !== q && css[k] !== '\n') k++;
+      while (k < css.length && css[k] !== q && css[k] !== '\n') k += css[k] === '\\' ? 2 : 1;
       value = css.slice(j + 1, k);
       j = k + 1;
     } else {

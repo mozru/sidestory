@@ -66,7 +66,14 @@ Mark any element that is about some code with `data-explain-anchor`, and name it
 | `summary` | Top level, optional: one line shown when a parent explainer peeks at this one. |
 | `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
 
-Then run **Code Explainer: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Re-run it after you change which lines a section covers.
+Then run **Code Explainer: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Until then a section is just a line range and can't tell when its code changes; the panel says so once per explainer. Pin edits only the anchors it pins and keeps the rest of `manifest.json` as you wrote it. It pins what the editors show, unsaved changes included, and says when it did.
+
+Pin only pins anchors whose code it finds with confidence. It names each anchor it left alone and why (code changed, out of date, code not found, ambiguous, file missing), then lists the ones it could still pin: where the code is now, and the lines their `range` gives. Tick the ones whose code you changed on purpose to pin them there.
+
+To point a section at different code:
+
+- select the code and run **Code Explainer: Re-anchor Section to Selection** (also in the editor's context menu while an explainer is open), then pick the section; sections whose code is lost or out of date are listed first. The selection may be in another file of the same repository; or
+- edit its `range` in the manifest and run Pin: when the recorded code can't be found with confidence, Pin offers the lines `range` gives. (If the recorded code is still there unchanged, Pin follows it instead; use Re-anchor.)
 
 ### Big systems: an overview with details
 
@@ -104,9 +111,16 @@ This works on unsaved edits too, as you type.
 Use VS Code's theme variables so your explainer looks right in every theme:
 `var(--vscode-editor-foreground)`, `var(--vscode-descriptionForeground)`, `var(--vscode-panel-border)`, `var(--vscode-editor-font-family)`, `var(--vscode-textLink-foreground)`, `var(--vscode-charts-blue)` and so on.
 
+The built-in styles are light: body text in the editor font and colors, code blocks and tables that scroll sideways when wide, images no wider than the panel, and an outline on the current section. Nothing else is clipped, so your tooltips and pop-outs can overflow their boxes.
+
+Interactivity without script works well, and readers keep what they set while you edit:
+- **Steppers, tabs and switches** built from radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` rules. A switch the reader flipped stays flipped when you edit another part of the explainer; changing that control's own `checked` in the source resets it.
+- **Pop-outs and footnotes** with `:target`: in-page links (`<a href="#id">`) set the target as in a browser.
+- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation** and `@container` queries. Animations in sections far off screen pause until the reader gets there; honour `prefers-reduced-motion` for readers who ask for less motion.
+
 ### What's supported, and what's removed
 
-Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, GIF, WebP, AVIF), fonts and videos from the explainer's own folder; inline SVG; tables; `<details>`; links.
+Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, GIF, WebP, AVIF), fonts and videos from the explainer's own folder; inline SVG; tables; `<details>`; form controls (inputs, labels, selects) for CSS-driven interactivity; links.
 
 Removed or ignored, for safety (see `SECURITY.md`):
 - scripts of any kind, event handler attributes, `javascript:` links;

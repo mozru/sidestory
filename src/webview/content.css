@@ -64,10 +64,9 @@ html, body {
   max-width: 100%;
 }
 
-/* Wide blocks scroll on their own, so the rest of the text stays put. */
-.cx-content :where(pre, table),
-[data-explain-anchor] > :where(:not(h1, h2, h3, h4, h5, h6, p, ul, ol)),
-.cx-content > :where(:not([data-explain-anchor], h1, h2, h3, h4, h5, h6, p, ul, ol, style)) {
+/* Wide code and tables scroll on their own, so the rest of the text stays put. (Only those: a
+   scrolling box would clip the author's tooltips and pop-outs.) */
+.cx-content :where(pre, table) {
   max-width: 100%;
   overflow-x: auto;
 }
@@ -80,15 +79,6 @@ html, body {
   scroll-margin-top: 12px;
   border-radius: 6px;
   transition: box-shadow 160ms ease, background-color 160ms ease;
-  cursor: pointer;
-}
-
-[data-explain-anchor] :where(a, button, input, select, textarea, summary, label) {
-  cursor: auto;
-}
-
-[data-explain-anchor][data-cx-state='lost'] {
-  cursor: default;
 }
 
 [data-explain-ref] {
@@ -198,6 +188,11 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
   gap: 4px 12px;
 }
 
+.cx-fix {
+  margin: 8px 0 2px;
+}
+
+.cx-fix button,
 .cx-detail button {
   padding: 2px 0;
   border: 0;
@@ -207,11 +202,13 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
   cursor: pointer;
 }
 
+.cx-fix button:hover,
 .cx-detail button:hover:not(:disabled) {
   color: var(--vscode-textLink-activeForeground);
   text-decoration: underline;
 }
 
+.cx-fix button:focus-visible,
 .cx-detail button:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;
@@ -231,7 +228,26 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
   font-size: 0.9em;
 }
 
+.cx-peek-body[hidden] {
+  display: none !important;
+}
+
 .cx-peek-body {
   margin: 6px 0 2px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* A nested section's badge goes below its content: in a small block, a corner badge would cover it. */
+[data-explain-anchor] [data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::after {
+  position: static;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+/* Sections far off screen (main.ts): animations wait until the reader gets there. */
+[data-cx-off],
+[data-cx-off] *,
+[data-cx-off] *::before,
+[data-cx-off] *::after {
+  animation-play-state: paused !important;
 }

@@ -1,0 +1,93 @@
+package tinyroute
+
+import (
+	"net/http"
+	"strings"
+)
+
+// node is one path segment in the route trie. Static children are
+// tried first, then the parameter child, then the catch-all.
+type node struct {
+	segment  string
+	children []*node
+	param    *node
+	wildcard *node
+	handler  http.Handler
+}
+
+// insert walks (and grows) the trie along segs and stores h at the end.
+func (n *node) insert(segs []string, h http.Handler) {
+	cur := n
+	for _, seg := range segs {
+		switch {
+		case strings.HasPrefix(seg, ":"):
+			if cur.param == nil {
+				cur.param = &node{segment: seg}
+			}
+			cur = cur.param
+		case seg == "*":
+			if cur.wildcard == nil {
+				cur.wildcard = &node{segment: seg}
+			}
+			cur = cur.wildcard
+		default:
+			cur = cur.child(seg)
+		}
+	}
+	cur.handler = h
+}
+
+// child returns the static child for seg, creating it if needed.
+func (n *node) child(seg string) *node {
+	for _, c := range n.children {
+		if c.segment == seg {
+			return c
+		}
+	}
+	c := &node{segment: seg}
+	n.children = append(n.children, c)
+	return c
+}
+
+// lookup finds the handler for segs and the parameters captured on the way.
+// It returns a nil handler when nothing matches.
+func (n *node) lookup(segs []string) (http.Handler, Params) {
+	var params Params
+	cur := n
+	for i, seg := range segs {
+		next := cur.static(seg)
+		if next == nil && cur.param != nil {
+			next = cur.param
+			params = append(params, Param{Key: next.segment[1:], Value: seg})
+		}
+		if next == nil && cur.wildcard != nil {
+			rest := strings.Join(segs[i:], "/")
+			params = append(params, Param{Key: "*", Value: rest})
+			return cur.wildcard.handler, params
+		}
+		if next == nil {
+			return nil, nil
+		}
+		cur = next
+	}
+	return cur.handler, params
+}
+
+// static returns the static child named seg, or nil.
+func (n *node) static(seg string) *node {
+	for _, c := range n.children {
+		if c.segment == seg {
+			return c
+		}
+	}
+	return nil
+}
+
+// splitPath turns "/users/:id/" into ["users", ":id"].
+func splitPath(p string) []string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}

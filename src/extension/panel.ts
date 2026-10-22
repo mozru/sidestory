@@ -9,7 +9,8 @@ export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscod
     enableFindWidget: true,
     // Hidden panels are rebuilt from `init` when shown again, so no need to keep them alive.
     retainContextWhenHidden: false,
-    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview'), ref.dir],
+    // The whole `.explain/` folder, so it covers whichever explainer the panel dives into.
+    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview'), vscode.Uri.joinPath(ref.dir, '..')],
   };
 }
 

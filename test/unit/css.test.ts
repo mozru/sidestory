@@ -54,3 +54,22 @@ describe('rewriteCss: round 3 audit', () => {
     expect(rewriteCss('a::before{content:"\\2192  next"} b{color:var(--x)}', BASE)).toBe('a::before{content:"\\2192  next"} b{color:var(--x)}');
   });
 });
+
+describe('rewriteCss: comments and newlines (navigation audit)', () => {
+  const BASE = 'https://x.vscode-cdn.net/ws/.explain/a/';
+  const remote = (css: string) => /url\("?https:\/\/(evil|file)/.test(rewriteCss(css, BASE));
+  it.each([
+    "/* ' */ a{background-image:url(https://evil.example/a.png)} /* ' */",
+    '/* " */ a{background:u\\72l(https://evil.example/a.png)} /* " */',
+    "a{content:'x\f;background-image:url(https://evil.example/b.png)} b{content:'}",
+    "a{content:'x\r;background-image:url(https://evil.example/b.png)} b{content:'}",
+    "a{content:'x\r\n;background-image:url(https://evil.example/b.png)} b{content:'}",
+    "/* ' */ a{background:url(https://file+.vscode-resource.vscode-cdn.net/etc/p.png)} /* ' */",
+  ])('leaves no remote url() in %j', (css) => {
+    expect(remote(css)).toBe(false);
+  });
+
+  it('keeps local urls and ordinary comments working', () => {
+    expect(rewriteCss('/* a comment */ a{background:url(img/x.png)}', BASE)).toContain(`url("${BASE}img/x.png")`);
+  });
+});
