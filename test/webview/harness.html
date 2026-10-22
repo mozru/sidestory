@@ -27,7 +27,8 @@
   });
   window.__send = (m) => {
     if (m.type === 'init') window.__base = m.base; // assets come from the explainer shown
-    window.dispatchEvent(new MessageEvent('message', { data: m }));
+    // As VS Code's host does: from the parent (here the page itself), on the page's origin.
+    window.dispatchEvent(new MessageEvent('message', { data: m, source: window.parent, origin: window.origin }));
   };
 </script>
 </head>

@@ -743,3 +743,20 @@ test('a click in the content is not scrolling: a layout scroll right after it ke
   await page.waitForTimeout(300);
   await expect(page.locator('.cx-position')).toHaveText('Step 4 of 6');
 });
+
+test('messages that do not come from VS Code’s host are ignored', async ({ page }) => {
+  await open(page);
+  // A frame inside the panel (a future widget, or anything else) posts a forged host message.
+  await page.evaluate(() => {
+    const f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts');
+    f.srcdoc = '<script nonce="harness">parent.postMessage({type:"error",message:"forged"},"*");parent.postMessage({type:"content",title:"forged",html:"<p>x</p>"},"*")<\/script>';
+    document.body.append(f);
+  });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.cx-banner')).toBeHidden();
+  await expect(page.locator('.cx-title')).toHaveText(MANIFEST.title);
+  // Messages with another origin are ignored too.
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'error', message: 'x' }, origin: 'https://evil.example' })));
+  await expect(page.locator('.cx-banner')).toBeHidden();
+});
