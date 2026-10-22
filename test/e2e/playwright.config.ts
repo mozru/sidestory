@@ -12,5 +12,12 @@ export default defineConfig({
   reporter: [['list']],
   retries: process.env.CI ? 2 : 0,
   forbidOnly: !!process.env.CI,
-  use: { baseURL: 'http://127.0.0.1:3100', viewport: { width: 1440, height: 900 }, screenshot: 'only-on-failure' },
+  use: {
+    baseURL: 'http://127.0.0.1:3100',
+    viewport: { width: 1440, height: 900 },
+    screenshot: 'only-on-failure',
+    // Headless Chromium turns site isolation off; desktop browsers (and Electron) isolate cross-site frames.
+    // CX_SITE_ISOLATION=1 models them, for measurements that depend on the process model.
+    launchOptions: process.env.CX_SITE_ISOLATION ? { args: ['--site-per-process', '--enable-features=IsolateSandboxedIframes'] } : {},
+  },
 });
