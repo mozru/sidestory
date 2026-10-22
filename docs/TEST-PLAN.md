@@ -1,5 +1,30 @@
 # Test plan
 
+## Test matrix
+
+| Suite | Command | Linux | Windows | macOS | Notes |
+|---|---|---|---|---|---|
+| Unit (core, extension logic, compiler, line endings, leaks) | `npm test` | CI | VM, CI | local, CI | Windows checkouts are CRLF |
+| Panel (webview in Chromium) | `npm run build && npm run test:webview` | CI | VM, CI | local, CI | |
+| Widget frames | `npm run test:widgets` | CI | VM, CI | local, CI | |
+| Desktop VS Code (Electron), 1.95.0 and stable, LF and CRLF | `npm run test:desktop` | CI (xvfb) | VM, CI | local, CI | A workspace path with a space and non-ASCII characters |
+| Browser VS Code (openvscode-server in Docker) | `npm run test:e2e` | local, CI | — | — | Also with `CX_SITE_ISOLATION=1` |
+| Manual: Remote-SSH, desktop widget isolation | below | — | yes | yes | |
+
+CI (`.github/workflows/ci.yml`) runs once the repository is on GitHub. Until then Windows runs in a local VM.
+
+### Windows VM (local)
+
+A Windows 11 ARM64 VM under QEMU with Apple's hypervisor, kept in `~/VMs/windows` (outside the repo): `vm.sh start|stop|ssh|shot`, SSH on 127.0.0.1:2222 with a dedicated key, a local test account (credentials in `credentials.txt`, owner-only), Node 24 and Git for Windows. Installed unattended from Microsoft's ISO (checksum verified); Windows is unactivated, which doesn't affect testing.
+
+`test/windows/run-in-vm.sh [unit|panel|desktop|all]` clones HEAD inside the VM with Git for Windows' defaults (a CRLF checkout), runs `npm ci`, then the unit, panel and widget-frame suites over SSH, and the desktop VS Code suite (1.95.0 and stable, LF and CRLF) as a task in the logged-in session, since Electron needs the interactive desktop.
+
+### Disk
+
+- e2e: the image is ~1 GB; setup warns below 5 GB free and removes this project's stale images after each rebuild (`docker image prune --filter label=org.code-explainer.test=e2e`).
+- Desktop VS Code downloads are cached in `.vscode-test/` (~200 MB per version); delete the folder to reclaim them.
+- Windows VM: the disk grows to ~30 GB; the ISO and guest tools (5 GB) can be deleted once installed.
+
 ## Automated
 
 | Suite | Command | What it covers |
