@@ -410,6 +410,39 @@ body:is(.vscode-light, .vscode-high-contrast-light) .cx-widget-frame {
   color-scheme: light;
 }
 
+/* The "Interactive" label over a running widget's placeholder: panel chrome, out of reach of author CSS. */
+.cx-widget-label {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font: 11px/22px var(--vscode-font-family);
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
+  pointer-events: none;
+}
+
+.cx-widget-label-tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 16px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.cx-widget-label-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .cx-pill {
   position: fixed;
   left: 50%;

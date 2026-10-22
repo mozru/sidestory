@@ -43,7 +43,7 @@ export interface WidgetAnchor {
 export interface WidgetCode {
   anchor: string;
   status: 'ok' | 'unavailable';
-  reason?: 'not-pinned' | 'unconfirmed' | 'ignored' | 'secret-file' | 'lost' | 'changed-untracked' | 'changed-since-commit' | 'too-large';
+  reason?: 'not-pinned' | 'unconfirmed' | 'ignored' | 'secret-file' | 'lost' | 'changed-untracked' | 'changed-since-commit' | 'too-large' | 'not-requested';
   text?: string;
   startLine?: number;
   language?: string;

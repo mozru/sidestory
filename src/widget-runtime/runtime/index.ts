@@ -137,6 +137,8 @@ const HEIGHT_INTERVAL_MS = 100;
 const LOOP_REPORTS = 15;
 /** px of slack when comparing the excess over the frame's height between reports. */
 const LOOP_SLACK = 2;
+/** Content that changed this soon after the frame was resized changed because of it. */
+const FOLLOW_MS = 50;
 export const GROWTH_MESSAGE = 'This widget sizes itself to the window, so its height was frozen. Give it a height (h-80, or style={{height: 320}}).';
 let lastHeight = -1;
 let lastSent = -Infinity;
@@ -177,7 +179,7 @@ function sendHeight() {
   if (px === lastHeight) return;
   const now = performance.now();
   // In the loop, the frame already has the last height sent, and the content exceeds it by a constant.
-  if (px > lastHeight && lastHeight >= 0 && excess > 0 && frameHeight() >= lastHeight - LOOP_SLACK) {
+  if (px > lastHeight && lastHeight >= 0 && excess > 0 && followsFrame && frameHeight() >= lastHeight - LOOP_SLACK) {
     loop = Math.abs(excess - loop.excess) <= LOOP_SLACK ? { excess: loop.excess, reports: loop.reports + 1 } : { excess, reports: 1 };
     if (loop.reports >= LOOP_REPORTS) {
       frozen = true;
@@ -198,7 +200,20 @@ function scheduleHeight() {
   const wait = Math.max(0, lastSent + HEIGHT_INTERVAL_MS - performance.now());
   heightTimer = native.setTimeout(sendHeight, wait);
 }
-new ResizeObserver(scheduleHeight).observe(rootEl);
+// In the loop the content grows in the very rendering update in which the frame was resized; content that
+// grows on its own schedule (a row every 100 ms) doesn't, however steadily.
+let frameResizedAt = -Infinity;
+let followsFrame = false;
+// A box the size of the frame: its observer runs before the root's in the same rendering update.
+const viewportProbe = document.createElement('div');
+viewportProbe.setAttribute('aria-hidden', 'true');
+viewportProbe.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none;z-index:-1';
+document.body.append(viewportProbe);
+new ResizeObserver(() => { frameResizedAt = performance.now(); }).observe(viewportProbe);
+new ResizeObserver(() => {
+  followsFrame = performance.now() - frameResizedAt < FOLLOW_MS;
+  scheduleHeight();
+}).observe(rootEl);
 
 // ---- modules ----
 let modules: Record<string, string> = {};

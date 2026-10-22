@@ -9,7 +9,7 @@ import type { FromWebview, WidgetBuild, WidgetGate } from '../shared/protocol.ts
 import { MAX_WIDGETS } from '../shared/protocol.ts';
 import type { FromWidget, ThemeKind, ToWidget, WidgetAnchor, WidgetCode } from '../shared/widget-protocol.ts';
 import { fromWidgetSchema } from '../shared/widget-protocol.ts';
-import { ActivationEvidence, type Box } from './activation.ts';
+import { ActivationEvidence, ENTRY_PX, rayEntry, type Box } from './activation.ts';
 import { MAX_WIDGET_PROPS, WIDGET_PROPS_ATTR } from './sanitize.ts';
 import { widgetSrcdoc } from './trusted.ts';
 import { WidgetStates, type SavedWidgetStates } from './widget-state.ts';
@@ -86,6 +86,8 @@ interface Widget {
   badge?: string;
   showFallback: boolean;
   frame?: HTMLIFrameElement;
+  /** The "Interactive" label drawn in the panel's own layer over the placeholder's bar, while mounted. */
+  label?: HTMLElement;
   win?: Window | null;
   build?: WidgetBuild;
   loads: number;
@@ -111,7 +113,7 @@ interface Widget {
   /** The frame's visible box (frame ∩ clipping ∩ the scroller's viewport), panel coordinates; null: not visible. */
   vis?: Box | null;
   /** Placement and clipping, measured on layout changes (not on every scroll frame); content-frame coordinates. */
-  layout?: { place: Placement; clip: Box; box: { left: number; top: number; width: number; height: number }; rect: { top: number; bottom: number } };
+  layout?: { place: Placement; clip: Box; outer: Box; box: { left: number; top: number; width: number; height: number }; rect: { top: number; bottom: number } };
 }
 
 const MAX_MOUNTED = 8;
@@ -267,16 +269,31 @@ export class WidgetFrames {
     if (down) {
       this.pointerDown = true;
       this.evidence.gesture(now(), { x, y });
-    } else this.evidence.sample({ x, y, t: now(), hit: this.frameAt(x, y) });
+    } else this.evidence.sample({ x, y, t: now(), ...this.aim(x, y) });
   }
 
-  /** The mounted widget frame whose visible box holds this panel point (as last positioned). */
-  private frameAt(x: number, y: number): HTMLIFrameElement | undefined {
+  /**
+   * The mounted widget frame this panel point is on, or that the pointer is heading into within ENTRY_PX
+   * (from the previous sample; with site isolation the last sample the panel gets is just outside the
+   * frame it entered). Judged on the frames' visible boxes now, as last positioned.
+   */
+  private aim(x: number, y: number): { hit?: HTMLIFrameElement; toward: HTMLIFrameElement[] } {
+    const prev = this.evidence.last();
+    const view = this.panel.scroller.getBoundingClientRect();
+    let best: { f: HTMLIFrameElement; d: number } | undefined;
+    const toward: HTMLIFrameElement[] = [];
     for (const w of this.widgets.values()) {
-      const b = w.vis;
-      if (w.frame && b && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return w.frame;
+      if (!w.frame || !w.vis) continue;
+      // Where the frame is now (its clipping as last measured), within the scroller's viewport.
+      const r = w.frame.getBoundingClientRect();
+      const b: Box = { left: Math.max(r.left, w.vis.left, view.left), top: Math.max(r.top, view.top), right: Math.min(r.right, w.vis.right, view.right), bottom: Math.min(r.bottom, view.bottom) };
+      if (b.right <= b.left || b.bottom <= b.top) continue;
+      const d = x >= b.left && x <= b.right && y >= b.top && y <= b.bottom ? 0 : prev ? rayEntry(prev, { x, y }, b) : undefined;
+      if (d === undefined) continue;
+      toward.push(w.frame);
+      if (d <= ENTRY_PX && (!best || d < best.d)) best = { f: w.frame, d };
     }
-    return undefined;
+    return { hit: best?.f, toward };
   }
 
   private onPointerUp(): void {
@@ -323,7 +340,7 @@ export class WidgetFrames {
       el.setAttribute('data-cx-wstate', status);
       el.toggleAttribute('data-cx-showfb', w?.showFallback ?? false);
       el.style.setProperty('--cx-wh', `${w?.height ?? this.initialHeight(el, key)}px`);
-      pinBox(el, status);
+      pinBox(el, status, w?.showFallback ?? false);
       const own = (cls: string) => [...el.children].find((c) => c.getAttribute('data-cx-box') === this.panel.boxToken && c.classList.contains(cls)) as HTMLElement | undefined;
       const make = (tag: string, cls: string) => {
         const x = doc.createElement(tag);
@@ -448,6 +465,8 @@ export class WidgetFrames {
   setGate(gate: WidgetGate): void {
     const was = this.gate;
     this.gate = gate;
+    // A new gate (what may run changed) ends a watchdog suspension: it already says what is turned off.
+    if (gate.status !== was.status || gate.stopped !== was.stopped || gate.disabled.join('\n') !== was.disabled.join('\n')) this.suspended = false;
     for (const [k, v] of Object.entries(gate.heights)) if (!this.heights.has(`${this.panel.dir()}\n${k}`)) this.heights.set(`${this.panel.dir()}\n${k}`, v);
     if (gate.status !== 'on' && was.status === 'on') for (const w of this.widgets.values()) this.unmount(w, true);
     // A refusal answered a request made under an older gate (say, the extension hadn't seen a live edit's new
@@ -456,8 +475,10 @@ export class WidgetFrames {
     for (const w of this.widgets.values()) {
       if (gate.disabled.includes(w.src)) {
         this.unmount(w, true);
-        this.fail(w, 'This widget was turned off because it stopped responding. It runs again when its code changes.');
-      } else if (was.disabled.includes(w.src) && w.status === 'error') {
+        this.fail(w, gate.stopped
+          ? "This explainer's widgets kept freezing the panel, so they were stopped. Run Code Explainer: Enable Widgets to try again."
+          : 'This widget was turned off because it stopped responding. It runs again when its code changes.');
+      } else if ((was.disabled.includes(w.src) || was.stopped) && w.status === 'error') {
         w.error = undefined;
         w.status = 'idle';
       }
@@ -544,6 +565,7 @@ export class WidgetFrames {
     this.dupWarned.clear();
     this.descIds.clear();
     this.evidence.reset();
+    this.suspended = false;
     this.owner = undefined;
     this.highlighted = false;
     this.lastActive = undefined;
@@ -721,7 +743,7 @@ export class WidgetFrames {
     const r = w.el.getBoundingClientRect();
     const rect = { top: r.top, bottom: r.bottom };
     const none = { left: 0, top: 0, right: 0, bottom: 0 };
-    if (place.kind !== 'ok') return { place, clip: none, box: { left: 0, top: 0, width: 0, height: 0 }, rect };
+    if (place.kind !== 'ok') return { place, clip: none, outer: none, box: { left: 0, top: 0, width: 0, height: 0 }, rect };
     const cs = win.getComputedStyle(w.el);
     const left = r.left + px(cs.borderLeftWidth) + px(cs.paddingLeft);
     const top = r.top + px(cs.borderTopWidth) + px(cs.paddingTop);
@@ -731,8 +753,13 @@ export class WidgetFrames {
     // Never outside the placeholder's own content box (author CSS may shrink the placeholder), the clipping
     // ancestors, or the content frame.
     let clip: Box = { left: Math.max(0, left), top: Math.max(0, top), right: Math.min(doc.clientWidth, right), bottom: Math.min(this.panel.contentFrame().clientHeight, bottom) };
-    for (const c of clipBoxes(w.el, win)) clip = { left: Math.max(clip.left, c.left), top: Math.max(clip.top, c.top), right: Math.min(clip.right, c.right), bottom: Math.min(clip.bottom, c.bottom) };
-    return { place, clip, box: { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }, rect };
+    // The label's area (the placeholder's bar) is clipped by the same ancestors, not by the content box.
+    let outer: Box = { left: 0, top: 0, right: doc.clientWidth, bottom: this.panel.contentFrame().clientHeight };
+    for (const c of clipBoxes(w.el, win)) {
+      clip = { left: Math.max(clip.left, c.left), top: Math.max(clip.top, c.top), right: Math.min(clip.right, c.right), bottom: Math.min(clip.bottom, c.bottom) };
+      outer = { left: Math.max(outer.left, c.left), top: Math.max(outer.top, c.top), right: Math.min(outer.right, c.right), bottom: Math.min(outer.bottom, c.bottom) };
+    }
+    return { place, clip, outer, box: { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }, rect };
   }
 
   /** The frame over the placeholder's content box, clipped to it, to clipping ancestors and the content frame. */
@@ -760,11 +787,45 @@ export class WidgetFrames {
       bottom: Math.min(view.bottom, content.top + Math.min(top + height, clip.bottom)),
     };
     w.vis = !empty && vis.right > vis.left && vis.bottom > vis.top ? vis : null;
+    this.positionLabel(w);
     const visible = w.vis !== null && document.visibilityState === 'visible';
     if (visible !== w.visible) {
       w.visible = visible;
       if (w.initSent) this.send(w, { type: 'visible', visible });
     }
+  }
+
+  /** The label, as panel chrome: over the placeholder's bar, the frame's width, clipped like the frame. */
+  private positionLabel(w: Widget): void {
+    const { box, outer } = w.layout!;
+    if (!w.label) {
+      const label = document.createElement('div');
+      label.className = 'cx-widget-label';
+      label.setAttribute('aria-hidden', 'true');
+      const tag = document.createElement('span');
+      tag.className = 'cx-widget-label-tag';
+      tag.textContent = 'Interactive';
+      const name = document.createElement('span');
+      name.className = 'cx-widget-label-name';
+      label.append(tag, name);
+      this.panel.layer.append(label);
+      w.label = label;
+    }
+    const l = w.label;
+    setText(l.querySelector('.cx-widget-label-name')!, w.title);
+    const left = box.left;
+    const top = box.top - BAR_PX;
+    const set = (k: string, v: string) => {
+      if (l.style.getPropertyValue(k) !== v) l.style.setProperty(k, v);
+    };
+    set('left', `${left}px`);
+    set('top', `${top}px`);
+    set('width', `${box.width}px`);
+    set('height', `${BAR_PX}px`);
+    const inset = [Math.max(0, outer.top - top), Math.max(0, left + box.width - outer.right), Math.max(0, top + BAR_PX - outer.bottom), Math.max(0, outer.left - left)];
+    const empty = outer.right <= outer.left || outer.bottom <= outer.top || inset[0]! + inset[2]! >= BAR_PX || inset[1]! + inset[3]! >= box.width;
+    set('clip-path', inset.every((x) => x === 0) ? '' : `inset(${inset.map((x) => `${x}px`).join(' ')})`);
+    set('visibility', empty || w.frame?.style.visibility === 'hidden' ? 'hidden' : '');
   }
 
   private mount(w: Widget): void {
@@ -842,6 +903,7 @@ export class WidgetFrames {
     if (save && w.initSent && !w.unmounting && w.loads <= 1) {
       this.send(w, { type: 'saveState' });
       w.frame.style.visibility = 'hidden';
+      if (w.label) w.label.style.visibility = 'hidden';
       w.unmounting = setTimeout(() => this.remove(w), SAVE_WAIT_MS);
       return;
     }
@@ -858,6 +920,8 @@ export class WidgetFrames {
     if (this.owner?.frame === w.frame) this.owner = undefined;
     w.frame?.remove();
     w.frame = undefined;
+    w.label?.remove();
+    w.label = undefined;
     w.win = undefined;
     w.build = undefined;
     w.booted = false;
@@ -882,7 +946,7 @@ export class WidgetFrames {
     if (w.status === status) return;
     w.status = status;
     w.el.setAttribute('data-cx-wstate', status);
-    pinBox(w.el, status);
+    pinBox(w.el, status, w.showFallback);
     const note = w.el.querySelector<HTMLElement>(':scope > .cx-widget-bar .cx-widget-note');
     if (note && !w.badge) setText(note, status === 'off' ? this.offNote() : '');
   }
@@ -1166,7 +1230,20 @@ export class WidgetFrames {
     const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
     if (!ua?.isActive || !w.frame || document.activeElement !== w.frame) return false;
     if (this.owner?.frame !== w.frame || !this.owner.legit) return false;
-    return this.evidence.allows(w.vis ?? null, now(), this.vp(), w.frame);
+    return this.evidence.allows(this.visibleNow(w), now(), this.vp(), w.frame);
+  }
+
+  /**
+   * The widget's visible box measured now, for a judgment (cached placement can be a moment stale: text
+   * reflowing as fonts load moves widgets without a scroll).
+   */
+  private visibleNow(w: Widget): Box | null {
+    if (!w.frame) return null;
+    const win = this.panel.contentDoc().defaultView!;
+    w.layout = this.measure(w, win);
+    if (w.layout.place.kind !== 'ok') return null;
+    this.position(w, this.panel.contentFrame().getBoundingClientRect(), this.panel.scroller.getBoundingClientRect());
+    return w.vis ?? null;
   }
 
   // ---- focus ----
@@ -1192,7 +1269,7 @@ export class WidgetFrames {
     }
     if (this.owner?.frame === a) return;
     const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
-    const verdict = ua?.isActive ? this.evidence.judge(w.vis ?? null, now(), this.vp(), w.frame) : 'refuse';
+    const verdict = ua?.isActive ? this.evidence.judge(this.visibleNow(w), now(), this.vp(), w.frame) : 'refuse';
     const legit = verdict === 'allow';
     this.owner = { frame: w.frame!, legit };
     if (legit) {
@@ -1475,8 +1552,9 @@ export function reducedMotion(): boolean {
  * Placeholder geometry and the label, inline and !important: author CSS (even !important, more specific)
  * can't shrink the box the frame lies over or hide the "Interactive" label.
  */
-function pinBox(el: HTMLElement, status: Status): void {
-  const off = status === 'off';
+function pinBox(el: HTMLElement, status: Status, showFallback: boolean): void {
+  // The fallback shows at its own height: widgets off, or the reader chose "Show fallback" (no frame there).
+  const off = status === 'off' || (showFallback && status !== 'live' && status !== 'loading');
   const props: [string, string][] = [
     ['display', 'block'], ['box-sizing', 'content-box'], ['height', off ? 'auto' : 'var(--cx-wh, 240px)'], ['min-height', '0'],
     ['max-height', 'none'], ['padding', `${BAR_PX}px 0 0`], ['overflow', off ? 'visible' : 'hidden'], ['visibility', 'visible'],

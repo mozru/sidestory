@@ -13,6 +13,7 @@ vi.mock('vscode', () => import('./vscode-stub.ts'));
 const { Git } = await import('../../src/extension/widgets/git.ts');
 const { WidgetHost, modalText } = await import('../../src/extension/widgets/host.ts');
 const { anchorsRead } = await import('../../src/extension/widgets/html.ts');
+const { decideConsent } = await import('../../src/extension/widgets/consent.ts');
 const { parseManifest } = await import('../../src/core/manifest.ts');
 const { resolveAnchor } = await import('../../src/core/resolve.ts');
 const { PreparedText } = await import('../../src/core/text.ts');
@@ -168,6 +169,51 @@ describe('a committed symlink to an ignored file (H1)', () => {
     expect(await host.fileGit(Uri.file(join(root, 'w', 'link.tsx')) as never)).toEqual({ kind: 'unknown' });
     expect((await host.fileGit(Uri.file(join(root, 'w', 'real.tsx')) as never)).kind).toBe('repo');
     host.dispose();
+  });
+});
+
+describe('consent for widget files reached through links, or read while git moves', () => {
+  const memento = () => {
+    const state = new Map<string, unknown>();
+    return { workspaceState: { get: (k: string, d: unknown) => state.get(k) ?? d, update: async (k: string, v: unknown) => void state.set(k, v) }, extensionUri: Uri.file('/ext') } as never;
+  };
+
+  it.skipIf(process.platform === 'win32')('a file in a symlinked folder of the explainer is unknown to git, so a new one asks', async () => {
+    const dir = join(root, '.explain', 'x');
+    mkdirSync(join(dir, 'real'), { recursive: true });
+    writeFileSync(join(dir, 'real', 'a.tsx'), 'export default () => null;');
+    symlinkSync('real', join(dir, 'w'));
+    fakeRepo({ getObjectDetails: async () => { throw new Error('Path not known'); } });
+    const host = new WidgetHost(memento());
+    await host.acknowledge([], true);
+    const f = await host.widgetFile(Uri.file(join(dir, 'w', 'a.tsx')) as never, Uri.file(dir) as never, Date.now());
+    expect(f.git).toEqual({ kind: 'unknown' });
+    expect(decideConsent(host.consent(), [f])).toMatchObject({ ask: true, added: [f.path] });
+    // The same file by its own path is git's to judge.
+    expect((await host.widgetFile(Uri.file(join(dir, 'real', 'a.tsx')) as never, Uri.file(dir) as never, Date.now())).git.kind).toBe('repo');
+    host.dispose();
+  });
+
+  it('bytes that change while git is asked (a pull landing) give unknown, not a mismatched record', async () => {
+    const dir = join(root, '.explain', 'x');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'a.tsx');
+    writeFileSync(path, 'old');
+    fakeRepo({ getObjectDetails: async () => { writeFileSync(path, 'new'); return { mode: '100644', object: 'b2', size: 3 }; } });
+    const host = new WidgetHost(memento());
+    const f = await host.widgetFile(Uri.file(path) as never, Uri.file(dir) as never, Date.now());
+    expect(f.git).toEqual({ kind: 'unknown' });
+    host.dispose();
+  });
+
+  it('an uncommitted .gitignore edit is seen by the ignore check', async () => {
+    const repo = fakeRepo();
+    const git = new Git();
+    const f = Uri.file(join(root, 'config', 'db.yml'));
+    await git.ignored(repo as never, f as never);
+    writeFileSync(join(root, '.gitignore'), 'x\n');
+    await git.ignored(repo as never, f as never);
+    expect(repo.ignoreCalls).toBe(2);
   });
 });
 

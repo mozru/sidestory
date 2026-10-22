@@ -5,7 +5,7 @@
 // renders untrusted content, so its requests are only requests.
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest, Quote } from '../../core/manifest.ts';
 import { parseManifest } from '../../core/manifest.ts';
@@ -101,6 +101,8 @@ export class WidgetHost implements vscode.Disposable {
   private readonly headManifests = new Map<string, Promise<Map<string, Quote | undefined> | null>>();
   private readonly escalations = new Escalations();
   private warm = false;
+  /** Explainers whose widgets the watchdog gave up on (until Enable Widgets), by folder URI. */
+  private readonly stoppedExplainers = new Set<string>();
   private readonly diagnostics = vscode.languages.createDiagnosticCollection('code-explainer-widgets');
   private readonly diagnosed = new Map<string, vscode.Uri[]>();
   private readonly checkTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -218,7 +220,13 @@ export class WidgetHost implements vscode.Disposable {
     if (changed) await this.context.workspaceState.update(DISABLED_KEY, next);
   }
 
+  /** The watchdog gave up on this explainer's widgets. */
+  isStopped(ref: ExplainerRef): boolean {
+    return this.stoppedExplainers.has(ref.dir.toString());
+  }
+
   async enableAll(): Promise<void> {
+    this.stoppedExplainers.clear();
     await this.context.workspaceState.update(DISABLED_KEY, undefined);
     this.refreshAll();
   }
@@ -281,13 +289,42 @@ export class WidgetHost implements vscode.Disposable {
    * Git's view of a widget file for consent, after the repository settled following an event at `since`. A
    * symlink, or a repository that doesn't settle (a long rebase), is `unknown`: changed code asks.
    */
-  async fileGit(uri: vscode.Uri, since = Date.now()): Promise<FileGit> {
-    if (uri.scheme === 'file' && (await lstat(uri.fsPath).then((st) => st.isSymbolicLink(), () => false))) return { kind: 'unknown' };
+  async fileGit(uri: vscode.Uri, since = Date.now(), base?: vscode.Uri): Promise<FileGit> {
+    if (await throughLink(uri, base)) return { kind: 'unknown' };
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return l;
     if (!(await this.git.settle(l.repo, since))) return { kind: 'unknown' };
     const [headBlob, text] = await Promise.all([this.git.headBlob(l.repo, uri), this.git.headText(l.repo, uri)]);
     return { kind: 'repo', headBlob, headHash: text === null ? null : contentHash(text) };
+  }
+
+  /**
+   * One widget file for consent: its bytes and git's view, consistent with each other. Git is settled only
+   * when the bytes differ from the record (unchanged code never waits on a paused rebase); then the bytes
+   * are read again after settling, and if git moved or the bytes changed while it was asked, the answer is
+   * `unknown` (asks).
+   */
+  async widgetFile(uri: vscode.Uri, dir: vscode.Uri, since: number): Promise<WidgetFile> {
+    const path = this.consentPath(uri);
+    const read = async () => {
+      const bytes = await readBytesInside(uri, dir, MAX_FILE_BYTES);
+      return bytes ? contentHash(bytes) : 'missing';
+    };
+    let hash = await read();
+    const unknown = (): WidgetFile => ({ path, hash, git: { kind: 'unknown' } });
+    if (await throughLink(uri, dir)) return unknown();
+    const l = await this.git.lookup(uri);
+    if (l.kind !== 'repo') return { path, hash, git: l };
+    const known = this.consent().files[path];
+    const settle = known?.hash !== hash;
+    if (settle) {
+      if (!(await this.git.settle(l.repo, since))) return unknown();
+      hash = await read();
+    }
+    const head = this.git.head(l.repo);
+    const [headBlob, text] = await Promise.all([this.git.headBlob(l.repo, uri), this.git.headText(l.repo, uri)]);
+    if (settle && (this.git.head(l.repo) !== head || (await this.git.busy(l.repo)) || (await read()) !== hash)) return unknown();
+    return { path, hash, git: { kind: 'repo', headBlob, headHash: text === null ? null : contentHash(text) } };
   }
 
   /** How consent names a file: workspace-relative (the record survives moving the workspace). */
@@ -299,11 +336,7 @@ export class WidgetHost implements vscode.Disposable {
   async widgetFiles(ref: ExplainerRef, results: readonly CompileResult[], since = Date.now()): Promise<WidgetFile[]> {
     const paths = [...new Set(results.flatMap((r) => r.files))];
     const out: WidgetFile[] = [];
-    for (const rel of paths) {
-      const uri = vscode.Uri.joinPath(ref.dir, rel);
-      const bytes = await readBytesInside(uri, ref.dir, MAX_FILE_BYTES);
-      out.push({ path: this.consentPath(uri), hash: bytes ? contentHash(bytes) : 'missing', git: await this.fileGit(uri, since) });
-    }
+    for (const rel of paths) out.push(await this.widgetFile(vscode.Uri.joinPath(ref.dir, rel), ref.dir, since));
     return out;
   }
 
@@ -328,9 +361,8 @@ export class WidgetHost implements vscode.Disposable {
     const path = this.consentPath(uri);
     if (!Object.hasOwn(this.consent().files, path)) return;
     void (async () => {
-      const bytes = await readBytesInside(uri, ref.dir, MAX_FILE_BYTES);
-      if (!bytes) return;
-      const file: WidgetFile = { path, hash: contentHash(bytes), git: await this.fileGit(uri, at) };
+      const file = await this.widgetFile(uri, ref.dir, at);
+      if (file.hash === 'missing') return;
       const d = decideConsent(this.consent(), [file]);
       if (d.observed.length) await this.acknowledge(d.observed, false);
     })();
@@ -496,8 +528,12 @@ export class WidgetHost implements vscode.Disposable {
     const ref = p.port.ref();
     const step = this.escalations.record(ref.dir.toString(), Date.now());
     if (step === 'stop') {
-      log.error(`${ref.name}: widgets keep freezing the panel; the watchdog stopped acting. Close the panel, or run "Code Explainer: Revoke Widget Consent".`);
-      void vscode.window.showErrorMessage(`Widgets in “${modalText(p.port.title() || ref.name)}” keep freezing the panel. Close it, or revoke widget consent.`);
+      // None of this explainer's widgets run any more (each box says so) until Enable Widgets.
+      this.stoppedExplainers.add(ref.dir.toString());
+      log.error(`${ref.name}: widgets keep freezing the panel, so none of them run now. Run "Code Explainer: Enable Widgets" to try again.`);
+      void vscode.window.showErrorMessage(`Widgets in “${modalText(p.port.title() || ref.name)}” keep freezing the panel, so they were stopped.`, 'Enable Widgets').then((c) => {
+        if (c) void vscode.commands.executeCommand('codeExplainer.enableWidgets');
+      });
       return false;
     }
     const srcs = step === 'suspect' && suspect ? [suspect] : p.sources();
@@ -523,20 +559,17 @@ export class WidgetHost implements vscode.Disposable {
 
   private async settleIncident(): Promise<void> {
     const reports = this.incident?.reports ?? [];
-    // The suspect: a widget that was mounting when it happened (in any panel), else the first report's most
-    // recently active one.
-    const pick = reports.find((r) => r.crumbs.mounting) ?? reports[0];
-    let resume = true;
+    // The suspect: a widget that was mounting when it happened (in any panel), else one a report names as
+    // the latest to do work. Without either, no explainer is blamed (it could be any panel's).
+    const pick = reports.find((r) => r.crumbs.mounting) ?? reports.find((r) => r.crumbs.recent);
     if (pick) {
       const { p, crumbs } = pick;
-      const suspect = crumbs.mounting ?? crumbs.recent ?? crumbs.mounted.at(-1);
+      const suspect = crumbs.mounting ?? crumbs.recent ?? undefined;
       log.warn(`${p.port.ref().name}: widgets stopped responding (mounted: ${crumbs.mounted.join(', ') || 'none'}; mounting: ${crumbs.mounting ?? 'none'}; ${reports.length} panel${reports.length === 1 ? '' : 's'} reported it).`);
-      resume = await this.escalate(p, suspect);
-    }
-    if (!resume) {
-      // The watchdog stopped acting: the panels stay suspended (no remount loop).
-      this.incident = undefined;
-      return;
+      // On "stop" the explainer's gate turns every widget off: the remount below mounts none of them.
+      await this.escalate(p, suspect);
+    } else {
+      log.warn(`Widgets stopped responding (${reports.length} panel${reports.length === 1 ? '' : 's'} reported it), with no widget to suspect; they were reloaded.`);
     }
     await new Promise((r) => setTimeout(r, REMOUNT_DELAY));
     this.incident = undefined;
@@ -574,6 +607,20 @@ export class WidgetHost implements vscode.Disposable {
     for (const t of this.checkTimers.values()) clearTimeout(t);
     for (const d of this.subscriptions) d.dispose();
   }
+}
+
+/**
+ * Whether the file is reached through a symlink (itself, or a linked folder) below `base` (default: its own
+ * folder): git knows such a file by another path, so its view of it can't be trusted.
+ */
+async function throughLink(uri: vscode.Uri, base?: vscode.Uri): Promise<boolean> {
+  if (uri.scheme !== 'file') return false;
+  const root = base?.fsPath ?? dirname(uri.fsPath);
+  const [realRoot, real] = await Promise.all([realpath(root).catch(() => undefined), realpath(uri.fsPath).catch(() => undefined)]);
+  if (!realRoot || !real) return (await lstat(uri.fsPath).then((s) => s.isSymbolicLink(), () => false));
+  const expected = join(realRoot, relative(root, uri.fsPath));
+  const fold = process.platform === 'win32' || process.platform === 'darwin';
+  return fold ? expected.toLowerCase() !== real.toLowerCase() : expected !== real;
 }
 
 type Crumbs = { mounted: string[]; mounting: string | null; recent: string | null };
@@ -677,7 +724,8 @@ export class PanelWidgets {
       status = d.ask ? 'ask' : 'on';
       await this.host.pruneDisabled(ref, new Map([...this.results].map(([src, r]) => [src, r.hash])));
     }
-    const disabled = this.srcs.filter((s) => this.host.isDisabled(ref, s, this.results.get(s)?.hash));
+    const stopped = this.host.isStopped(ref);
+    const disabled = this.srcs.filter((s) => stopped || this.host.isDisabled(ref, s, this.results.get(s)?.hash));
     let unconfirmed: WidgetGate['unconfirmed'] = null;
     if (status === 'on' && results.length) {
       const list = await this.host.unconfirmed(this.port, results);
@@ -688,7 +736,7 @@ export class PanelWidgets {
         unconfirmed = { anchors: list.length, summary: [...byFile].map(([f, n]) => `${f}, ${plural(n, 'line')}`).join('; ').slice(0, 200) };
       }
     }
-    const gate: WidgetGate = { status, unconfirmed, disabled, heights: this.host.heightsFor(ref) };
+    const gate: WidgetGate = { status, unconfirmed, disabled, heights: this.host.heightsFor(ref), ...(stopped ? { stopped } : {}) };
     this.gate = gate;
     this.port.post({ type: 'widgets', gate });
     // Live edits: builds the panel already runs are sent again when their code changed.
@@ -753,7 +801,7 @@ export class PanelWidgets {
         this.loggedReasons.add(`${src}:${id}:not-read`);
         log.warn(`${this.port.ref().name}: ${src} asked for the code of anchor '${id}', which it doesn't read with useAnchorCode('${id}'); it gets none.`);
       }
-      this.port.post({ type: 'widgetCode', src, code: { anchor: id, status: 'unavailable', reason: 'unconfirmed' } });
+      this.port.post({ type: 'widgetCode', src, code: { anchor: id, status: 'unavailable', reason: 'not-requested' } });
       return;
     }
     const code = await this.host.codeFor(this.port, id);
@@ -917,4 +965,5 @@ const REASON_FIX: Record<string, string> = {
   'changed-untracked': 'The code changed and the file is not tracked by git: pin again.',
   'changed-since-commit': 'The code changed since the quote was committed: pin again.',
   'too-large': 'The anchor is longer than 2,000 lines.',
+  'not-requested': "The widget doesn't name this anchor in a direct useAnchorCode('id') call.",
 };

@@ -43,6 +43,8 @@ export interface WidgetGate {
   disabled: string[];
   /** Last known heights by widget key, so remounts don't shift the page. */
   heights: Record<string, number>;
+  /** The watchdog gave up on this explainer's widgets (they kept freezing the panel): none run until re-enabled. */
+  stopped?: boolean;
 }
 
 /** A compiled widget as the panel needs it (docs/WIDGETS-PLAN.md §3 "Compile"). */

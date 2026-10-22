@@ -560,7 +560,25 @@ test.describe('review regressions', () => {
     const pb = (await placeholder(page).boundingBox())!;
     expect(pb.height).toBeGreaterThan(400);
     expect(fb.y + fb.height).toBeLessThanOrEqual(pb.y + pb.height + 1);
-    await expect(placeholder(page).locator('.cx-widget-tag')).toBeVisible();
+    await expect(page.locator('.cx-widget-label')).toBeVisible();
+  });
+
+  test('the "Interactive" label over a running widget is panel chrome: author CSS (custom properties, text-indent, width) can’t hide it', async ({ page }) => {
+    const css = '<style>#w .cx-widget-tag{--vscode-badge-foreground:transparent !important;--vscode-badge-background:transparent !important;width:0 !important;overflow:hidden !important;padding:0 !important;text-indent:-999px !important} #w .cx-widget-name,#w .cx-widget-note{color:transparent !important} :root{--vscode-badge-foreground:transparent !important}</style>';
+    await openWith(page, css + explainerHtml(probeTag(' id="w"')), builds, { active: 'ring' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    const tag = page.locator('.cx-widget-label .cx-widget-label-tag');
+    await expect(tag).toHaveText('Interactive');
+    await expect(tag).toBeVisible();
+    const info = await tag.evaluate((e) => { const cs = getComputedStyle(e); const r = e.getBoundingClientRect(); return { color: cs.color, w: r.width, indent: cs.textIndent }; });
+    expect(info.color).not.toBe('rgba(0, 0, 0, 0)');
+    expect(info.w).toBeGreaterThan(40);
+    expect(info.indent).toBe('0px');
+    // It sits on the placeholder's bar, just above the frame.
+    const lb = (await page.locator('.cx-widget-label').boundingBox())!;
+    const fb = (await frames(page).first().boundingBox())!;
+    expect(Math.abs(lb.y + lb.height - fb.y)).toBeLessThan(2);
+    expect(Math.abs(lb.x - fb.x)).toBeLessThan(2);
   });
 
   test('a widget growing while it holds the reading line stays where the reader is using it', async ({ page }) => {
@@ -656,6 +674,33 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     await serve(page, builds);
     await send(page, { type: 'widgets', gate: ON });
     await expect(out(widgetFrame(page))).toContainText('w:0');
+  });
+
+  test('a watchdog suspension ends with a new gate or another explainer; a stopped explainer says why', async ({ page }) => {
+    await openProbe(page);
+    await send(page, { type: 'widgetsReset', phase: 'unmount' });
+    await expect(frames(page)).toHaveCount(0);
+    // The extension's new gate (nothing turned off) ends it, even without a remount message.
+    await send(page, { type: 'widgets', gate: { ...ON, stopped: true, disabled: ['w/probe.tsx'] } });
+    await expect(placeholder(page).locator('.cx-widget-error')).toContainText('kept freezing the panel, so they were stopped');
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    // Suspended, then another explainer is shown: its widgets mount.
+    await send(page, { type: 'widgetsReset', phase: 'unmount' });
+    await expect(frames(page)).toHaveCount(0);
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+    await send(page, { type: 'init', title: 'Other', html: explainerHtml(probeTag()), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.explain/other', base, trail: [{ name: 'other', title: 'Other' }] });
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+  });
+
+  test('"Show fallback" on a broken widget shows the whole fallback, not clipped at the widget’s height', async ({ page }) => {
+    const bad = await compile({ 'w/bad.tsx': 'export default function B() { return <div>; }' });
+    await openWith(page, explainerHtml(`<explain-widget id="b" src="w/bad.tsx" title="B" height="120"><div>${filler(8)}</div></explain-widget>`), { ...builds, ...bad }, { active: 'ring' });
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'error');
+    await placeholder(page).locator('.cx-widget-fallback').click();
+    await expect.poll(() => placeholder(page).evaluate((e) => e.scrollHeight - e.clientHeight)).toBeLessThanOrEqual(1);
+    expect(await placeholder(page).evaluate((e) => e.clientHeight)).toBeGreaterThan(200);
   });
 
   test('heartbeats go on while the page is hidden (visible: false), and one is sent at once on the change', async ({ page }) => {

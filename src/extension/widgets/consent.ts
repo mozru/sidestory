@@ -67,10 +67,17 @@ export function decideConsent(record: ConsentRecord, files: readonly WidgetFile[
   for (const f of files) {
     const known = Object.hasOwn(record.files, f.path) ? record.files[f.path] : undefined;
     const g = f.git;
+    // What git had when the file was acknowledged: null (not in HEAD) is a value; undefined only in records
+    // from before blobs were kept.
+    const recorded = known && 'headBlob' in known ? known.headBlob : undefined;
     if (known?.hash === f.hash) {
-      // The acknowledged code: nothing to ask. Git's version moved meanwhile (the user committed it, say):
-      // remember the new blob, so later edits are compared with it.
-      if (g.kind === 'repo' && known.headBlob !== g.headBlob) observed.push(f);
+      // The acknowledged code. Git's version moved meanwhile: if it is this very code (the user committed
+      // it), remember the new blob so later edits are compared with it; otherwise git changed under bytes
+      // that may not be settled yet (a pull mid-way): ask.
+      if (g.kind === 'repo' && recorded !== g.headBlob) {
+        if (g.headHash === f.hash) observed.push(f);
+        else changed.push(f.path);
+      }
       continue;
     }
     if (g.kind === 'none') observed.push(f);
@@ -82,7 +89,7 @@ export function decideConsent(record: ConsentRecord, files: readonly WidgetFile[
     } else {
       // Git's version of the file changed since it was acknowledged, and not to the acknowledged code itself
       // (the user committing their own edit): the new bytes may have come with it.
-      const gitMoved = g.headBlob !== (known.headBlob ?? undefined) && (g.headHash === null || g.headHash !== known.hash);
+      const gitMoved = g.headBlob !== recorded && (g.headHash === null || g.headHash !== known.hash);
       if (gitMoved) changed.push(f.path);
       else observed.push(f);
     }

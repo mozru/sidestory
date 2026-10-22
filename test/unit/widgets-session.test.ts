@@ -195,7 +195,7 @@ describe('review regressions (extension side)', () => {
     p.send({ type: 'widgetConfirmAnchors' });
     await vi.waitFor(() => expect(p.last('widgets')?.gate.unconfirmed).toBeNull());
     p.send({ type: 'widgetCode', src: 'widgets/backoff.tsx', anchor: 'options' });
-    await vi.waitFor(() => expect(p.last('widgetCode')).toEqual({ type: 'widgetCode', src: 'widgets/backoff.tsx', code: { anchor: 'options', status: 'unavailable', reason: 'unconfirmed' } }));
+    await vi.waitFor(() => expect(p.last('widgetCode')).toEqual({ type: 'widgetCode', src: 'widgets/backoff.tsx', code: { anchor: 'options', status: 'unavailable', reason: 'not-requested' } }));
     p.send({ type: 'widgetCode', src: 'widgets/backoff.tsx', anchor: 'delay' });
     await vi.waitFor(() => expect(p.last('widgetCode')?.code.status).toBe('ok'));
   });
@@ -218,7 +218,7 @@ describe('review regressions (extension side)', () => {
     }
   });
 
-  it('one hang reported by several panels: one suspect is turned off, each panel hears of it before remounting, and after the watchdog gives up they stay suspended', async () => {
+  it('one hang reported by several panels: one suspect is turned off, each panel hears of it before remounting, and when the watchdog gives up the explainer’s widgets are stopped (with a reason) while panels remount', async () => {
     const host = newHost();
     closers.push(() => host.dispose());
     const a = await consented({ host });
@@ -239,9 +239,21 @@ describe('review regressions (extension side)', () => {
     a.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
     await vi.waitFor(() => expect(resets()).toBe(4), { timeout: 5000 });
     a.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
-    await vi.waitFor(() => expect(resets()).toBe(5));
-    await new Promise((r) => setTimeout(r, 2000));
-    expect(a.posted.filter((m) => m.type === 'widgetsReset').at(-1)).toEqual({ type: 'widgetsReset', phase: 'unmount' });
-    expect(resets()).toBe(5);
-  }, 20_000);
+    // Third: the watchdog gives up on this explainer. Its gate stops every widget, with the reason, and the
+    // panels remount (nothing of this explainer runs).
+    await vi.waitFor(() => expect(resets()).toBe(6), { timeout: 5000 });
+    for (const p of [a, b]) expect(p.last('widgets')?.gate).toMatchObject({ stopped: true, disabled: ['widgets/backoff.tsx'] });
+    expect(b.posted.filter((m) => m.type === 'widgetsReset').at(-1)).toEqual({ type: 'widgetsReset', phase: 'remount' });
+    // Enable Widgets brings them back.
+    await host.enableAll();
+    await vi.waitFor(() => expect(a.last('widgets')?.gate.stopped).toBeUndefined());
+    expect(a.last('widgets')?.gate.disabled).toEqual([]);
+  }, 30_000);
+
+  it('a hang nobody can attribute (no widget mounting or recently active) blames no explainer: panels just remount', async () => {
+    const p = await consented();
+    p.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: null, recent: null });
+    await vi.waitFor(() => expect(p.posted).toContainEqual({ type: 'widgetsReset', phase: 'remount' }), { timeout: 5000 });
+    expect(p.last('widgets')?.gate.disabled).toEqual([]);
+  });
 });

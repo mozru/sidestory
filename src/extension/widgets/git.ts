@@ -133,6 +133,12 @@ export class Git {
     return done;
   }
 
+  /** Git is in the middle of something: holding the index lock, or a merge or rebase in progress. */
+  async busy(repo: GitRepository): Promise<boolean> {
+    const s = repo.state;
+    return s.rebaseCommit !== undefined || !!s.mergeChanges?.length || (await exists(join(await gitDir(repo.rootUri.fsPath), 'index.lock')));
+  }
+
   head(repo: GitRepository): string | null {
     return repo.state.HEAD?.commit ?? null;
   }
@@ -182,9 +188,10 @@ export class Git {
     return repo.state.indexChanges.some((c) => c.uri.fsPath === file.fsPath);
   }
 
-  /** Ignored by git; cached per HEAD (a .gitignore change usually comes with a commit). */
-  ignored(repo: GitRepository, file: vscode.Uri): Promise<boolean> {
-    return this.cached(this.ignores, `${this.head(repo)}\n${file.fsPath}`, async () => {
+  /** Ignored by git; cached per HEAD and the root .gitignore's modification time (edits often aren't committed). */
+  async ignored(repo: GitRepository, file: vscode.Uri): Promise<boolean> {
+    const mtime = await stat(join(repo.rootUri.fsPath, '.gitignore')).then((s) => s.mtimeMs, () => 0);
+    return this.cached(this.ignores, `${this.head(repo)}\n${mtime}\n${file.fsPath}`, async () => {
       try {
         return (await repo.checkIgnore([file.fsPath])).has(file.fsPath);
       } catch {

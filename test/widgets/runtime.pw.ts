@@ -545,6 +545,19 @@ exports.default = function W() {
   await expect(harness.frame(b).locator('.cx-notice')).toHaveCount(0);
 });
 
+test('content that grows steadily on its own (a row every 100 ms for 2.5 s) isn’t frozen', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: REACT, init: one(`var _react = require("react");
+exports.default = function W() {
+  var [n, setN] = (0, _react.useState)(1);
+  (0, _react.useEffect)(() => { var t = setInterval(() => setN((x) => (x < 25 ? x + 1 : x)), 100); return () => clearInterval(t); }, []);
+  return _jsxruntime.jsx("div", { children: Array.from({ length: n }, (_, i) => _jsxruntime.jsx("p", { style: { height: 20, margin: 0 }, children: "row " + i }, i)) });
+};`),
+  });
+  await harness.waitFor(id, 'height', (m) => m.px === 500, 8000);
+  await expect(harness.frame(id).locator('.cx-notice')).toHaveCount(0);
+});
+
 test('a widget’s own animation-play-state still works after it was hidden and shown', async ({ harness }) => {
   const id = await harness.mount({
     libs: REACT, init: one(`exports.default = function W() {

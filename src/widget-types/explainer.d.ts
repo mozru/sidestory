@@ -23,7 +23,7 @@ declare module 'explainer' {
   }
 
   /** Why useAnchorCode has no code for an anchor. Shown to authors by the checker, never to readers. */
-  export type UnavailableReason = 'not-pinned' | 'unconfirmed' | 'ignored' | 'secret-file' | 'lost' | 'changed-untracked' | 'changed-since-commit' | 'too-large';
+  export type UnavailableReason = 'not-pinned' | 'unconfirmed' | 'ignored' | 'secret-file' | 'lost' | 'changed-untracked' | 'changed-since-commit' | 'too-large' | 'not-requested';
 
   export type AnchorCode =
     | { anchor: string; status: 'ok'; text: string; startLine: number; language: string; state: AnchorState; reason?: undefined }

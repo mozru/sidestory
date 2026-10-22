@@ -313,7 +313,7 @@ export default function CaseCount({ anchor = 'decode' }: { anchor?: string }) {
 }
 ```
 
-**`useAnchorCode` is limited on purpose.** Widgets get an anchor's code only when the explainer's author demonstrably knew that code: the anchor is **pinned** (its `quote` in `manifest.json`), the quote is either committed in git or was confirmed by the reader in VS Code, the file isn't ignored by git or secret-looking, and the anchor is at most 2,000 lines. Otherwise the widget gets `{ status: 'unavailable', reason }` with one of `not-pinned`, `unconfirmed`, `ignored`, `secret-file`, `lost`, `changed-untracked`, `changed-since-commit`, `too-large`. Readers never see the reason (an explainer mustn't be able to ask readers to pin things); the checker and VS Code's Problems panel tell you, the author. Always render something useful for `null` and `unavailable`.
+**`useAnchorCode` is limited on purpose.** Widgets get an anchor's code only when the explainer's author demonstrably knew that code: the anchor is **pinned** (its `quote` in `manifest.json`), the quote is either committed in git or was confirmed by the reader in VS Code, the file isn't ignored by git or secret-looking, and the anchor is at most 2,000 lines. Otherwise the widget gets `{ status: 'unavailable', reason }` with one of `not-pinned`, `unconfirmed`, `ignored`, `secret-file`, `lost`, `changed-untracked`, `changed-since-commit`, `too-large`, or `not-requested` (the widget asked for an anchor it doesn't name in a direct `useAnchorCode('id')` call). Readers never see the reason (an explainer mustn't be able to ask readers to pin things); the checker and VS Code's Problems panel tell you, the author. Always render something useful for `null` and `unavailable`.
 
 ## 7. Placement
 

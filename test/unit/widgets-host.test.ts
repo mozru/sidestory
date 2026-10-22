@@ -11,7 +11,7 @@ import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, type WidgetFile
 import { anchorsRead, scanWidgets, widgetSources } from '../../src/extension/widgets/html.ts';
 import { Escalations, HeartbeatWatchdog } from '../../src/extension/widgets/watchdog.ts';
 import { WIDGET_BOOTSTRAP } from '../../src/shared/widget-bootstrap.ts';
-import { ActivationEvidence, rayHits } from '../../src/webview/activation.ts';
+import { ActivationEvidence, rayEntry, rayHits } from '../../src/webview/activation.ts';
 import { closeWidgetTags } from '../../src/webview/sanitize.ts';
 import { MAX_STATE_PER_PANEL, MAX_STATE_PER_WIDGET, WidgetStates } from '../../src/webview/widget-state.ts';
 
@@ -79,6 +79,18 @@ describe('consent', () => {
     const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
     expect(decideConsent(rec, [file('new.tsx', 'n1', repo('nb', 'n1'))])).toMatchObject({ ask: true, changed: [], added: ['new.tsx'] });
     expect(decideConsent(rec, [file('new.tsx', 'n1', repo(null))]).ask).toBe(false);
+  });
+
+  it('git: an untracked widget file the user edits doesn’t ask (a recorded null blob is a value)', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('u.tsx', 'h1', repo(null))], true);
+    expect(decideConsent(rec, [file('u.tsx', 'h2', repo(null))]).ask).toBe(false);
+  });
+
+  it('git: acknowledged bytes under a moved blob that isn’t those bytes ask (a pull read half-way), instead of recording the new blob', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
+    expect(decideConsent(rec, [file('a.tsx', 'h1', repo('b2', 'h2'))])).toMatchObject({ ask: true, changed: ['a.tsx'] });
+    // The user's own commit of these bytes: recorded, no question.
+    expect(decideConsent(rec, [file('a.tsx', 'h1', repo('b2', 'h1'))])).toMatchObject({ ask: false, observed: [{ path: 'a.tsx' }] });
   });
 
   it('records from before git blobs were kept ask once', () => {
@@ -246,7 +258,7 @@ describe('activation evidence (§5.3)', () => {
     e.sample({ x: 150, y: 150, t: 900, hit: frame }); // the pointer arrived on the widget
     e.gesture(1000); // a key pressed in the panel
     expect(e.judge(box, 1100, vp, frame)).toBe('allow');
-    expect(e.judge({ ...box, top: 160 }, 1100, vp, frame)).toBe('refuse'); // no longer under the pointer
+    expect(e.judge({ ...box, top: 180 }, 1100, vp, frame)).toBe('refuse'); // no longer under the pointer
     const f = new ActivationEvidence();
     f.sample({ x: 150, y: 150, t: 900 }); // on the prose; the widget then moved or grew under it
     f.gesture(1000);
@@ -254,7 +266,29 @@ describe('activation evidence (§5.3)', () => {
     expect(f.allows(box, 1100, vp, frame)).toBe(false);
   });
 
-  it('a widget that isn’t visible is never credited', () => {
+  it('a pointer heading into the widget from just outside counts as on it (site isolation: no samples inside)', () => {
+    expect(rayEntry({ x: 150, y: 60 }, { x: 150, y: 90 }, box)).toBe(10);
+    expect(rayEntry({ x: 150, y: 90 }, { x: 150, y: 60 }, box)).toBeUndefined();
+    expect(rayEntry({ x: 150, y: 140 }, { x: 150, y: 150 }, box)).toBe(0);
+    const frame = {};
+    const e = new ActivationEvidence();
+    e.sample({ x: 150, y: 97, t: 900, hit: frame }); // 3 px above the box, moving down into it
+    e.gesture(1000);
+    expect(e.judge(box, 1100, vp, frame)).toBe('allow');
+    expect(e.judge({ ...box, top: 140 }, 1100, vp, frame)).toBe('refuse'); // the widget moved away since
+  });
+
+  it('travel counts toward where the widget was when the pointer moved, not where it is when judged', () => {
+    const frame = {};
+    const e = new ActivationEvidence();
+    e.gesture(1000, { x: 200, y: 20 + 30 });
+    e.sample({ x: 200, y: 60, t: 1050, toward: [] }); // heading down; the widget was off screen then
+    expect(e.judge(box, 1100, vp, frame)).toBe('refuse'); // it has since scrolled into the ray's path
+    e.sample({ x: 200, y: 70, t: 1060, toward: [frame] });
+    expect(e.judge(box, 1100, vp, frame)).toBe('allow');
+  });
+
+    it('a widget that isn’t visible is never credited', () => {
     const e = new ActivationEvidence();
     e.gesture(1000, { x: 200, y: 50 });
     e.sample({ x: 200, y: 80, t: 1050 });
