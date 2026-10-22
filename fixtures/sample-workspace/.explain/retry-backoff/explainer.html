@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Retry with full-jitter backoff</title>
+<style>
+  section { padding: 14px 16px; margin: 0 0 12px; }
+  section > h2 { font-size: 1.1em; margin: 0 0 6px; }
+  .mono { font-family: var(--vscode-editor-font-family); }
+  .chart { display: flex; align-items: flex-end; gap: 10px; height: 120px; margin: 12px 0 4px; padding-bottom: 2px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .chart > div { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; text-align: center; font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+  .chart b { display: block; border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--cx-accent) 35%, transparent); border: 1px solid var(--cx-accent); }
+  .labels { display: flex; gap: 10px; font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+  .labels > span { flex: 1; text-align: center; }
+  ol.timeline { margin: 10px 0 0; padding-left: 20px; }
+  ol.timeline li { margin: 4px 0; }
+  .callout { margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+</style>
+</head>
+<body>
+<section data-explain-anchor="options" data-explain-title="Options">
+  <h2>Four knobs</h2>
+  <table>
+    <tr><th>option</th><th>meaning</th></tr>
+    <tr><td class="mono">retries</td><td>attempts after the first one</td></tr>
+    <tr><td class="mono">baseMs</td><td>ceiling of the first wait</td></tr>
+    <tr><td class="mono">maxMs</td><td>cap on any single wait</td></tr>
+    <tr><td class="mono">shouldRetry</td><td>optional: give up early on errors that won't go away</td></tr>
+  </table>
+</section>
+
+<section data-explain-anchor="delay" data-explain-title="Delay">
+  <h2>How long to wait</h2>
+  <p>The ceiling doubles every attempt until <span class="mono">maxMs</span>; the actual wait is a random point below it. Randomness spreads clients out so they don't retry in lockstep.</p>
+  <div class="chart" role="img" aria-label="Ceilings for attempts 0 to 5 with baseMs 100 and maxMs 2000: 100, 200, 400, 800, 1600, 2000 milliseconds">
+    <div><b style="height: 5%"></b></div><div><b style="height: 10%"></b></div><div><b style="height: 20%"></b></div><div><b style="height: 40%"></b></div><div><b style="height: 80%"></b></div><div><b style="height: 100%"></b></div>
+  </div>
+  <div class="labels"><span>100</span><span>200</span><span>400</span><span>800</span><span>1600</span><span>2000 ms</span></div>
+</section>
+
+<section data-explain-anchor="loop" data-explain-title="The loop">
+  <h2>The loop</h2>
+  <p>Each turn calls <span class="mono">fn(attempt)</span>. Success returns at once; a failure waits <a data-explain-ref="delay">a jittered delay</a> and tries again.</p>
+  <ol class="timeline">
+    <li>attempt 0 fails → wait up to 100 ms</li>
+    <li>attempt 1 fails → wait up to 200 ms</li>
+    <li>attempt 2 succeeds → return its value</li>
+  </ol>
+  <div class="callout" data-explain-anchor="giveup">
+    <strong>When it gives up:</strong> when <span class="mono">shouldRetry</span> says no, or after <span class="mono">retries</span> extra attempts. The last error is rethrown unchanged.
+  </div>
+</section>
+</body>
+</html>

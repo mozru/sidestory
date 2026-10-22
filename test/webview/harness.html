@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Explainer webview harness</title>
+<link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
+<link rel="stylesheet" href="/dist/webview/main.css">
+<script>
+  // Stands in for the VS Code webview host: records posted messages and keeps state in memory.
+  window.__posted = [];
+  window.__state = undefined;
+  window.acquireVsCodeApi = () => ({
+    postMessage: (m) => window.__posted.push(m),
+    getState: () => window.__state,
+    setState: (s) => { window.__state = s; },
+  });
+  window.__send = (m) => window.dispatchEvent(new MessageEvent('message', { data: m }));
+</script>
+</head>
+<body>
+<div id="app" data-base="http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/" data-dir="file:///ws/.explain/bit-reader" data-content-css="/dist/webview/content.css"></div>
+<script src="/dist/webview/main.js"></script>
+</body>
+</html>

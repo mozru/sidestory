@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "title": "Retry with full-jitter backoff",
+  "anchors": {
+    "options": {
+      "file": "src/retry.ts",
+      "range": [
+        1,
+        10
+      ],
+      "highlight": [
+        "retries",
+        "baseMs",
+        "maxMs"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "export interface RetryOptions {\n  /** Attempts after the first one. */\n  retries: number;\n  /** Ceiling of the first backoff, in milliseconds. */\n  baseMs: number;\n  /** No single wait is longer than this. */\n  maxMs: number;\n  /** Return false to give up early, e.g. on a 4xx error. */\n  shouldRetry?: (err: unknown) => boolean;\n}",
+        "prefix": "",
+        "suffix": "\nconst sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));\n",
+        "norm": "ws"
+      }
+    },
+    "delay": {
+      "file": "src/retry.ts",
+      "range": [
+        14,
+        18
+      ],
+      "highlight": [
+        "ceiling",
+        "attempt"
+      ],
+      "color": "charts.green",
+      "quote": {
+        "exact": "/** \"Full jitter\": a random wait between 0 and an exponentially growing ceiling. */\nexport function backoffDelay(attempt: number, opts: RetryOptions, rand = Math.random): number {\n  const ceiling = Math.min(opts.maxMs, opts.baseMs * 2 ** attempt);\n  return Math.floor(rand() * ceiling);\n}",
+        "prefix": "\nconst sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));\n",
+        "suffix": "\nexport async function retry<T>(fn: (attempt: number) => Promise<T>, opts: RetryOptions): Promise<T> {\n  for (let attempt = 0; ; attempt++) {",
+        "norm": "ws"
+      }
+    },
+    "loop": {
+      "file": "src/retry.ts",
+      "range": [
+        20,
+        30
+      ],
+      "highlight": [
+        "attempt"
+      ],
+      "color": "charts.purple",
+      "quote": {
+        "exact": "export async function retry<T>(fn: (attempt: number) => Promise<T>, opts: RetryOptions): Promise<T> {\n  for (let attempt = 0; ; attempt++) {\n    try {\n      return await fn(attempt);\n    } catch (err) {\n      const retryable = opts.shouldRetry?.(err) ?? true;\n      if (!retryable || attempt >= opts.retries) throw err;\n      await sleep(backoffDelay(attempt, opts));\n    }\n  }\n}",
+        "prefix": "  return Math.floor(rand() * ceiling);\n}\n",
+        "suffix": "",
+        "norm": "ws"
+      }
+    },
+    "giveup": {
+      "file": "src/retry.ts",
+      "range": [
+        25,
+        26
+      ],
+      "highlight": [
+        "retryable"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "      const retryable = opts.shouldRetry?.(err) ?? true;\n      if (!retryable || attempt >= opts.retries) throw err;",
+        "prefix": "    try {\n      return await fn(attempt);\n    } catch (err) {",
+        "suffix": "      await sleep(backoffDelay(attempt, opts));\n    }\n  }",
+        "norm": "ws"
+      }
+    }
+  }
+}

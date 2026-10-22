@@ -1,0 +1,159 @@
+{
+  "name": "code-explainer",
+  "displayName": "Code Explainer",
+  "description": "Rich HTML explainers beside your code, linked both ways, updated live.",
+  "version": "0.0.1",
+  "publisher": "code-explainer",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "workspaceContains:**/.explain/*/manifest.json",
+    "onWebviewPanel:codeExplainer.explainer"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeExplainer.open",
+        "title": "Open Explainer",
+        "category": "Code Explainer",
+        "icon": "$(book)"
+      },
+      {
+        "command": "codeExplainer.nextStep",
+        "title": "Next Step",
+        "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.prevStep",
+        "title": "Previous Step",
+        "category": "Code Explainer"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codeExplainer.nextStep",
+        "key": "alt+]",
+        "when": "codeExplainer.active"
+      },
+      {
+        "command": "codeExplainer.prevStep",
+        "key": "alt+[",
+        "when": "codeExplainer.active"
+      }
+    ],
+    "configuration": {
+      "title": "Code Explainer",
+      "properties": {
+        "codeExplainer.dimUnfocused": {
+          "type": "boolean",
+          "default": true,
+          "description": "Dim code outside the active step when you move through the explainer."
+        }
+      }
+    },
+    "colors": [
+      {
+        "id": "codeExplainer.focusBackground",
+        "description": "Background of the lines the active explainer step is about.",
+        "defaults": {
+          "dark": "editor.rangeHighlightBackground",
+          "light": "editor.rangeHighlightBackground",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      },
+      {
+        "id": "codeExplainer.focusBorder",
+        "description": "Left bar on the active step's lines when the step has no accent color.",
+        "defaults": {
+          "dark": "focusBorder",
+          "light": "focusBorder",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "codeExplainer.highlightBackground",
+        "description": "Background of identifiers the active step highlights.",
+        "defaults": {
+          "dark": "editor.wordHighlightStrongBackground",
+          "light": "editor.wordHighlightStrongBackground",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      },
+      {
+        "id": "codeExplainer.highlightBorder",
+        "description": "Border of identifiers the active step highlights.",
+        "defaults": {
+          "dark": "#00000000",
+          "light": "#00000000",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "codeExplainer.staleForeground",
+        "description": "Explainer sections whose code changed a lot.",
+        "defaults": {
+          "dark": "editorWarning.foreground",
+          "light": "editorWarning.foreground",
+          "highContrast": "editorWarning.foreground",
+          "highContrastLight": "editorWarning.foreground"
+        }
+      },
+      {
+        "id": "codeExplainer.lostForeground",
+        "description": "Explainer sections whose code can't be found.",
+        "defaults": {
+          "dark": "editorError.foreground",
+          "light": "editorError.foreground",
+          "highContrast": "editorError.foreground",
+          "highContrastLight": "editorError.foreground"
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/core/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:webview": "playwright test -c test/webview/playwright.config.ts",
+    "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
+    "pin": "node scripts/pin.ts",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies -o dist/code-explainer.vsix",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.19.2",
+    "@types/vscode": "1.95.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.46-24",
+    "idiomorph": "^0.8.0",
+    "zod": "^4.6.7"
+  },
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moshe/code-explainer"
+  }
+}

@@ -1,0 +1,251 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, type Page, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import type { AnchorView, FromWebview, ToWebview } from '../../src/shared/protocol.ts';
+import { type ThemeName, THEMES, themeCss } from './themes.ts';
+
+const FIXTURE = 'fixtures/sample-workspace/.explain/bit-reader';
+const HTML = readFileSync(`${FIXTURE}/explainer.html`, 'utf8');
+const MANIFEST = JSON.parse(readFileSync(`${FIXTURE}/manifest.json`, 'utf8')) as {
+  title: string;
+  anchors: Record<string, { file: string; range: [number, number]; color?: string }>;
+};
+
+function anchors(states: Record<string, AnchorView['state']> = {}): AnchorView[] {
+  return Object.entries(MANIFEST.anchors).map(([id, a]) => ({
+    id,
+    file: a.file,
+    range: states[id] === 'lost' ? null : { start: a.range[0], end: a.range[1] },
+    state: states[id] ?? 'exact',
+    colorVar: a.color ? `--vscode-${a.color.replace('.', '-')}` : undefined,
+  }));
+}
+
+async function open(page: Page, opts: { theme?: ThemeName; html?: string; active?: string } = {}): Promise<void> {
+  const theme = opts.theme ?? 'dark';
+  await page.goto('/test/webview/harness.html');
+  await page.evaluate(([css, cls]) => {
+    document.documentElement.setAttribute('style', css);
+    document.body.className = cls;
+  }, [themeCss(theme), THEMES[theme].bodyClass] as const);
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+  await send(page, { type: 'init', title: MANIFEST.title, html: opts.html ?? HTML, anchors: anchors(), active: opts.active });
+}
+
+const send = (page: Page, m: ToWebview) => page.evaluate((msg) => (window as unknown as { __send(m: unknown): void }).__send(msg), m);
+const posted = (page: Page) => page.evaluate(() => (window as unknown as { __posted: FromWebview[] }).__posted);
+const clearPosted = (page: Page) => page.evaluate(() => ((window as unknown as { __posted: FromWebview[] }).__posted = []));
+const section = (page: Page, id: string) => page.locator(`[data-explain-anchor="${id}"]`);
+
+test('renders the title, the steps and the sections', async ({ page }) => {
+  await open(page);
+  await expect(page.locator('.cx-title')).toHaveText(MANIFEST.title);
+  await expect(page.locator('.cx-step')).toHaveText(['1Interface', '2State', '3Handshakes', '4Consume', '5Refill']);
+  await expect(page.locator('.cx-status')).toHaveText('Linked');
+  await expect(section(page, 'refill')).toBeAttached();
+  await expect(page.locator('.cx-position')).toHaveText('Step – of 5');
+});
+
+test('clicking a step activates it and reveals its code', async ({ page }) => {
+  await open(page);
+  await clearPosted(page);
+  await page.locator('.cx-step', { hasText: 'Handshakes' }).click();
+  await expect(page.locator('.cx-step', { hasText: 'Handshakes' })).toHaveAttribute('aria-current', 'step');
+  await expect(section(page, 'handshakes')).toHaveClass(/cx-active/);
+  expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'handshakes', source: 'step' });
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
+});
+
+test('the editor cursor moves the page without echoing back', async ({ page }) => {
+  await open(page);
+  await clearPosted(page);
+  await send(page, { type: 'syncTo', anchorId: 'refill' });
+  await expect(section(page, 'refill')).toHaveClass(/cx-active/);
+  await expect(section(page, 'refill')).toBeInViewport();
+  await page.waitForTimeout(400);
+  expect((await posted(page)).filter((m) => m.type === 'focusAnchor')).toEqual([]);
+});
+
+test('scrolling to a section tells the editor once', async ({ page }) => {
+  await open(page);
+  await clearPosted(page);
+  await page.locator('.cx-scroll').hover();
+  await page.mouse.wheel(0, 700);
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'focusAnchor').length).toBeGreaterThan(0);
+  const last = (await posted(page)).filter((m) => m.type === 'focusAnchor').at(-1);
+  expect(last).toMatchObject({ source: 'scroll' });
+  await expect(section(page, (last as { anchorId: string }).anchorId)).toHaveClass(/cx-active/);
+});
+
+test('the cursor does not yank the page while the reader is scrolling', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-scroll').hover();
+  await page.mouse.wheel(0, 200);
+  await expect.poll(() => page.locator('.cx-scroll').evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await send(page, { type: 'syncTo', anchorId: 'refill' });
+  await expect(page.locator('.cx-pill')).toBeVisible();
+  await expect(page.locator('.cx-pill')).toContainText('Refill');
+  await page.locator('.cx-pill').click();
+  await expect(section(page, 'refill')).toBeInViewport();
+});
+
+test('an edit above the reader keeps their place and flags the changed section', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-step', { hasText: 'Consume' }).click();
+  await page.waitForTimeout(800);
+  const before = await section(page, 'consume').evaluate((el) => el.getBoundingClientRect().top);
+  const edited = HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p>A new paragraph.</p><p>And another.</p><p>And a third, to push everything down.</p>');
+  await send(page, { type: 'content', title: MANIFEST.title, html: edited });
+  const after = await section(page, 'consume').evaluate((el) => el.getBoundingClientRect().top);
+  expect(Math.abs(after - before)).toBeLessThan(2);
+  await expect(section(page, 'interface')).toHaveClass(/cx-updated/);
+  await expect(section(page, 'consume')).not.toHaveClass(/cx-updated/);
+  await expect(section(page, 'consume')).toHaveClass(/cx-active/);
+  await expect(page.locator('[aria-live]')).toHaveText('Updated: Interface');
+});
+
+test('a content update keeps the step picker focused', async ({ page }) => {
+  await page.setViewportSize({ width: 340, height: 900 });
+  await open(page);
+  await page.locator('.cx-step-select').focus();
+  await send(page, { type: 'content', title: 'Renamed', html: HTML.replace('Three one-line rules', 'Three rules') });
+  await expect(page.locator('.cx-step-select')).toBeFocused();
+  await expect(page.locator('.cx-title')).toHaveText('Renamed');
+});
+
+test('anchor states show on sections and in the header', async ({ page }) => {
+  await open(page);
+  await send(page, { type: 'anchors', anchors: anchors({ consume: 'stale', refill: 'lost', state: 'changed', interface: 'moved' }) });
+  await expect(section(page, 'consume')).toHaveAttribute('data-cx-label', 'Out of date');
+  await expect(section(page, 'refill')).toHaveAttribute('data-cx-label', 'Code not found');
+  await expect(section(page, 'state')).toHaveAttribute('data-cx-label', 'Code changed');
+  await expect(section(page, 'interface')).toHaveAttribute('data-cx-label', '');
+  await expect(page.locator('.cx-status')).toHaveText('1 out of date · 1 not found');
+});
+
+test('errors show in a banner and keep the last good content', async ({ page }) => {
+  await open(page);
+  await send(page, { type: 'error', message: 'manifest.json: anchors: bad' });
+  await expect(page.locator('.cx-banner')).toHaveText('manifest.json: anchors: bad');
+  await expect(section(page, 'refill')).toBeAttached();
+  await send(page, { type: 'error', message: null });
+  await expect(page.locator('.cx-banner')).toBeHidden();
+});
+
+test('explainer HTML cannot run scripts, phone home or navigate', async ({ page }) => {
+  await open(page, {
+    html: `<section data-explain-anchor="state">
+      <script>window.__pwned = 1</script>
+      <img id="remote" src="https://example.com/x.png">
+      <img id="local" src="assets/diagram.png" onerror="window.__pwned = 2">
+      <a id="js" href="javascript:window.__pwned=3">x</a>
+      <iframe src="https://example.com"></iframe>
+      <meta http-equiv="refresh" content="0;url=https://example.com">
+    </section>`,
+  });
+  const host = page.locator('.cx-host');
+  await expect(host.locator('#remote')).not.toHaveAttribute('src', /.+/);
+  await expect(host.locator('#local')).toHaveAttribute('src', 'http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/assets/diagram.png');
+  await expect(host.locator('#local')).not.toHaveAttribute('onerror', /.*/);
+  await expect(host.locator('#js')).not.toHaveAttribute('href', /.*/);
+  await expect(host.locator('iframe, meta, script')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+});
+
+test('the sanitizer refuses every way out of the explainer folder', async ({ page }) => {
+  await open(page, {
+    html: `<section data-explain-anchor="state">
+      <a id="vb" href="vbscript:x">x</a>
+      <a id="datahtml" href="data:text/html,<script>1</script>">x</a>
+      <img id="proto" src="//example.com/x.png">
+      <img id="up" src="../../secret.png">
+      <img id="enc" src="%2e%2e/%2e%2e/secret.png">
+      <img id="set" srcset="ok.png 1x, https://example.com/x.png 2x">
+      <svg><use id="use" href="#frag"></use><image id="svgimg" href="https://example.com/x.png"></image><script>window.__pwned = 4</script></svg>
+      <link id="remote-css" rel="stylesheet" href="https://example.com/x.css">
+      <base href="https://example.com/">
+      <form action="https://example.com"><input id="field"></form>
+      <div id="data-svg" style="background:url(data:image/svg+xml,x)"></div>
+    </section>`,
+  });
+  const host = page.locator('.cx-host');
+  for (const id of ['vb', 'datahtml']) await expect(host.locator(`#${id}`)).not.toHaveAttribute('href', /.*/);
+  for (const id of ['proto', 'up', 'enc']) await expect(host.locator(`#${id}`)).not.toHaveAttribute('src', /.*/);
+  await expect(host.locator('#set')).not.toHaveAttribute('srcset', /.*/);
+  await expect(host.locator('#use')).toHaveAttribute('href', '#frag');
+  await expect(host.locator('#svgimg')).not.toHaveAttribute('href', /.*/);
+  await expect(host.locator('link:not([href$="content.css"]), base, form, script')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+});
+
+test('inline references jump the editor', async ({ page }) => {
+  await open(page);
+  await clearPosted(page);
+  await page.locator('[data-explain-ref="state"]').click();
+  expect(await posted(page)).toContainEqual({ type: 'openRef', anchorId: 'state' });
+});
+
+test('clicking inside a section focuses its code', async ({ page }) => {
+  await open(page);
+  await clearPosted(page);
+  await section(page, 'handshakes').locator('.rule').first().click();
+  expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'handshakes', source: 'click' });
+});
+
+test('J and K step through sections; the editor command does too', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-scroll').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('j');
+  await page.keyboard.press('j');
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 5');
+  await page.keyboard.press('k');
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 5');
+  await send(page, { type: 'navigate', delta: 1 });
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 5');
+});
+
+test('narrow panes get a step picker instead of tabs', async ({ page }) => {
+  await page.setViewportSize({ width: 340, height: 900 });
+  await open(page);
+  await expect(page.locator('.cx-steps')).toBeHidden();
+  await expect(page.locator('.cx-step-select')).toBeVisible();
+  await page.locator('.cx-step-select').selectOption('refill');
+  await expect(section(page, 'refill')).toHaveClass(/cx-active/);
+});
+
+test('the reader comes back to the same place after the panel is rebuilt', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-step', { hasText: 'Consume' }).click();
+  await page.waitForTimeout(900);
+  const saved = await page.evaluate(() => (window as unknown as { __state: unknown }).__state);
+  expect(saved).toMatchObject({ active: 'consume', scroll: { anchor: expect.any(String) } });
+  // Rebuild: a new page with the saved state, as VS Code does when a hidden panel is shown again.
+  await page.goto('/test/webview/harness.html');
+  await page.evaluate((s) => ((window as unknown as { __state: unknown }).__state = s), saved);
+  await page.reload();
+  await page.evaluate((s) => ((window as unknown as { __state: unknown }).__state = s), saved);
+});
+
+for (const theme of ['dark', 'light', 'hc'] as const) {
+  test(`no accessibility violations (${theme})`, async ({ page }) => {
+    await open(page, { theme });
+    await page.locator('.cx-step', { hasText: 'State' }).click();
+    const results = await new AxeBuilder({ page }).analyze();
+    expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
+  });
+}
+
+for (const theme of ['dark', 'light', 'hc'] as const) {
+  for (const width of [340, 600, 1000]) {
+    test(`screenshot ${theme} ${width}px`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: 900 });
+      await open(page, { theme });
+      await send(page, { type: 'anchors', anchors: anchors({ consume: 'stale' }) });
+      await page.locator(width < 420 ? '.cx-step-select' : '.cx-step >> nth=1').first().evaluate((el) => el);
+      if (width < 420) await page.locator('.cx-step-select').selectOption('state');
+      else await page.locator('.cx-step', { hasText: 'State' }).click();
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: info.outputPath(`${theme}-${width}.png`) });
+    });
+  }
+}

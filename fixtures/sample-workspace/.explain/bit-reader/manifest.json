@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "title": "A backward bit reader in five moves",
+  "anchors": {
+    "interface": {
+      "file": "rtl/bit_reader.sv",
+      "range": [
+        1,
+        15
+      ],
+      "highlight": [
+        "in_byte",
+        "peek"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "module bit_reader #(\n  parameter int W = 64\n) (\n  input  logic         clk,\n  input  logic         rst_n,\n  // bytes arrive last-first (backward stream)\n  input  logic [7:0]   in_byte,\n  input  logic         in_valid,\n  output logic         in_ready,\n  // consumer side\n  input  logic [5:0]   rd_bits,\n  input  logic         rd_en,\n  output logic [W-1:0] peek,\n  output logic         avail\n);",
+        "prefix": "",
+        "suffix": "  logic [W-1:0] buf_q;   // MSB-aligned bit window\n  logic [6:0]   cnt_q;   // valid bits in buf_q\n",
+        "norm": "ws"
+      }
+    },
+    "state": {
+      "file": "rtl/bit_reader.sv",
+      "range": [
+        16,
+        17
+      ],
+      "highlight": [
+        "buf_q",
+        "cnt_q"
+      ],
+      "color": "charts.green",
+      "quote": {
+        "exact": "  logic [W-1:0] buf_q;   // MSB-aligned bit window\n  logic [6:0]   cnt_q;   // valid bits in buf_q",
+        "prefix": "  output logic [W-1:0] peek,\n  output logic         avail\n);",
+        "suffix": "\n  assign in_ready = (cnt_q <= 7'(W - 8));\n  assign avail    = (cnt_q >= 7'(rd_bits));",
+        "norm": "ws"
+      }
+    },
+    "handshakes": {
+      "file": "rtl/bit_reader.sv",
+      "range": [
+        19,
+        21
+      ],
+      "highlight": [
+        "cnt_q",
+        "rd_bits"
+      ],
+      "color": "charts.yellow",
+      "quote": {
+        "exact": "  assign in_ready = (cnt_q <= 7'(W - 8));\n  assign avail    = (cnt_q >= 7'(rd_bits));\n  assign peek     = buf_q;",
+        "prefix": "  logic [W-1:0] buf_q;   // MSB-aligned bit window\n  logic [6:0]   cnt_q;   // valid bits in buf_q\n",
+        "suffix": "\n  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin",
+        "norm": "ws"
+      }
+    },
+    "consume": {
+      "file": "rtl/bit_reader.sv",
+      "range": [
+        31,
+        34
+      ],
+      "highlight": [
+        "rd_bits",
+        "b",
+        "c"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "      if (rd_en && avail) begin        // consume from the top\n        b = b << rd_bits;\n        c = c - 7'(rd_bits);\n      end",
+        "prefix": "      logic [W-1:0] b;\n      logic [6:0]   c;\n      b = buf_q;  c = cnt_q;",
+        "suffix": "      if (in_valid && in_ready) begin  // refill below valid bits\n        b = b | (W'(in_byte) << (W - 8 - c));\n        c = c + 7'd8;",
+        "norm": "ws"
+      }
+    },
+    "refill": {
+      "file": "rtl/bit_reader.sv",
+      "range": [
+        35,
+        38
+      ],
+      "highlight": [
+        "in_byte",
+        "c"
+      ],
+      "color": "charts.purple",
+      "quote": {
+        "exact": "      if (in_valid && in_ready) begin  // refill below valid bits\n        b = b | (W'(in_byte) << (W - 8 - c));\n        c = c + 7'd8;\n      end",
+        "prefix": "        b = b << rd_bits;\n        c = c - 7'(rd_bits);\n      end",
+        "suffix": "      buf_q <= b;\n      cnt_q <= c;\n    end",
+        "norm": "ws"
+      }
+    }
+  }
+}

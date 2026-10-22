@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A backward bit reader in five moves</title>
+<style>
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 12px; }
+  section > h2 { font-size: 1.1em; margin: 0 0 6px; }
+  .mono { font-family: var(--vscode-editor-font-family); }
+  .accent { text-decoration: underline 2px var(--cx-accent); text-underline-offset: 4px; }
+
+  /* 1. block diagram */
+  .diagram { display: flex; align-items: center; gap: 0; margin-top: 12px; font-size: 0.9em; }
+  .box { flex: none; padding: 10px; border-radius: 6px; border: 1px solid var(--vscode-panel-border); text-align: center; }
+  .box.main { border: 2px solid var(--cx-accent); font-weight: 600; }
+  .wires { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 0 6px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; text-align: center; }
+  .wires > span { border-bottom: 1px solid var(--vscode-descriptionForeground); color: var(--vscode-descriptionForeground); }
+  .wires > span.key { border-color: var(--cx-accent); border-bottom-width: 2px; color: var(--vscode-editor-foreground); }
+
+  /* 2 & 4 & 5. bit windows */
+  .bits { display: flex; gap: 1px; margin: 6px 0; }
+  .bits > i { flex: 1; height: 16px; border-radius: 1px; background: color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent); }
+  .bits > i.v { background: var(--vscode-descriptionForeground); }
+  .bits > i.a { background: var(--cx-accent); }
+  .axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); }
+  .legend { display: flex; gap: 14px; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+
+  /* 3. rule cards */
+  .rules { display: grid; gap: 8px; margin-top: 10px; }
+  .rule { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--vscode-panel-border); }
+  .rule b { display: block; }
+  .rule .mono { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+  .rule > :first-child { flex: 1; }
+</style>
+</head>
+<body>
+<p class="lede">How <span class="mono">bit_reader</span> turns a stream of bytes, arriving last-first, into reads of 1 to 63 bits at a time.</p>
+
+<section data-explain-anchor="interface" data-explain-title="Interface">
+  <h2>The interface</h2>
+  <p>Bytes arrive from a backward stream. The consumer asks for <span class="mono">rd_bits</span> bits at a time and always finds the next bits at the top of <a data-explain-ref="state" class="mono">peek</a>.</p>
+  <div class="diagram" role="img" aria-label="Producer sends in_byte and in_valid to bit_reader, which answers in_ready. The consumer sends rd_bits and rd_en and receives peek and avail.">
+    <div class="box">Producer<br><small>backward bytes</small></div>
+    <div class="wires"><span class="key">in_byte[7:0] →</span><span>in_valid →</span><span>← in_ready</span></div>
+    <div class="box main">bit_reader<br><small class="mono">W = 64</small></div>
+    <div class="wires"><span>← rd_bits, rd_en</span><span class="key">peek →</span><span>avail →</span></div>
+    <div class="box">Consumer<br><small>1–63 bits</small></div>
+  </div>
+</section>
+
+<section data-explain-anchor="state" data-explain-title="State">
+  <h2>Two registers hold everything</h2>
+  <p><span class="mono">buf_q</span> is a 64-bit window whose valid bits are packed against the top. <span class="mono">cnt_q</span> counts them; 0 to 64 needs 7 bits, not 6.</p>
+  <div class="axis"><span>bit 63</span><span>bit 0</span></div>
+  <div class="bits" role="img" aria-label="21 of 64 bits valid, packed at the top">
+    <i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+  <p class="mono accent">cnt_q = 21</p>
+</section>
+
+<section data-explain-anchor="handshakes" data-explain-title="Handshakes">
+  <h2>Three one-line rules</h2>
+  <p>All three outputs fall straight out of the count.</p>
+  <div class="rules">
+    <div class="rule"><div><b>Take a byte only if it fits</b><span class="mono">in_ready = cnt_q ≤ W − 8</span></div></div>
+    <div class="rule"><div><b>Serve a read only if enough bits are valid</b><span class="mono">avail = cnt_q ≥ rd_bits</span></div></div>
+    <div class="rule"><div><b>The next bits are always at the top</b><span class="mono">peek = buf_q</span></div></div>
+  </div>
+</section>
+
+<section data-explain-anchor="consume" data-explain-title="Consume">
+  <h2>Consume from the top</h2>
+  <p>Reading <span class="mono">rd_bits</span> bits is a left shift: the bits read fall off the top and the count drops by the same amount.</p>
+  <div class="axis"><span>before · cnt = 21</span></div>
+  <div class="bits"><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <p class="mono accent">b = b &lt;&lt; rd_bits (5) · c = c − 5</p>
+  <div class="axis"><span>after · cnt = 16</span></div>
+  <div class="bits"><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="legend"><span><i style="background: var(--cx-accent)"></i>read this cycle</span><span><i style="background: var(--vscode-descriptionForeground)"></i>still valid</span></div>
+</section>
+
+<section data-explain-anchor="refill" data-explain-title="Refill">
+  <h2>Refill below the valid bits</h2>
+  <p>A new <span class="mono">in_byte</span> is OR-ed in right under the last valid bit, shifted up by <span class="mono">W − 8 − c</span>. Consume runs first, so a read and a refill can share a cycle.</p>
+  <div class="bits"><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="v"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i class="a"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="axis"><span>16 valid</span><span class="accent">in_byte &lt;&lt; 40</span><span>empty</span></div>
+  <table>
+    <thead><tr><th>cycle</th><th>read</th><th>byte in</th><th>cnt_q</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>—</td><td class="mono">0x3A</td><td>0 → 8</td></tr>
+      <tr><td>1</td><td>—</td><td class="mono">0x91</td><td>8 → 16</td></tr>
+      <tr><td>2</td><td>5</td><td class="mono">0x07</td><td>16 → 19</td></tr>
+      <tr><td>3</td><td>6</td><td>—</td><td>19 → 13</td></tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>

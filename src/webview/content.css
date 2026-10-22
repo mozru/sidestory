@@ -1,0 +1,142 @@
+/*
+ * Defaults for explainer content, inside the shadow root. Authors can override any of this.
+ * Theme variables inherit into the shadow root, so authors can use them too.
+ */
+
+:host {
+  display: block;
+}
+
+.cx-content {
+  padding: 16px var(--cx-gutter, 20px) 40vh;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.cx-content :where(h1, h2, h3, h4) {
+  color: var(--vscode-editor-foreground);
+  line-height: 1.3;
+  margin: 1.2em 0 0.5em;
+}
+
+.cx-content :where(a) {
+  color: var(--vscode-textLink-foreground);
+}
+
+.cx-content :where(a:hover) {
+  color: var(--vscode-textLink-activeForeground);
+}
+
+.cx-content :where(code, pre, kbd) {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.95em;
+}
+
+.cx-content :where(:not(pre) > code) {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.cx-content :where(pre) {
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background);
+  overflow-x: auto;
+}
+
+.cx-content :where(table) {
+  border-collapse: collapse;
+}
+
+.cx-content :where(th, td) {
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-panel-border, var(--vscode-editorGroup-border));
+  text-align: left;
+}
+
+.cx-content :where(img, svg, video) {
+  max-width: 100%;
+}
+
+/* ---- linked sections ---- */
+
+[data-explain-anchor] {
+  --cx-accent: var(--vscode-codeExplainer-focusBorder, var(--vscode-focusBorder));
+  position: relative;
+  scroll-margin-top: 12px;
+  border-radius: 6px;
+  transition: box-shadow 160ms ease, background-color 160ms ease;
+  cursor: pointer;
+}
+
+[data-explain-anchor] :where(a, button, input, select, textarea, summary, label) {
+  cursor: auto;
+}
+
+[data-explain-anchor].cx-active {
+  box-shadow: inset 3px 0 0 var(--cx-accent);
+  background: color-mix(in srgb, var(--cx-accent) 7%, transparent);
+}
+
+/* Section states. "moved" and "exact" look normal. */
+[data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::after {
+  content: attr(data-cx-label);
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  line-height: 1.6;
+  pointer-events: none;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border, var(--vscode-editorGroup-border));
+  background: var(--vscode-editor-background);
+}
+
+[data-explain-anchor][data-cx-state='stale'] {
+  outline: 1px dashed var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  outline-offset: -1px;
+}
+
+[data-explain-anchor][data-cx-state='stale']::after {
+  color: var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  border-color: currentColor;
+}
+
+[data-explain-anchor][data-cx-state='lost'] {
+  outline: 1px solid var(--vscode-codeExplainer-lostForeground, var(--vscode-editorError-foreground));
+  outline-offset: -1px;
+}
+
+[data-explain-anchor][data-cx-state='lost']::after {
+  color: var(--vscode-codeExplainer-lostForeground, var(--vscode-editorError-foreground));
+  border-color: currentColor;
+}
+
+/* A brief glow on sections an update just changed. */
+[data-explain-anchor].cx-updated {
+  animation: cx-updated 1.6s ease-out;
+}
+
+@keyframes cx-updated {
+  0% { background: color-mix(in srgb, var(--vscode-editorInfo-foreground) 22%, transparent); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-explain-anchor] { transition: none; }
+  [data-explain-anchor].cx-updated {
+    animation: none;
+    outline: 1px solid var(--vscode-editorInfo-foreground);
+  }
+}
+
+:host-context(body.vscode-high-contrast) [data-explain-anchor].cx-active,
+:host-context(body.vscode-high-contrast-light) [data-explain-anchor].cx-active {
+  outline: 1px solid var(--vscode-contrastActiveBorder);
+}
