@@ -23,6 +23,7 @@ export const fromWidgetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('activity') }),
   z.object({ type: z.literal('focusExit'), dir: z.enum(['forward', 'backward', 'escape', 'pointer', 'shortcut']) }),
   z.object({ type: z.literal('requestCode'), anchor: anchorIdSchema }),
+  z.object({ type: z.literal('pong'), n: z.number().int() }),
 ]);
 export type FromWidget = z.infer<typeof fromWidgetSchema>;
 
@@ -72,4 +73,5 @@ export type ToWidget =
   | { type: 'visible'; visible: boolean }
   | { type: 'viewport'; height: number }
   | { type: 'result'; id: number; ok: boolean }
-  | { type: 'saveState' };
+  | { type: 'saveState' }
+  | { type: 'ping'; n: number };
