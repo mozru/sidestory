@@ -188,10 +188,20 @@ export class Git {
     return repo.state.indexChanges.some((c) => c.uri.fsPath === file.fsPath);
   }
 
-  /** Ignored by git; cached per HEAD and the root .gitignore's modification time (edits often aren't committed). */
+  /**
+   * Ignored by git; cached per HEAD and the modification times of the ignore files that apply (every
+   * .gitignore from the repository root down to the file's folder, and .git/info/exclude): edits to them
+   * often aren't committed.
+   */
   async ignored(repo: GitRepository, file: vscode.Uri): Promise<boolean> {
-    const mtime = await stat(join(repo.rootUri.fsPath, '.gitignore')).then((s) => s.mtimeMs, () => 0);
-    return this.cached(this.ignores, `${this.head(repo)}\n${mtime}\n${file.fsPath}`, async () => {
+    const root = resolve(repo.rootUri.fsPath);
+    const files = [join(await gitDir(root), 'info', 'exclude')];
+    for (let d = dirname(resolve(file.fsPath)); d.startsWith(root); d = dirname(d)) {
+      files.push(join(d, '.gitignore'));
+      if (d === root || dirname(d) === d) break;
+    }
+    const mtimes = await Promise.all(files.map((f) => stat(f).then((s) => s.mtimeMs, () => 0)));
+    return this.cached(this.ignores, `${this.head(repo)}\n${mtimes.join(',')}\n${file.fsPath}`, async () => {
       try {
         return (await repo.checkIgnore([file.fsPath])).has(file.fsPath);
       } catch {

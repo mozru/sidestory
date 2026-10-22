@@ -20,6 +20,8 @@ export interface Point {
    * say) isn't credited for travel toward where it now is.
    */
   toward?: readonly unknown[];
+  /** How far outside `hit`'s box this sample may be and still count as on it (the step that led here). */
+  reach?: number;
 }
 
 export interface Box {
@@ -35,8 +37,9 @@ export const ACTIVATION_WINDOW_MS = 5000;
 export const EDGE_PX = 24;
 const MAX_SAMPLES = 8;
 /**
- * A pointer heading into a widget frame this close is taken to have entered it: with site isolation the
- * panel's last sample is the last move outside the frame (the frame's own moves go to its process).
+ * A pointer heading into a widget frame this close is taken to have entered it (farther, as after a fast
+ * move, it is refused without counting against the widget): with site isolation the panel's last sample
+ * is the last move outside the frame (the frame's own moves go to its process).
  */
 export const ENTRY_PX = 24;
 const MAX_GESTURES = 16;
@@ -103,8 +106,11 @@ export class ActivationEvidence {
       // No travel since the gesture. The pointer resting on this widget all along (it was on it when sampled,
       // and is still inside its box) counts; one the widget only moved or grew under doesn't.
       const mine = target !== undefined && p2.hit === target;
-      if (edge || !(inside(box, p2) || (mine && inside(grow(box, ENTRY_PX), p2)))) return 'refuse';
-      return mine ? 'allow' : 'unsure';
+      if (!edge && mine && inside(grow(box, p2.reach ?? ENTRY_PX), p2)) return 'allow';
+      // Headed for it, just not close enough to be sure: refused, but not held against the widget.
+      if (!edge && target !== undefined && p2.toward?.includes(target)) return 'unsure';
+      if (edge || !inside(box, p2)) return 'refuse';
+      return 'unsure';
     }
     // Travel after the gesture toward the widget, as it was when the pointer moved.
     if (edge) return 'refuse';

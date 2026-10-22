@@ -194,6 +194,21 @@ describe('consent for widget files reached through links, or read while git move
     host.dispose();
   });
 
+  it.skipIf(process.platform === 'win32')('a symlinked explainer folder (.explain/x -> ../docs/x) is unknown to git, so a new widget asks', async () => {
+    mkdirSync(join(root, 'docs', 'x', 'w'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'x', 'w', 'a.tsx'), 'export default () => null;');
+    mkdirSync(join(root, '.explain'), { recursive: true });
+    symlinkSync('../docs/x', join(root, '.explain', 'x'));
+    fakeRepo({ getObjectDetails: async () => { throw new Error('Path not known'); } });
+    const host = new WidgetHost(memento());
+    await host.acknowledge([], true);
+    const ref = refFromDir(Uri.file(join(root, '.explain', 'x')) as never)!;
+    const [f] = await host.widgetFiles(ref, [{ files: ['w/a.tsx'] } as never]);
+    expect(f!.git).toEqual({ kind: 'unknown' });
+    expect(decideConsent(host.consent(), [f!])).toMatchObject({ ask: true, added: [f!.path] });
+    host.dispose();
+  });
+
   it('bytes that change while git is asked (a pull landing) give unknown, not a mismatched record', async () => {
     const dir = join(root, '.explain', 'x');
     mkdirSync(dir, { recursive: true });
@@ -214,6 +229,17 @@ describe('consent for widget files reached through links, or read while git move
     writeFileSync(join(root, '.gitignore'), 'x\n');
     await git.ignored(repo as never, f as never);
     expect(repo.ignoreCalls).toBe(2);
+    // A nested .gitignore, and .git/info/exclude.
+    mkdirSync(join(root, 'config'), { recursive: true });
+    writeFileSync(join(root, 'config', '.gitignore'), 'db.yml\n');
+    await git.ignored(repo as never, f as never);
+    expect(repo.ignoreCalls).toBe(3);
+    mkdirSync(join(root, '.git', 'info'), { recursive: true });
+    writeFileSync(join(root, '.git', 'info', 'exclude'), 'db.yml\n');
+    await git.ignored(repo as never, f as never);
+    expect(repo.ignoreCalls).toBe(4);
+    await git.ignored(repo as never, f as never);
+    expect(repo.ignoreCalls).toBe(4);
   });
 });
 

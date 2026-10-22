@@ -676,6 +676,55 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     await expect(out(widgetFrame(page))).toContainText('w:0');
   });
 
+  test('a fast move onto a widget (long steps, last sample well outside it), a key in the panel, then clicks: never held against the widget', async ({ page }, info) => {
+    await openProbe(page);
+    const ph = (await placeholder(page).boundingBox())!;
+    const b = (await widgetFrame(page).getByTestId('reveal').boundingBox())!;
+    await page.mouse.move(b.x + 5, ph.y - 130);
+    await page.mouse.move(b.x + 5, b.y + 5, { steps: 2 });
+    await page.waitForTimeout(200);
+    for (let i = 0; i < 4; i++) {
+      await page.locator('.cx-scroll').focus();
+      await page.keyboard.press(i ? 'Shift' : 'ArrowDown');
+      await page.waitForTimeout(300);
+      const b2 = (await widgetFrame(page).getByTestId('reveal').boundingBox())!;
+      await page.mouse.move(b2.x + 6 + i, b2.y + 6, { steps: 3 });
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+    }
+    // With site isolation the panel last saw the pointer far outside the frame: the click may be refused
+    // (the reader clicks again after the key's 5 s), but it never counts as a focus theft.
+    expect((await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('took focus'))).toBe(false);
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+    if (info.project.name === 'panel') await expect(out(widgetFrame(page))).toContainText('reveal:true');
+  });
+
+  test('a widget clipped to a sliver gets no credit for moves over prose where its hidden part lies', async ({ page }) => {
+    await openWith(page, explainerHtml(`<div style="overflow:hidden;height:45px">${probeTag()}</div><p>Visible prose right after the clipping box, line one.</p><p>Visible prose line two.</p><p>Visible prose line three.</p>`), builds, { active: 'ring' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    const prose = (await content(page).locator('p', { hasText: 'Visible prose line two.' }).boundingBox())!;
+    await page.mouse.click(prose.x + 30, prose.y + 5);
+    await page.mouse.move(prose.x + 60, prose.y + 8, { steps: 3 });
+    await widgetEval(page, 0, 'steal');
+    expect(await widgetEval<boolean>(page, 0, 'reveal')).toBe(false);
+  });
+
+  test('while a widget runs, its label (panel chrome) shows the Esc hint and error badges', async ({ page }) => {
+    await openProbe(page);
+    const note = page.locator('.cx-widget-label .cx-widget-label-note');
+    await placeholder(page).focus();
+    await page.keyboard.press('Enter');
+    await expect(note).toHaveText('Esc leaves the widget');
+    await expect(note).toBeVisible();
+    // A runtime error badge, while the widget keeps running.
+    const f = (await (await frames(page).first().elementHandle())!.contentFrame())!;
+    await f.evaluate(() => setTimeout(() => { throw new Error('boom'); }));
+    await expect(note).toContainText('error: boom');
+    await expect(note).toHaveClass(/cx-error/);
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+  });
+
   test('a watchdog suspension ends with a new gate or another explainer; a stopped explainer says why', async ({ page }) => {
     await openProbe(page);
     await send(page, { type: 'widgetsReset', phase: 'unmount' });

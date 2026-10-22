@@ -393,6 +393,8 @@ button.cx-crumb:focus-visible,
   inset: 0;
   overflow: clip;
   pointer-events: none;
+  /* Its own stacking context: labels stack above frames here, never above the panel's header. */
+  isolation: isolate;
 }
 
 .cx-widget-frame {
@@ -422,9 +424,23 @@ body:is(.vscode-light, .vscode-high-contrast-light) .cx-widget-frame {
   white-space: nowrap;
   font: 11px/22px var(--vscode-font-family);
   color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
   border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
+  /* Opaque, and above every frame (placeholders may overlap): nothing covers it, it covers the content's bar. */
+  background: var(--vscode-editor-background, Canvas);
+  z-index: 1;
   pointer-events: none;
+}
+
+.cx-widget-label-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.cx-widget-label-note.cx-error {
+  color: var(--vscode-errorForeground);
 }
 
 .cx-widget-label-tag {

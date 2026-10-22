@@ -277,23 +277,29 @@ export class WidgetFrames {
    * (from the previous sample; with site isolation the last sample the panel gets is just outside the
    * frame it entered). Judged on the frames' visible boxes now, as last positioned.
    */
-  private aim(x: number, y: number): { hit?: HTMLIFrameElement; toward: HTMLIFrameElement[] } {
+  private aim(x: number, y: number): { hit?: HTMLIFrameElement; toward: HTMLIFrameElement[]; reach: number } {
     const prev = this.evidence.last();
+    const reach = ENTRY_PX;
     const view = this.panel.scroller.getBoundingClientRect();
     let best: { f: HTMLIFrameElement; d: number } | undefined;
     const toward: HTMLIFrameElement[] = [];
     for (const w of this.widgets.values()) {
       if (!w.frame || !w.vis) continue;
-      // Where the frame is now (its clipping as last measured), within the scroller's viewport.
+      // Where the frame is now, clipped as last measured (both axes), within the scroller's viewport.
       const r = w.frame.getBoundingClientRect();
-      const b: Box = { left: Math.max(r.left, w.vis.left, view.left), top: Math.max(r.top, view.top), right: Math.min(r.right, w.vis.right, view.right), bottom: Math.min(r.bottom, view.bottom) };
+      const clip = w.layout!.clip;
+      const c = this.panel.contentFrame().getBoundingClientRect();
+      const b: Box = {
+        left: Math.max(r.left, c.left + clip.left, view.left), top: Math.max(r.top, c.top + clip.top, view.top),
+        right: Math.min(r.right, c.left + clip.right, view.right), bottom: Math.min(r.bottom, c.top + clip.bottom, view.bottom),
+      };
       if (b.right <= b.left || b.bottom <= b.top) continue;
       const d = x >= b.left && x <= b.right && y >= b.top && y <= b.bottom ? 0 : prev ? rayEntry(prev, { x, y }, b) : undefined;
       if (d === undefined) continue;
       toward.push(w.frame);
-      if (d <= ENTRY_PX && (!best || d < best.d)) best = { f: w.frame, d };
+      if (d <= reach && (!best || d < best.d)) best = { f: w.frame, d };
     }
-    return { hit: best?.f, toward };
+    return { hit: best?.f, toward, reach };
   }
 
   private onPointerUp(): void {
@@ -387,6 +393,7 @@ export class WidgetFrames {
       err.hidden = !(w?.error && !w.showFallback && status !== 'off');
       setText(err.querySelector('.cx-widget-error-text')!, w?.error?.message ?? '');
       setText(err.querySelector('.cx-widget-error-where')!, w?.error?.where ?? '');
+      if (w) this.syncLabelNote(w);
     }
   }
 
@@ -807,12 +814,15 @@ export class WidgetFrames {
       tag.textContent = 'Interactive';
       const name = document.createElement('span');
       name.className = 'cx-widget-label-name';
-      label.append(tag, name);
+      const note = document.createElement('span');
+      note.className = 'cx-widget-label-note';
+      label.append(tag, name, note);
       this.panel.layer.append(label);
       w.label = label;
     }
     const l = w.label;
     setText(l.querySelector('.cx-widget-label-name')!, w.title);
+    this.syncLabelNote(w);
     const left = box.left;
     const top = box.top - BAR_PX;
     const set = (k: string, v: string) => {
@@ -826,6 +836,14 @@ export class WidgetFrames {
     const empty = outer.right <= outer.left || outer.bottom <= outer.top || inset[0]! + inset[2]! >= BAR_PX || inset[1]! + inset[3]! >= box.width;
     set('clip-path', inset.every((x) => x === 0) ? '' : `inset(${inset.map((x) => `${x}px`).join(' ')})`);
     set('visibility', empty || w.frame?.style.visibility === 'hidden' ? 'hidden' : '');
+  }
+
+  /** The label shows the content bar's note too (error badges, the Esc hint): it covers that bar. */
+  private syncLabelNote(w: Widget): void {
+    const note = w.label?.querySelector<HTMLElement>('.cx-widget-label-note');
+    if (!note) return;
+    setText(note, w.el.querySelector(':scope > .cx-widget-bar .cx-widget-note')?.textContent ?? '');
+    note.classList.toggle('cx-error', !!w.badge || w.status === 'error');
   }
 
   private mount(w: Widget): void {
@@ -949,6 +967,7 @@ export class WidgetFrames {
     pinBox(w.el, status, w.showFallback);
     const note = w.el.querySelector<HTMLElement>(':scope > .cx-widget-bar .cx-widget-note');
     if (note && !w.badge) setText(note, status === 'off' ? this.offNote() : '');
+    this.syncLabelNote(w);
   }
 
   /** Shows a problem in the widget's box (the reader sees the message; authors get details in Output). */
@@ -1315,8 +1334,10 @@ export class WidgetFrames {
       const note = w.el.querySelector<HTMLElement>(':scope > .cx-widget-bar .cx-widget-note');
       if (note && !w.badge) {
         setText(note, 'Esc leaves the widget');
+        this.syncLabelNote(w);
         setTimeout(() => {
           if (!w.badge && note.textContent === 'Esc leaves the widget') setText(note, '');
+          this.syncLabelNote(w);
         }, HINT_MS);
       }
       this.panel.announce('Esc leaves the widget');

@@ -304,7 +304,7 @@ export class WidgetHost implements vscode.Disposable {
    * are read again after settling, and if git moved or the bytes changed while it was asked, the answer is
    * `unknown` (asks).
    */
-  async widgetFile(uri: vscode.Uri, dir: vscode.Uri, since: number): Promise<WidgetFile> {
+  async widgetFile(uri: vscode.Uri, dir: vscode.Uri, since: number, root: vscode.Uri = dir): Promise<WidgetFile> {
     const path = this.consentPath(uri);
     const read = async () => {
       const bytes = await readBytesInside(uri, dir, MAX_FILE_BYTES);
@@ -312,7 +312,9 @@ export class WidgetHost implements vscode.Disposable {
     };
     let hash = await read();
     const unknown = (): WidgetFile => ({ path, hash, git: { kind: 'unknown' } });
-    if (await throughLink(uri, dir)) return unknown();
+    // Any link from the repository root down (the explainer folder itself, `.explain`, a folder in it): git
+    // knows the file by another path, or not at all.
+    if (await throughLink(uri, root)) return unknown();
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return { path, hash, git: l };
     const known = this.consent().files[path];
@@ -336,7 +338,7 @@ export class WidgetHost implements vscode.Disposable {
   async widgetFiles(ref: ExplainerRef, results: readonly CompileResult[], since = Date.now()): Promise<WidgetFile[]> {
     const paths = [...new Set(results.flatMap((r) => r.files))];
     const out: WidgetFile[] = [];
-    for (const rel of paths) out.push(await this.widgetFile(vscode.Uri.joinPath(ref.dir, rel), ref.dir, since));
+    for (const rel of paths) out.push(await this.widgetFile(vscode.Uri.joinPath(ref.dir, rel), ref.dir, since, ref.root));
     return out;
   }
 
@@ -361,7 +363,7 @@ export class WidgetHost implements vscode.Disposable {
     const path = this.consentPath(uri);
     if (!Object.hasOwn(this.consent().files, path)) return;
     void (async () => {
-      const file = await this.widgetFile(uri, ref.dir, at);
+      const file = await this.widgetFile(uri, ref.dir, at, ref.root);
       if (file.hash === 'missing') return;
       const d = decideConsent(this.consent(), [file]);
       if (d.observed.length) await this.acknowledge(d.observed, false);

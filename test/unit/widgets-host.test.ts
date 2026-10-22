@@ -288,6 +288,18 @@ describe('activation evidence (§5.3)', () => {
     expect(e.judge(box, 1100, vp, frame)).toBe('allow');
   });
 
+    it('no travel since a key, the pointer last seen heading for the widget from farther away: refused, not counted', () => {
+    const frame = {};
+    const e = new ActivationEvidence();
+    e.sample({ x: 150, y: 40, t: 900, toward: [frame] }); // 60 px above, moving down fast
+    e.gesture(1000);
+    expect(e.judge(box, 1100, vp, frame)).toBe('unsure');
+    const f = new ActivationEvidence();
+    f.sample({ x: 150, y: 40, t: 900, toward: [] });
+    f.gesture(1000);
+    expect(f.judge(box, 1100, vp, frame)).toBe('refuse');
+  });
+
     it('a widget that isn’t visible is never credited', () => {
     const e = new ActivationEvidence();
     e.gesture(1000, { x: 200, y: 50 });
