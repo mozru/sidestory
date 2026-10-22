@@ -93,6 +93,7 @@ let initialized = false;
 // Declared up here: the frame's listeners (attached in buildFrame, before the code below runs) use them.
 let lastKeyAt = 0;
 let lastFocused: HTMLElement | undefined;
+let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
 let pendingInit: { active?: string; after?: () => void } | undefined;
 /** Places kept per explainer; the oldest are dropped past this. */
@@ -278,13 +279,16 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       // A different explainer (dive / back): remember the reader's place here, forget the rest.
       if (entering) {
         if (initialized) savePlace();
+        // Until the new explainer renders, the old one is still on screen: don't save or hold its places.
+        initialized = false;
         details.clear();
         describing.clear();
         peeked.clear();
         lastRender = undefined;
         hidePill();
         try {
-          frame.location.replace('about:srcdoc#'); // no :target carried over
+          // No :target carried over. Not an empty fragment, which would scroll to the top.
+          frame.location.replace('about:srcdoc#cx-none');
         } catch {
           // a nicety
         }
@@ -346,7 +350,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'error':
       bannerEl.hidden = m.message === null;
       bannerText.textContent = m.message ?? '';
-      bannerOpen.hidden = !/manifest|linked/.test(m.message ?? '');
+      bannerOpen.hidden = !/manifest|linked/.test(m.message ?? '') || /^Can't read/.test(m.message ?? '');
       break;
   }
 });
@@ -379,7 +383,13 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     ignoreActiveValue: true,
     restoreFocus: true,
     // data-cx-off is the visibility observer's: it only says so again when visibility changes.
-    callbacks: { beforeNodeMorphed: keepReaderState, beforeAttributeUpdated: (name) => name !== 'data-cx-off' },
+    callbacks: {
+      beforeNodeMorphed: keepReaderState,
+      beforeAttributeUpdated: (name, el, type) =>
+        name !== 'data-cx-off' &&
+        // An input with no value in the source: what the reader typed or slid to stands (idiomorph would clear it).
+        !(name === 'value' && type === 'remove' && el.localName === 'input' && !el.hasAttribute('value')),
+    },
   });
   fitFrame();
   if (keep) restorePosition(keep);
@@ -601,7 +611,9 @@ function arrived(title: string, leftDetail: string | undefined): void {
   if (!app.contains(document.activeElement) && document.activeElement !== document.body && !frame.root.contains(frame.root.ownerDocument.activeElement)) return;
   const dive = leftDetail ? [...content.querySelectorAll<HTMLElement>('[data-explain-detail]')].find((h) => h.dataset.explainDetail === leftDetail)?.querySelector<HTMLElement>('.cx-dive') : undefined;
   if (dive) {
+    focusingSelf = true; // not the reader tabbing into its section
     dive.focus({ preventScroll: true });
+    focusingSelf = false;
     return;
   }
   titleEl.tabIndex = -1;
@@ -630,6 +642,7 @@ function decorate(): void {
     .filter((el) => !el.parentElement?.closest('[data-explain-anchor]'))
     .map((el) => ({ id: el.dataset.explainAnchor!, el, label: stepLabel(el, el.dataset.explainAnchor!) }));
   if (active && !steps.some((s) => s.id === active) && !anchors.has(active)) active = undefined;
+  offscreen.disconnect(); // sections the morph replaced aren't watched forever
   for (const s of steps) offscreen.observe(s.el);
   renderNavigator();
   renderStatus();
@@ -856,8 +869,9 @@ scroller.addEventListener('scroll', () => {
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = 0;
     saveState();
+    // Where the reader is, however they got there, so a resize can put it back (not mid-resize).
+    if (Date.now() - resizedAt > 1000) heldPlace = readingPosition();
     if (Date.now() < programmaticUntil) return;
-    heldPlace = readingPosition();
     // Only the reader's own scrolling picks the step: not layout (the editor opening beside the panel,
     // images loading), which would undo a step the reader chose but the page can't scroll to.
     if (!readerLeads()) return;
@@ -892,7 +906,7 @@ document.addEventListener('keydown', noteKey, true);
 /** Tabbing into a section makes it the current step, as scrolling to it would. */
 function onContentFocus(e: FocusEvent): void {
   lastFocused = e.target as HTMLElement;
-  if (Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
+  if (focusingSelf || Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
   const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
   const step = steps.find((s) => s.el === section || s.el.contains(section));
@@ -976,14 +990,16 @@ function onContentClick(e: MouseEvent): void {
       if (dest) {
         // Set the frame's fragment so CSS :target works (pop-outs, highlighted footnotes); the panel,
         // not the frame, scrolls, just below.
+        const section = dest.closest<HTMLElement>('[data-explain-anchor]');
+        programmaticUntil = Date.now() + 1000;
+        const from = scroller.scrollTop;
         try {
           // Absolute: a srcdoc frame resolves '#x' against the panel's URL, which would navigate it away.
           frame.location.replace(`about:srcdoc#${encodeURIComponent(id)}`);
         } catch {
           // :target is a nicety
         }
-        const section = dest.closest<HTMLElement>('[data-explain-anchor]');
-        programmaticUntil = Date.now() + 1000;
+        scroller.scrollTop = from; // the fragment jumps there; scroll smoothly instead
         scrollToTop(topOf(dest));
         if (section) setActive(section.dataset.explainAnchor!, 'click');
       }
@@ -1135,7 +1151,7 @@ function savePlace(): void {
   places[state.dir] = place;
   const keys = Object.keys(places);
   for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PLACES))) delete places[k];
-  state = { dir: state.dir, ...place, places };
+  state = { ...state, ...place, places };
   vscode.setState(state);
 }
 

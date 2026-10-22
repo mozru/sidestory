@@ -26,6 +26,7 @@ let current: ExplainerSession | undefined;
 let lastTextEditor: vscode.TextEditor | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
+  lastTextEditor = vscode.window.activeTextEditor;
   context.subscriptions.push(log, { dispose: () => [...sessions].forEach((s) => s.dispose()) });
 
   const updateContext = () => void vscode.commands.executeCommand('setContext', 'codeExplainer.active', [...sessions].some((s) => s.panel.visible));
@@ -105,6 +106,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((e) => {
       if (e) lastTextEditor = e;
+    }),
+    // A selection made in an editor that was already active when the extension started counts too.
+    vscode.window.onDidChangeTextEditorSelection((e) => {
+      lastTextEditor = e.textEditor;
     }),
     vscode.commands.registerCommand('codeExplainer.open', async (dir?: vscode.Uri | string) => {
       const ref = dir ? refFromDir(typeof dir === 'string' ? vscode.Uri.parse(dir) : dir) : await pickExplainer();

@@ -667,3 +667,67 @@ test('a section whose code is gone offers to re-anchor it; a manifest error offe
   await page.getByRole('button', { name: 'Open manifest.json' }).click();
   expect(await posted(page)).toEqual([{ type: 'openFile', path: 'manifest.json' }]);
 });
+
+// ---- review of the user-testing fixes ----
+
+const TALL = Array.from({ length: 6 }, (_, i) => `<section data-explain-anchor="t${i}"><h2>Tall ${i}</h2><p style="height:700px">.</p></section>`).join('');
+
+test('the saved trail survives scrolling (it restores the way back after a restart)', async ({ page }) => {
+  await open(page, { html: TALL });
+  await send(page, { type: 'init', title: 'Child', html: TALL, anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
+  await expect(page.locator('.cx-title')).toHaveText('Child');
+  await page.mouse.move(300, 400);
+  await page.mouse.wheel(0, 500);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (window as unknown as { __state: { trail?: string[] } }).__state.trail)).toEqual(['bit-reader', 'retry-backoff']);
+});
+
+test('typed text and slider positions survive an edit elsewhere', async ({ page }) => {
+  const doc = (word: string) => `<section data-explain-anchor="interface"><h2>I ${word}</h2></section>
+    <section data-explain-anchor="state"><h2>S</h2><input id="txt"><input type="range" id="rng" min="0" max="10"></section>`;
+  await open(page, { html: doc('one') });
+  await frame(page).locator('#txt').fill('typed');
+  await frame(page).locator('#rng').fill('9');
+  await page.locator('.cx-step').first().focus();
+  await send(page, { type: 'content', title: 't', html: doc('two') });
+  await expect(frame(page).getByText('I two')).toBeVisible();
+  await expect(frame(page).locator('#txt')).toHaveValue('typed');
+  await expect(frame(page).locator('#rng')).toHaveValue('9');
+});
+
+test('a resize after stepping keeps the step in view, not an older scrolled-to place', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await open(page, { html: TALL });
+  await page.mouse.move(300, 400);
+  await page.mouse.wheel(0, 200);
+  await page.waitForTimeout(1800);
+  await page.locator('.cx-step', { hasText: 'Tall 4' }).click();
+  await page.waitForTimeout(1800);
+  await page.setViewportSize({ width: 700, height: 700 });
+  await page.waitForTimeout(500);
+  const top = await panelTop(page, 't4');
+  expect(Math.abs(top - (await page.locator('.cx-scroll').boundingBox())!.y)).toBeLessThan(150);
+});
+
+test('going back restores the parent place even when its assets are slow', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 700 });
+  await open(page, { html: TALL + '<img alt="" src="assets/dot.svg">' });
+  await page.locator('.cx-step', { hasText: 'Tall 4' }).click();
+  await expect(page.locator('.cx-position')).toHaveText('Step 5 of 6');
+  await page.waitForTimeout(1200);
+  const before = await page.locator('.cx-scroll').evaluate((el) => el.scrollTop);
+  await send(page, { type: 'init', title: 'Child', html: TALL.replace(/"t(\d)"/g, '"c$1"'), anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
+  await expect(page.locator('.cx-title')).toHaveText('Child');
+  // The reader scrolls down in the child before going back.
+  await page.mouse.move(300, 400);
+  await page.mouse.wheel(0, 1500);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const w = window as unknown as { __send(m: unknown): void };
+    const real = w.__send;
+    w.__send = (m: unknown) => ((m as { type: string }).type === 'asset' ? setTimeout(() => real(m), 600) : real(m));
+  });
+  await send(page, { type: 'init', title: MANIFEST.title, html: TALL + '<img alt="" src="assets/dot.svg">', anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL });
+  await expect(page.locator('.cx-position')).toHaveText('Step 5 of 6');
+  await expect.poll(() => page.locator('.cx-scroll').evaluate((el) => el.scrollTop)).toBeGreaterThan(before - 50);
+});

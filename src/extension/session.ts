@@ -220,10 +220,13 @@ export class ExplainerSession implements vscode.Disposable {
 
   /** Title, summary and size of detail explainers, for the parent's "peek" and "+N steps". */
   private async describe(names: string[]): Promise<void> {
+    const generation = this.generation;
     const items: DetailInfo[] = [];
     for (const name of new Set(names)) {
       const child = this.detailRef(name);
       const text = child ? await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES) : undefined;
+      // Moved to another explainer meanwhile: these details are the old one's.
+      if (generation !== this.generation) return;
       const parsed = text === undefined ? undefined : parseManifest(text);
       if (!child || !parsed?.ok) {
         items.push({ name, found: false, title: name, summary: '', steps: 0 });
