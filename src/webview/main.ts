@@ -60,11 +60,14 @@ function requestAsset(path: string): Promise<Blob | null> {
   const id = ++assetId;
   vscode.postMessage({ type: 'requestAsset', id, path });
   return new Promise<Blob | null>((resolve) => {
-    pendingAssets.set(id, resolve);
     // Don't hold a render forever if the reply never comes (e.g. the panel was hidden meanwhile).
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (pendingAssets.delete(id)) resolve(null);
     }, 5_000);
+    pendingAssets.set(id, (b) => {
+      clearTimeout(timer);
+      resolve(b);
+    });
   });
 }
 let assets = new Assets(baseUrl, requestAsset);

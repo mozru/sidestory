@@ -87,6 +87,8 @@ export class ExplainerSession implements vscode.Disposable {
   private assetsInFlight = 0;
   private assetRequests = 0;
   private readonly assetQueue: (() => void)[] = [];
+  /** Anchors by their file's URI, for the manifest loaded: looked up on every edit and cursor move in any file. */
+  private byFile: { manifest: Manifest | undefined; anchors: Map<string, Anchor[]> } = { manifest: undefined, anchors: new Map() };
   /** Bumped per file on every resolve, so a slower, older resolve can't overwrite a newer one. */
   private readonly fileSeq = new Map<string, number>();
   private active: string | undefined;
@@ -394,7 +396,17 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private anchorsIn(uri: string): Anchor[] {
-    return this.anchorList().filter((a) => this.fileUri(a.file).toString() === uri);
+    if (this.byFile.manifest !== this.manifest) {
+      const anchors = new Map<string, Anchor[]>();
+      for (const a of this.anchorList()) {
+        const key = this.fileUri(a.file).toString();
+        const list = anchors.get(key);
+        if (list) list.push(a);
+        else anchors.set(key, [a]);
+      }
+      this.byFile = { manifest: this.manifest, anchors };
+    }
+    return this.byFile.anchors.get(uri) ?? [];
   }
 
   private async resolveAll(): Promise<void> {

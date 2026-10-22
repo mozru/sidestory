@@ -463,3 +463,23 @@ describe('resolveAnchor: user test regressions (tinyroute, sync_fifo)', () => {
     });
   });
 });
+
+describe('resolveAnchor: the per-edit path', () => {
+  it('re-resolving 50 live-tracked anchors after an edit in a 10 MB file stays quick', () => {
+    // What the session does once typing settles: split the buffer, then resolve each anchor at its tracked place.
+    const lines = Array.from({ length: 220_000 }, (_, i) => `    assign  w${i} = a${i % 97} ^ b${i % 13};   // note ${i}`);
+    const anchors = Array.from({ length: 50 }, (_, j) => anchorFor(lines, { start: 2000 + j * 4300, end: 2019 + j * 4300 }));
+    const source = ['// a new first line', ...lines].join('\n');
+    expect(source.length).toBeGreaterThan(10_000_000);
+    const shifted = (r: LineRange) => ({ start: r.start + 1, end: r.end + 1 });
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      const text = PreparedText.from(source);
+      for (const a of anchors) expect(resolveAnchor(text, a, { hint: shifted(a.range), previous: 'exact' }).range).toEqual(shifted(a.range));
+      best = Math.min(best, performance.now() - t0);
+    }
+    // ~50 ms here, nearly all of it normalizing the buffer once; the anchors themselves are the fast path.
+    expect(best).toBeLessThan(400);
+  });
+});

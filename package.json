@@ -200,17 +200,31 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.64.1",
+    "@tailwindcss/browser": "4.3.3",
     "@types/node": "^24.19.2",
     "@types/vscode": "1.95.0",
     "@vscode/vsce": "^4.0.0",
+    "clsx": "2.1.1",
+    "d3": "7.9.0",
     "esbuild": "^0.28.2",
+    "lodash": "4.18.1",
+    "lucide": "1.61.0",
+    "lucide-react": "1.61.0",
+    "motion": "14.6.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "recharts": "3.10.1",
+    "tailwind-merge": "3.7.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   },
   "dependencies": {
     "@vscode/codicons": "0.0.46-24",
+    "acorn": "8.19.0",
+    "acorn-walk": "8.3.5",
     "idiomorph": "0.8.0",
     "jsonc-parser": "3.3.1",
+    "sucrase": "3.35.1",
     "zod": "4.6.7"
   },
   "type": "module"

@@ -79,7 +79,10 @@ export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: nu
     log.warn(`Not reading ${uri.fsPath}: missing, or outside ${root.fsPath} after following links.`);
     return undefined;
   }
-  if (open) return open.getText().length <= maxBytes ? open.getText() : undefined;
+  if (open) {
+    const text = open.getText(); // a copy of the whole buffer: once, not once to measure and again to return
+    return text.length <= maxBytes ? text : undefined;
+  }
   try {
     await assertSize(real, maxBytes);
     // Files that aren't open are read as UTF-8 (documented limit).
