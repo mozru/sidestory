@@ -8,6 +8,8 @@ const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
 /** Attributes that are dropped outright: popovers render in the top layer, above any containment. */
 const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping']);
+/** Elements whose `name` becomes a property of the document (DOM clobbering). */
+const NAMED = new Set(['img', 'embed', 'object', 'form', 'iframe', 'frame', 'frameset']);
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */
 const LINKS = new Set(['a', 'area']);
 
@@ -17,13 +19,14 @@ export interface Sanitized {
   body: Node[];
 }
 
-export function sanitize(html: string, baseUrl: string, into: Document = document): Sanitized {
+/** `importNode` adopts nodes into the target document (passed bound, so clobbered documents can't interfere). */
+export function sanitize(html: string, baseUrl: string, importNode: (node: Node, deep: boolean) => Node = (n, deep) => document.importNode(n, deep)): Sanitized {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   for (const el of doc.querySelectorAll(DROP)) el.remove();
   for (const el of doc.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      if (name.startsWith('on') || DROP_ATTRS.has(name)) el.removeAttribute(attr.name);
+      if (name.startsWith('on') || DROP_ATTRS.has(name) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
       else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
         const fixed = rewriteUrl(el.localName, name, attr.value, baseUrl);
@@ -40,8 +43,8 @@ export function sanitize(html: string, baseUrl: string, into: Document = documen
   // Keep <style>, and stylesheet links whose URL survived the rewrite (local files only).
   const keep = styles.filter((el) => el.localName === 'style' || ((el.getAttribute('rel') ?? '').split(/\s+/).includes('stylesheet') && el.hasAttribute('href')));
   return {
-    styles: keep.map((el) => into.importNode(el, true)),
-    body: [...doc.body.childNodes].map((n) => into.importNode(n, true)),
+    styles: keep.map((el) => importNode(el, true)),
+    body: [...doc.body.childNodes].map((n) => importNode(n, true)),
   };
 }
 

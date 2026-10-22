@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80" viewBox="0 0 240 80" role="img" aria-label="Waits grow: short, longer, longest">
+  <g fill="none" stroke="#888" stroke-width="2">
+    <path d="M10 70 H230"/>
+    <rect x="20" y="58" width="30" height="12"/>
+    <rect x="70" y="46" width="50" height="24"/>
+    <rect x="140" y="22" width="80" height="48"/>
+  </g>
+</svg>

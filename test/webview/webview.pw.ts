@@ -184,8 +184,8 @@ test('the sanitizer refuses every way out of the explainer folder', async ({ pag
   await expect(host.locator('#set')).not.toHaveAttribute('srcset', /.*/);
   await expect(host.locator('#use')).toHaveAttribute('href', '#frag');
   await expect(host.locator('#svgimg')).not.toHaveAttribute('href', /.*/);
-  await expect(host.locator('link:not([href$="content.css"]), base, form, script')).toHaveCount(0);
-  await expect(frame(page).locator('head link:not([href$="content.css"])')).toHaveCount(0);
+  await expect(host.locator('link, base, form, script')).toHaveCount(0);
+  await expect(frame(page).locator('head link')).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });
 
@@ -214,6 +214,35 @@ test('relative URLs in explainer CSS point at the explainer folder; remote ones 
   expect(css).not.toContain('example.com');
   await expect(frame(page).locator('#inline')).toHaveAttribute('style', /bit-reader\/img\/c\.png/);
   await expect(frame(page).locator('set')).toHaveCount(0);
+});
+
+test('links never navigate the content: web links go to VS Code, page links scroll', async ({ page }) => {
+  await open(page, {
+    html: HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p><a id="ext" href="https://example.com/docs">docs</a></p>'),
+  });
+  await clearPosted(page);
+  await frame(page).locator('#ext').click();
+  expect(await posted(page)).toContainEqual({ type: 'openExternal', url: 'https://example.com/docs' });
+  await expect(section(page, 'refill')).toBeAttached(); // the content is still there
+  await send(page, { type: 'content', title: 'still alive', html: HTML });
+  await expect(page.locator('.cx-title')).toHaveText('still alive');
+  await send(page, { type: 'content', title: 't', html: HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p><a id="jump2" href="#cx-a-refill">to refill</a></p>') });
+  await frame(page).locator('#jump2').click();
+  await expect(section(page, 'refill')).toBeInViewport();
+});
+
+test('content that names elements after document methods cannot break later updates', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="state"><img name="createElement"><img name="importNode"><img name="body"><form name="x"></form><p>one</p></section>' });
+  await send(page, { type: 'content', title: 'second', html: '<section data-explain-anchor="state"><p>two</p></section>' });
+  await expect(section(page, 'state')).toHaveText('two');
+});
+
+test('the content frame shrinks when content is removed', async ({ page }) => {
+  await open(page);
+  const tall = await page.locator('iframe.cx-content-frame').evaluate((f) => f.getBoundingClientRect().height);
+  await send(page, { type: 'content', title: 't', html: '<section data-explain-anchor="state"><p>short</p></section>' });
+  const short = await page.locator('iframe.cx-content-frame').evaluate((f) => f.getBoundingClientRect().height);
+  expect(short).toBeLessThan(tall / 2);
 });
 
 test('inline references jump the editor', async ({ page }) => {

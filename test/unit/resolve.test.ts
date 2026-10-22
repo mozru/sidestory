@@ -330,3 +330,15 @@ describe('resolveAnchor: round 4 regressions', () => {
     expect((performance.now() - t0) / 5).toBeLessThan(40);
   });
 });
+
+describe('resolveAnchor: round 5 regressions', () => {
+  it('deleted code is lost, not attributed to a renamed sibling', () => {
+    const handler = (n: string) => [`  always_ff @(posedge clk) if (${n}_valid) begin`, `    ${n}_count <= ${n}_count + 1;`, `    ${n}_last <= ${n}_data;`, '  end'];
+    const lines = ['module m;', ...handler('rx'), ...handler('tx'), ...handler('cfg'), 'endmodule'];
+    const anchor = anchorFor(lines, { start: 6, end: 9 });
+    const deleted = ['module m;', ...handler('rx'), ...handler('cfg'), 'endmodule'];
+    expect(resolve(deleted, anchor).state).toBe('lost');
+    // With a trusted live hint (someone renaming in place) it stays findable, flagged out of date.
+    expect(resolve(deleted, anchor, { hint: { start: 6, end: 9 } }).state).toBe('stale');
+  });
+});

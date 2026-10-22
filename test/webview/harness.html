@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'nonce-harness'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
 <title>Explainer webview harness</title>
 <link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
 <link rel="stylesheet" href="/dist/webview/main.css">
-<script>
+<script nonce="harness">
   // Stands in for the VS Code webview host: records posted messages and keeps state in memory.
   window.__posted = [];
   window.__state = undefined;
@@ -20,7 +20,7 @@
 </script>
 </head>
 <body>
-<div id="app" data-base="http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/" data-dir="file:///ws/.explain/bit-reader" data-content-css="/dist/webview/content.css"></div>
-<script type="module" src="/dist/webview/main.js"></script>
+<div id="app" data-base="http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/" data-dir="file:///ws/.explain/bit-reader"></div>
+<script type="module" nonce="harness" src="/dist/webview/main.js"></script>
 </body>
 </html>

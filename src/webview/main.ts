@@ -2,6 +2,7 @@
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
 import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
+import contentCssText from './content.css';
 import { sanitize } from './sanitize.ts';
 
 interface VsCodeApi {
@@ -103,43 +104,86 @@ const liveEl = $('[aria-live]');
  * its box, so it can never cover the panel's own controls. The frame is as tall as its content;
  * the panel scrolls, not the frame.
  */
-const frame = document.createElement('iframe');
-frame.className = 'cx-content-frame';
-frame.title = 'Explainer content';
-frame.setAttribute('sandbox', 'allow-same-origin');
-frame.srcdoc = '<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>';
-$('.cx-frame').append(frame);
-await new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
-const doc = frame.contentDocument!;
-const contentCss = doc.createElement('link');
-contentCss.rel = 'stylesheet';
-contentCss.href = app.dataset.contentCss!;
-doc.head.append(contentCss);
-const content = doc.createElement('div');
-content.className = 'cx-content';
-doc.body.append(content);
+interface Frame {
+  el: HTMLIFrameElement;
+  /** Captured before any content goes in: named elements can override document members (clobbering). */
+  root: HTMLElement;
+  body: HTMLElement;
+  createElement: Document['createElement'];
+  importNode: Document['importNode'];
+  getSelection: () => Selection | null;
+}
 
-// The frame doesn't inherit the theme: copy VS Code's variables and body classes, and keep them in sync.
-const syncTheme = () => {
-  doc.documentElement.setAttribute('style', document.documentElement.getAttribute('style') ?? '');
-  doc.body.className = document.body.className;
-  doc.documentElement.style.setProperty('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
-};
-syncTheme();
+let frame!: Frame;
+let content!: HTMLElement;
+let lastRender: { title: string; html: string } | undefined;
+
+async function buildFrame(): Promise<void> {
+  const el = document.createElement('iframe');
+  el.className = 'cx-content-frame';
+  el.title = 'Explainer content';
+  el.setAttribute('sandbox', 'allow-same-origin');
+  el.srcdoc = '<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>';
+  $('.cx-frame').replaceChildren(el);
+  await new Promise<void>((resolve) => el.addEventListener('load', () => resolve(), { once: true }));
+  const d = el.contentDocument!;
+  frame = {
+    el,
+    root: d.documentElement,
+    body: d.body,
+    createElement: Document.prototype.createElement.bind(d) as Document['createElement'],
+    importNode: Document.prototype.importNode.bind(d) as Document['importNode'],
+    getSelection: () => el.contentWindow?.getSelection() ?? null,
+  };
+  const style = frame.createElement('style');
+  style.textContent = contentCssText;
+  d.head.append(style);
+  content = frame.createElement('div');
+  content.className = 'cx-content';
+  frame.body.append(content);
+  bindFrameEvents(d);
+  syncTheme();
+  new ResizeObserver(fitFrame).observe(frame.body);
+  // Nothing in the content can navigate the frame (links are intercepted, forms removed), but if
+  // it ever happens, start over with a fresh frame rather than leave a dead page.
+  el.addEventListener('load', () => {
+    if (el.contentDocument !== d) void rebuildFrame();
+  });
+}
+
+async function rebuildFrame(): Promise<void> {
+  await buildFrame();
+  if (lastRender) render(lastRender.title, lastRender.html, false);
+  markActive();
+}
+
+// The frame doesn't inherit the theme: copy VS Code's variables, body classes and the panel's
+// gutter, and keep them in sync.
+function syncTheme(): void {
+  if (!frame) return;
+  frame.root.setAttribute('style', document.documentElement.getAttribute('style') ?? '');
+  frame.body.className = document.body.className;
+  frame.root.style.setProperty('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
+  frame.root.style.setProperty('--cx-gutter', getComputedStyle($('.cx-header')).getPropertyValue('--cx-gutter') || '20px');
+}
+
+// The frame is as tall as its content, so the panel's scroller does the scrolling. Measured from the
+// content (not the document, which never reports less than the frame's current height), synchronously
+// after every render, and again when images or fonts load.
+function fitFrame(): void {
+  if (!frame) return;
+  const h = `${Math.ceil(content.getBoundingClientRect().bottom)}px`;
+  if (frame.el.style.height !== h) frame.el.style.height = h;
+}
+
+await buildFrame();
 new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 new ResizeObserver(syncTheme).observe(scroller);
-// Grow the frame to its content, so the panel's scroller does the scrolling. Done synchronously after
-// every render (so a scroll right after an update has room), and again when images or fonts load.
-const fitFrame = () => {
-  const h = `${doc.documentElement.scrollHeight}px`;
-  if (frame.style.height !== h) frame.style.height = h;
-};
-new ResizeObserver(fitFrame).observe(doc.body);
 
 const sectionEl = (id: string) => content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
 /** An element's top, in the panel's coordinates. */
-const topOf = (el: Element) => el.getBoundingClientRect().top + frame.getBoundingClientRect().top;
+const topOf = (el: Element) => el.getBoundingClientRect().top + frame.el.getBoundingClientRect().top;
 
 // ---- messages ----
 
@@ -179,9 +223,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
 // ---- rendering ----
 
 function render(title: string, html: string, isUpdate: boolean): void {
+  lastRender = { title, html };
   titleEl.textContent = title;
-  const parsed = sanitize(html, baseUrl, doc);
-  const next = doc.createElement('div');
+  const parsed = sanitize(html, baseUrl, frame.importNode);
+  const next = frame.createElement('div');
   next.append(...parsed.styles, ...parsed.body);
   // Stable ids let the morph match sections across edits.
   for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (!el.id) el.id = `cx-a-${el.dataset.explainAnchor}`;
@@ -390,8 +435,12 @@ function scrollToSection(id: string): void {
   const el = sectionEl(id);
   if (!el) return;
   programmaticUntil = Date.now() + 1000;
-  const top = scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - 12;
-  scroller.scrollTo({ top, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  scrollToTop(topOf(el));
+}
+
+/** Scrolls the panel so that a point (in panel coordinates) sits just below the top. */
+function scrollToTop(top: number): void {
+  scroller.scrollTo({ top: scroller.scrollTop + top - scroller.getBoundingClientRect().top - 12, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
 }
 
 function step(delta: 1 | -1): void {
@@ -413,14 +462,15 @@ function followEditor(id: string): void {
   if (!anchors.has(id)) return;
   const el = sectionEl(id);
   if (!el) return;
+  const view = scroller.getBoundingClientRect();
+  const top = topOf(el);
   if (readerLeads()) {
-    showPill(id, el);
+    // Already on screen: nothing to offer.
+    if (!(top >= view.top && top <= view.bottom - 40)) showPill(id, el);
     return;
   }
   hidePill();
   setActive(id);
-  const top = topOf(el);
-  const view = scroller.getBoundingClientRect();
   const visible = top >= view.top && top <= view.top + view.height * 0.6;
   if (!visible) scrollToSection(id);
 }
@@ -464,10 +514,17 @@ scroller.addEventListener('scroll', () => {
 scroller.addEventListener('scrollend', () => {
   programmaticUntil = 0;
 });
-const readerInput = () => (lastUserScroll = Date.now());
-// Events over the content happen in the frame's document; the scrollbar belongs to the panel.
-for (const target of [scroller, doc] as EventTarget[]) {
-  for (const ev of ['wheel', 'touchmove', 'pointerdown']) target.addEventListener(ev, readerInput, { passive: true });
+// A hoisted function, not a const: the frame's listeners are attached (in buildFrame) before this line runs.
+function readerInput(): void {
+  lastUserScroll = Date.now();
+}
+// The scrollbar belongs to the panel; events over the content happen in the frame (bindFrameEvents).
+for (const ev of ['wheel', 'touchmove', 'pointerdown']) scroller.addEventListener(ev, readerInput, { passive: true });
+
+function bindFrameEvents(d: Document): void {
+  for (const ev of ['wheel', 'touchmove', 'pointerdown']) d.addEventListener(ev, readerInput, { passive: true });
+  d.addEventListener('click', onContentClick);
+  d.addEventListener('keydown', onContentKey);
 }
 
 // ---- input ----
@@ -477,7 +534,7 @@ function openRef(ref: HTMLElement): void {
   if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
 }
 
-doc.addEventListener('click', (e) => {
+function onContentClick(e: MouseEvent): void {
   const target = e.target as HTMLElement;
   const ref = target.closest<HTMLElement>('[data-explain-ref]');
   if (ref) {
@@ -485,30 +542,43 @@ doc.addEventListener('click', (e) => {
     openRef(ref);
     return;
   }
-  const link = target.closest('a');
+  const link = target.closest('a, area');
   if (link) {
-    // External links open in the browser (VS Code handles http/https); anything else stays put.
-    if (!/^https?:|^mailto:/i.test(link.getAttribute('href') ?? '')) e.preventDefault();
+    // Links never navigate the frame. Web and mail links go to VS Code, which asks before opening them;
+    // in-page links scroll the panel.
+    e.preventDefault();
+    const href = link.getAttribute('href') ?? '';
+    if (href.startsWith('#')) {
+      const dest = content.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`);
+      if (dest) scrollToTop(topOf(dest));
+    } else if (/^(https?|mailto):/i.test(href)) vscode.postMessage({ type: 'openExternal', url: href });
     return;
   }
-  if (target.closest('button, input, select, textarea, summary, label') || (frame.contentWindow?.getSelection()?.toString() ?? '') !== '') return;
+  if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
   const id = section.dataset.explainAnchor!;
   // Always reveal, even when the section is already active.
   if (id === active) vscode.postMessage({ type: 'focusAnchor', anchorId: id, source: 'click' });
   else setActive(id, 'click');
-});
+}
 
-doc.addEventListener('keydown', (e) => {
+function onContentKey(e: KeyboardEvent): void {
   const ref = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-ref]');
   if (ref && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault();
     openRef(ref);
     return;
   }
+  // The frame can't scroll itself, so page-size keys scroll the panel.
+  if (e.key === ' ' && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    readerInput();
+    scroller.scrollBy({ top: (e.shiftKey ? -1 : 1) * scroller.clientHeight * 0.9, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    return;
+  }
   onKey(e);
-});
+}
 
 stepsEl.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.cx-step');

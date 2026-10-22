@@ -270,6 +270,10 @@ export class ExplainerSession implements vscode.Disposable {
         this.setActive(m.anchorId);
         this.requestReveal(m.anchorId, false);
         break;
+      case 'openExternal':
+        // Goes through VS Code's own link handling, which asks before opening untrusted domains.
+        void vscode.env.openExternal(vscode.Uri.parse(m.url, true));
+        break;
       case 'openRef':
         // A reference inside a section jumps to other code; the section being read stays active.
         if (!this.manifest?.anchors.has(m.anchorId)) return;

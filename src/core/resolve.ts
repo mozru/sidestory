@@ -42,7 +42,11 @@ const GOOD_ENOUGH = 0.9;
 const WORK_BUDGET = 3_000_000;
 /** Exact copies considered, nearest to the hint first. More than this is itself ambiguous. */
 const MAX_EXACT = 50;
-/** The fuzzy search looks this many lines either side of the hint (exact copies are found anywhere). */
+/**
+ * The fuzzy search looks this many lines either side of the hint, to stay within the per-anchor time
+ * budget (docs/research/anchors.md §7). Exact copies are found anywhere; code that moved further than
+ * this *and* changed is reported lost.
+ */
 const SCAN_RADIUS = 5000;
 
 export function resolveAnchor(text: PreparedText, anchor: Anchor, opts: ResolveOptions = {}): Resolution {
@@ -99,11 +103,16 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     // Code that moved keeps its body but loses its neighbours. For a nearly identical body, unfamiliar
     // surroundings are no evidence against the place, so count them as neutral rather than zero.
     // (Exact copies keep the real context score: it is what tells duplicates apart.)
+    // The floors below only apply when the names still match: a renamed sibling block (same shape,
+    // other identifiers) is not the code that moved, so it gets no benefit of the doubt.
+    const sameNames = T >= 0.5;
     // The floor rises smoothly with S (no cliff where a small edit flips the state).
-    const Ceff = C !== null && !c.exact ? Math.max(C, 0.5 * clamp((S - 0.7) / 0.2, 0, 1)) : C;
+    const Ceff = C !== null && !c.exact && sameNames ? Math.max(C, 0.5 * clamp((S - 0.7) / 0.2, 0, 1)) : C;
     let L = Ceff === null ? (0.45 * S + 0.1 * T + 0.1 * P) / 0.65 : 0.45 * S + 0.35 * Ceff + 0.1 * T + 0.1 * P;
     // Live tracking says the code is here and it still mostly matches: we know where it is.
     if (trustHint && c.i === h && S >= 0.7) L = Math.max(L, 0.6);
+    // Elsewhere, code whose names mostly differ is some other code that looks alike, not this one.
+    else if (!c.exact && !sameNames) L = Math.min(L, 0.59);
     scored.push({ ...c, S, L });
   };
 

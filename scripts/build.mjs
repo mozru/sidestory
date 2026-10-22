@@ -9,9 +9,10 @@ const common = { bundle: true, sourcemap: !production, minify: production, logLe
 
 const builds = [
   { ...common, entryPoints: ['src/extension/extension.ts'], outfile: 'dist/extension.cjs', platform: 'node', format: 'cjs', external: ['vscode'] },
-  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm' },
+  // content.css is bundled into the script as text: the sandboxed content frame isn't served by the
+  // webview's resource loader, so it can't fetch stylesheets itself.
+  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm', loader: { '.css': 'text' } },
   { ...common, entryPoints: ['src/webview/main.css'], outfile: 'dist/webview/main.css' },
-  { ...common, entryPoints: ['src/webview/content.css'], outfile: 'dist/webview/content.css' },
 ];
 
 if (production) rmSync('dist', { recursive: true, force: true });

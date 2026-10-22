@@ -1,7 +1,7 @@
 import { codeTokens } from './text.ts';
 
 /** Above this many cells, token edit distance is too slow; compare lines instead. */
-const MAX_CELLS = 400_000;
+const MAX_CELLS = 100_000;
 
 /** Lengths of the common prefix and suffix, which the quadratic algorithms can skip. */
 export function trimCommon<T>(a: readonly T[], b: readonly T[]): { head: number; tail: number } {

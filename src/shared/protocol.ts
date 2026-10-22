@@ -34,7 +34,9 @@ export type FromWebview =
   /** The reader moved to a section: reveal and highlight its code without moving the cursor. */
   | { type: 'focusAnchor'; anchorId: string; source: 'scroll' | 'click' | 'step' }
   /** An inline reference was clicked: jump the cursor there. */
-  | { type: 'openRef'; anchorId: string };
+  | { type: 'openRef'; anchorId: string }
+  /** A web or mail link was clicked; VS Code asks before opening it. */
+  | { type: 'openExternal'; url: string };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -46,4 +48,17 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('focusAnchor'), anchorId: anchorIdSchema, source: z.enum(['scroll', 'click', 'step']) }),
   z.object({ type: z.literal('openRef'), anchorId: anchorIdSchema }),
+  z.object({
+    type: z.literal('openExternal'),
+    url: z
+      .string()
+      .max(2048)
+      .refine((u) => {
+        try {
+          return ['http:', 'https:', 'mailto:'].includes(new URL(u).protocol);
+        } catch {
+          return false;
+        }
+      }),
+  }),
 ]);
