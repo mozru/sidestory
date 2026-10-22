@@ -1,7 +1,7 @@
 // The explainer page. It renders author HTML in a sandboxed iframe, keeps the reader's place through
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
-import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
+import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '../shared/protocol.ts';
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
 import { sanitize } from './sanitize.ts';
@@ -13,11 +13,17 @@ interface VsCodeApi {
 }
 declare function acquireVsCodeApi(): VsCodeApi;
 
-interface SavedState {
-  dir: string;
+interface Place {
   active?: string;
   /** The section at the reading line and how far from the top of the viewport it was. */
   scroll?: { anchor: string; offset: number };
+}
+
+interface SavedState extends Place {
+  /** The explainer shown (its folder URI); the panel is restored to it after a restart. */
+  dir: string;
+  /** The reader's place in every explainer visited, so going back up the trail returns there. */
+  places?: Record<string, Place>;
 }
 
 interface Step {
@@ -43,11 +49,11 @@ const vscode = acquireVsCodeApi();
 const app = document.getElementById('app')!;
 // Normalized the way the URL parser does it: in remote windows VS Code's resource host contains a
 // percent-encoded '+', which resolved URLs spell decoded, so the raw string wouldn't prefix-match them.
-const baseUrl = new URL(app.dataset.base!).href;
+let baseUrl = new URL(app.dataset.base!).href;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const pendingAssets = new Map<number, (b: Blob | null) => void>();
 let assetId = 0;
-const assets = new Assets(baseUrl, (path) => {
+function requestAsset(path: string): Promise<Blob | null> {
   const id = ++assetId;
   vscode.postMessage({ type: 'requestAsset', id, path });
   return new Promise<Blob | null>((resolve) => {
@@ -57,7 +63,15 @@ const assets = new Assets(baseUrl, (path) => {
       if (pendingAssets.delete(id)) resolve(null);
     }, 5_000);
   });
-});
+}
+let assets = new Assets(baseUrl, requestAsset);
+/** The trail: the root explainer, the details dived into, the one shown last. */
+let trail: TrailItem[] = [];
+/** What we know about detail explainers named in the current one. */
+const details = new Map<string, DetailInfo>();
+const describing = new Set<string>();
+/** Details whose summary ("peek") is open. */
+const peeked = new Set<string>();
 
 let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
 let anchors = new Map<string, AnchorView>();
@@ -70,11 +84,15 @@ let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
 /** Set by `init`; applied by whichever render completes first after it. */
 let pendingInit: { active?: string } | undefined;
+/** Places kept per explainer; the oldest are dropped past this. */
+const MAX_PLACES = 32;
+const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // ---- skeleton ----
 
 app.innerHTML = `
 <header class="cx-header">
+  <nav class="cx-trail" aria-label="Explainer path" hidden></nav>
   <div class="cx-titlerow">
     <h1 class="cx-title"></h1>
     <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>
@@ -96,6 +114,7 @@ app.innerHTML = `
   <button class="cx-nav" type="button" data-delta="-1" aria-label="Previous step"><span class="codicon codicon-chevron-left" aria-hidden="true"></span></button>
   <button class="cx-nav" type="button" data-delta="1" aria-label="Next step"><span class="codicon codicon-chevron-right" aria-hidden="true"></span></button>
   <span class="cx-position"></span>
+  <button class="cx-back" type="button" hidden></button>
   <span class="cx-hint">J / K steps</span>
 </footer>
 <div class="cx-sr" role="status" aria-live="polite"></div>`;
@@ -115,6 +134,8 @@ const pillEl = $('.cx-pill');
 const pillShow = $<HTMLButtonElement>('.cx-pill-show');
 const positionEl = $('.cx-position');
 const liveEl = $('[aria-live]');
+const trailEl = $('.cx-trail');
+const backEl = $<HTMLButtonElement>('.cx-back');
 
 /*
  * Explainer content lives in a sandboxed iframe: no scripts run in it (only this script, from
@@ -208,10 +229,38 @@ const topOf = (el: Element) => el.getBoundingClientRect().top + frame.el.getBoun
 window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   const m = e.data;
   switch (m.type) {
-    case 'init':
+    case 'init': {
+      // A new explainer (first open, or dive / back): forget everything about the previous one.
+      if (m.dir !== state.dir || new URL(m.base).href !== baseUrl) {
+        savePlace();
+        assets.invalidate();
+        baseUrl = new URL(m.base).href;
+        assets = new Assets(baseUrl, requestAsset);
+        details.clear();
+        describing.clear();
+        peeked.clear();
+        lastRender = undefined;
+        hidePill();
+        const place = state.places?.[m.dir];
+        active = place?.active;
+        state = { ...state, dir: m.dir, active: place?.active, scroll: place?.scroll };
+      }
+      trail = m.trail;
+      renderTrail();
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
       pendingInit = { active: m.active };
       void render(m.title, m.html, false);
+      break;
+    }
+    case 'details':
+      for (const d of m.items) {
+        details.set(d.name, d);
+        describing.delete(d.name);
+      }
+      decorate();
+      break;
+    case 'childHint':
+      showDivePill(m.name, m.title);
       break;
     case 'content':
       // Always render the newest content, even if the first render is still loading its assets.
@@ -278,7 +327,8 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     active = init.active ?? active;
     restoreScroll();
     // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
-    if (!active) active = sectionAtReadingLine()?.id;
+    // At the top, that's the first step, however many short sections fit above the line.
+    if (!active) active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
     markActive();
     initialized = true;
   }
@@ -293,6 +343,7 @@ function snapshot(): Map<string, string> {
 /** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
   const c = el.cloneNode(true) as HTMLElement;
+  for (const d of c.querySelectorAll('.cx-detail')) d.remove();
   for (const x of [c, ...c.querySelectorAll<HTMLElement>('*')]) {
     x.classList.remove('cx-active', 'cx-updated');
     if (x.classList.length === 0) x.removeAttribute('class');
@@ -346,6 +397,89 @@ function decorateTree(root: HTMLElement): void {
     if (!ref.hasAttribute('tabindex')) ref.tabIndex = 0;
     if (!ref.hasAttribute('role') && !(ref.localName === 'a' && ref.hasAttribute('href'))) ref.setAttribute('role', 'link');
   }
+  decorateDetails(root);
+}
+
+/**
+ * Elements marked data-explain-detail="<explainer>" name a more detailed explainer (a sibling folder).
+ * Each gets controls to peek at its summary here or dive into it; readers who don't care just read on.
+ */
+function decorateDetails(root: HTMLElement): void {
+  const unknown: string[] = [];
+  for (const host of root.querySelectorAll<HTMLElement>('[data-explain-detail]')) {
+    const name = host.dataset.explainDetail!;
+    let box = [...host.children].find((c) => c.classList.contains('cx-detail')) as HTMLElement | undefined;
+    if (!DETAIL_NAME.test(name)) {
+      box?.remove();
+      continue;
+    }
+    const info = details.get(name);
+    if (!info && !describing.has(name)) unknown.push(name);
+    if (!box) {
+      box = frame.createElement('div');
+      box.className = 'cx-detail';
+      box.innerHTML =
+        '<div class="cx-detail-row"><button type="button" class="cx-peek" aria-expanded="false"></button>' +
+        '<button type="button" class="cx-dive"></button><span class="cx-detail-steps"></span></div>' +
+        '<p class="cx-peek-body" hidden></p>';
+      host.append(box);
+    }
+    const title = info?.title || name;
+    const missing = info?.found === false;
+    const open = peeked.has(name) && !missing;
+    const peek = box.querySelector<HTMLButtonElement>('.cx-peek')!;
+    const dive = box.querySelector<HTMLButtonElement>('.cx-dive')!;
+    const body = box.querySelector<HTMLElement>('.cx-peek-body')!;
+    setText(peek, `${open ? '▾' : '▸'} ${title} in brief`);
+    peek.setAttribute('aria-expanded', String(open));
+    peek.disabled = missing;
+    setText(dive, missing ? `No explainer named “${name}”` : `Dive into ${title} ›`);
+    dive.disabled = missing;
+    setText(box.querySelector('.cx-detail-steps')!, info?.found ? `${info.steps} step${info.steps === 1 ? '' : 's'}` : '');
+    setText(body, info?.summary || (info ? 'No summary.' : 'Loading…'));
+    body.hidden = !open;
+  }
+  if (unknown.length) {
+    for (const n of unknown) describing.add(n);
+    vscode.postMessage({ type: 'describe', names: [...new Set(unknown)].slice(0, 50) });
+  }
+}
+
+function renderTrail(): void {
+  trailEl.hidden = trail.length < 2;
+  trailEl.replaceChildren(
+    ...trail.flatMap((t, i) => {
+      const last = i === trail.length - 1;
+      const item = document.createElement(last ? 'span' : 'button');
+      item.className = 'cx-crumb';
+      item.textContent = t.title || t.name;
+      if (last) item.setAttribute('aria-current', 'page');
+      else {
+        (item as HTMLButtonElement).type = 'button';
+        item.addEventListener('click', () => goTo(i));
+      }
+      if (i === 0) return [item];
+      const sep = document.createElement('span');
+      sep.className = 'cx-crumb-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = '›';
+      return [sep, item];
+    }),
+  );
+  const parent = trail.at(-2);
+  backEl.hidden = !parent;
+  if (parent) backEl.textContent = `‹ Back to ${parent.title || parent.name}`;
+}
+
+function goTo(depth: number): void {
+  if (depth >= trail.length - 1) return;
+  savePlace();
+  vscode.postMessage({ type: 'goTo', depth });
+}
+
+function dive(name: string): void {
+  savePlace();
+  vscode.postMessage({ type: 'dive', name });
 }
 
 /** Applies anchor states, accents and the active section, then rebuilds the navigator. */
@@ -523,8 +657,21 @@ function followEditor(id: string): void {
 
 function showPill(id: string, el: HTMLElement): void {
   pillShow.textContent = `Cursor is in “${stepLabel(el, id)}” · Show`;
+  delete pillEl.dataset.dive;
   pillEl.dataset.anchor = id;
   if (pillEl.hidden) announce(`Editor cursor is in ${stepLabel(el, id)}`);
+  pillEl.hidden = false;
+  clearTimeout(pillTimer);
+  pillTimer = setTimeout(hidePill, PILL_MS);
+}
+
+/** The editor cursor is in code a detail explainer covers: offer to dive into it. */
+function showDivePill(name: string, title: string): void {
+  if (!DETAIL_NAME.test(name)) return;
+  pillShow.textContent = `Cursor is in ${title || name} · Dive`;
+  delete pillEl.dataset.anchor;
+  pillEl.dataset.dive = name;
+  if (pillEl.hidden) announce(`Editor cursor is in ${title || name}`);
   pillEl.hidden = false;
   clearTimeout(pillTimer);
   pillTimer = setTimeout(hidePill, PILL_MS);
@@ -534,6 +681,7 @@ function hidePill(): void {
   clearTimeout(pillTimer);
   pillEl.hidden = true;
   delete pillEl.dataset.anchor;
+  delete pillEl.dataset.dive;
 }
 
 function sectionAtReadingLine(): Step | undefined {
@@ -586,6 +734,20 @@ function onContentClick(e: MouseEvent): void {
   if (ref) {
     e.preventDefault();
     openRef(ref);
+    return;
+  }
+  const control = target.closest<HTMLElement>('.cx-peek, .cx-dive');
+  const host = control?.closest('.cx-detail')?.parentElement;
+  const name = host?.dataset.explainDetail;
+  if (control && name) {
+    e.preventDefault();
+    if (control.classList.contains('cx-dive')) dive(name);
+    else {
+      if (peeked.has(name)) peeked.delete(name);
+      else peeked.add(name);
+      decorateDetails(content);
+      fitFrame();
+    }
     return;
   }
   const link = target.closest('a, area');
@@ -664,19 +826,30 @@ for (const b of app.querySelectorAll<HTMLButtonElement>('.cx-nav')) b.addEventLi
 
 pillShow.addEventListener('click', () => {
   const id = pillEl.dataset.anchor;
+  const detail = pillEl.dataset.dive;
   hidePill();
+  if (detail) return dive(detail);
   if (!id) return;
   setActive(id);
   scrollToSection(id);
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
+backEl.addEventListener('click', () => goTo(trail.length - 2));
 
 document.addEventListener('keydown', onKey);
 
 function onKey(e: KeyboardEvent): void {
   const t = e.target as HTMLElement | undefined;
-  if (e.key === 'Escape') hidePill();
-  if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) {
+    if (e.key === 'Escape') hidePill();
+    return;
+  }
+  // Escape dismisses the pill; with nothing to dismiss, it goes back up the trail.
+  if (e.key === 'Escape') {
+    if (!pillEl.hidden) hidePill();
+    else if (trail.length > 1) goTo(trail.length - 2);
+    return;
+  }
   if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) readerInput();
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
@@ -708,15 +881,26 @@ function restorePosition(p: Position): void {
 function restoreScroll(): void {
   if (state.scroll) restorePosition(state.scroll);
   else if (active) scrollToSection(active);
+  else scroller.scrollTop = 0; // a newly entered explainer starts at the top
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 function saveState(): void {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    state = { dir: state.dir, active, scroll: readingPosition() };
-    vscode.setState(state);
-  }, 200);
+  saveTimer = setTimeout(savePlace, 200);
+}
+
+/** Records the reader's place in the explainer shown, now (before switching away from it). */
+function savePlace(): void {
+  clearTimeout(saveTimer);
+  const place: Place = { active, scroll: readingPosition() };
+  const places = { ...state.places };
+  delete places[state.dir]; // re-inserted last: the most recent is kept longest
+  places[state.dir] = place;
+  const keys = Object.keys(places);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PLACES))) delete places[k];
+  state = { dir: state.dir, ...place, places };
+  vscode.setState(state);
 }
 
 const pendingAnnouncements: string[] = [];

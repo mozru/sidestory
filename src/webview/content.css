@@ -180,3 +180,58 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
 body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-active.cx-updated {
   box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder), 0 0 0 3px var(--vscode-editorInfo-foreground);
 }
+
+/* ---- detail explainers: peek in place, or dive in ---- */
+
+.cx-detail {
+  margin: 10px 0 2px;
+  padding: 6px 10px;
+  border: 1px dashed var(--vscode-panel-border, var(--vscode-editorGroup-border));
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+
+.cx-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.cx-detail button {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cx-detail button:hover:not(:disabled) {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+.cx-detail button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.cx-detail button:disabled {
+  color: var(--vscode-descriptionForeground);
+  cursor: default;
+}
+
+.cx-detail .cx-peek {
+  color: var(--vscode-foreground);
+}
+
+.cx-detail-steps {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.cx-peek-body {
+  margin: 6px 0 2px;
+  color: var(--vscode-descriptionForeground);
+}

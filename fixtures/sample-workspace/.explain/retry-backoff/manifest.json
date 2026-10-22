@@ -1,6 +1,7 @@
 {
   "version": 2,
   "title": "Retry with full-jitter backoff",
+  "summary": "Retries a failing call with full-jitter exponential backoff: options, the delay formula, the loop and when it gives up.",
   "anchors": {
     "options": {
       "file": "src/retry.ts",

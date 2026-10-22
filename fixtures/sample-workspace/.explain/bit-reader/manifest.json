@@ -1,6 +1,7 @@
 {
   "version": 2,
   "title": "A backward bit reader in five moves",
+  "summary": "A 64-bit window filled a byte at a time from a backward stream, drained a few bits at a time; five steps from ports to refill.",
   "anchors": {
     "interface": {
       "file": "rtl/bit_reader.sv",

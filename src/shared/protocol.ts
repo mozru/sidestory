@@ -1,7 +1,7 @@
 // Messages between the extension host and the explainer webview.
 // The webview never reloads: content and anchor states arrive as updates it applies in place.
 import { z } from 'zod';
-import { anchorIdSchema, isSafeRelativePath } from '../core/manifest.ts';
+import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 
 export interface AnchorView {
@@ -15,9 +15,40 @@ export interface AnchorView {
   colorVar?: string;
 }
 
+/** One level of the explainer path (the trail): the root explainer, the details dived into, the current one. */
+export interface TrailItem {
+  name: string;
+  title: string;
+}
+
+/** What a parent shows about a detail explainer before you dive into it. */
+export interface DetailInfo {
+  name: string;
+  found: boolean;
+  title: string;
+  summary: string;
+  /** How many steps diving would add. */
+  steps: number;
+}
+
 export type ToWebview =
-  /** Everything the page needs; sent in reply to `ready`. */
-  | { type: 'init'; title: string; html: string; anchors: AnchorView[]; active?: string }
+  /** Everything the page needs; sent in reply to `ready`, and when the panel moves to another explainer. */
+  | {
+      type: 'init';
+      title: string;
+      html: string;
+      anchors: AnchorView[];
+      active?: string;
+      /** Identifies the explainer (its folder URI), so the page can remember the reader's place in each. */
+      dir: string;
+      /** Base URL that relative URLs in this explainer resolve against. */
+      base: string;
+      trail: TrailItem[];
+    }
+  /** Answers `describe`. */
+  | { type: 'details'; items: DetailInfo[] }
+  /** The editor cursor is in a file that a detail of the current step explains. */
+  | { type: 'childHint'; name: string; title: string }
   /** The explainer HTML changed: patch it in place. */
   | { type: 'content'; title: string; html: string }
   /** Anchor locations or states changed. */
@@ -44,12 +75,21 @@ export type FromWebview =
   /** A link to another file in the explainer folder was clicked (path relative to that folder). */
   | { type: 'openFile'; path: string }
   /** The content frame needs a file from the explainer folder (an image, font or stylesheet). */
-  | { type: 'requestAsset'; id: number; path: string };
+  | { type: 'requestAsset'; id: number; path: string }
+  /** Open a detail explainer in this panel, optionally at one of its sections. */
+  | { type: 'dive'; name: string; section?: string }
+  /** Go back up the trail to this level (0 = the root explainer). */
+  | { type: 'goTo'; depth: number }
+  /** Describe these detail explainers (title, summary, size). */
+  | { type: 'describe'; names: string[] };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
   return `--vscode-${colorId.replace(/\./g, '-')}`;
 }
+
+/** How deep detours can nest. */
+export const MAX_TRAIL = 16;
 
 /** Runtime check for messages from the webview, which renders untrusted HTML. */
 export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('type', [
@@ -59,7 +99,11 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('openExternal'), url: z.string().max(2048).refine((u) => safeExternalUrl(u) !== null) }),
   z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
+  z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional() }),
+  z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL) }),
+  z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),
 ]);
+
 
 const MIME: Record<string, string> = {
   svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',

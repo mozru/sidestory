@@ -166,3 +166,29 @@ test('two explainers open at once both keep working', async ({ page }) => {
   await expect(editorLines(page)).toContainText('refill below valid bits');
   await expect(first.locator('.cx-position')).toHaveText('Step 5 of 5');
 });
+
+test('diving into a detail and coming back keeps the reader’s place', async ({ page }) => {
+  const panel = await openExplainer(page, 'overview');
+  await expect(panel.locator('.cx-title')).toHaveText('Sample workspace tour');
+  await chooseStep(panel, 'retry');
+  const detail = content(panel).locator('[data-explain-detail="bit-reader"] .cx-detail');
+  // Peek: the summary, in place.
+  await detail.locator('.cx-peek').click();
+  await expect(detail.locator('.cx-peek-body')).toContainText('A 64-bit window');
+  await expect(detail.locator('.cx-detail-steps')).toHaveText('5 steps');
+  // Dive: the same panel shows the detail, with a trail back.
+  await detail.locator('.cx-dive').click();
+  await expect(panel.locator('.cx-title')).toHaveText('A backward bit reader in five moves');
+  await expect(panel.getByRole('navigation', { name: 'Explainer path' })).toContainText('Sample workspace tour');
+  await chooseStep(panel, 'refill');
+  await expect(activeTab(page, 'bit_reader.sv')).toBeVisible();
+  await expect(editorLines(page)).toContainText('refill below valid bits');
+  // Back: the overview again, at the step the reader left.
+  await panel.locator('.cx-back').click();
+  await expect(panel.locator('.cx-title')).toHaveText('Sample workspace tour');
+  await expect(panel.locator('.cx-position')).toHaveText('Step 2 of 2');
+  await expect(panel.locator('.cx-trail')).toBeHidden();
+  // The cursor in code a detail covers offers to dive into it.
+  await codeEditor(page, 'bit_reader.sv').locator('.view-line', { hasText: 'refill below valid bits' }).click();
+  await expect(panel.locator('.cx-pill-show')).toContainText('Dive');
+});

@@ -21,6 +21,10 @@ function anchors(states: Record<string, AnchorView['state']> = {}): AnchorView[]
   }));
 }
 
+const DIR = 'file:///ws/.explain/bit-reader';
+const base = (page: Page, name = 'bit-reader') => page.evaluate((n) => `${location.origin}/fixtures/sample-workspace/.explain/${n}/`, name);
+const ROOT_TRAIL = [{ name: 'bit-reader', title: MANIFEST.title }];
+
 async function open(page: Page, opts: { theme?: ThemeName; html?: string; active?: string } = {}): Promise<void> {
   const theme = opts.theme ?? 'dark';
   await page.goto('/test/webview/harness.html');
@@ -29,7 +33,7 @@ async function open(page: Page, opts: { theme?: ThemeName; html?: string; active
     document.body.className = cls;
   }, [themeCss(theme), THEMES[theme].bodyClass] as const);
   await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
-  await send(page, { type: 'init', title: MANIFEST.title, html: opts.html ?? HTML, anchors: anchors(), active: opts.active });
+  await send(page, { type: 'init', title: MANIFEST.title, html: opts.html ?? HTML, anchors: anchors(), active: opts.active, dir: DIR, base: await base(page), trail: ROOT_TRAIL });
 }
 
 const send = (page: Page, m: ToWebview) => page.evaluate((msg) => (window as unknown as { __send(m: unknown): void }).__send(msg), m);
@@ -386,7 +390,7 @@ test('a content update that arrives while the first render loads its assets is n
     w.__send = (m: unknown) => ((m as { type: string }).type === 'asset' ? setTimeout(() => real(m), 600) : real(m));
   });
   await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
-  await send(page, { type: 'init', title: 'first', html: '<section data-explain-anchor="state"><h2>old</h2><img alt="" src="assets/dot.svg"></section>', anchors: anchors() });
+  await send(page, { type: 'init', title: 'first', html: '<section data-explain-anchor="state"><h2>old</h2><img alt="" src="assets/dot.svg"></section>', anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL });
   await page.waitForTimeout(100);
   await send(page, { type: 'content', title: 'second', html: '<section data-explain-anchor="state"><h2>EDITED DURING INIT</h2></section>' });
   await expect(section(page, 'state').locator('h2')).toHaveText('EDITED DURING INIT');
@@ -406,4 +410,93 @@ test('hostile CSS can neither stall the panel nor sneak URLs past the rewriter',
   expect(css).not.toContain('example.com/x.png');
   expect(css).not.toMatch(/@import/i);
   expect(css).toContain('cx-blocked(');
+});
+
+// ---- moving between explainers ----
+
+const OVERVIEW = `<section data-explain-anchor="interface"><h2>Interface</h2><p>Top level.</p>
+  <div data-explain-detail="retry-backoff"><p>The retry logic has its own walkthrough.</p></div></section>
+  <section data-explain-anchor="state"><h2>State</h2><p>More.</p><div data-explain-detail="no-such-thing"></div></section>`;
+
+test('a detail can be peeked at in place or dived into', async ({ page }) => {
+  await open(page, { html: OVERVIEW });
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'describe', names: ['retry-backoff', 'no-such-thing'] });
+  await send(page, {
+    type: 'details',
+    items: [
+      { name: 'retry-backoff', found: true, title: 'Retry with backoff', summary: 'Waits longer after each failure.', steps: 4 },
+      { name: 'no-such-thing', found: false, title: '', summary: '', steps: 0 },
+    ],
+  });
+  const detail = frame(page).locator('[data-explain-detail="retry-backoff"] .cx-detail');
+  const peek = detail.locator('.cx-peek');
+  await expect(peek).toHaveText('▸ Retry with backoff in brief');
+  await expect(detail.locator('.cx-detail-steps')).toHaveText('4 steps');
+  await expect(detail.locator('.cx-peek-body')).toBeHidden();
+  await peek.click();
+  await expect(peek).toHaveAttribute('aria-expanded', 'true');
+  await expect(detail.locator('.cx-peek-body')).toHaveText('Waits longer after each failure.');
+  // Peeking is local: it doesn't move the reader or the editor.
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 2');
+  // An edit to the explainer keeps the peek open.
+  await send(page, { type: 'content', title: MANIFEST.title, html: OVERVIEW.replace('Top level.', 'Top level, edited.') });
+  await expect(frame(page).getByText('Top level, edited.')).toBeVisible();
+  await expect(detail.locator('.cx-peek-body')).toBeVisible();
+  await expect(frame(page).locator('[data-explain-detail="no-such-thing"] .cx-dive')).toBeDisabled();
+  await clearPosted(page);
+  await detail.locator('.cx-dive').click();
+  expect(await posted(page)).toContainEqual({ type: 'dive', name: 'retry-backoff' });
+});
+
+test('the trail shows where the reader is and leads back up', async ({ page }) => {
+  await open(page);
+  await expect(page.locator('.cx-trail')).toBeHidden();
+  await expect(page.locator('.cx-back')).toBeHidden();
+  await send(page, {
+    type: 'init',
+    title: 'Retry with backoff',
+    html: '<section data-explain-anchor="loop"><h2>Loop</h2></section>',
+    anchors: [],
+    dir: 'file:///ws/.explain/retry-backoff',
+    base: await base(page, 'retry-backoff'),
+    trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Retry with backoff' }],
+  });
+  const trail = page.getByRole('navigation', { name: 'Explainer path' });
+  await expect(trail).toBeVisible();
+  await expect(trail.locator('[aria-current="page"]')).toHaveText('Retry with backoff');
+  await clearPosted(page);
+  await trail.getByRole('button', { name: MANIFEST.title }).click();
+  await page.locator('.cx-back').click();
+  await page.locator('.cx-scroll').focus();
+  await page.keyboard.press('Escape');
+  expect(await posted(page)).toEqual([
+    { type: 'goTo', depth: 0 },
+    { type: 'goTo', depth: 0 },
+    { type: 'goTo', depth: 0 },
+  ]);
+});
+
+test('going back returns to the place the reader left', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-step', { hasText: 'Handshakes' }).click();
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
+  const child = { anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff') };
+  await send(page, { type: 'init', title: 'Child', html: '<section data-explain-anchor="a"><h2>A</h2></section><section data-explain-anchor="b"><h2>B</h2></section>', ...child, trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
+  await expect(page.locator('.cx-title')).toHaveText('Child');
+  await expect(page.locator('.cx-position')).toHaveText('Step 1 of 2');
+  // Coming back, assets resolve against the parent's folder again.
+  await send(page, { type: 'init', title: MANIFEST.title, html: HTML + '<img alt="" src="assets/dot.svg">', anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL });
+  await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
+  await expect(page.locator('.cx-trail')).toBeHidden();
+  await expect(frame(page).locator('img').first()).toHaveAttribute('src', /^blob:/);
+});
+
+test('the cursor in code a detail covers offers to dive into it', async ({ page }) => {
+  await open(page);
+  await send(page, { type: 'childHint', name: 'retry-backoff', title: 'Retry with backoff' });
+  await expect(page.locator('.cx-pill-show')).toHaveText('Cursor is in Retry with backoff · Dive');
+  await clearPosted(page);
+  await page.locator('.cx-pill-show').click();
+  expect(await posted(page)).toEqual([{ type: 'dive', name: 'retry-backoff' }]);
+  await expect(page.locator('.cx-pill')).toBeHidden();
 });

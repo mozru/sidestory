@@ -50,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (dir) void vscode.window.showWarningMessage('Not an explainer: expected a folder like .explain/<name> inside the workspace.');
         return;
       }
-      const existing = sessions.get(ref.dir.toString());
+      const existing = [...sessions.values()].find((s) => s.ref.dir.toString() === ref.dir.toString());
       if (existing) {
         existing.panel.reveal(undefined, true);
         return;
@@ -60,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('codeExplainer.pin', async () => {
       const ref = current?.ref ?? (await pickExplainer());
       if (!ref) return;
-      const open = sessions.get(ref.dir.toString());
+      const open = [...sessions.values()].find((s) => s.ref.dir.toString() === ref.dir.toString());
       try {
         await pinAnchors(ref, (id) => open?.liveHint(id));
       } catch (e) {
@@ -74,7 +74,7 @@ export function activate(context: vscode.ExtensionContext): void {
       async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PanelState | undefined) {
         const ref = typeof state?.dir === 'string' ? refFromDir(vscode.Uri.parse(state.dir)) : undefined;
         // In Restricted Mode, an explainer is shown only when the user opens it, never automatically.
-        if (!ref || sessions.has(ref.dir.toString()) || !vscode.workspace.isTrusted) {
+        if (!ref || [...sessions.values()].some((s) => s.ref.dir.toString() === ref.dir.toString()) || !vscode.workspace.isTrusted) {
           panel.dispose();
           return;
         }

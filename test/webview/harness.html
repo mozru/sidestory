@@ -17,7 +17,7 @@
       // Play the extension's part for assets: read the file and reply with its bytes.
       if (m.type === 'requestAsset') {
         const types = { svg: 'image/svg+xml', png: 'image/png', css: 'text/css' };
-        fetch(document.getElementById('app').dataset.base + m.path)
+        fetch((window.__base ?? document.getElementById('app').dataset.base) + m.path)
           .then((r) => (r.ok ? r.arrayBuffer() : null))
           .then((b) => window.__send({ type: 'asset', id: m.id, mime: types[m.path.split('.').pop()] ?? '', data: b && btoa(String.fromCharCode(...new Uint8Array(b))) }));
       }
@@ -25,7 +25,10 @@
     getState: () => window.__state,
     setState: (s) => { window.__state = s; },
   });
-  window.__send = (m) => window.dispatchEvent(new MessageEvent('message', { data: m }));
+  window.__send = (m) => {
+    if (m.type === 'init') window.__base = m.base; // assets come from the explainer shown
+    window.dispatchEvent(new MessageEvent('message', { data: m }));
+  };
 </script>
 </head>
 <body>

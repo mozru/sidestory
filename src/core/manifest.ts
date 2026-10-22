@@ -42,6 +42,8 @@ export interface Anchor extends AnchorSpec {
 export interface Manifest {
   version: 1 | 2;
   title: string;
+  /** A short description, shown when a parent explainer offers this one as a detail ("peek"). */
+  summary?: string;
   commit?: string;
   anchors: Map<string, Anchor>;
   /** The parsed JSON as written, so tools can rewrite it without losing fields we don't model. */
@@ -116,11 +118,15 @@ export const anchorSpecSchema = z.looseObject({
     .optional(),
 });
 
+/** An explainer's folder name under `.explain/`, as used in `data-explain-detail`. */
+export const explainerNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, 'explainer names use letters, digits, ".", "-" and "_"');
+
 export const anchorIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/, 'anchor ids start with a letter and use letters, digits, - and _');
 
 const manifestSchema = z.looseObject({
   version: z.number(),
   title: z.string().max(LIMITS.titleChars),
+  summary: z.string().max(1000).optional(),
   commit: z
     .string()
     .regex(/^[0-9a-fA-F]{7,64}$/, 'commit must be a hex commit id')
@@ -172,7 +178,7 @@ export function parseManifest(json: string): ParseResult {
   return {
     ok: true,
     diagnostics,
-    manifest: { version: version as 1 | 2, title: top.data.title, commit: top.data.commit, anchors, raw: raw as Record<string, unknown> },
+    manifest: { version: version as 1 | 2, title: top.data.title, summary: top.data.summary, commit: top.data.commit, anchors, raw: raw as Record<string, unknown> },
   };
 }
 

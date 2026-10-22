@@ -1,0 +1,16 @@
+<style>
+  .lede { color: var(--vscode-descriptionForeground); }
+</style>
+<p class="lede">Two pieces, each with its own walkthrough. Read this page for the shape of the system; open a detail only when you need it.</p>
+
+<section data-explain-anchor="reader" data-explain-title="The bit reader">
+  <h2>The bit reader</h2>
+  <p>Bytes arrive last-first; the reader keeps an MSB-aligned window of bits and hands the consumer whatever count it asks for.</p>
+  <div data-explain-detail="bit-reader"></div>
+</section>
+
+<section data-explain-anchor="retry" data-explain-title="Retrying">
+  <h2>Retrying</h2>
+  <p>Failed calls are retried with a random wait whose ceiling doubles each attempt, so clients that fail together don't retry together.</p>
+  <div data-explain-detail="retry-backoff"></div>
+</section>

@@ -1,17 +1,18 @@
-// One open explainer: keeps its anchors resolved against live buffers and the webview in sync.
+// One explainer panel: keeps the current explainer's anchors resolved against live buffers and the
+// webview in sync. The panel can dive into detail explainers and come back (the trail).
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
-import { parseManifest } from '../core/manifest.ts';
+import { explainerNameSchema, parseManifest } from '../core/manifest.ts';
 import type { Resolution } from '../core/resolve.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { anchorAtLine } from '../core/sections.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
-import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
-import { assetMime, fromWebviewSchema, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
+import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
+import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
+import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
 import { log } from './log.ts';
 import { shellHtml } from './panel.ts';
 import { realPathInside } from './paths.ts';
@@ -30,8 +31,19 @@ const MAX_ASSET_REQUESTS = 500;
 const LOST: Resolution = { state: 'lost', range: null, location: 0, similarity: 0, ambiguous: false, method: 'none' };
 
 export class ExplainerSession implements vscode.Disposable {
-  readonly ref: ExplainerRef;
+  /** The root explainer, then each detail dived into; the last one is shown. */
+  private trail: ExplainerRef[];
   readonly panel: vscode.WebviewPanel;
+  /** Where the reader was in each explainer of the trail, so going back returns there. */
+  private readonly positions = new Map<string, string | undefined>();
+  /** Titles of explainers seen, for the trail. */
+  private readonly titles = new Map<string, string>();
+  /** Files that each described detail explainer covers, for "the cursor is in a detail" hints. */
+  private readonly detailFiles = new Map<string, { title: string; files: Set<string> }>();
+  private lastHint: string | undefined;
+  /** While moving to another explainer, half-updated state isn't sent; `init` follows. */
+  private switching = false;
+  private explainerWatchers: vscode.Disposable[] = [];
   private readonly decorations: Decorations;
 
   private manifest: Manifest | undefined;
@@ -70,18 +82,12 @@ export class ExplainerSession implements vscode.Disposable {
   readonly onDidDispose = this.onDisposeEmitter.event;
 
   constructor(ref: ExplainerRef, panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations) {
-    this.ref = ref;
+    this.trail = [ref];
     this.panel = panel;
     this.decorations = decorations;
     panel.webview.html = shellHtml(panel.webview, extensionUri, ref);
-    // Everything in the explainer folder: its two files reload the explainer; anything else is an asset.
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(ref.dir, '**/*'));
-    const changed = (uri: vscode.Uri) => this.onExplainerFileChange(uri);
+    this.watchExplainer();
     this.subscriptions.push(
-      watcher,
-      watcher.onDidChange(changed),
-      watcher.onDidCreate(changed),
-      watcher.onDidDelete(changed),
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
       panel.onDidDispose(() => this.dispose()),
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
@@ -90,8 +96,107 @@ export class ExplainerSession implements vscode.Disposable {
     );
   }
 
+  /** The explainer shown now. */
+  get ref(): ExplainerRef {
+    return this.trail[this.trail.length - 1]!;
+  }
+
   async load(): Promise<void> {
     await this.reload();
+  }
+
+  /** Everything in the explainer folder: its two files reload the explainer; anything else is an asset. */
+  private watchExplainer(): void {
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(this.ref.dir, '**/*'));
+    const changed = (uri: vscode.Uri) => this.onExplainerFileChange(uri);
+    this.explainerWatchers = [watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed)];
+  }
+
+  // ---- the trail: diving into details and coming back ----
+
+  /** A detail explainer: a sibling folder under the same `.explain/`. */
+  private detailRef(name: string): ExplainerRef | undefined {
+    if (!explainerNameSchema.safeParse(name).success) return undefined;
+    return refFromDir(vscode.Uri.joinPath(this.ref.dir, '..', name));
+  }
+
+  private async dive(name: string, section?: string): Promise<void> {
+    const child = this.detailRef(name);
+    if (!child || this.trail.length >= MAX_TRAIL) return;
+    if (this.trail.some((t) => t.dir.toString() === child.dir.toString())) return; // no loops
+    if ((await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES)) === undefined) {
+      void vscode.window.showWarningMessage(`There's no explainer called "${name}" next to this one.`);
+      return;
+    }
+    await this.switchTo([...this.trail, child], section);
+  }
+
+  /** Shows another explainer in this panel: resets everything that belongs to the current one. */
+  private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
+    this.positions.set(this.ref.dir.toString(), this.active);
+    for (const t of this.timers.values()) clearTimeout(t);
+    this.timers.clear();
+    for (const d of [...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
+    this.fileWatchers = [];
+    this.trail = trail;
+    this.manifest = undefined;
+    this.manifestText = '';
+    this.html = '';
+    this.title = this.titles.get(this.ref.dir.toString()) ?? '';
+    this.lastError = null;
+    this.warnings = null;
+    this.resolutions.clear();
+    this.hints.clear();
+    this.orphaned.clear();
+    this.fileSeq.clear();
+    this.changedAssets.clear();
+    this.detailFiles.clear();
+    this.lastHint = undefined;
+    this.assetBytes = 0;
+    this.assetRequests = 0;
+    this.active = active ?? this.positions.get(this.ref.dir.toString());
+    this.decorations.set(undefined);
+    this.watchExplainer();
+    this.switching = true;
+    try {
+      await this.reload();
+    } finally {
+      this.switching = false;
+    }
+    this.sendInit();
+  }
+
+  private sendInit(): void {
+    this.post({
+      type: 'init',
+      title: this.title,
+      html: this.html,
+      anchors: this.anchorViews(),
+      active: this.active,
+      dir: this.ref.dir.toString(),
+      base: `${this.panel.webview.asWebviewUri(this.ref.dir).toString()}/`,
+      trail: this.trail.map((t) => ({ name: t.name, title: this.titles.get(t.dir.toString()) || t.name })),
+    });
+    if (this.lastError) this.post({ type: 'error', message: this.lastError });
+  }
+
+  /** Title, summary and size of detail explainers, for the parent's "peek" and "+N steps". */
+  private async describe(names: string[]): Promise<void> {
+    const items: DetailInfo[] = [];
+    for (const name of new Set(names)) {
+      const child = this.detailRef(name);
+      const text = child ? await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES) : undefined;
+      const parsed = text === undefined ? undefined : parseManifest(text);
+      if (!child || !parsed?.ok) {
+        items.push({ name, found: false, title: name, summary: '', steps: 0 });
+        continue;
+      }
+      const m = parsed.manifest;
+      this.titles.set(child.dir.toString(), m.title);
+      this.detailFiles.set(name, { title: m.title || name, files: new Set([...m.anchors.values()].map((a) => vscode.Uri.joinPath(child.root, a.file).toString())) });
+      items.push({ name, found: true, title: m.title || name, summary: m.summary ?? '', steps: m.anchors.size });
+    }
+    this.post({ type: 'details', items });
   }
 
   /** Where live tracking last saw an anchor's code (only trusted positions are kept). */
@@ -176,6 +281,7 @@ export class ExplainerSession implements vscode.Disposable {
     const contentChanged = html !== this.html || parsed.manifest.title !== this.title;
     this.html = html;
     this.title = parsed.manifest.title;
+    this.titles.set(this.ref.dir.toString(), this.title);
     this.panel.title = `Explainer: ${this.title || this.ref.name}`;
     this.warnings = warnings.length ? `Some sections aren't linked:\n${warnings.join('\n')}` : null;
     this.showError(this.warnings);
@@ -301,14 +407,25 @@ export class ExplainerSession implements vscode.Disposable {
   private onSelection(e: vscode.TextEditorSelectionChangeEvent): void {
     const uri = e.textEditor.document.uri.toString();
     const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
-    if (ids.size === 0 || Date.now() < this.ignoreSelectionUntil) return;
+    if (Date.now() < this.ignoreSelectionUntil) return;
+    // Code a detail explainer covers: when none of this explainer's sections do, offer to dive.
+    const detail = [...this.detailFiles].find(([, d]) => d.files.has(uri));
+    if (ids.size === 0 && !detail) return;
     const line = e.selections[0]!.active.line + 1;
     // The reader clicked or typed in the code: stop fading the rest of the file.
     const byUser = e.kind === vscode.TextEditorSelectionChangeKind.Keyboard || e.kind === vscode.TextEditorSelectionChangeKind.Mouse;
-    if (byUser && this.decorations.isDimmed()) this.decorateActive(false);
+    if (byUser && ids.size && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
-      const id = anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line);
-      if (!id || id === this.active) return;
+      const id = ids.size ? anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line) : undefined;
+      if (!id) {
+        if (detail && detail[0] !== this.lastHint) {
+          this.lastHint = detail[0];
+          this.post({ type: 'childHint', name: detail[0], title: detail[1].title });
+        }
+        return;
+      }
+      this.lastHint = undefined;
+      if (id === this.active) return;
       this.setActive(id);
       this.decorateActive(false);
       this.post({ type: 'syncTo', anchorId: id });
@@ -326,8 +443,16 @@ export class ExplainerSession implements vscode.Disposable {
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
         this.assetBytes = 0;
         this.assetRequests = 0;
-        this.post({ type: 'init', title: this.title, html: this.html, anchors: this.anchorViews(), active: this.active });
-        if (this.lastError) this.post({ type: 'error', message: this.lastError });
+        this.sendInit();
+        break;
+      case 'dive':
+        void this.dive(m.name, m.section);
+        break;
+      case 'goTo':
+        if (m.depth < this.trail.length - 1) void this.switchTo(this.trail.slice(0, m.depth + 1));
+        break;
+      case 'describe':
+        void this.describe(m.names);
         break;
       case 'focusAnchor':
         if (!this.manifest?.anchors.has(m.anchorId)) return;
@@ -475,7 +600,7 @@ export class ExplainerSession implements vscode.Disposable {
 
   private post(message: ToWebview): void {
     // Messages to a hidden webview are dropped; it asks for everything again with `ready` when shown.
-    if (this.panel.visible && !this.disposed) void this.panel.webview.postMessage(message);
+    if (this.panel.visible && !this.disposed && !this.switching) void this.panel.webview.postMessage(message);
   }
 
   private debounce(key: string, ms: number, fn: () => void): void {
@@ -491,7 +616,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.disposed = true;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
-    for (const d of [...this.subscriptions, ...this.fileWatchers]) d.dispose();
+    for (const d of [...this.subscriptions, ...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
     this.decorations.set(undefined);
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();

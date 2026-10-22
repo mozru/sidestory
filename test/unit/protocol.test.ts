@@ -35,6 +35,9 @@ describe('fromWebviewSchema', () => {
   it('accepts well-formed messages', () => {
     expect(fromWebviewSchema.safeParse({ type: 'focusAnchor', anchorId: 'refill', source: 'scroll' }).success).toBe(true);
     expect(fromWebviewSchema.safeParse({ type: 'openFile', path: 'notes/more.html' }).success).toBe(true);
+    expect(fromWebviewSchema.safeParse({ type: 'dive', name: 'retry-backoff' }).success).toBe(true);
+    expect(fromWebviewSchema.safeParse({ type: 'goTo', depth: 0 }).success).toBe(true);
+    expect(fromWebviewSchema.safeParse({ type: 'describe', names: ['bit-reader', 'v1.2_x'] }).success).toBe(true);
   });
 
   it.each([
@@ -45,6 +48,15 @@ describe('fromWebviewSchema', () => {
     { type: 'openFile', path: '../../etc/passwd' },
     { type: 'openFile', path: '/abs' },
     { type: 'unknown' },
+    // Detail names are sibling folder names, never paths.
+    { type: 'dive', name: '../outside' },
+    { type: 'dive', name: 'a/b' },
+    { type: 'dive', name: '.hidden' },
+    { type: 'dive', name: 'x'.repeat(65) },
+    { type: 'goTo', depth: -1 },
+    { type: 'goTo', depth: 1.5 },
+    { type: 'goTo', depth: 17 },
+    { type: 'describe', names: Array(51).fill('a') },
   ])('refuses %j', (m) => {
     expect(fromWebviewSchema.safeParse(m).success).toBe(false);
   });

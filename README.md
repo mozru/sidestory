@@ -63,9 +63,30 @@ Mark any element that is about some code with `data-explain-anchor`, and name it
 | `file` | Path from the folder that contains `.explain/`, with `/` separators. |
 | `range` | First and last line (1-based). A hint: the anchor follows the code as it moves. |
 | `highlight` | Identifiers to mark everywhere in the file while the section is active. |
+| `summary` | Top level, optional: one line shown when a parent explainer peeks at this one. |
 | `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
 
 Then run **Code Explainer: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Re-run it after you change which lines a section covers.
+
+### Big systems: an overview with details
+
+One explainer per piece, plus an overview that ties them together. In the overview, mark where a piece comes up with the name of its explainer (a sibling folder in `.explain/`):
+
+```html
+<section data-explain-anchor="reader">
+  <h2>The bit reader</h2>
+  <p>Bytes arrive last-first; it hands out bits on demand.</p>
+  <div data-explain-detail="bit-reader"></div>
+</section>
+```
+
+Readers then choose, per piece:
+
+- **Skip**: just read on; the overview stands on its own.
+- **Peek**: "*Title* in brief" opens the detail's `summary` in place.
+- **Dive**: "Dive into *Title*" shows the detail explainer in the same panel. A trail at the top shows the way back; **Back**, a trail entry or <kbd>Esc</kbd> returns to the step you left.
+
+Details can have details of their own (up to 16 levels). Give each explainer a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the explainer you're reading doesn't, the panel offers to dive into it.
 
 ### How sections follow the code
 

@@ -42,6 +42,50 @@ body {
   border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-editorGroup-border));
 }
 
+.cx-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin-bottom: 4px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cx-trail[hidden] {
+  display: none;
+}
+
+.cx-crumb {
+  overflow-wrap: anywhere;
+}
+
+button.cx-crumb,
+.cx-back {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.cx-crumb:hover,
+.cx-back:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+button.cx-crumb:focus-visible,
+.cx-back:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.cx-back[hidden] {
+  display: none;
+}
+
 .cx-titlerow {
   display: flex;
   align-items: baseline;
