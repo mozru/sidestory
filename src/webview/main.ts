@@ -5,6 +5,7 @@ import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
 import { sanitize } from './sanitize.ts';
+import { staticHtml } from './trusted.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -102,7 +103,7 @@ const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // ---- skeleton ----
 
-app.innerHTML = `
+app.innerHTML = staticHtml`
 <header class="cx-header">
   <nav class="cx-trail" aria-label="Explainer path" hidden></nav>
   <div class="cx-titlerow">
@@ -177,7 +178,7 @@ async function buildFrame(): Promise<void> {
   el.className = 'cx-content-frame';
   el.title = 'Explainer content';
   el.setAttribute('sandbox', 'allow-same-origin');
-  el.srcdoc = '<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>';
+  el.srcdoc = staticHtml`<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>` as unknown as string;
   $('.cx-frame').replaceChildren(el);
   await new Promise<void>((resolve) => el.addEventListener('load', () => resolve(), { once: true }));
   const d = el.contentDocument!;
@@ -519,7 +520,7 @@ function decorateTree(root: HTMLElement): void {
         fix = frame.createElement('div');
         fix.className = 'cx-fix';
         fix.setAttribute('data-cx-box', BOX_TOKEN);
-        fix.innerHTML = '<button type="button" class="cx-reanchor">Re-anchor to the selected code</button>';
+        fix.innerHTML = staticHtml`<button type="button" class="cx-reanchor">Re-anchor to the selected code</button>` as unknown as string;
         fix.querySelector('button')!.title = 'Select the code this section explains in the editor, then click';
         el.append(fix);
       }
@@ -555,10 +556,7 @@ function decorateDetails(root: HTMLElement): void {
     if (!box) {
       box = frame.createElement('div');
       box.className = 'cx-detail';
-      box.innerHTML =
-        '<div class="cx-detail-row"><button type="button" class="cx-peek" aria-expanded="false"></button>' +
-        '<button type="button" class="cx-dive"></button><span class="cx-detail-steps"></span></div>' +
-        '<p class="cx-peek-body" hidden></p>';
+      box.innerHTML = staticHtml`<div class="cx-detail-row"><button type="button" class="cx-peek" aria-expanded="false"></button><button type="button" class="cx-dive"></button><span class="cx-detail-steps"></span></div><p class="cx-peek-body" hidden></p>` as unknown as string;
       host.append(box);
       box.setAttribute('data-cx-box', BOX_TOKEN);
     }
@@ -677,7 +675,7 @@ function renderNavigator(): void {
       b.className = 'cx-step';
       b.dataset.anchor = s.id;
       // Visible: "1  Interface". Spoken: "Step 1: Interface, out of date" (the hidden parts carry the rest).
-      b.innerHTML = '<span class="cx-sr cx-step-prefix"></span><span class="cx-step-num" aria-hidden="true"></span><span class="cx-step-label"></span><span class="cx-sr cx-step-state"></span>';
+      b.innerHTML = staticHtml`<span class="cx-sr cx-step-prefix"></span><span class="cx-step-num" aria-hidden="true"></span><span class="cx-step-label"></span><span class="cx-sr cx-step-state"></span>` as unknown as string;
     }
     buttons.delete(s.id);
     return b;

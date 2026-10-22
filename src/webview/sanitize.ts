@@ -2,6 +2,7 @@
 // The CSP already blocks scripts and remote loads; this also removes anything that could
 // navigate, embed or phone home, and rewrites relative URLs to the explainer folder.
 // The result is handed over as nodes, never re-serialized and re-parsed (which invites mXSS).
+import { parseInert } from './trusted.ts';
 
 // SVG animation elements can rewrite a sanitized attribute (such as href) after the fact.
 const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
@@ -21,7 +22,7 @@ export interface Sanitized {
 
 /** `importNode` adopts nodes into the target document (passed bound, so clobbered documents can't interfere). */
 export function sanitize(html: string, baseUrl: string, importNode: (node: Node, deep: boolean) => Node = (n, deep) => document.importNode(n, deep)): Sanitized {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const doc = parseInert(html);
   for (const el of doc.querySelectorAll(DROP)) el.remove();
   for (const el of doc.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {

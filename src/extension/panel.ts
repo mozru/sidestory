@@ -1,5 +1,10 @@
+import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
+import { WIDGET_BOOTSTRAP } from '../shared/widget-bootstrap.ts';
 import type { ExplainerRef } from './explainers.ts';
+
+/** CSP source allowing exactly the widget bootstrap script. */
+export const BOOTSTRAP_HASH = `sha256-${createHash('sha256').update(WIDGET_BOOTSTRAP, 'utf8').digest('base64')}`;
 
 export const VIEW_TYPE = 'codeExplainer.explainer';
 
@@ -35,7 +40,13 @@ export function shellHtml(webview: vscode.Webview, extensionUri: vscode.Uri, ref
     `media-src ${webview.cspSource} blob:`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
     `font-src ${webview.cspSource} blob:`,
-    `script-src 'nonce-${nonce}'`,
+    // Our script by nonce; the widget frame bootstrap by hash, and what it appends via 'strict-dynamic'
+    // (docs/WIDGETS-PLAN.md §3). The nonce never reaches widget code.
+    `script-src 'nonce-${nonce}' '${BOOTSTRAP_HASH}' 'strict-dynamic'`,
+    // Strings become HTML only through our named policies (src/webview/trusted.ts). `default` is for
+    // widget frames, which inherit this list; the panel itself never creates it.
+    "require-trusted-types-for 'script'",
+    'trusted-types cx-static cx-sanitize cx-widget default',
     "form-action 'none'",
     "frame-src 'none'",
     "object-src 'none'",

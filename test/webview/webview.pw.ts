@@ -343,7 +343,7 @@ for (const theme of ['dark', 'light', 'hc'] as const) {
     const chrome = await new AxeBuilder({ page }).exclude('iframe.cx-content-frame').analyze();
     const html = await frame(page).locator('html').evaluate((el) => el.outerHTML);
     const copy = await page.context().newPage();
-    await copy.goto('/test/webview/harness.html'); // same origin, so the content stylesheet loads
+    await copy.goto('/test/webview/blank.html'); // same origin, so the content stylesheet loads
     await copy.setContent(`<!doctype html>${html}`, { waitUntil: 'load' });
     // The frame is transparent over the panel; give the copy the panel's background.
     await copy.addStyleTag({ content: 'html { background: var(--vscode-editor-background); }' });
@@ -750,7 +750,8 @@ test('messages that do not come from VS Code’s host are ignored', async ({ pag
   await page.evaluate(() => {
     const f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts');
-    f.srcdoc = '<script nonce="harness">parent.postMessage({type:"error",message:"forged"},"*");parent.postMessage({type:"content",title:"forged",html:"<p>x</p>"},"*")<\/script>';
+    const tt = (window as unknown as { trustedTypes: { createPolicy(n: string, r: object): { createHTML(s: string): string } } }).trustedTypes;
+    f.srcdoc = tt.createPolicy('cx-test', { createHTML: (s: string) => s }).createHTML('<script nonce="harness">parent.postMessage({type:"error",message:"forged"},"*");parent.postMessage({type:"content",title:"forged",html:"<p>x</p>"},"*")<\/script>');
     document.body.append(f);
   });
   await page.waitForTimeout(500);

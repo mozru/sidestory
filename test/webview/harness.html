@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness' 'strict-dynamic'; require-trusted-types-for 'script'; trusted-types cx-static cx-sanitize cx-widget default cx-test; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
 <title>Explainer webview harness</title>
 <link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
 <link rel="stylesheet" href="/dist/webview/main.css">
