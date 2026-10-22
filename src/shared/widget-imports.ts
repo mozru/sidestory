@@ -69,3 +69,38 @@ export function libraryFor(specifier: string): string | undefined {
   if (s.startsWith('@/components/ui/')) return UI_COMPONENTS.includes(s.slice(16) as (typeof UI_COMPONENTS)[number]) ? 'ui' : undefined;
   return WIDGET_LIBRARIES.find((l) => l.specifiers.includes(s))?.id;
 }
+
+/** Named exports of the `explainer` SDK (§6). The compiler checks named imports against this list. */
+export const EXPLAINER_SDK_EXPORTS = [
+  'useActiveStep', 'useMyAnchor', 'useIsMyStepActive', 'useIsActive', 'useStep', 'useStepValue', 'useAnchors', 'useAnchorCode',
+  'highlight', 'reveal', 'goToStep', 'Ref', 'useWidgetState', 'useTheme', 'useVisible', 'useReducedMotion', 'asset',
+] as const;
+
+/** Named exports of each `@/components/ui/<name>` shim, following shadcn/ui's names. */
+export const UI_COMPONENT_EXPORTS: Record<(typeof UI_COMPONENTS)[number], readonly string[]> = {
+  card: ['Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter'],
+  button: ['Button'],
+  badge: ['Badge'],
+  input: ['Input'],
+  label: ['Label'],
+  slider: ['Slider'],
+  switch: ['Switch'],
+  checkbox: ['Checkbox'],
+  tabs: ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
+  select: ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
+  progress: ['Progress'],
+  separator: ['Separator'],
+  alert: ['Alert', 'AlertTitle', 'AlertDescription'],
+  tooltip: ['Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider'],
+  'scroll-area': ['ScrollArea'],
+};
+
+/** Named exports of `@/lib/utils`. */
+export const LIB_UTILS_EXPORTS = ['cn'] as const;
+
+/**
+ * The name of the per-iteration hook the compiler inserts into every loop body of widget code:
+ * `globalThis.__cxLoopGuard();`. The runtime defines it (one global counter plus a "last yielded"
+ * timestamp refreshed by MessageChannel ticks) and throws when a loop runs over ~1 s without yielding.
+ */
+export const LOOP_GUARD_HOOK = '__cxLoopGuard';
