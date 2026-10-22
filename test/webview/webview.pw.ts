@@ -731,3 +731,15 @@ test('going back restores the parent place even when its assets are slow', async
   await expect(page.locator('.cx-position')).toHaveText('Step 5 of 6');
   await expect.poll(() => page.locator('.cx-scroll').evaluate((el) => el.scrollTop)).toBeGreaterThan(before - 50);
 });
+
+test('a click in the content is not scrolling: a layout scroll right after it keeps the chosen step', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 700 });
+  await open(page, { html: TALL });
+  await page.locator('.cx-step', { hasText: 'Tall 3' }).click();
+  await expect(page.locator('.cx-position')).toHaveText('Step 4 of 6');
+  await page.waitForTimeout(1200);
+  await frame(page).getByRole('heading', { name: 'Tall 3' }).click({ modifiers: ['Alt'] }); // a click, not a scroll
+  await page.locator('.cx-scroll').evaluate((el) => (el.scrollTop = 0)); // layout moves the page (e.g. content shrank)
+  await page.waitForTimeout(300);
+  await expect(page.locator('.cx-position')).toHaveText('Step 4 of 6');
+});

@@ -281,6 +281,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
         if (initialized) savePlace();
         // Until the new explainer renders, the old one is still on screen: don't save or hold its places.
         initialized = false;
+        lastUserScroll = 0; // scrolling in the old explainer says nothing about this one
         details.clear();
         describing.clear();
         peeked.clear();
@@ -891,7 +892,8 @@ function readerInput(): void {
 for (const ev of ['wheel', 'touchmove', 'pointerdown']) scroller.addEventListener(ev, readerInput, { passive: true });
 
 function bindFrameEvents(d: Document): void {
-  for (const ev of ['wheel', 'touchmove', 'pointerdown']) d.addEventListener(ev, readerInput, { passive: true });
+  // Not pointerdown, as on the panel's scrollbar: a click in the content (a button, a link) isn't scrolling.
+  for (const ev of ['wheel', 'touchmove']) d.addEventListener(ev, readerInput, { passive: true });
   d.addEventListener('click', onContentClick);
   d.addEventListener('keydown', onContentKey);
   d.addEventListener('keydown', noteKey, true);
