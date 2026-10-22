@@ -209,6 +209,20 @@ describe('consent for widget files reached through links, or read while git move
     host.dispose();
   });
 
+  it.skipIf(process.platform === 'win32')('a symlink above the folder holding .explain (b -> a, opened as b/.explain/x) is unknown to git, so a new widget asks', async () => {
+    mkdirSync(join(root, 'a', '.explain', 'x', 'w'), { recursive: true });
+    writeFileSync(join(root, 'a', '.explain', 'x', 'w', 'a.tsx'), 'export default () => null;');
+    symlinkSync('a', join(root, 'b'));
+    fakeRepo({ getObjectDetails: async () => { throw new Error('Path not known'); } });
+    const host = new WidgetHost(memento());
+    await host.acknowledge([], true);
+    const ref = refFromDir(Uri.file(join(root, 'b', '.explain', 'x')) as never)!;
+    const [f] = await host.widgetFiles(ref, [{ files: ['w/a.tsx'] } as never]);
+    expect(f!.git).toEqual({ kind: 'unknown' });
+    expect(decideConsent(host.consent(), [f!])).toMatchObject({ ask: true, added: [f!.path] });
+    host.dispose();
+  });
+
   it('bytes that change while git is asked (a pull landing) give unknown, not a mismatched record', async () => {
     const dir = join(root, '.explain', 'x');
     mkdirSync(dir, { recursive: true });

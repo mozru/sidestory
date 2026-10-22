@@ -57,6 +57,7 @@ These are known and accepted; they are why running widgets needs your consent.
 - **Pointer-based allowances.** Within about 5 s of pressing J or clicking a panel control, a widget the pointer moves toward (or across, on the way out of the panel) can navigate or take focus; refusing it would break "press J, then click the widget that came up". So can a widget the pointer was already resting on, or had just moved into (heading in, within about 24 px of its edge), when a key was pressed in the panel; not one that moved or grew under a pointer resting elsewhere.
 - **Between widgets.** A widget can take focus within about 5 s of a click inside another widget: the panel sees neither click.
 - **Touch.** With no pointer samples, a tap on the prose followed within about 5 s by a tap on a widget is refused; tap again.
+- **Fast moves.** After a fast pointer move into a widget and a key press in the panel, a click in that widget within about 5 s may be refused (focus returns to its placeholder); click again. It never counts against the widget.
 - **Refocus target.** After a focus theft, focus returns to the active editor group, even if it was taken from the terminal or the sidebar.
 - **Keyboard.** Escape and Tab are seen by widget code first, so a widget can hold keyboard focus until you click elsewhere. VS Code shortcuts don't work while focus is in a widget.
 - **Side channels** between widgets and the panel in the shared renderer process (timing, memory pressure).

@@ -293,6 +293,7 @@ export class WidgetHost implements vscode.Disposable {
     if (await throughLink(uri, base)) return { kind: 'unknown' };
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return l;
+    if (await throughLink(uri, l.repo.rootUri)) return { kind: 'unknown' };
     if (!(await this.git.settle(l.repo, since))) return { kind: 'unknown' };
     const [headBlob, text] = await Promise.all([this.git.headBlob(l.repo, uri), this.git.headText(l.repo, uri)]);
     return { kind: 'repo', headBlob, headHash: text === null ? null : contentHash(text) };
@@ -317,6 +318,9 @@ export class WidgetHost implements vscode.Disposable {
     if (await throughLink(uri, root)) return unknown();
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return { path, hash, git: l };
+    // And from the repository's own root: a link above the folder holding `.explain` (b -> a, opened as
+    // b/.explain/x) makes git know the file by another path, or not at all.
+    if (await throughLink(uri, l.repo.rootUri)) return unknown();
     const known = this.consent().files[path];
     const settle = known?.hash !== hash;
     if (settle) {
