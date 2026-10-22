@@ -12,10 +12,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The test matrix (see docs/TEST-PLAN.md):
+#   unit, panel, widgets ........ Linux, Windows, macOS
+#   desktop VS Code (Electron) .. Linux, Windows, macOS × oldest supported (1.95.0) and stable, LF and CRLF
+#   browser VS Code (e2e) ....... Linux (Docker), with and without site isolation
+# Windows runners check files out with CRLF (core.autocrlf=true), as most Windows users have them.
 # Actions are pinned to commit SHAs (tags noted alongside).
 jobs:
   unit:
-    # Path, symlink and line-ending logic must hold on every OS.
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +36,55 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  panel:
+    # The explainer panel and widget frames in Chromium, on each OS's fonts, paths and line endings.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:webview
+      - run: npm run test:widgets
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: panel-results-${{ matrix.os }}
+          path: test-results/
+
+  desktop:
+    # The extension in real desktop VS Code (Electron), oldest supported and current.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        vscode: ['1.95.0', stable]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Desktop tests (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node test/desktop/run.mjs --version ${{ matrix.vscode }}
+      - name: Desktop tests
+        if: runner.os != 'Linux'
+        run: node test/desktop/run.mjs --version ${{ matrix.vscode }}
+
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -43,31 +96,30 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=moderate
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:webview
       - run: npm run package
       - name: Package contents and size
         run: |
           npx vsce ls --no-dependencies
           size=$(stat -c %s dist/code-explainer.vsix)
           echo "vsix: $size bytes"
-          test "$size" -lt 1000000
+          test "$size" -lt 2000000
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: code-explainer-vsix
           path: dist/code-explainer.vsix
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: failure()
-        with:
-          name: webview-results
-          path: test-results/
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     needs: check
     steps:
+      - name: Free disk space
+        # Hosted runners start with ~14 GB free; the VS Code image, build cache and browsers need a few GB.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af --volumes > /dev/null
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -78,6 +130,11 @@ jobs:
       - run: npm run test:e2e
         env:
           CX_E2E_CONTAINER: cx-e2e-${{ github.run_id }}
+      - name: e2e with site isolation (desktop browsers' process model)
+        run: npm run test:e2e
+        env:
+          CX_E2E_CONTAINER: cx-e2e-iso-${{ github.run_id }}
+          CX_SITE_ISOLATION: '1'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

@@ -196,7 +196,8 @@
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
     "pin": "node scripts/pin.ts",
     "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository -o dist/code-explainer.vsix",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "test:desktop": "npm run build && node test/desktop/run.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -219,7 +220,10 @@
     "recharts": "3.10.1",
     "tailwind-merge": "3.7.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "@vscode/test-electron": "3.1.0",
+    "mocha": "11.7.5",
+    "@types/mocha": "10.0.10"
   },
   "dependencies": {
     "@vscode/codicons": "0.0.46-24",
