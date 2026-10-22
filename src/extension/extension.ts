@@ -3,7 +3,7 @@ import { explainerNameSchema } from '../core/manifest.ts';
 import { MAX_TRAIL } from '../shared/protocol.ts';
 import { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { findExplainers, refFromDir } from './explainers.ts';
+import { findExplainers, refFromDir, uriKey } from './explainers.ts';
 import { log } from './log.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection } from './pin.ts';
@@ -90,7 +90,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** The panel showing this explainer now: the active one if it does, else any. */
   const showing = (ref: ExplainerRef) => {
-    const same = (s: ExplainerSession) => s.ref.dir.toString() === ref.dir.toString();
+    const same = (s: ExplainerSession) => uriKey(s.ref.dir) === uriKey(ref.dir);
     return current && same(current) ? current : [...sessions].find(same);
   };
 
@@ -189,7 +189,7 @@ export function activate(context: vscode.ExtensionContext): void {
       async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PanelState | undefined) {
         const trail = restoredTrail(state);
         const shown = trail?.at(-1);
-        if (!trail || !shown || [...sessions].some((s) => s.ref.dir.toString() === shown.dir.toString())) {
+        if (!trail || !shown || [...sessions].some((s) => uriKey(s.ref.dir) === uriKey(shown.dir))) {
           panel.dispose();
           return;
         }

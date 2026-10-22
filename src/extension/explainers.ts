@@ -35,6 +35,13 @@ export async function findExplainers(): Promise<ExplainerRef[]> {
     .sort((a, b) => a.dir.path.localeCompare(b.dir.path));
 }
 
+/** File names on macOS and Windows are case-insensitive by default: a key under which `RTL/x.sv` and `rtl/x.sv` are one file. */
+const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+export function uriKey(uri: vscode.Uri | string): string {
+  const s = uri.toString();
+  return caseInsensitive && s.startsWith('file:') ? s.toLowerCase() : s;
+}
+
 export const manifestUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'manifest.json');
 export const htmlUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'explainer.html');
 

@@ -14,7 +14,7 @@ import type { GroupView } from './columns.ts';
 import { codeColumnFor } from './columns.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside } from './explainers.ts';
+import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
 import { log } from './log.ts';
 import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
@@ -460,14 +460,14 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.byFile.manifest !== this.manifest) {
       const anchors = new Map<string, Anchor[]>();
       for (const a of this.anchorList()) {
-        const key = this.fileUri(a.file).toString();
+        const key = uriKey(this.fileUri(a.file));
         const list = anchors.get(key);
         if (list) list.push(a);
         else anchors.set(key, [a]);
       }
       this.byFile = { manifest: this.manifest, anchors };
     }
-    return this.byFile.anchors.get(uri) ?? [];
+    return this.byFile.anchors.get(uriKey(uri)) ?? [];
   }
 
   private async resolveAll(): Promise<void> {

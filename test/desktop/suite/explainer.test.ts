@@ -1,7 +1,7 @@
 // Desktop VS Code: the extension end to end through VS Code's own API (tabs, editors, files on disk), on
 // whatever OS this runs on, with the workspace's line endings set by the runner (CX_EOL = lf | crlf).
 import * as assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 
@@ -89,6 +89,20 @@ export function explainerTests(): void {
       await until('the manifest rewritten with the new range', () => manifest().anchors.refill!.range[0] === before[0] + 3);
       const raw = readFileSync(manifestPath, 'utf8');
       assert.equal(raw.includes('\r\n'), rawBefore.includes('\r\n'), 'line endings kept');
+    });
+
+    (caseInsensitiveFs ? it : it.skip)('a manifest path in different letter case still links the code', async () => {
+      // Rewrite one anchor's file as RTL/BIT_READER.SV: the same file on macOS and Windows.
+      const raw = readFileSync(manifestPath, 'utf8');
+      const a = manifest().anchors.refill!;
+      writeFileSync(manifestPath, raw.replace(`"${a.file}"`, `"${a.file.toUpperCase()}"`));
+      try {
+        await vscode.commands.executeCommand('codeExplainer.prevStep');
+        await vscode.commands.executeCommand('codeExplainer.nextStep');
+        await until('refill code in view through the upper-case path', () => editorShowingLine(a.file, manifest().anchors.refill!.range[0]));
+      } finally {
+        writeFileSync(manifestPath, raw);
+      }
     });
 
     (caseInsensitiveFs ? it : it.skip)('opening the same explainer with different letter case reuses its panel', async () => {
