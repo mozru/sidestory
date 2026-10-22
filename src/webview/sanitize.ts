@@ -51,27 +51,115 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
 /**
  * Points `url()` references at the explainer folder (or nowhere) and drops `@import`.
  * Relative URLs resolve against `from` (a stylesheet's own URL), and must stay inside `baseUrl`.
+ *
+ * A small hand-written scanner rather than regular expressions: every step moves forward through
+ * the text, so the time is linear whatever the input (regexes here kept turning out quadratic on
+ * crafted input). Escapes outside strings are decoded first, so they can't hide `url(`, `@import`
+ * or `image-set(` from the rules; the scanner then rewrites exactly the text the browser will parse.
  */
 export function rewriteCss(css: string, baseUrl: string, from: string = baseUrl): string {
   if (css.length > MAX_CSS) return '';
-  return (
-    css
-      // Undo hex escapes of ASCII letters and punctuation (e.g. \75 rl( is url( ), so they can't hide
-      // url( or @import from the rules below. Letters never need escaping, so nothing legitimate changes.
-      .replace(/\\0{0,4}(4[0-9a-f]|5[0-9a]|6[0-9a-f]|7[0-9a]|28|29|40)\s?/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-      // A backslash before any other non-hex letter or "(" / "@" just means that character (u\rl( is url( ).
-      .replace(/\\([g-zG-Z(@])/g, '$1')
-      .replace(/@import[^;]*;?/gi, '')
-      // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
-      .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(')
-      // Linear-time: each alternative stops at its own delimiter, and the unquoted form can't run on
-      // past another "(" (otherwise "url(url(url(…" backtracks quadratically).
-      .replace(/url\(\s*(?:"([^"\n]*)"|'([^'\n]*)'|([^()'"\s\\]*))\s*\)/gi, (_, d?: string, s?: string, b?: string) => {
-      const u = d ?? s ?? b ?? '';
-      const fixed = u.startsWith('#') ? u : resolveLocal(u, baseUrl, from);
-      return fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';
-    })
-  );
+  const decoded = decodeEscapesOutsideStrings(css);
+  return rewriteUrlFunctions(decoded, baseUrl, from)
+    .replace(/@import[^;]*;?/gi, '')
+    // image-set() and image() take bare strings as URLs; make them invalid rather than parse them.
+    .replace(/(-webkit-)?image(-set)?\(/gi, 'cx-blocked(');
+}
+
+const isHex = (c: string) => /^[0-9a-f]$/i.test(c);
+
+/**
+ * Replaces CSS escapes outside strings with the characters they stand for. An escape that decodes to
+ * a backslash, a quote or a control character is dropped, so escapes can't be chained or open strings.
+ */
+function decodeEscapesOutsideStrings(css: string): string {
+  let out = '';
+  let i = 0;
+  while (i < css.length) {
+    const c = css[i]!;
+    if (c === '"' || c === "'") {
+      // Copy a string verbatim, including its own escapes, up to the closing quote or line end.
+      let j = i + 1;
+      while (j < css.length && css[j] !== c && css[j] !== '\n') j += css[j] === '\\' ? 2 : 1;
+      out += css.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (c !== '\\') {
+      out += c;
+      i++;
+      continue;
+    }
+    const next = css[i + 1];
+    if (next === undefined || next === '\n') {
+      i += 2; // a stray backslash, or a line continuation: drop it
+      continue;
+    }
+    let decoded: string;
+    if (isHex(next)) {
+      let j = i + 1;
+      while (j < css.length && j < i + 7 && isHex(css[j]!)) j++;
+      const code = parseInt(css.slice(i + 1, j), 16);
+      if (/\s/.test(css[j] ?? '')) j++; // one whitespace ends a hex escape
+      decoded = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff) ? String.fromCodePoint(code) : '';
+      i = j;
+    } else {
+      decoded = next;
+      i += 2;
+    }
+    if (!/[\\"'\x00-\x1f\x7f]/.test(decoded)) out += decoded;
+  }
+  return out;
+}
+
+/** Rewrites every url(...) outside strings, in one forward pass. */
+function rewriteUrlFunctions(css: string, baseUrl: string, from: string): string {
+  let out = '';
+  let i = 0;
+  const ws = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+  while (i < css.length) {
+    const c = css[i]!;
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== c && css[j] !== '\n') j += css[j] === '\\' ? 2 : 1;
+      out += css.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    const startsUrl = (c === 'u' || c === 'U') && css.slice(i, i + 4).toLowerCase() === 'url(' && !/[\w-]/.test(css[i - 1] ?? '');
+    if (!startsUrl) {
+      out += c;
+      i++;
+      continue;
+    }
+    // url( [ws] ( "string" | 'string' | bare ) [ws] )
+    let j = i + 4;
+    while (ws(css[j])) j++;
+    let value = '';
+    const q = css[j];
+    if (q === '"' || q === "'") {
+      let k = j + 1;
+      while (k < css.length && css[k] !== q && css[k] !== '\n') k++;
+      value = css.slice(j + 1, k);
+      j = k + 1;
+    } else {
+      let k = j;
+      while (k < css.length && !ws(css[k]) && !'()"\'\\'.includes(css[k]!)) k++;
+      value = css.slice(j, k);
+      j = k;
+    }
+    while (ws(css[j])) j++;
+    if (css[j] !== ')') {
+      // Malformed: don't guess. Neutralize it and carry on after what we consumed.
+      out += 'none';
+      i = j;
+      continue;
+    }
+    const fixed = value.startsWith('#') ? value : resolveLocal(value, baseUrl, from);
+    out += fixed ? `url("${fixed.replace(/["\\]/g, '\\$&')}")` : 'none';
+    i = j + 1;
+  }
+  return out;
 }
 
 /** Larger stylesheets are dropped: rewriting them would tie up the panel. */

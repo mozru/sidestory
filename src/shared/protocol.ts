@@ -93,8 +93,10 @@ export function safeExternalUrl(raw: string): string | null {
   // (e.g. an OAuth redirect_uri). Refuse any query or fragment value that is itself a web URL.
   // Mirror VS Code: it percent-decodes the whole query first, then splits on & and =. Check every
   // value both that way and the standard way, and refuse local hosts anywhere in the decoded text.
-  const decodedQuery = decodeURIComponentSafe(u.search.slice(1));
-  const decodedHash = decodeURIComponentSafe(u.hash.slice(1));
+  // A query or fragment that doesn't decode cleanly is refused: decoders disagree on such input.
+  if (!decodesCleanly(u.search.slice(1)) || !decodesCleanly(u.hash.slice(1))) return null;
+  const decodedQuery = percentDecode(u.search.slice(1));
+  const decodedHash = percentDecode(u.hash.slice(1));
   const values = [
     ...decodedQuery.split('&').map((p) => p.slice(p.indexOf('=') + 1)),
     ...u.searchParams.values(),
@@ -117,10 +119,26 @@ export function safeExternalUrl(raw: string): string | null {
   return privateHost ? null : u.href;
 }
 
-function decodeURIComponentSafe(s: string): string {
+function decodesCleanly(s: string): boolean {
   try {
-    return decodeURIComponent(s);
+    decodeURIComponent(s);
+    return true;
   } catch {
-    return s;
+    return false;
   }
+}
+
+// VS Code's own decoding (src/vs/base/common/uri.ts), so we see a URL exactly as it will.
+const ENCODED_AS_HEX = /(%[0-9A-Za-z][0-9A-Za-z])+/g;
+
+function decodeURIComponentGraceful(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str.length > 3 ? str.slice(0, 3) + decodeURIComponentGraceful(str.slice(3)) : str;
+  }
+}
+
+function percentDecode(str: string): string {
+  return str.replace(ENCODED_AS_HEX, (m) => decodeURIComponentGraceful(m));
 }

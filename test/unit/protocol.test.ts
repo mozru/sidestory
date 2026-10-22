@@ -82,3 +82,9 @@ describe('safeExternalUrl: encoded nested URLs (round 2 audit)', () => {
     expect(safeExternalUrl(u)).toBeNull();
   });
 });
+
+describe('safeExternalUrl: round 3 audit', () => {
+  it.each(['https://a.example/?a=%ZZ%26u=%68ttp://%6cocalhost:8080', 'https://a.example/?a=%ZZ%26u=%68ttp://%31%327.0.0.1:2375', 'https://a.example/#%E0%A4%A'])('refuses %s', (u) => {
+    expect(safeExternalUrl(u)).toBeNull();
+  });
+});

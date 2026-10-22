@@ -26,3 +26,31 @@ describe('rewriteCss', () => {
     expect(performance.now() - t0).toBeLessThan(150);
   });
 });
+
+describe('rewriteCss: round 3 audit', () => {
+  it.each([
+    ['url( + spaces', 'url(' + ' '.repeat(490_000)],
+    ['url( + spaces + quote', 'url(' + ' '.repeat(489_000) + '"'],
+    ['many escapes', '\\75 '.repeat(120_000)],
+    ['many strings', '"a"'.repeat(160_000)],
+  ])('is linear on %s', (_, css) => {
+    const t0 = performance.now();
+    rewriteCss(css, BASE);
+    expect(performance.now() - t0).toBeLessThan(150);
+  });
+
+  it.each([
+    ['escaped hyphen in image-set', 'a{b:image\\-set("https://evil.example/q.png" 1x)}'],
+    ['hex hyphen in image-set', 'a{b:image\\2d set("https://evil.example/q.png" 1x)}'],
+    ['escape inside a bare url', 'a{b:url(http\\://evil.example/q.png)}'],
+    ['chained escapes', 'a{b:\\5c 75rl(https://evil.example/q.png)}'],
+  ])('neutralizes %s', (_, css) => {
+    const out = rewriteCss(css, BASE);
+    expect(out).not.toMatch(/(image-set|url)\(\s*["']?https?:\/\/evil/i);
+    expect(out).not.toContain('\\');
+  });
+
+  it('keeps ordinary CSS intact', () => {
+    expect(rewriteCss('a::before{content:"\\2192  next"} b{color:var(--x)}', BASE)).toBe('a::before{content:"\\2192  next"} b{color:var(--x)}');
+  });
+});
