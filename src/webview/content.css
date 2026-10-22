@@ -3,12 +3,14 @@
  * Theme variables inherit into the shadow root, so authors can use them too.
  */
 
-:host {
-  display: block;
+html, body {
+  margin: 0;
+  background: transparent;
 }
 
+/* --cx-gutter and --cx-tail are set by the panel (vh would grow with the frame itself). */
 .cx-content {
-  padding: 16px var(--cx-gutter, 20px) 40vh;
+  padding: 16px var(--cx-gutter, 20px) var(--cx-tail, 240px);
   color: var(--vscode-editor-foreground);
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
@@ -60,6 +62,14 @@
 
 .cx-content :where(img, svg, video) {
   max-width: 100%;
+}
+
+/* Wide blocks scroll on their own, so the rest of the text stays put. */
+.cx-content :where(pre, table),
+[data-explain-anchor] > :where(:not(h1, h2, h3, h4, h5, h6, p, ul, ol)),
+.cx-content > :where(:not([data-explain-anchor], h1, h2, h3, h4, h5, h6, p, ul, ol, style)) {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* ---- linked sections ---- */
@@ -149,19 +159,24 @@
   [data-explain-anchor] { transition: none; }
   [data-explain-anchor].cx-updated {
     animation: none;
+    box-shadow: 0 0 0 1px var(--vscode-editorInfo-foreground);
+  }
+  [data-explain-anchor].cx-active.cx-updated {
     box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 1px var(--vscode-editorInfo-foreground);
   }
 }
 
 /* High contrast: no tints; mark things with borders. Box shadows leave the state outlines visible. */
-:host-context(body.vscode-high-contrast) [data-explain-anchor].cx-active,
-:host-context(body.vscode-high-contrast-light) [data-explain-anchor].cx-active {
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-active {
   background: transparent;
   box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder);
 }
 
-:host-context(body.vscode-high-contrast) [data-explain-anchor].cx-updated,
-:host-context(body.vscode-high-contrast-light) [data-explain-anchor].cx-updated {
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-updated {
   animation: none;
   box-shadow: 0 0 0 1px var(--vscode-editorInfo-foreground);
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-active.cx-updated {
+  box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder), 0 0 0 3px var(--vscode-editorInfo-foreground);
 }

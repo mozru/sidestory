@@ -9,7 +9,8 @@ export interface AnchorView {
   file: string;
   /** Current location, 1-based inclusive. Null when the code can't be found. */
   range: { start: number; end: number } | null;
-  state: AnchorState;
+  /** `pending`: not resolved yet (shown as normal, never as "not found"). */
+  state: AnchorState | 'pending';
   /** CSS variable for the section accent, e.g. `--vscode-charts-purple`. */
   colorVar?: string;
 }

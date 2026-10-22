@@ -319,3 +319,14 @@ describe('resolveAnchor: round 3 regressions', () => {
     expect(performance.now() - t0).toBeLessThan(150);
   });
 });
+
+describe('resolveAnchor: round 4 regressions', () => {
+  it('a file of millions of identical lines costs little per anchor once indexed', () => {
+    const text = new PreparedText(Array.from({ length: 2_000_000 }, () => 'a'));
+    const anchor: Anchor = { id: 'a', file: 'x', range: { start: 10, end: 11 }, quote: { exact: 'a\na', prefix: 'x', suffix: 'y', norm: 'ws' }, highlight: [] };
+    resolveAnchor(text, anchor);
+    const t0 = performance.now();
+    for (let i = 0; i < 5; i++) expect(resolveAnchor(text, anchor).ambiguous).toBe(true);
+    expect((performance.now() - t0) / 5).toBeLessThan(40);
+  });
+});

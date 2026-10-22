@@ -46,6 +46,8 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private fileWatchers: vscode.Disposable[] = [];
   private disposed = false;
+  /** Our own cursor move (an inline reference) shouldn't count as the reader moving to that section. */
+  private ignoreSelectionUntil = 0;
   private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposeEmitter.event;
 
@@ -196,7 +198,7 @@ export class ExplainerSession implements vscode.Disposable {
   private anchorViews(): AnchorView[] {
     return this.anchorList().map((a) => {
       const r = this.resolutions.get(a.id);
-      return { id: a.id, file: a.file, range: r?.range ?? null, state: r?.state ?? 'lost', colorVar: a.color ? themeColorVar(a.color) : undefined };
+      return { id: a.id, file: a.file, range: r?.range ?? null, state: r?.state ?? 'pending', colorVar: a.color ? themeColorVar(a.color) : undefined };
     });
   }
 
@@ -239,7 +241,7 @@ export class ExplainerSession implements vscode.Disposable {
   private onSelection(e: vscode.TextEditorSelectionChangeEvent): void {
     const uri = e.textEditor.document.uri.toString();
     const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
-    if (ids.size === 0) return;
+    if (ids.size === 0 || Date.now() < this.ignoreSelectionUntil) return;
     const line = e.selections[0]!.active.line + 1;
     // The reader clicked or typed in the code: stop fading the rest of the file.
     const byUser = e.kind === vscode.TextEditorSelectionChangeKind.Keyboard || e.kind === vscode.TextEditorSelectionChangeKind.Mouse;
@@ -264,10 +266,14 @@ export class ExplainerSession implements vscode.Disposable {
         this.post({ type: 'init', title: this.title, html: this.html, anchors: this.anchorViews(), active: this.active });
         break;
       case 'focusAnchor':
-      case 'openRef':
         if (!this.manifest?.anchors.has(m.anchorId)) return;
         this.setActive(m.anchorId);
-        this.requestReveal(m.anchorId, m.type === 'openRef');
+        this.requestReveal(m.anchorId, false);
+        break;
+      case 'openRef':
+        // A reference inside a section jumps to other code; the section being read stays active.
+        if (!this.manifest?.anchors.has(m.anchorId)) return;
+        this.requestReveal(m.anchorId, true);
         break;
     }
   }
@@ -317,15 +323,17 @@ export class ExplainerSession implements vscode.Disposable {
     const uri = this.fileUri(a.file);
     const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
     try {
+      if (moveCursor) this.ignoreSelectionUntil = Date.now() + 500;
       const editor = await vscode.window.showTextDocument(uri, {
         viewColumn: this.codeColumn(uri),
         preserveFocus: !moveCursor,
         preview: true,
         selection: moveCursor ? new vscode.Range(range.start, range.start) : undefined,
       });
-      if (this.active !== id || this.disposed) return; // the reader moved on while the file opened
+      if (this.disposed) return;
       editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-      this.decorateActive(dim);
+      if (moveCursor) this.decorations.flash(editor, new vscode.Range(range.start, new vscode.Position(r.range.end - 1, 0)));
+      else if (this.active === id) this.decorateActive(dim); // unless the reader moved on while the file opened
     } catch (e) {
       void vscode.window.showWarningMessage(`Can't open ${a.file}: ${(e as Error).message}`);
     }

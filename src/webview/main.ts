@@ -1,4 +1,4 @@
-// The explainer page. It renders author HTML in a shadow root, keeps the reader's place through
+// The explainer page. It renders author HTML in a sandboxed iframe, keeps the reader's place through
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
 import type { AnchorView, FromWebview, ToWebview } from '../shared/protocol.ts';
@@ -68,7 +68,7 @@ app.innerHTML = `
   </div>
 </header>
 <div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span></div>
-<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"><div class="cx-host"></div></div></main>
+<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"></div></main>
 <div class="cx-pill" hidden>
   <button class="cx-pill-show" type="button"></button>
   <button class="cx-pill-close" type="button" aria-label="Dismiss"><span class="codicon codicon-close" aria-hidden="true"></span></button>
@@ -97,15 +97,49 @@ const pillShow = $<HTMLButtonElement>('.cx-pill-show');
 const positionEl = $('.cx-position');
 const liveEl = $('[aria-live]');
 
-const shadow = $('.cx-host').attachShadow({ mode: 'open' });
-const contentCss = document.createElement('link');
+/*
+ * Explainer content lives in a sandboxed iframe: no scripts run in it (only this script, from
+ * outside, touches its DOM), and anything it draws, even in the browser's top layer, stays inside
+ * its box, so it can never cover the panel's own controls. The frame is as tall as its content;
+ * the panel scrolls, not the frame.
+ */
+const frame = document.createElement('iframe');
+frame.className = 'cx-content-frame';
+frame.title = 'Explainer content';
+frame.setAttribute('sandbox', 'allow-same-origin');
+frame.srcdoc = '<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>';
+$('.cx-frame').append(frame);
+await new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
+const doc = frame.contentDocument!;
+const contentCss = doc.createElement('link');
 contentCss.rel = 'stylesheet';
 contentCss.href = app.dataset.contentCss!;
-const content = document.createElement('div');
+doc.head.append(contentCss);
+const content = doc.createElement('div');
 content.className = 'cx-content';
-shadow.append(contentCss, content);
+doc.body.append(content);
+
+// The frame doesn't inherit the theme: copy VS Code's variables and body classes, and keep them in sync.
+const syncTheme = () => {
+  doc.documentElement.setAttribute('style', document.documentElement.getAttribute('style') ?? '');
+  doc.body.className = document.body.className;
+  doc.documentElement.style.setProperty('--cx-tail', `${Math.round(scroller.clientHeight * 0.4)}px`);
+};
+syncTheme();
+new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+new ResizeObserver(syncTheme).observe(scroller);
+// Grow the frame to its content, so the panel's scroller does the scrolling. Done synchronously after
+// every render (so a scroll right after an update has room), and again when images or fonts load.
+const fitFrame = () => {
+  const h = `${doc.documentElement.scrollHeight}px`;
+  if (frame.style.height !== h) frame.style.height = h;
+};
+new ResizeObserver(fitFrame).observe(doc.body);
 
 const sectionEl = (id: string) => content.querySelector<HTMLElement>(`[data-explain-anchor="${CSS.escape(id)}"]`);
+/** An element's top, in the panel's coordinates. */
+const topOf = (el: Element) => el.getBoundingClientRect().top + frame.getBoundingClientRect().top;
 
 // ---- messages ----
 
@@ -146,15 +180,20 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
 
 function render(title: string, html: string, isUpdate: boolean): void {
   titleEl.textContent = title;
-  const parsed = sanitize(html, baseUrl);
-  const next = document.createElement('div');
+  const parsed = sanitize(html, baseUrl, doc);
+  const next = doc.createElement('div');
   next.append(...parsed.styles, ...parsed.body);
   // Stable ids let the morph match sections across edits.
   for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (!el.id) el.id = `cx-a-${el.dataset.explainAnchor}`;
+  // Give the incoming tree the attributes this script adds, so the morph leaves them alone
+  // (removing tabindex from a focused link would blur it).
+  decorateTree(next);
+  for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (el.dataset.explainAnchor === active) el.classList.add('cx-active');
 
   const before = isUpdate ? snapshot() : new Map<string, string>();
   const keep = isUpdate ? readingPosition() : undefined;
   Idiomorph.morph(content, next, { morphStyle: 'innerHTML', ignoreActiveValue: true, restoreFocus: true });
+  fitFrame();
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
   decorate();
@@ -171,7 +210,7 @@ function cleanHtml(el: HTMLElement): string {
   for (const x of [c, ...c.querySelectorAll<HTMLElement>('*')]) {
     x.classList.remove('cx-active', 'cx-updated');
     if (x.classList.length === 0) x.removeAttribute('class');
-    for (const a of ['data-cx-state', 'data-cx-label', 'data-cx-title']) x.removeAttribute(a);
+    for (const a of ['data-cx-state', 'data-cx-label']) x.removeAttribute(a);
     if (x.hasAttribute('data-cx-ref')) for (const a of ['data-cx-ref', 'tabindex', 'role']) x.removeAttribute(a);
     if (x.dataset.cxTitled) {
       x.removeAttribute('title');
@@ -195,32 +234,38 @@ function markUpdated(before: Map<string, string>): void {
   if (changed.length) announce(`${changed.join(', ')} updated`);
 }
 
-/** Applies anchor states, accents and the active section, then rebuilds the navigator. */
-function decorate(): void {
-  const all = [...content.querySelectorAll<HTMLElement>('[data-explain-anchor]')];
-  for (const el of all) {
+/** Section states, accents and inline-reference behaviour, on any tree (live or about to be morphed in). */
+function decorateTree(root: HTMLElement): void {
+  for (const el of root.querySelectorAll<HTMLElement>('[data-explain-anchor]')) {
     const a = anchors.get(el.dataset.explainAnchor!);
     const s = a?.state ?? 'unknown';
     el.dataset.cxState = s;
     const text = STATE_TEXT[s];
     el.setAttribute('data-cx-label', text?.badge ?? '');
-    // Explain the state on hover, without clobbering a title the author wrote.
-    if (text && (!el.hasAttribute('title') || el.dataset.cxTitled)) {
-      el.title = text.title;
-      el.dataset.cxTitled = '1';
-    } else if (!text && el.dataset.cxTitled) {
-      el.removeAttribute('title');
-      delete el.dataset.cxTitled;
+    // Explain the state on the section's heading (not the whole section, which you hover while reading).
+    const heading = el.querySelector<HTMLElement>('h1, h2, h3, h4, h5, h6');
+    if (heading && text && (!heading.hasAttribute('title') || heading.dataset.cxTitled)) {
+      heading.title = text.title;
+      heading.dataset.cxTitled = '1';
+    } else if (heading && !text && heading.dataset.cxTitled) {
+      heading.removeAttribute('title');
+      delete heading.dataset.cxTitled;
     }
     if (a?.colorVar) el.style.setProperty('--cx-accent', `var(${a.colorVar})`);
     else el.style.removeProperty('--cx-accent');
   }
   // Inline references behave like links for the keyboard and screen readers.
-  for (const ref of content.querySelectorAll<HTMLElement>('[data-explain-ref]')) {
+  for (const ref of root.querySelectorAll<HTMLElement>('[data-explain-ref]')) {
     ref.dataset.cxRef = '1';
     if (!ref.hasAttribute('tabindex')) ref.tabIndex = 0;
     if (!ref.hasAttribute('role') && !(ref.localName === 'a' && ref.hasAttribute('href'))) ref.setAttribute('role', 'link');
   }
+}
+
+/** Applies anchor states, accents and the active section, then rebuilds the navigator. */
+function decorate(): void {
+  decorateTree(content);
+  const all = [...content.querySelectorAll<HTMLElement>('[data-explain-anchor]')];
   steps = all
     .filter((el) => !el.parentElement?.closest('[data-explain-anchor]'))
     .map((el) => ({ id: el.dataset.explainAnchor!, el, label: stepLabel(el, el.dataset.explainAnchor!) }));
@@ -240,37 +285,53 @@ function spokenState(id: string): string {
   return t ? `, ${t.spoken}` : '';
 }
 
+/** Keeps one button, option and progress segment per step, updated in place (a focused button survives edits). */
 function renderNavigator(): void {
-  const signature = steps.map((s) => `${s.id}:${s.label}`).join('|');
-  if (stepsEl.dataset.signature !== signature) {
-    stepsEl.dataset.signature = signature;
-    stepsEl.replaceChildren(
-      ...steps.map((s, i) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'cx-step';
-        b.dataset.anchor = s.id;
-        // Visible: "1  Interface". Spoken: "Step 1: Interface, out of date" (the hidden parts carry the rest).
-        b.innerHTML = `<span class="cx-sr">Step ${i + 1}: </span><span class="cx-step-num" aria-hidden="true">${i + 1}</span><span class="cx-step-label"></span><span class="cx-sr cx-step-state"></span>`;
-        b.querySelector('.cx-step-label')!.textContent = s.label;
-        b.title = s.label;
-        return b;
-      }),
-    );
-    selectEl.replaceChildren(...steps.map((s) => Object.assign(document.createElement('option'), { value: s.id })));
-    progressEl.replaceChildren(...steps.map(() => document.createElement('span')));
-  }
+  const buttons = new Map([...stepsEl.querySelectorAll<HTMLButtonElement>('.cx-step')].map((b) => [b.dataset.anchor!, b]));
+  const ordered = steps.map((s) => {
+    let b = buttons.get(s.id);
+    if (!b) {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cx-step';
+      b.dataset.anchor = s.id;
+      // Visible: "1  Interface". Spoken: "Step 1: Interface, out of date" (the hidden parts carry the rest).
+      b.innerHTML = '<span class="cx-sr cx-step-prefix"></span><span class="cx-step-num" aria-hidden="true"></span><span class="cx-step-label"></span><span class="cx-sr cx-step-state"></span>';
+    }
+    buttons.delete(s.id);
+    return b;
+  });
+  for (const stale of buttons.values()) stale.remove();
+  ordered.forEach((b, i) => {
+    if (stepsEl.children[i] !== b) stepsEl.insertBefore(b, stepsEl.children[i] ?? null);
+  });
+  while (selectEl.options.length > steps.length) selectEl.remove(selectEl.options.length - 1);
+  while (selectEl.options.length < steps.length) selectEl.add(document.createElement('option'));
+  while (progressEl.children.length > steps.length) progressEl.lastElementChild!.remove();
+  while (progressEl.children.length < steps.length) progressEl.append(document.createElement('span'));
+
   steps.forEach((s, i) => {
+    const b = ordered[i]!;
+    setText(b.querySelector('.cx-step-prefix')!, `Step ${i + 1}: `);
+    setText(b.querySelector('.cx-step-num')!, String(i + 1));
+    setText(b.querySelector('.cx-step-label')!, s.label);
+    setText(b.querySelector('.cx-step-state')!, spokenState(s.id));
+    b.title = s.label;
     const accent = anchors.get(s.id)?.colorVar;
     const stateName = anchors.get(s.id)?.state ?? 'unknown';
-    for (const el of [stepsEl.children[i], progressEl.children[i]] as HTMLElement[]) {
+    for (const el of [b, progressEl.children[i] as HTMLElement]) {
       if (accent) el.style.setProperty('--cx-accent', `var(${accent})`);
       else el.style.removeProperty('--cx-accent');
       el.dataset.cxState = stateName;
     }
-    stepsEl.children[i]!.querySelector('.cx-step-state')!.textContent = spokenState(s.id);
-    (selectEl.options[i] as HTMLOptionElement).textContent = `${i + 1}. ${s.label}${spokenState(s.id) ? ` (${spokenState(s.id).slice(2)})` : ''}`;
+    const o = selectEl.options[i]!;
+    o.value = s.id;
+    setText(o, `${i + 1}. ${s.label}${spokenState(s.id) ? ` (${spokenState(s.id).slice(2)})` : ''}`);
   });
+}
+
+function setText(el: Element, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
 }
 
 function renderStatus(): void {
@@ -329,7 +390,8 @@ function scrollToSection(id: string): void {
   const el = sectionEl(id);
   if (!el) return;
   programmaticUntil = Date.now() + 1000;
-  el.scrollIntoView({ block: 'start', behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  const top = scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - 12;
+  scroller.scrollTo({ top, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
 }
 
 function step(delta: 1 | -1): void {
@@ -357,15 +419,16 @@ function followEditor(id: string): void {
   }
   hidePill();
   setActive(id);
-  const r = el.getBoundingClientRect();
+  const top = topOf(el);
   const view = scroller.getBoundingClientRect();
-  const visible = r.top >= view.top && r.top <= view.top + view.height * 0.6;
+  const visible = top >= view.top && top <= view.top + view.height * 0.6;
   if (!visible) scrollToSection(id);
 }
 
 function showPill(id: string, el: HTMLElement): void {
   pillShow.textContent = `Cursor is in “${stepLabel(el, id)}” · Show`;
   pillEl.dataset.anchor = id;
+  if (pillEl.hidden) announce(`Editor cursor is in ${stepLabel(el, id)}`);
   pillEl.hidden = false;
   clearTimeout(pillTimer);
   pillTimer = setTimeout(hidePill, PILL_MS);
@@ -382,7 +445,7 @@ function sectionAtReadingLine(): Step | undefined {
   if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return steps[steps.length - 1];
   const y = view.top + view.height * READING_LINE;
   let found: Step | undefined;
-  for (const s of steps) if (s.el.getBoundingClientRect().top <= y) found = s;
+  for (const s of steps) if (topOf(s.el) <= y) found = s;
   return found ?? steps[0];
 }
 
@@ -402,9 +465,10 @@ scroller.addEventListener('scrollend', () => {
   programmaticUntil = 0;
 });
 const readerInput = () => (lastUserScroll = Date.now());
-for (const ev of ['wheel', 'touchmove'] as const) scroller.addEventListener(ev, readerInput, { passive: true });
-// Covers dragging the scrollbar, which fires no wheel events.
-scroller.addEventListener('pointerdown', readerInput, { passive: true });
+// Events over the content happen in the frame's document; the scrollbar belongs to the panel.
+for (const target of [scroller, doc] as EventTarget[]) {
+  for (const ev of ['wheel', 'touchmove', 'pointerdown']) target.addEventListener(ev, readerInput, { passive: true });
+}
 
 // ---- input ----
 
@@ -413,7 +477,7 @@ function openRef(ref: HTMLElement): void {
   if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
 }
 
-shadow.addEventListener('click', (e) => {
+doc.addEventListener('click', (e) => {
   const target = e.target as HTMLElement;
   const ref = target.closest<HTMLElement>('[data-explain-ref]');
   if (ref) {
@@ -427,7 +491,7 @@ shadow.addEventListener('click', (e) => {
     if (!/^https?:|^mailto:/i.test(link.getAttribute('href') ?? '')) e.preventDefault();
     return;
   }
-  if (target.closest('button, input, select, textarea, summary, label') || (getSelection()?.toString() ?? '') !== '') return;
+  if (target.closest('button, input, select, textarea, summary, label') || (frame.contentWindow?.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
   const id = section.dataset.explainAnchor!;
@@ -436,14 +500,14 @@ shadow.addEventListener('click', (e) => {
   else setActive(id, 'click');
 });
 
-shadow.addEventListener('keydown', (e) => {
-  const ke = e as KeyboardEvent;
-  const ref = (ke.target as HTMLElement).closest?.<HTMLElement>('[data-explain-ref]');
-  if (ref && (ke.key === 'Enter' || ke.key === ' ')) {
-    ke.preventDefault();
-    ke.stopPropagation();
+doc.addEventListener('keydown', (e) => {
+  const ref = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-ref]');
+  if (ref && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
     openRef(ref);
+    return;
   }
+  onKey(e);
 });
 
 stepsEl.addEventListener('click', (e) => {
@@ -472,14 +536,16 @@ pillShow.addEventListener('click', () => {
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
 
-document.addEventListener('keydown', (e) => {
-  const t = e.composedPath()[0] as HTMLElement | undefined;
+document.addEventListener('keydown', onKey);
+
+function onKey(e: KeyboardEvent): void {
+  const t = e.target as HTMLElement | undefined;
   if (e.key === 'Escape') hidePill();
   if (e.altKey || e.ctrlKey || e.metaKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) return;
   if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) readerInput();
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
-});
+}
 
 // ---- keeping the reader's place ----
 
@@ -491,13 +557,13 @@ interface Position {
 function readingPosition(): Position | undefined {
   const s = sectionAtReadingLine();
   if (!s) return undefined;
-  return { anchor: s.id, offset: s.el.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
+  return { anchor: s.id, offset: topOf(s.el) - scroller.getBoundingClientRect().top };
 }
 
 function restorePosition(p: Position): void {
   const el = sectionEl(p.anchor);
   if (!el) return;
-  const now = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  const now = topOf(el) - scroller.getBoundingClientRect().top;
   if (Math.abs(now - p.offset) > 1) {
     programmaticUntil = Date.now() + 200;
     scroller.scrollTop += now - p.offset;
@@ -518,10 +584,14 @@ function saveState(): void {
   }, 200);
 }
 
+const pendingAnnouncements: string[] = [];
 function announce(text: string): void {
-  // Clear first so the same message twice is announced twice.
+  // Collect messages from one update into one announcement; clear first so a repeat is announced again.
+  if (pendingAnnouncements.push(text) > 1) return;
   liveEl.textContent = '';
-  requestAnimationFrame(() => (liveEl.textContent = text));
+  requestAnimationFrame(() => {
+    liveEl.textContent = pendingAnnouncements.splice(0).join('. ');
+  });
 }
 
 vscode.setState(state);

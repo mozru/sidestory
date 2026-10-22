@@ -53,7 +53,7 @@ export function shellHtml(webview: vscode.Webview, extensionUri: vscode.Uri, ref
 </head>
 <body>
 <div id="app" data-base="${base}/" data-dir="${dir}" data-content-css="${asset('content.css')}"></div>
-<script nonce="${nonce}" src="${asset('main.js')}"></script>
+<script type="module" nonce="${nonce}" src="${asset('main.js')}"></script>
 </body>
 </html>`;
 }

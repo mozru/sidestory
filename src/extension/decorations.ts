@@ -22,7 +22,21 @@ export class Decorations implements vscode.Disposable {
     borderRadius: '3px',
   });
   private readonly dim = vscode.window.createTextEditorDecorationType({ opacity: '0.5' });
+  private readonly flashType = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+    overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
+    overviewRulerLane: vscode.OverviewRulerLane.Center,
+  });
+  private flashTimer: ReturnType<typeof setTimeout> | undefined;
   private current: Focus | undefined;
+
+  /** Briefly marks lines (an inline reference's target) without changing the active step. */
+  flash(editor: vscode.TextEditor, range: vscode.Range): void {
+    clearTimeout(this.flashTimer);
+    editor.setDecorations(this.flashType, [range]);
+    this.flashTimer = setTimeout(() => editor.setDecorations(this.flashType, []), 1500);
+  }
 
   set(focus: Focus | undefined): void {
     this.current = focus;
@@ -82,8 +96,10 @@ export class Decorations implements vscode.Disposable {
 
   dispose(): void {
     for (const t of this.focusTypes.values()) t.dispose();
+    clearTimeout(this.flashTimer);
     this.chip.dispose();
     this.dim.dispose();
+    this.flashType.dispose();
   }
 }
 

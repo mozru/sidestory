@@ -35,7 +35,15 @@ async function open(page: Page, opts: { theme?: ThemeName; html?: string; active
 const send = (page: Page, m: ToWebview) => page.evaluate((msg) => (window as unknown as { __send(m: unknown): void }).__send(msg), m);
 const posted = (page: Page) => page.evaluate(() => (window as unknown as { __posted: FromWebview[] }).__posted);
 const clearPosted = (page: Page) => page.evaluate(() => ((window as unknown as { __posted: FromWebview[] }).__posted = []));
-const section = (page: Page, id: string) => page.locator(`[data-explain-anchor="${id}"]`);
+const frame = (page: Page) => page.frameLocator('iframe.cx-content-frame');
+const section = (page: Page, id: string) => frame(page).locator(`[data-explain-anchor="${id}"]`);
+/** A section's top in the panel's coordinates (the frame itself doesn't scroll). */
+const panelTop = (page: Page, id: string) =>
+  page.evaluate((anchor) => {
+    const f = document.querySelector<HTMLIFrameElement>('iframe.cx-content-frame')!;
+    const el = f.contentDocument!.querySelector(`[data-explain-anchor="${anchor}"]`)!;
+    return f.getBoundingClientRect().top + el.getBoundingClientRect().top;
+  }, id);
 
 test('renders the title, the steps and the sections', async ({ page }) => {
   await open(page);
@@ -95,10 +103,10 @@ test('an edit above the reader keeps their place and flags the changed section',
   await open(page);
   await page.locator('.cx-step', { hasText: 'Consume' }).click();
   await page.waitForTimeout(800);
-  const before = await section(page, 'consume').evaluate((el) => el.getBoundingClientRect().top);
+  const before = await panelTop(page, 'consume');
   const edited = HTML.replace('<h2>The interface</h2>', '<h2>The interface</h2><p>A new paragraph.</p><p>And another.</p><p>And a third, to push everything down.</p>');
   await send(page, { type: 'content', title: MANIFEST.title, html: edited });
-  const after = await section(page, 'consume').evaluate((el) => el.getBoundingClientRect().top);
+  const after = await panelTop(page, 'consume');
   expect(Math.abs(after - before)).toBeLessThan(2);
   await expect(section(page, 'interface')).toHaveClass(/cx-updated/);
   await expect(section(page, 'consume')).not.toHaveClass(/cx-updated/);
@@ -145,7 +153,7 @@ test('explainer HTML cannot run scripts, phone home or navigate', async ({ page 
       <meta http-equiv="refresh" content="0;url=https://example.com">
     </section>`,
   });
-  const host = page.locator('.cx-host');
+  const host = frame(page).locator('body');
   await expect(host.locator('#remote')).not.toHaveAttribute('src', /.+/);
   await expect(host.locator('#local')).toHaveAttribute('src', 'http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/assets/diagram.png');
   await expect(host.locator('#local')).not.toHaveAttribute('onerror', /.*/);
@@ -170,13 +178,14 @@ test('the sanitizer refuses every way out of the explainer folder', async ({ pag
       <div id="data-svg" style="background:url(data:image/svg+xml,x)"></div>
     </section>`,
   });
-  const host = page.locator('.cx-host');
+  const host = frame(page).locator('body');
   for (const id of ['vb', 'datahtml']) await expect(host.locator(`#${id}`)).not.toHaveAttribute('href', /.*/);
   for (const id of ['proto', 'up', 'enc']) await expect(host.locator(`#${id}`)).not.toHaveAttribute('src', /.*/);
   await expect(host.locator('#set')).not.toHaveAttribute('srcset', /.*/);
   await expect(host.locator('#use')).toHaveAttribute('href', '#frag');
   await expect(host.locator('#svgimg')).not.toHaveAttribute('href', /.*/);
   await expect(host.locator('link:not([href$="content.css"]), base, form, script')).toHaveCount(0);
+  await expect(frame(page).locator('head link:not([href$="content.css"])')).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });
 
@@ -191,7 +200,7 @@ test('explainer CSS cannot cover the panel controls', async ({ page }) => {
     return (document.elementFromPoint(t.left + 5, t.top + 5) as HTMLElement | null)?.className;
   });
   expect(hit).toBe('cx-title');
-  await expect(page.locator('.cx-host').locator('[popover], [popovertarget]')).toHaveCount(0);
+  await expect(frame(page).locator('[popover], [popovertarget]')).toHaveCount(0);
 });
 
 test('relative URLs in explainer CSS point at the explainer folder; remote ones are dropped', async ({ page }) => {
@@ -200,17 +209,17 @@ test('relative URLs in explainer CSS point at the explainer folder; remote ones 
       <section data-explain-anchor="state"><div id="inline" style="background-image:url('img/c.png')"></div>
       <svg><a id="svglink" href="#ok"><set attributeName="href" to="javascript:alert(1)"/></a></svg></section>`,
   });
-  const css = await page.locator('.cx-host').evaluate((host) => [...host.shadowRoot!.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
+  const css = await frame(page).locator('body').evaluate((body) => [...body.ownerDocument.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
   expect(css).toContain('url("http://127.0.0.1:4173/fixtures/sample-workspace/.explain/bit-reader/img/a.png")');
   expect(css).not.toContain('example.com');
-  await expect(page.locator('.cx-host #inline')).toHaveAttribute('style', /bit-reader\/img\/c\.png/);
-  await expect(page.locator('.cx-host set')).toHaveCount(0);
+  await expect(frame(page).locator('#inline')).toHaveAttribute('style', /bit-reader\/img\/c\.png/);
+  await expect(frame(page).locator('set')).toHaveCount(0);
 });
 
 test('inline references jump the editor', async ({ page }) => {
   await open(page);
   await clearPosted(page);
-  await page.locator('[data-explain-ref="state"]').click();
+  await frame(page).locator('[data-explain-ref="state"]').click();
   expect(await posted(page)).toContainEqual({ type: 'openRef', anchorId: 'state' });
 });
 
@@ -261,8 +270,19 @@ for (const theme of ['dark', 'light', 'hc'] as const) {
     await open(page, { theme });
     await page.locator('.cx-step', { hasText: 'State' }).click();
     await send(page, { type: 'anchors', anchors: anchors({ consume: 'stale', refill: 'lost', handshakes: 'changed' }) });
-    const results = await new AxeBuilder({ page }).analyze();
-    expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)).toEqual([]);
+    // Axe can't run inside the content frame (it runs no scripts), so scan the panel without it,
+    // then scan a copy of the frame's document as an ordinary page.
+    const chrome = await new AxeBuilder({ page }).exclude('iframe.cx-content-frame').analyze();
+    const html = await frame(page).locator('html').evaluate((el) => el.outerHTML);
+    const copy = await page.context().newPage();
+    await copy.goto('/test/webview/harness.html'); // same origin, so the content stylesheet loads
+    await copy.setContent(`<!doctype html>${html}`, { waitUntil: 'load' });
+    // The frame is transparent over the panel; give the copy the panel's background.
+    await copy.addStyleTag({ content: 'html { background: var(--vscode-editor-background); }' });
+    // Page-level rules don't apply to a fragment shown inside the panel.
+    const body = await new AxeBuilder({ page: copy }).disableRules(['document-title', 'landmark-one-main', 'page-has-heading-one', 'region']).analyze();
+    const list = (r: typeof chrome) => r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
+    expect([...list(chrome), ...list(body)]).toEqual([]);
   });
 }
 

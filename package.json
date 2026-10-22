@@ -12,6 +12,15 @@
   "extensionKind": [
     "workspace"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Explainers are resolved against files on disk."
+    }
+  },
   "categories": [
     "Visualization",
     "Other"

@@ -2,7 +2,7 @@
 // Strategy and thresholds: docs/research/anchors.md §4–§5. Exact hits and fuzzy windows
 // compete under one score, so context and proximity can overrule a far-away duplicate.
 import type { Anchor, LineRange, Quote } from './manifest.ts';
-import { contentSimilarity, jaccard, lcsRatio } from './similarity.ts';
+import { contentSimilarity, jaccard, lcsRatio, trimCommon } from './similarity.ts';
 import type { PreparedText } from './text.ts';
 import { identifiers, normalizeLines, splitLines } from './text.ts';
 
@@ -42,6 +42,8 @@ const GOOD_ENOUGH = 0.9;
 const WORK_BUDGET = 3_000_000;
 /** Exact copies considered, nearest to the hint first. More than this is itself ambiguous. */
 const MAX_EXACT = 50;
+/** The fuzzy search looks this many lines either side of the hint (exact copies are found anywhere). */
+const SCAN_RADIUS = 5000;
 
 export function resolveAnchor(text: PreparedText, anchor: Anchor, opts: ResolveOptions = {}): Resolution {
   const hint = opts.hint ?? anchor.range;
@@ -82,10 +84,13 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     seen.add(key);
     let S = 1;
     if (!c.exact) {
-      const cost = k * c.len;
+      const window = n.slice(c.i, c.i + c.len);
+      // Charge what the comparison really costs: only the differing middle is quadratic.
+      const { head, tail } = trimCommon(q, window);
+      const cost = (k - head - tail) * (c.len - head - tail) + k;
       if (cost > budget) return;
       budget -= cost;
-      S = contentSimilarity(q, n.slice(c.i, c.i + c.len));
+      S = contentSimilarity(q, window);
     }
     const C = context(c.i, c.len);
     const T = c.exact ? 1 : jaccard(quoteIds, identifiers(text.lines.slice(c.i, c.i + c.len).join('\n'), quote.norm));
@@ -94,17 +99,18 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
     // Code that moved keeps its body but loses its neighbours. For a nearly identical body, unfamiliar
     // surroundings are no evidence against the place, so count them as neutral rather than zero.
     // (Exact copies keep the real context score: it is what tells duplicates apart.)
-    const Ceff = C !== null && !c.exact && S >= 0.9 ? Math.max(C, 0.5) : C;
-    const L = Ceff === null ? (0.45 * S + 0.1 * T + 0.1 * P) / 0.65 : 0.45 * S + 0.35 * Ceff + 0.1 * T + 0.1 * P;
+    // The floor rises smoothly with S (no cliff where a small edit flips the state).
+    const Ceff = C !== null && !c.exact ? Math.max(C, 0.5 * clamp((S - 0.7) / 0.2, 0, 1)) : C;
+    let L = Ceff === null ? (0.45 * S + 0.1 * T + 0.1 * P) / 0.65 : 0.45 * S + 0.35 * Ceff + 0.1 * T + 0.1 * P;
+    // Live tracking says the code is here and it still mostly matches: we know where it is.
+    if (trustHint && c.i === h && S >= 0.7) L = Math.max(L, 0.6);
     scored.push({ ...c, S, L });
   };
 
   // Exact copies and the windows at the hint first; the whole-file search only if they aren't convincing.
   // Exact copies are found through the quote's rarest line, so the scan is cheap even in huge files.
-  const starts = exactStarts(text, quote.norm, q);
-  starts.sort((a, b) => Math.abs(a - h) - Math.abs(b - h));
   let checked = 0;
-  for (const i of starts) {
+  for (const i of exactStarts(text, quote.norm, q, h, Math.floor(budget / Math.max(1, k)))) {
     if (checked === MAX_EXACT || budget < k) break;
     budget -= k;
     if (matchesAt(n, q, i)) {
@@ -126,8 +132,10 @@ function resolveQuote(text: PreparedText, anchor: Anchor, quote: Quote, hint: Li
   // A trusted hint (live-tracked, or confidently resolved before) is strong evidence: a close
   // rival elsewhere only makes the result ambiguous when the winner is somewhere else.
   // A near-copy at a trusted hint is also a rival: the code the reader is editing may be the real one.
-  const hintRival = trustHint && best.i !== h && scored.some((c) => c.i === h && c.S >= 0.8);
-  const ambiguous = tooManyCopies || hintRival || (rival !== undefined && best.L - rival.L < AMBIGUITY && !(trustHint && best.i === h));
+  const overlapsBest = (c: { i: number; len: number }) => c.i < best.i + best.len && best.i < c.i + c.len;
+  const atTrustedHint = trustHint && best.i === h;
+  const hintRival = trustHint && !overlapsBest({ i: h, len: k }) && scored.some((c) => c.i === h && c.S >= 0.8);
+  const ambiguous = (tooManyCopies && !atTrustedHint) || hintRival || (rival !== undefined && best.L - rival.L < AMBIGUITY && !atTrustedHint);
 
   // Same text, ignoring whitespace: the prose still holds.
   if (best.S === 1) {
@@ -209,8 +217,12 @@ function contextSimilarity(n: readonly string[], i: number, len: number, pre: re
   return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : null;
 }
 
-/** Possible start lines of an exact copy: where the quote's rarest non-blank line occurs, shifted back. */
-function exactStarts(text: PreparedText, norm: Quote['norm'], q: readonly string[]): number[] {
+/**
+ * Possible start lines of an exact copy, nearest to `h` first, at most `limit` of them: where the
+ * quote's rarest non-blank line occurs, shifted back. Walks outward from `h` in the (sorted)
+ * position list, so the cost doesn't grow with how often the line occurs.
+ */
+function* exactStarts(text: PreparedText, norm: Quote['norm'], q: readonly string[], h: number, limit: number): Generator<number> {
   const index = text.positions(norm);
   let rarest = -1;
   let rarestCount = Infinity;
@@ -222,8 +234,25 @@ function exactStarts(text: PreparedText, norm: Quote['norm'], q: readonly string
       rarestCount = count;
     }
   });
-  if (rarest < 0) return []; // a quote of blank lines only can't be pinned
-  return (index.get(q[rarest]!) ?? []).map((p) => p - rarest).filter((i) => i >= 0 && i + q.length <= text.lines.length);
+  if (rarest < 0) return; // a quote of blank lines only can't be pinned
+  const at = index.get(q[rarest]!) ?? [];
+  const valid = (p: number) => p - rarest >= 0 && p - rarest + q.length <= text.lines.length;
+  // Binary search for the first occurrence at or after the hint, then walk both ways.
+  const target = h + rarest;
+  let lo = 0;
+  let hi = at.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (at[mid]! < target) lo = mid + 1;
+    else hi = mid;
+  }
+  let up = lo - 1;
+  let down = lo;
+  for (let n = 0; n < limit && (up >= 0 || down < at.length); n++) {
+    const takeDown = down < at.length && (up < 0 || at[down]! - target <= target - at[up]!);
+    const p = takeDown ? at[down++]! : at[up--]!;
+    if (valid(p)) yield p - rarest;
+  }
 }
 
 function clamp(x: number, lo: number, hi: number): number {
@@ -246,22 +275,24 @@ function shortlist(n: readonly string[], q: readonly string[], h: number): { i: 
   const want = new Map<string, number>();
   for (const l of q) if (l !== '') want.set(l, (want.get(l) ?? 0) + 1);
   const found: { i: number; len: number; dice: number }[] = [];
+  const from = Math.max(0, h - SCAN_RADIUS);
+  const to = Math.min(n.length, h + k + SCAN_RADIUS);
   for (const m of windowLengths(k, n.length)) {
     const have = new Map<string, number>();
     let overlap = 0;
-    for (let i = 0; i < n.length; i++) {
+    for (let i = from; i < to; i++) {
       const inLine = n[i]!;
       const h = have.get(inLine) ?? 0;
       if (h < (want.get(inLine) ?? 0)) overlap++;
       have.set(inLine, h + 1);
-      if (i >= m) {
+      if (i - from >= m) {
         const outLine = n[i - m]!;
         const o = have.get(outLine)! - 1;
         have.set(outLine, o);
         if (o < (want.get(outLine) ?? 0)) overlap--;
       }
       const start = i - m + 1;
-      if (start >= 0 && overlap > 0) found.push({ i: start, len: m, dice: (2 * overlap) / (m + k) });
+      if (start >= from && overlap > 0) found.push({ i: start, len: m, dice: (2 * overlap) / (m + k) });
     }
   }
   found.sort((a, b) => b.dice - a.dice || Math.abs(a.len - k) - Math.abs(b.len - k) || Math.abs(a.i - h) - Math.abs(b.i - h));

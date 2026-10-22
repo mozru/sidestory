@@ -50,7 +50,7 @@ export const THEMES: Record<ThemeName, { bodyClass: string; vars: Record<string,
     vars: {
       ...shared,
       'editor-background': '#000000', 'editor-foreground': '#ffffff', foreground: '#ffffff', descriptionForeground: '#ffffff',
-      'panel-border': '#6fc3df', 'editorGroup-border': '#6fc3df', focusBorder: '#f38518', contrastActiveBorder: '#f38518',
+      'panel-border': '#6fc3df', 'editorGroup-border': '#6fc3df', focusBorder: '#f38518', contrastActiveBorder: '#f38518', contrastBorder: '#6fc3df',
       'list-hoverBackground': 'transparent', 'list-inactiveSelectionBackground': 'transparent',
       'dropdown-background': '#000000', 'dropdown-foreground': '#ffffff', 'dropdown-border': '#6fc3df', 'input-border': '#6fc3df',
       'inputValidation-errorBackground': '#000000', 'inputValidation-errorBorder': '#6fc3df',

@@ -9,7 +9,7 @@ const common = { bundle: true, sourcemap: !production, minify: production, logLe
 
 const builds = [
   { ...common, entryPoints: ['src/extension/extension.ts'], outfile: 'dist/extension.cjs', platform: 'node', format: 'cjs', external: ['vscode'] },
-  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'iife' },
+  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm' },
   { ...common, entryPoints: ['src/webview/main.css'], outfile: 'dist/webview/main.css' },
   { ...common, entryPoints: ['src/webview/content.css'], outfile: 'dist/webview/content.css' },
 ];
