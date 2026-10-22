@@ -18,12 +18,16 @@ interface Manifest {
 }
 const manifest = (): Manifest => JSON.parse(readFileSync(manifestPath, 'utf8'));
 
-async function until<T>(what: string, check: () => T | undefined | false, timeout = 15_000): Promise<T> {
+/** What the editors show, for timeout messages. */
+const showing = () =>
+  vscode.window.visibleTextEditors.map((e) => `${vscode.workspace.asRelativePath(e.document.uri)} lines ${e.visibleRanges.map((r) => `${r.start.line + 1}-${r.end.line + 1}`).join(',')}`).join('; ') || 'no text editors';
+
+async function until<T>(what: string, check: () => T | undefined | false, timeout = 30_000): Promise<T> {
   const end = Date.now() + timeout;
   for (;;) {
     const v = check();
     if (v) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what} (showing: ${showing()})`);
     await new Promise((r) => setTimeout(r, 100));
   }
 }

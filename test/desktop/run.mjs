@@ -4,7 +4,7 @@
 // Usage: node test/desktop/run.mjs [--version 1.95.0|stable] [--only lf|crlf]
 import { runTests } from '@vscode/test-electron';
 import { build } from 'esbuild';
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -27,11 +27,12 @@ await build({
 });
 
 const TEXT = /\.(ts|tsx|js|sv|json|html|css|md)$/;
-function toCrlf(dir) {
+/** Sets every text file's line endings: the checkout may be either (a Windows checkout is CRLF). */
+function setEol(dir, eol) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) toCrlf(p);
-    else if (TEXT.test(name)) writeFileSync(p, readFileSync(p, 'utf8').replace(/\r?\n/g, '\r\n'));
+    if (statSync(p).isDirectory()) setEol(p, eol);
+    else if (TEXT.test(name)) writeFileSync(p, readFileSync(p, 'utf8').replace(/\r?\n/g, eol === 'crlf' ? '\r\n' : '\n'));
   }
 }
 
@@ -42,8 +43,11 @@ for (const eol of ['lf', 'crlf']) {
   const base = mkdtempSync(join(tmpdir(), 'cx desktop ü-'));
   const workspace = join(base, 'Sample Workspace');
   cpSync(join(root, 'fixtures/sample-workspace'), workspace, { recursive: true });
-  if (eol === 'crlf') toCrlf(workspace);
+  setEol(workspace, eol);
   const userData = join(base, 'user-data');
+  // Small screens (CI's virtual display, a VM at 800×600) leave the editor beside the panel a few lines tall.
+  mkdirSync(join(userData, 'User'), { recursive: true });
+  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none' }));
   console.log(`\n== desktop VS Code ${version}, ${process.platform}, ${eol.toUpperCase()} ==`);
   try {
     await runTests({
