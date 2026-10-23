@@ -48,10 +48,16 @@ export async function openExplainer(page: Page, name: string): Promise<FrameLoca
   await command(page, 'Sidestory: Open Sidestory');
   await expect(page.locator('.quick-input-widget')).toContainText('retry-backoff');
   await page.keyboard.type(name);
-  await page.keyboard.press('Enter');
+  // Pick the row for exactly this folder (its description ends in .sidestory/<name>), not the best fuzzy match.
+  const row = page.locator('.quick-input-list .monaco-list-row', { has: page.locator('.label-description', { hasText: new RegExp(`(^|/)\\.sidestory/${name}( |$)`) }) }).first();
+  await row.click();
   await expect(page.locator('iframe.webview.ready')).toHaveCount(index + 1, { timeout: 30_000 });
   const panel = page.frameLocator('iframe.webview.ready').nth(index).frameLocator('#active-frame');
   await expect(panel.locator('.cx-title')).toBeVisible({ timeout: 30_000 });
+  // Opened from a list, a panel is a preview the next open replaces (docs/NAVIGATION-PLAN.md §7.5): keep it, so
+  // specs that open several sidestories get one panel each, as before.
+  const keep = panel.locator('.cx-preview-keep');
+  if (await keep.isVisible().catch(() => false)) await keep.click();
   return panel;
 }
 

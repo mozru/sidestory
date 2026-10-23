@@ -65,8 +65,9 @@ test('the filter shows each match once under its path; Clear restores everything
   await openSidebar(page);
   await viewAction(page, 'Filter');
   await expect(page.locator('.quick-input-widget')).toContainText('Matches titles');
-  await page.keyboard.type('fifo');
+  await page.locator('.quick-input-widget input').fill('fifo');
   await page.keyboard.press('Enter');
+  await expect(page.locator('.quick-input-widget')).toBeHidden();
   await expect(sidebar(page).locator('.pane-body')).toContainText('Filtered by "fifo": 3 sidestories');
   await expect(treeRow(page, 'dma_fifo: slack between read and write')).toBeVisible();
   const labels = (await rows(page)).map((r) => r.label);
@@ -76,10 +77,12 @@ test('the filter shows each match once under its path; Clear restores everything
   expect(labels).not.toContain('Auth overview');
   await viewAction(page, 'Clear Filter');
   await expect(treeRow(page, 'Auth overview')).toBeVisible();
+  await expect(sidebar(page).locator('.pane-body')).not.toContainText('Filtered by');
   await viewAction(page, 'Filter');
   await expect(page.locator('.quick-input-widget')).toContainText('Matches titles');
-  await page.keyboard.type('zzzz-nothing');
+  await page.locator('.quick-input-widget input').fill('zzzz-nothing');
   await page.keyboard.press('Enter');
+  await expect(page.locator('.quick-input-widget')).toBeHidden();
   await expect(sidebar(page).locator('.pane-body')).toContainText('Filtered by "zzzz-nothing": 0 sidestories');
   await expect(sidebar(page).locator('.welcome-view')).toHaveCount(0);
   await viewAction(page, 'Clear Filter');

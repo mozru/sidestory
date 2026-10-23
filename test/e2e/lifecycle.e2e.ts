@@ -12,12 +12,12 @@ test.beforeEach(async ({ page }) => resetWorkbench(page));
 const FIELDS: Record<string, string[]> = {};
 
 function classNames(): { session: string; decorations: string } {
-  const bundle = readFileSync(new URL('../../dist/extension.cjs', import.meta.url), 'utf8');
+  const bundle = readFileSync(new URL('../../dist/full.cjs', import.meta.url), 'utf8');
   // `X=class{trail;panel;positions=` when minified; spaced out otherwise.
   const name = (...fields: string[]) => new RegExp(`([\\w$]+)\\s*=\\s*class\\s*\\{\\s*${fields.join('[;=\\s]+')}`).exec(bundle)?.[1];
   const session = name('trail', 'panel', 'positions');
   const decorations = name('focusTypes');
-  if (!session || !decorations) throw new Error('ExplainerSession or Decorations not found in dist/extension.cjs');
+  if (!session || !decorations) throw new Error('ExplainerSession or Decorations not found in dist/full.cjs');
   FIELDS[session] = ['trail', 'panel', 'positions'];
   FIELDS[decorations] = ['focusTypes'];
   return { session, decorations };

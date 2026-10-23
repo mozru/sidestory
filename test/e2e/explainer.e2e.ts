@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 import { CONTAINER, WORKSPACE } from './setup.ts';
+import { expand, openSidebar, treeRow } from './nav-helpers.ts';
 import { activeTab, chooseStep, codeEditor, command, content, editorLines, inContainer, openExplainer, resetWorkbench } from './helpers.ts';
 
 test.beforeEach(async ({ page }) => resetWorkbench(page));
@@ -124,7 +125,15 @@ for (const [theme, bodyClass] of THEMES) {
 
 test('two explainers open at once both keep working', async ({ page }) => {
   const first = await openExplainer(page, 'bit-reader');
-  const second = await openExplainer(page, 'retry-backoff');
+  // Both are details of the same top, so a list would reuse this panel (docs/NAVIGATION-PLAN.md §7.5): open the
+  // second in a new panel from the Sidestories view.
+  await openSidebar(page);
+  await expand(treeRow(page, 'Sample workspace tour'));
+  const row = treeRow(page, 'Retry with full-jitter backoff');
+  await row.hover();
+  await row.locator('a[aria-label="Open in New Panel"]').click();
+  await expect(page.locator('iframe.webview.ready')).toHaveCount(2, { timeout: 30_000 });
+  const second = page.frameLocator('iframe.webview.ready').nth(1).frameLocator('#active-frame');
   await expect(second.locator('.cx-title')).toHaveText('Retry with full-jitter backoff');
   await page.locator('.tab', { hasText: 'A backward bit reader' }).click();
   await chooseStep(first, 'refill');
@@ -182,4 +191,15 @@ test('a file reopening with its old cursor (view state restored) does not pull t
   await expect(panel.locator('.cx-position')).toHaveText('Step 3 of 7');
   await next.click();
   await expect(panel.locator('.cx-position')).toHaveText('Step 4 of 7');
+});
+
+test('Open Sidestory lists recently opened sidestories first, a detail labelled by its path', async ({ page }) => {
+  await openExplainer(page, 'retry-backoff');
+  await command(page, 'Sidestory: Open Sidestory');
+  await expect(page.locator('.quick-input-widget input')).toHaveAttribute('placeholder', /Open which sidestory/);
+  const list = page.locator('.quick-input-list');
+  await expect(list).toContainText('Recently opened');
+  // The first item is the one just opened; a detail's label names its top.
+  await expect(list.locator('.monaco-list-row').first()).toContainText('Sample workspace tour › Retry with full-jitter backoff');
+  await page.keyboard.press('Escape');
 });

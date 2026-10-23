@@ -21,6 +21,7 @@ export type TreeNode =
 /** Ids encode each part, so package paths and group names containing `/` stay unique; never parsed back. */
 const idOf = (...parts: string[]) => parts.map(encodeURIComponent).join('/');
 
+
 export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private readonly index: SidestoryIndex;
   private readonly drift: DriftQueue;
@@ -113,7 +114,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   getChildren(node?: TreeNode): TreeNode[] {
     if (!node) {
       const pkgs = this.index.packages().filter((p) => !this.filtered || [...p.entries.keys()].some((k) => this.filtered!.matches.has(k)));
-      if (this.index.packages().length > 1) return pkgs.map((p) => this.make({ kind: 'package', id: idOf('p', p.key), pkg: p }));
+      if (this.index.packages().length > 1) return pkgs.map((p) => this.make({ kind: 'package', id: this.id('p', p.key), pkg: p }));
       const only = pkgs[0];
       return only ? this.packageChildren(only, undefined) : [];
     }
@@ -149,7 +150,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
         for (const m of members) grouped.add(m);
         if (!members.length) continue;
         if (this.filtered && !members.some((m) => this.wanted(this.entryByName(pkg, m), [m]))) continue;
-        out.push(this.make({ kind: 'group', id: idOf('g', pkg.key, g.key), pkg, key: g.key, label: g.label, members, parent }));
+        out.push(this.make({ kind: 'group', id: this.id('g', pkg.key, g.key), pkg, key: g.key, label: g.label, members, parent }));
       }
     }
     for (const e of this.sortedTops(pkg, tops.filter((t) => !grouped.has(t)))) {
@@ -176,8 +177,8 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       if (!e) continue;
       const path = [...node.path, child];
       if (!this.wanted(e, path)) continue;
-      if (node.path.includes(child)) out.push(this.make({ kind: 'leaf', id: idOf('l', pkg.key, ...path), entry: e, path, reason: 'back', parent: node }));
-      else if (path.length > MAX_TRAIL) out.push(this.make({ kind: 'leaf', id: idOf('l', pkg.key, ...path), entry: e, path, reason: 'deep', parent: node }));
+      if (node.path.includes(child)) out.push(this.make({ kind: 'leaf', id: this.id('l', pkg.key, ...path), entry: e, path, reason: 'back', parent: node }));
+      else if (path.length > MAX_TRAIL) out.push(this.make({ kind: 'leaf', id: this.id('l', pkg.key, ...path), entry: e, path, reason: 'deep', parent: node }));
       else out.push(this.sidestoryNode(e, path, node, false));
     }
     return out;
@@ -195,7 +196,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   }
 
   private sidestoryNode(entry: IndexEntry, path: string[], parent: TreeNode | undefined, startHere: boolean): TreeNode {
-    return this.make({ kind: 'sidestory', id: idOf(startHere ? 's*' : 's', entry.pkg, ...path), entry, path, startHere, parent });
+    return this.make({ kind: 'sidestory', id: this.id(startHere ? 's*' : 's', entry.pkg, ...path), entry, path, startHere, parent });
   }
 
   private make<T extends TreeNode>(n: T): T {
@@ -203,6 +204,14 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     if (existing) return existing as T;
     this.nodes.set(n.id, n);
     return n;
+  }
+
+  /**
+   * Node ids. While filtered they get their own namespace, so VS Code applies the filtered tree's expansion (each
+   * match's path open) instead of the expansion it remembers for the same ids unfiltered.
+   */
+  private id(...parts: string[]): string {
+    return this.filtered ? idOf('f', this.filterText, ...parts) : idOf(...parts);
   }
 
   getParent(node: TreeNode): TreeNode | undefined {
@@ -324,14 +333,14 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   /** Builds (or finds) the nodes along a path, with parents, so `reveal` can walk them. */
   private pathNode(pkg: IndexPackage, path: string[]): TreeNode | undefined {
     const multi = this.index.packages().length > 1;
-    let parent: TreeNode | undefined = multi ? this.make({ kind: 'package', id: idOf('p', pkg.key), pkg }) : undefined;
+    let parent: TreeNode | undefined = multi ? this.make({ kind: 'package', id: this.id('p', pkg.key), pkg }) : undefined;
     const topName = path[0]!;
     const top = this.entryByName(pkg, topName);
     if (!top) return undefined;
     const start = this.startHere(pkg);
     if (topName !== start && top.group && pkg.groups.length) {
       const g = pkg.groups.find((x) => x.members.includes(topName));
-      if (g) parent = this.make({ kind: 'group', id: idOf('g', pkg.key, g.key), pkg, key: g.key, label: g.label, members: g.members.filter((m) => pkg.graph.isTop(m) && m !== start), parent });
+      if (g) parent = this.make({ kind: 'group', id: this.id('g', pkg.key, g.key), pkg, key: g.key, label: g.label, members: g.members.filter((m) => pkg.graph.isTop(m) && m !== start), parent });
     }
     let node: TreeNode = this.sidestoryNode(top, [topName], parent, topName === start);
     for (let i = 1; i < path.length; i++) {
