@@ -24,7 +24,7 @@ async function runWidgets(page: Page, panel: FrameLocator): Promise<void> {
   const dialog = page.locator('.monaco-dialog-box');
   await expect(dialog).toContainText('Widgets are code from this repository');
   await expect(dialog).toContainText('may be able to reach the network');
-  await dialog.getByRole('button', { name: 'Run Widgets' }).click();
+  await dialog.getByRole('button', { name: 'Run Widgets', exact: true }).click();
   await expect(panel.locator('.cx-consent')).not.toContainText('Run widgets…');
   await expect(widget(panel).getByTestId('backoff')).toBeVisible({ timeout: 20_000 });
 }
@@ -133,7 +133,8 @@ test.describe('two panels (process model)', () => {
     await runWidgets(page, first);
     const one = await renderers();
     const second = await openExplainer(page, 'retry-copy');
-    await expect(widget(second).getByTestId('backoff')).toBeVisible({ timeout: 20_000 });
+    // A copied-in explainer asks the first time, like any explainer whose widgets never ran here.
+    await runWidgets(page, second);
     const two = await renderers();
     const targets = (await cdp.send('Target.getTargets')).targetInfos.filter((t) => t.type === 'iframe').length;
     const record = { renderersWithOnePanel: one, renderersWithTwoPanels: two, iframeTargets: targets };

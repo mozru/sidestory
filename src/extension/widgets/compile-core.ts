@@ -166,7 +166,7 @@ export class WidgetCompilerCore {
 
     /** Reads a file in the folder with every check; returns an error message instead when it's refused. */
     const read = async (key: string, kind: FileKind): Promise<Uint8Array | { code: string; message: string }> => {
-      if (isSecretPath(key)) return { code: 'secret-file', message: 'files with secret-looking names (.env, *secret*, *token*, *.key, …) are never given to widgets; rename the file' };
+      if (isSecretPath(key)) return { code: 'secret-file', message: 'files with secret-looking names (.env, *.key, credentials.json, …) are never given to widgets; rename the file' };
       const abs = join(root, ...key.split('/'));
       const real = await realPathInside(abs, root);
       if (!real) {

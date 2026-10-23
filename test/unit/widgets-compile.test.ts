@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { relativize, WidgetCompiler, type CompileResult } from '../../src/extension/widgets/compile.ts';
 import { orderLibraries, WidgetCompilerCore } from '../../src/extension/widgets/compile-core.ts';
 import { SizeLru } from '../../src/extension/widgets/lru.ts';
-import { isSecretFileName } from '../../src/extension/widgets/secret-files.ts';
+import { isSecretFileName, isSecretPath } from '../../src/extension/widgets/secret-files.ts';
 import { normalizeEntry, resolveRelative } from '../../src/extension/widgets/specifiers.ts';
 import { suggest } from '../../src/extension/widgets/suggest.ts';
 
@@ -192,10 +192,9 @@ describe('compileWidget: rejections', () => {
     ["'./styles.css'", 'bad-extension'],
     ["'./data.csv'", 'bad-extension'],
     ["'./nope'", 'not-found'],
-    ["'./secret-values.ts'", 'secret-file'],
+    ["'./secret-values.json'", 'secret-file'],
     ["'./api-token.json'", 'secret-file'],
     ["'./.env.json'", 'secret-file'],
-    ["'./id_rsa.png'", 'secret-file'],
     ["'node:fs'", 'bad-specifier'],
   ])('import %s → %s', async (spec, code) => {
     const r = await compileFiles({
@@ -203,10 +202,9 @@ describe('compileWidget: rejections', () => {
       'x.ts': 'export default 1;',
       'styles.css': '',
       'data.csv': '',
-      'secret-values.ts': 'export default 1;',
+      'secret-values.json': '{}',
       'api-token.json': '{}',
       '.env.json': '{}',
-      'id_rsa.png': 'x',
     });
     expect(codes(r)).toEqual([code]);
     expect(r.errors[0]).toMatchObject({ file: 'w.tsx', line: 1 });
@@ -355,6 +353,15 @@ describe('compileWidget: imports and exports', () => {
     expect(r.errors).toHaveLength(1);
     expect(r.errors[0]).toMatchObject({ file: 'w.tsx', code: 'syntax', line: expect.any(Number), column: expect.any(Number) });
   });
+
+  it('places errors Sucrase’s JSX transform raises without a position at the token it stopped on, not at 1:1', async () => {
+    // "Unexpected token when processing JSX children" comes from Sucrase's transformer, which gives no position.
+    const src = 'export default function A({x}:{x:number}){\n  retu-->rn (\n    <div className="p-2">\n      <ul>{[1,2].map((i)=><li key={i}>{i}</li>){}</ul>\n    </div>\n  );\n}\n';
+    const r = await compileFiles({ 'w.tsx': src });
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.message).toBe('Syntax error: Unexpected token when processing JSX children.');
+    expect(r.errors[0]).toMatchObject({ line: 6, column: 4 });
+  });
 });
 
 describe('compileWidget: artifact habits', () => {
@@ -486,10 +493,31 @@ describe('widget compiler helpers', () => {
   });
 
   it('matches secret-looking names case-insensitively', () => {
-    for (const n of ['.env', '.env.local', 'MY_SECRET.ts', 'tokens.json', 'Credentials.ts', 'a.pem', 'b.KEY', 'x.p12', 'settings.local.json', 'appsettings.Production.json', 'kubeconfig', '.npmrc', 'id_rsa', 'id_ed25519.png']) {
+    for (const n of [
+      '.env', '.env.local', '.envrc', 'tokens.json', 'Credentials.json', 'credentials', 'db-password.txt', 'API_KEY.yaml', 'apikey.env', 'client_secret.xml',
+      'a.pem', 'b.KEY', 'x.p12', 'settings.local.json', 'appsettings.Production.json', 'kubeconfig', 'my-kubeconfig.yaml', '.npmrc', 'id_rsa', 'id_ed25519.pub', '.git-credentials',
+    ]) {
       expect(isSecretFileName(n), n).toBe(true);
     }
-    for (const n of ['ring.tsx', 'data.json', 'keyboard.ts', 'environment.ts', 'monkey.png']) expect(isSecretFileName(n), n).toBe(false);
+    // Source files are never secret by name, nor are id_ names that aren't SSH keys.
+    for (const n of ['ring.tsx', 'data.json', 'keyboard.ts', 'environment.ts', 'monkey.png', 'tokenBucket.ts', 'tokens-chart.tsx', 'tokenizer.py', 'secretary.ts', 'password_reset.go', 'id_utils.ts', 'id_rsa.png', 'credentials.sv', 'design-tokens.ts']) {
+      expect(isSecretFileName(n), n).toBe(false);
+    }
+  });
+
+  it('judges a path by its file name only: folders named like secrets hold ordinary code', () => {
+    expect(isSecretPath('src/tokens/lexer.ts')).toBe(false);
+    expect(isSecretPath('secrets/README.md')).toBe(false);
+    expect(isSecretPath('config/secrets.yaml')).toBe(true);
+    expect(isSecretPath('deploy/.env.production')).toBe(true);
+  });
+
+  it('compiles widgets and imports named like tokens or under a tokens/ folder (ordinary code)', async () => {
+    const r = await compileFiles({
+      'tokens-chart.tsx': "import { take } from './tokens/tokenBucket';\nexport default function W() { return <div>{take()}</div>; }\n",
+      'tokens/tokenBucket.ts': 'export const take = () => 1;\n',
+    }, 'tokens-chart.tsx');
+    expect(r.errors).toEqual([]);
   });
 
   it('normalizes and resolves paths lexically', () => {
@@ -503,5 +531,63 @@ describe('widget compiler helpers', () => {
     expect(suggest('LineChat', ['LineChart', 'BarChart', 'Line'])[0]).toBe('LineChart');
     expect(suggest('usestate', ['useState', 'useEffect'])[0]).toBe('useState');
     expect(suggest('zzzzzz', ['useState'])).toEqual([]);
+  });
+});
+
+describe('compileWidget: artifact habits that break in a panel (user testing)', () => {
+  it('warns about a page background on the root, palette text, wide fixed widths, hex colors, icon-only buttons and bad highlight/reveal arguments', async () => {
+    const src = [
+      "import { Line, LineChart } from 'recharts';",
+      "import { Play, Pause } from 'lucide-react';",
+      "import { Button } from '@/components/ui/button';",
+      "import { highlight, reveal } from 'explainer';",
+      'export default function W() {',
+      '  return <div className="min-h-0 bg-white dark:bg-slate-950 p-4">',
+      '    <h2 className="text-gray-900">Title</h2>',
+      '    <div className="w-[480px]">card</div>',
+      '    <LineChart><Line stroke="#ef4444" dataKey="y" /></LineChart>',
+      '    <Button onClick={() => highlight(0)}><Play /></Button>',
+      "    <button onClick={() => reveal('a', { highlight: true })}><Pause /></button>",
+      "    <button onClick={() => reveal('a', { lines: [1.5, 2] })}>x</button>",
+      '  </div>;',
+      '}',
+    ].join('\n');
+    const r = await compileFiles({ 'w.tsx': src });
+    expect(r.errors).toEqual([]);
+    expect(r.warnings.map((w) => [w.code, w.line]).sort((a, b) => (a[1] as number) - (b[1] as number) || String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ['page-background', 6],
+      ['palette-text', 7],
+      ['fixed-width', 8],
+      ['hex-color', 9],
+      ['highlight-lines', 10],
+      ['icon-button-label', 10],
+      ['icon-button-label', 11],
+      ['reveal-highlight', 11],
+      ['reveal-lines', 12],
+    ]);
+  });
+
+  it('says nothing about the same habits done right', async () => {
+    const src = [
+      "import { Line, LineChart, ResponsiveContainer } from 'recharts';",
+      "import { Play } from 'lucide-react';",
+      "import { Button } from '@/components/ui/button';",
+      "import { highlight, reveal } from 'explainer';",
+      'function Inner() { return <div className="bg-white text-black">swatch</div>; }',
+      'export default function W() {',
+      '  return <div className="flex flex-col gap-2">',
+      '    <h2 className="text-gray-900 dark:text-gray-100">Title</h2>',
+      '    <div className="w-full max-w-[480px]">card</div>',
+      '    <div className="overflow-x-auto"><div className="min-w-[560px] w-[300px]">wave</div></div>',
+      '    <div className="h-64"><ResponsiveContainer width="100%" height="100%"><LineChart><Line stroke="var(--chart-1)" dataKey="y" /></LineChart></ResponsiveContainer></div>',
+      '    <Button aria-label="Play" onClick={() => highlight([2, 3])}><Play /></Button>',
+      "    <button onClick={() => reveal('a', { lines: 4, highlight: ['wr'] })}>show <Play /></button>",
+      '    <Inner />',
+      '  </div>;',
+      '}',
+    ].join('\n');
+    const r = await compileFiles({ 'w.tsx': src });
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 // Theme variables the webview reads, for the browser harness. Values approximate VS Code's
-// Dark Modern, Light Modern and High Contrast themes; the end-to-end tests use the real ones.
-export type ThemeName = 'dark' | 'light' | 'hc';
+// Dark Modern, Light Modern, Dark High Contrast and Light High Contrast themes; the end-to-end tests use the
+// real ones. A color a theme leaves unset (Dark High Contrast's button background) is left out here too.
+export type ThemeName = 'dark' | 'light' | 'hc' | 'hc-light';
 
 const shared = {
   'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
@@ -17,7 +18,7 @@ export const THEMES: Record<ThemeName, { bodyClass: string; vars: Record<string,
       'panel-border': '#2b2b2b', 'editorGroup-border': '#ffffff17', focusBorder: '#0078d4', contrastActiveBorder: 'transparent',
       'list-hoverBackground': '#2a2d2e', 'list-inactiveSelectionBackground': '#37373d',
       'dropdown-background': '#313131', 'dropdown-foreground': '#cccccc', 'dropdown-border': '#3c3c3c', 'input-border': '#3c3c3c',
-      'inputValidation-errorBackground': '#5a1d1d', 'inputValidation-errorBorder': '#be1100',
+      'inputValidation-errorBackground': '#5a1d1d', 'inputValidation-errorBorder': '#be1100', errorForeground: '#f85149',
       'button-background': '#0078d4', 'button-foreground': '#ffffff', 'button-hoverBackground': '#026ec1',
       'button-secondaryBackground': '#313131', 'button-secondaryForeground': '#cccccc', 'button-secondaryHoverBackground': '#3c3c3c',
       'widget-shadow': '#0000005c', 'textLink-foreground': '#4daafc', 'textLink-activeForeground': '#4daafc',
@@ -35,7 +36,7 @@ export const THEMES: Record<ThemeName, { bodyClass: string; vars: Record<string,
       'panel-border': '#e5e5e5', 'editorGroup-border': '#e5e5e5', focusBorder: '#005fb8', contrastActiveBorder: 'transparent',
       'list-hoverBackground': '#f2f2f2', 'list-inactiveSelectionBackground': '#e4e6f1',
       'dropdown-background': '#ffffff', 'dropdown-foreground': '#3b3b3b', 'dropdown-border': '#cecece', 'input-border': '#cecece',
-      'inputValidation-errorBackground': '#f2dede', 'inputValidation-errorBorder': '#be1100',
+      'inputValidation-errorBackground': '#f2dede', 'inputValidation-errorBorder': '#be1100', errorForeground: '#e51400',
       'button-background': '#005fb8', 'button-foreground': '#ffffff', 'button-hoverBackground': '#0258a8',
       'button-secondaryBackground': '#e5e5e5', 'button-secondaryForeground': '#3b3b3b', 'button-secondaryHoverBackground': '#cccccc',
       'widget-shadow': '#00000029', 'textLink-foreground': '#005fb8', 'textLink-activeForeground': '#005fb8',
@@ -53,14 +54,32 @@ export const THEMES: Record<ThemeName, { bodyClass: string; vars: Record<string,
       'panel-border': '#6fc3df', 'editorGroup-border': '#6fc3df', focusBorder: '#f38518', contrastActiveBorder: '#f38518', contrastBorder: '#6fc3df',
       'list-hoverBackground': 'transparent', 'list-inactiveSelectionBackground': 'transparent',
       'dropdown-background': '#000000', 'dropdown-foreground': '#ffffff', 'dropdown-border': '#6fc3df', 'input-border': '#6fc3df',
-      'inputValidation-errorBackground': '#000000', 'inputValidation-errorBorder': '#6fc3df',
-      'button-background': '#000000', 'button-foreground': '#ffffff', 'button-hoverBackground': '#000000',
-      'button-secondaryBackground': '#000000', 'button-secondaryForeground': '#ffffff', 'button-secondaryHoverBackground': '#000000',
+      'inputValidation-errorBackground': '#000000', 'inputValidation-errorBorder': '#6fc3df', errorForeground: '#f48771',
+      // No button backgrounds: buttons are outlines in this theme.
+      'button-foreground': '#ffffff', 'button-border': '#6fc3df', 'button-secondaryForeground': '#ffffff',
       'widget-shadow': '#00000000', 'textLink-foreground': '#21a6ff', 'textLink-activeForeground': '#21a6ff',
       'textCodeBlock-background': '#000000', 'textBlockQuote-background': '#000000', 'editorWidget-background': '#0c141f',
       'editorWarning-foreground': '#fff000', 'editorError-foreground': '#f48771', 'editorInfo-foreground': '#3794ff',
       'charts-blue': '#3794ff', 'charts-green': '#89d185', 'charts-yellow': '#ffff00', 'charts-orange': '#d18616', 'charts-purple': '#b180d7', 'charts-red': '#f14c4c',
       'codeExplainer-focusBorder': '#f38518', 'codeExplainer-staleForeground': '#fff000', 'codeExplainer-lostForeground': '#f48771',
+    },
+  },
+  'hc-light': {
+    bodyClass: 'vscode-high-contrast-light',
+    vars: {
+      ...shared,
+      'editor-background': '#ffffff', 'editor-foreground': '#292929', foreground: '#292929', descriptionForeground: '#292929',
+      'panel-border': '#0f4a85', 'editorGroup-border': '#0f4a85', focusBorder: '#006bbd', contrastActiveBorder: '#006bbd', contrastBorder: '#0f4a85',
+      'list-hoverBackground': 'transparent', 'list-inactiveSelectionBackground': 'transparent',
+      'dropdown-background': '#ffffff', 'dropdown-foreground': '#292929', 'dropdown-border': '#0f4a85', 'input-border': '#0f4a85',
+      'inputValidation-errorBackground': '#ffffff', 'inputValidation-errorBorder': '#b5200d', errorForeground: '#b5200d',
+      'button-background': '#0f4a85', 'button-foreground': '#ffffff', 'button-hoverBackground': '#0f4a85', 'button-border': '#0f4a85',
+      'button-secondaryForeground': '#292929',
+      'widget-shadow': '#00000000', 'textLink-foreground': '#0f4a85', 'textLink-activeForeground': '#0f4a85',
+      'textCodeBlock-background': '#ffffff', 'textBlockQuote-background': '#ffffff', 'editorWidget-background': '#ffffff',
+      'editorWarning-foreground': '#895503', 'editorError-foreground': '#b5200d', 'editorInfo-foreground': '#0f4a85',
+      'charts-blue': '#0f4a85', 'charts-green': '#374e06', 'charts-yellow': '#895503', 'charts-orange': '#b5200d', 'charts-purple': '#652d90', 'charts-red': '#b5200d',
+      'codeExplainer-focusBorder': '#006bbd', 'codeExplainer-staleForeground': '#895503', 'codeExplainer-lostForeground': '#b5200d',
     },
   },
 };

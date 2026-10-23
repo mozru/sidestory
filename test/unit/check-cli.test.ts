@@ -285,6 +285,35 @@ describe('checkExplainer', () => {
     expect(r.findings.find((f) => f.code === 'secret-file')!.severity).toBe('error');
   });
 
+  it('doesn’t take ordinary code named like tokens for a secret file (file names only; source files never)', async () => {
+    const dir = repoWith({
+      'src/tokens/tokenBucket.ts': CODE,
+      '.explain/demo/manifest.json': JSON.stringify({ version: 2, title: 'Demo', anchors: { refill: { file: 'src/tokens/tokenBucket.ts', range: [2, 4] } } }),
+      '.explain/demo/explainer.html': page(section('refill', widgetEl('tokens-chart.tsx'))),
+      '.explain/demo/tokens-chart.tsx': "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); return null; }\n",
+    });
+    const r = await check(dir);
+    expect(codes(r)).not.toContain('secret-file');
+    expect(codes(r)).toContain('not-pinned');
+  });
+
+  it('--types writes the widget types and tsconfig into .explain, and says how to typecheck from a terminal', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.explain/demo/manifest.json': manifest(ANCHORS),
+      '.explain/demo/explainer.html': page(section('refill', widgetEl('widgets/w.tsx'))),
+      '.explain/demo/widgets/w.tsx': GOOD_WIDGET,
+    });
+    const out: string[] = [];
+    const err: string[] = [];
+    expect(await main([dir, '--types'], { out: (x) => out.push(x), err: (x) => err.push(x) }, compilerOpts, join(repo, 'src/widget-types'))).toBe(0);
+    const explain = dirname(dir);
+    expect(JSON.parse(readFileSync(join(explain, 'tsconfig.json'), 'utf8')).include[0]).toBe('.types/*.d.ts');
+    expect(readFileSync(join(explain, '.types/explainer.d.ts'), 'utf8')).toBe(readFileSync(join(repo, 'src/widget-types/explainer.d.ts'), 'utf8'));
+    expect(err.join('\n')).toContain('npx -y -p typescript tsc -p .explain');
+    expect(out.join('\n')).toMatch(/1 widget checked/);
+  });
+
   it('reports a missing explainer.html', async () => {
     const r = await check(join(base, 'nowhere/.explain/demo'));
     expect(codes(r, 'error')).toEqual(['not-found']);

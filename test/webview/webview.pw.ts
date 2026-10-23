@@ -145,6 +145,21 @@ test('anchor states show on sections and in the header', async ({ page }) => {
   await expect(page.locator('.cx-status')).toHaveText('1 out of date · 1 not found');
 });
 
+test('on a narrow panel the "Code changed" badge never covers the section heading: the heading wraps around it', async ({ page }) => {
+  await page.setViewportSize({ width: 300, height: 900 });
+  const html = '<section data-explain-anchor="state"><h2>The next-state logic and its handshake rules</h2><p>Text.</p></section>';
+  await open(page, { html });
+  await send(page, { type: 'anchors', anchors: anchors({ state: 'changed' }) });
+  await expect(section(page, 'state')).toHaveAttribute('data-cx-label', 'Code changed');
+  const { firstLine, right } = await section(page, 'state').evaluate((el) => {
+    const r = document.createRange();
+    r.selectNodeContents(el.querySelector('h2')!);
+    return { firstLine: r.getClientRects()[0]!.right, right: el.getBoundingClientRect().right };
+  });
+  // The badge (about 90 px wide) sits at the top right; the heading's first line ends before it.
+  expect(firstLine).toBeLessThan(right - 60);
+});
+
 test('errors show in a banner and keep the last good content', async ({ page }) => {
   await open(page);
   await send(page, { type: 'error', message: 'manifest.json: anchors: bad' });
@@ -333,7 +348,7 @@ test('the reader comes back to the same place after the panel is rebuilt', async
   await page.evaluate((s) => ((window as unknown as { __state: unknown }).__state = s), saved);
 });
 
-for (const theme of ['dark', 'light', 'hc'] as const) {
+for (const theme of ['dark', 'light', 'hc', 'hc-light'] as const) {
   test(`no accessibility violations (${theme})`, async ({ page }) => {
     await open(page, { theme });
     await page.locator('.cx-step', { hasText: 'State' }).click();

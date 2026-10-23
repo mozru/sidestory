@@ -36,6 +36,35 @@ test('moving the cursor in the code moves the explainer', async ({ page }) => {
   await expect(panel.locator('.cx-position')).toHaveText('Step 4 of 5');
 });
 
+test('a reference or a step shows the start of its lines: an editor scrolled sideways (a long line) scrolls back', async ({ page }) => {
+  inContainer(`printf '// %0400d\\n' 0 >> ${WORKSPACE}/rtl/bit_reader.sv && sed -i '17s|$|  // ${'x'.repeat(300)}|' ${WORKSPACE}/rtl/bit_reader.sv`);
+  const panel = await openExplainer(page, 'bit-reader');
+  await chooseStep(panel, 'interface');
+  await expect(activeTab(page, 'bit_reader.sv')).toBeVisible();
+  // To the end of the long last line: the editor scrolls sideways.
+  await editorLines(page).click();
+  await command(page, 'Go to Line/Column', true);
+  await page.keyboard.type('44'); // the long line just added (45 is the empty one after it)
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('End');
+  const scrolled = () => codeEditor(page, 'bit_reader.sv').locator('.lines-content').evaluate((el) => parseFloat(getComputedStyle(el).left) || 0);
+  await expect.poll(scrolled).toBeLessThan(-100);
+  // A reference that puts the cursor there (as a widget's reveal() does).
+  await content(panel).locator('[data-explain-ref="state"]').first().click();
+  await expect(page.locator('.statusbar')).toContainText('Ln 16');
+  await expect.poll(scrolled).toBe(0);
+  // And a step.
+  await editorLines(page).click();
+  await command(page, 'Go to Line/Column', true);
+  await page.keyboard.type('44');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('End');
+  await expect.poll(scrolled).toBeLessThan(-100);
+  await chooseStep(panel, 'refill');
+  await expect(editorLines(page)).toContainText('refill below valid bits');
+  await expect.poll(scrolled).toBe(0);
+});
+
 test('edits to the explainer file appear live, without a reload', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
   await chooseStep(panel, 'handshakes');

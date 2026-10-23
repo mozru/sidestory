@@ -17,17 +17,21 @@ import type { WidgetCode } from '../../shared/widget-protocol.ts';
 import type { ExplainerRef } from '../explainers.ts';
 import { htmlUri, MAX_CODE_BYTES, MAX_HTML_BYTES, readBytesInside, readInside, refFromDir } from '../explainers.ts';
 import { log } from '../log.ts';
+import { WidgetStates } from '../../shared/widget-state.ts';
 import { decideCodeAccess, languageOf, type GitFacts } from './code-access.ts';
 import { compileWidget, type CompileResult } from './compile.ts';
-import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, type ConsentRecord, type FileGit, type WidgetFile } from './consent.ts';
+import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, linesCovered, type ConsentRecord, type FileGit, type WidgetFile } from './consent.ts';
 import { Git } from './git.ts';
 import { anchorsRead, scanWidgets, widgetSources } from './html.ts';
 import { isSecretPath } from './secret-files.ts';
-import { Escalations, HeartbeatWatchdog, TICK_MS } from './watchdog.ts';
+import { Escalations, HeartbeatWatchdog, ourModal, QUIET, TICK_MS } from './watchdog.ts';
 
 const CONSENT_KEY = 'codeExplainer.widgetConsent';
 const CONFIRMED_KEY = 'codeExplainer.widgetQuotesConfirmed';
 const DISABLED_KEY = 'codeExplainer.widgetsDisabled';
+const STATES_KEY = 'codeExplainer.widgetStates';
+/** Explainers whose widget state is kept; the least recently saved are dropped past this. */
+const MAX_STATE_EXPLAINERS = 16;
 const MAX_CONFIRMED = 2000;
 const MAX_HEIGHTS = 200;
 const MAX_FILE_BYTES = 5_000_000;
@@ -84,11 +88,18 @@ export interface PinWidgetHooks {
   isCommitted(a: Anchor): Promise<boolean>;
 }
 
+/** Anchors widgets would read, for a modal: exact line ranges per file. */
+function readingList(entries: readonly { id: string; file: string; range: LineRange }[]): string {
+  const byFile = new Map<string, string[]>();
+  for (const e of entries) byFile.set(e.file, [...(byFile.get(e.file) ?? []), `lines ${e.range.start}–${e.range.end} (${e.id})`]);
+  return [...byFile].map(([f, r]) => `${f}: ${r.join(', ')}`).join('\n');
+}
+
 const quoteKey = (file: string, quote: Quote, range: LineRange) => `${file}\n${createHash('sha256').update(quote.exact).digest('hex')}\n${range.start}-${range.end}`;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 function toBuild(r: CompileResult): WidgetBuild {
-  return { entry: r.entry, modules: r.modules, libraries: r.libraries, icons: r.icons, errors: r.errors.map((e) => ({ file: e.file, line: e.line, message: e.message })), hash: r.hash };
+  return { entry: r.entry, modules: r.modules, libraries: r.libraries, icons: r.icons, errors: r.errors.map((e) => ({ file: e.file, line: e.line, column: e.column, message: e.message })), hash: r.hash };
 }
 
 export class WidgetHost implements vscode.Disposable {
@@ -142,7 +153,8 @@ export class WidgetHost implements vscode.Disposable {
     this.panels.add(p);
     this.tickTimer ??= setInterval(() => {
       const at = Date.now();
-      for (const x of this.panels) if (x.watchdog.tick(at) === 'trip') void this.trip(x);
+      const quiet = QUIET.active(at);
+      for (const x of this.panels) if (x.watchdog.tick(at, true, quiet) === 'trip') void this.trip(x);
     }, TICK_MS);
     return p;
   }
@@ -229,6 +241,42 @@ export class WidgetHost implements vscode.Disposable {
     this.stoppedExplainers.clear();
     await this.context.workspaceState.update(DISABLED_KEY, undefined);
     this.refreshAll();
+  }
+
+  /**
+   * The reader's "Try again" in a widget's box: that widget (or, when the watchdog stopped the explainer, its
+   * widgets) runs again. The trip still counts: another within 5 minutes escalates.
+   */
+  async retry(ref: ExplainerRef, src: string): Promise<void> {
+    const map = { ...this.disabledMap() };
+    delete map[`${ref.dir.toString()}\n${src}`];
+    await this.context.workspaceState.update(DISABLED_KEY, map);
+    this.stoppedExplainers.delete(ref.dir.toString());
+    log.info(`${ref.name}: ${src} was turned on again from its box (Try again).`);
+    this.refreshAll();
+  }
+
+  /** What readers set in an explainer's widgets (useWidgetState), kept across window reloads and closing the panel. */
+  statesFor(ref: ExplainerRef): [string, string][] {
+    return this.context.workspaceState.get<Record<string, [string, string][]>>(STATES_KEY, {})[ref.dir.toString()] ?? [];
+  }
+
+  private stateWrites: Promise<void> = Promise.resolve();
+
+  /** Keeps widget state (by widget key) for an explainer, with the panel's caps: 64 KB per widget, 256 KB per explainer. */
+  saveStates(dir: string, entries: readonly [string, string][]): Promise<void> {
+    // One write at a time: each reads what the last one wrote.
+    this.stateWrites = this.stateWrites.then(async () => {
+      const all = { ...this.context.workspaceState.get<Record<string, [string, string][]>>(STATES_KEY, {}) };
+      const states = new WidgetStates(all[dir] ?? []);
+      for (const [key, json] of entries) states.set(key, json);
+      delete all[dir]; // re-inserted last: the most recently used explainers are kept longest
+      all[dir] = states.save();
+      const dirs = Object.keys(all);
+      for (const d of dirs.slice(0, Math.max(0, dirs.length - MAX_STATE_EXPLAINERS))) delete all[d];
+      await this.context.workspaceState.update(STATES_KEY, all);
+    }).catch((e: Error) => log.warn(`Couldn't keep widget state: ${e.message}`));
+    return this.stateWrites;
   }
 
   heightsFor(ref: ExplainerRef): Record<string, number> {
@@ -488,15 +536,12 @@ export class WidgetHost implements vscode.Disposable {
   /** The native modal for anchors widgets would read: exact line ranges per file. */
   async confirmReading(title: string, entries: { id: string; file: string; range: LineRange }[]): Promise<boolean> {
     if (entries.length === 0) return false;
-    const byFile = new Map<string, string[]>();
-    for (const e of entries) byFile.set(e.file, [...(byFile.get(e.file) ?? []), `lines ${e.range.start}–${e.range.end} (${e.id})`]);
-    const lines = [...byFile].map(([f, r]) => `${f}: ${r.join(', ')}`);
     const ok = 'Let Widgets Read';
-    const choice = await vscode.window.showWarningMessage(
+    const choice = await ourModal(() => vscode.window.showWarningMessage(
       `Let the widgets in “${modalText(title)}” read this code?`,
-      { modal: true, detail: `${lines.join('\n')}\n\nWidgets would see these lines as they are in the editor, including unsaved edits.` },
+      { modal: true, detail: `${readingList(entries)}\n\nWidgets would see these lines as they are in the editor, including unsaved edits.` },
       ok,
-    );
+    ));
     return choice === ok;
   }
 
@@ -524,7 +569,7 @@ export class WidgetHost implements vscode.Disposable {
 
   private notifyDisabled(port: WidgetSessionPort, what: string): void {
     const enable = 'Enable Widgets';
-    void vscode.window.showWarningMessage(`${what} in “${modalText(port.title() || port.ref().name)}” stopped responding, so ${what === 'A widget' ? 'it is' : 'they are'} turned off until the code changes.`, enable).then((c) => {
+    void vscode.window.showWarningMessage(`${what} in “${modalText(port.title() || port.ref().name)}” stopped responding, so ${what === 'A widget' ? 'it is' : 'they are'} turned off until the code changes. "Try again" in ${what === 'A widget' ? 'its box' : 'their boxes'} turns ${what === 'A widget' ? 'it' : 'them'} on again.`, enable).then((c) => {
       if (c === enable) void vscode.commands.executeCommand('codeExplainer.enableWidgets');
     });
   }
@@ -542,7 +587,13 @@ export class WidgetHost implements vscode.Disposable {
       });
       return false;
     }
-    const srcs = step === 'suspect' && suspect ? [suspect] : p.sources();
+    // Without evidence against one widget (none mounting, none doing work, several mounted), a first trip
+    // blames none: the panel is just reloaded. A second within 5 minutes turns them all off.
+    const srcs = step === 'suspect' ? (suspect ? [suspect] : []) : p.sources();
+    if (srcs.length === 0) {
+      log.warn(`${ref.name}: the panel stopped responding, with no widget to suspect; it was reloaded.`);
+      return true;
+    }
     await this.disable(ref, await Promise.all(srcs.map(async (src) => ({ src, hash: (await this.compile(ref, src)).hash }))));
     log.warn(`${ref.name}: the watchdog turned off ${srcs.join(', ')} until ${srcs.length === 1 ? 'its' : 'their'} code changes.`);
     this.notifyDisabled(p.port, srcs.length === 1 ? 'A widget' : 'Widgets');
@@ -555,6 +606,12 @@ export class WidgetHost implements vscode.Disposable {
    * disabled, and the rest mount again.
    */
   unresponsive(p: PanelWidgets, crumbs: Crumbs): void {
+    // A dialog of ours was open (or a gate just mounted widgets): their silence says nothing. The panel starts counting again.
+    if (QUIET.active(Date.now()) && !this.incident) {
+      log.info(`${p.port.ref().name}: widgets were slow to answer while a dialog was open or widgets were mounting; not held against them.`);
+      p.port.post({ type: 'widgetsReset', phase: 'remount' });
+      return;
+    }
     // Every panel whose widgets share the hung process reports it: one incident, one suspect, one escalation.
     if (!this.incident) {
       for (const x of this.panels) x.port.post({ type: 'widgetsReset', phase: 'unmount' });
@@ -642,6 +699,10 @@ export class PanelWidgets {
   private gate: WidgetGate | undefined;
   private changed: string[] = [];
   private added: string[] = [];
+  /** This explainer's widgets never ran here. */
+  private first = false;
+  /** Anchors the widgets read whose quotes nobody confirmed (offered in the consent modal too). */
+  private unconfirmedAnchors: Anchor[] = [];
   private gateSeq = 0;
   /** The gate being computed, for requests that arrive before it is done. */
   private pending: Promise<void> | undefined;
@@ -649,6 +710,8 @@ export class PanelWidgets {
   private healthySince: number | undefined;
   /** What the panel was sent, by src (hash), so live edits push new builds. */
   private readonly served = new Map<string, string>();
+  /** Explainers this panel showed (widget state for them is accepted). */
+  private readonly dirs = new Set<string>();
   /** `${src}\n${anchor}` pairs widgets subscribed to. */
   private readonly codeAnchors = new Set<string>();
   private readonly loggedReasons = new Set<string>();
@@ -680,10 +743,15 @@ export class PanelWidgets {
     this.port.highlight(undefined);
   }
 
-  /** After `init` (a new or rebuilt page): it needs the gate again. */
+  /** After `init` (a new or rebuilt page): it needs the widget state the extension keeps, and the gate again. */
   onInit(): void {
     this.served.clear();
     this.codeAnchors.clear();
+    const ref = this.port.ref();
+    this.dirs.add(ref.dir.toString());
+    // Before anything mounts (widgets wait for the gate): the panel fills in what its own state lacks.
+    const states = this.host.statesFor(ref);
+    if (states.length) this.port.post({ type: 'widgetStates', states });
     if (this.gate) this.port.post({ type: 'widgets', gate: this.gate });
     void this.refreshGate();
   }
@@ -727,22 +795,28 @@ export class PanelWidgets {
       if (record.granted && d.observed.length) await this.host.acknowledge(d.observed, false);
       this.changed = record.granted ? d.changed : [];
       this.added = record.granted ? d.added : [];
+      this.first = d.first;
       status = d.ask ? 'ask' : 'on';
       await this.host.pruneDisabled(ref, new Map([...this.results].map(([src, r]) => [src, r.hash])));
     }
     const stopped = this.host.isStopped(ref);
     const disabled = this.srcs.filter((s) => stopped || this.host.isDisabled(ref, s, this.results.get(s)?.hash));
     let unconfirmed: WidgetGate['unconfirmed'] = null;
-    if (status === 'on' && results.length) {
+    this.unconfirmedAnchors = [];
+    // Also while consent is pending: the consent modal then offers both at once.
+    if ((status === 'on' || status === 'ask') && results.length) {
       const list = await this.host.unconfirmed(this.port, results);
       if (stale()) return;
+      this.unconfirmedAnchors = list;
       if (list.length) {
-        const byFile = new Map<string, number>();
-        for (const a of list) byFile.set(a.file, (byFile.get(a.file) ?? 0) + a.range.end - a.range.start + 1);
-        unconfirmed = { anchors: list.length, summary: [...byFile].map(([f, n]) => `${f}, ${plural(n, 'line')}`).join('; ').slice(0, 200) };
+        const byFile = new Map<string, LineRange[]>();
+        for (const a of list) byFile.set(a.file, [...(byFile.get(a.file) ?? []), a.range]);
+        unconfirmed = { anchors: list.length, summary: [...byFile].map(([f, r]) => `${f}, ${plural(linesCovered(r), 'line')}`).join('; ').slice(0, 200) };
       }
     }
     const gate: WidgetGate = { status, unconfirmed, disabled, heights: this.host.heightsFor(ref), ...(stopped ? { stopped } : {}) };
+    // What may run changed (consent given, a widget turned on again): mounting a burst of widgets is no hang.
+    if (status === 'on' && (this.gate?.status !== 'on' || this.gate.disabled.join('\n') !== disabled.join('\n'))) QUIET.hold(Date.now());
     this.gate = gate;
     this.port.post({ type: 'widgets', gate });
     // Live edits: builds the panel already runs are sent again when their code changed.
@@ -877,9 +951,16 @@ export class PanelWidgets {
       case 'widgetHeights':
         this.host.setHeights(ref, m.heights);
         return true;
+      case 'widgetStates':
+        // Only for explainers this panel showed (a widget still saving as the panel moves on is filed under its own).
+        if (this.dirs.has(m.dir)) void this.host.saveStates(m.dir, m.states);
+        return true;
+      case 'widgetRetry':
+        if (this.srcs.includes(m.src)) void this.host.retry(ref, m.src);
+        return true;
       case 'heartbeat': {
         const at = Date.now();
-        if (this.watchdog.beat({ delay: m.delay, visible: m.visible, mounted: m.mounted, mounting: m.mounting, recent: m.recent }, at) === 'trip') void this.host.trip(this);
+        if (this.watchdog.beat({ delay: m.delay, visible: m.visible, mounted: m.mounted, mounting: m.mounting, recent: m.recent }, at, QUIET.active(at)) === 'trip') void this.host.trip(this);
         else if (this.port.recovered && m.visible && m.delay < 1000) {
           // A recovered panel that has beaten on time for a minute works again: a later hang gets recovered too.
           this.healthySince ??= at;
@@ -923,20 +1004,27 @@ export class PanelWidgets {
       const results = [...this.results.values()];
       const files = await this.host.widgetFiles(ref, results);
       const run = 'Run Widgets';
+      // Anchors they'd read that nobody confirmed: offered here too, so an author who just pinned isn't asked twice.
+      const reads = this.unconfirmedAnchors.map((a) => ({ id: a.id, file: a.file, range: a.range, quote: a.quote! }));
+      const runAndRead = 'Run Widgets and Let Them Read';
       const list = (xs: string[]) => xs.slice(0, 10).join(', ') + (xs.length > 10 ? `, and ${xs.length - 10} more` : '');
       const detail = [
         `Explainer: “${modalText(this.port.title() || ref.name)}” (${plural(this.srcs.length, 'widget')}: ${list(this.srcs)})`,
+        this.first && !this.changed.length && !this.added.length ? "This explainer's widgets haven't run in this workspace before." : '',
         this.changed.length ? `Changed through git since you last agreed: ${list(this.changed)}` : '',
         this.added.length ? `New from git (not agreed to before): ${list(this.added)}` : '',
         'Your answer covers this code. Your own edits to it keep running; code that arrives through git (a pull, a checkout) asks again.',
+        reads.length ? `\nThey also want to read this code (as it is in the editor, including unsaved edits):\n${readingList(reads)}` : '',
+        'Widgets run in a sandbox that blocks the usual network calls (fetch fails), but the sandbox is best effort: treat what they can see as something they could send.',
       ].filter(Boolean).join('\n');
-      const choice = await vscode.window.showWarningMessage(
+      const choice = await ourModal(() => vscode.window.showWarningMessage(
         "Widgets are code from this repository. They can read the code this explainer points at (including unsaved edits) and may be able to reach the network. Run this explainer's widgets?",
         { modal: true, detail },
-        run,
-      );
-      if (choice !== run || generation !== this.port.generation()) return;
+        ...(reads.length ? [runAndRead, run] : [run]),
+      ));
+      if ((choice !== run && choice !== runAndRead) || generation !== this.port.generation()) return;
       await this.host.acknowledge(files, true);
+      if (choice === runAndRead) await this.host.confirm(reads.map((r) => ({ file: r.file, quote: r.quote, range: r.range })));
       this.host.refreshAll();
     } finally {
       this.asking = false;

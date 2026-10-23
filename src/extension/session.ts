@@ -20,6 +20,7 @@ import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
 import type { AnchorStates } from './pin.ts';
 import type { PanelWidgets, WidgetHost, WidgetSessionPort } from './widgets/host.ts';
+import { ourModal } from './widgets/watchdog.ts';
 
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
@@ -583,8 +584,11 @@ export class ExplainerSession implements vscode.Disposable {
       return;
     }
     const line = e.selections[0]!.active.line + 1;
-    // The reader clicked or typed in the code: stop fading the rest of the file.
-    const byUser = e.kind === vscode.TextEditorSelectionChangeKind.Keyboard || e.kind === vscode.TextEditorSelectionChangeKind.Mouse;
+    // The reader clicked, typed or ran a command in the code (Go to Line, Go to Definition): stop fading the
+    // rest of the file. Only selections set through the API (undefined kind) don't count; this extension's own
+    // cursor moves are ignored above.
+    const k = vscode.TextEditorSelectionChangeKind;
+    const byUser = e.kind === k.Keyboard || e.kind === k.Mouse || e.kind === k.Command;
     if (byUser && ids.size && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
       const id = ids.size ? anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line) : undefined;
@@ -708,7 +712,7 @@ export class ExplainerSession implements vscode.Disposable {
     const url = safeExternalUrl(raw);
     if (!url) return;
     const open = 'Open';
-    const choice = await vscode.window.showInformationMessage(`The explainer links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open);
+    const choice = await ourModal(() => vscode.window.showInformationMessage(`The explainer links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open));
     if (choice === open) await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 
@@ -768,6 +772,9 @@ export class ExplainerSession implements vscode.Disposable {
       });
       if (this.disposed) return;
       editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      // Vertically only: a long line (the cursor's, or one in the range) can leave the editor scrolled
+      // sideways, cutting off the start of every line. Revealing the first line's start scrolls back.
+      editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
       if (moveCursor) this.decorations.flash(editor, new vscode.Range(range.start, new vscode.Position(r.range.end - 1, 0)));
       else if (this.active === id) this.decorateActive(dim); // unless the reader moved on while the file opened
     } catch (e) {

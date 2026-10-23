@@ -25,6 +25,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-link: var(--link);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -55,11 +56,13 @@
   --accent: var(--vscode-list-hoverBackground, color-mix(in srgb, CanvasText 10%, Canvas));
   --accent-foreground: var(--vscode-list-hoverForeground, var(--foreground));
   --destructive: var(--vscode-errorForeground, #f14c4c);
-  --destructive-foreground: var(--vscode-button-foreground, #ffffff);
+  /* Black or white, whichever reads better on the theme's error color (no theme pairs a text color with it). */
+  --destructive-foreground: oklch(from var(--destructive) clamp(0, (0.6 - l) * 1000, 1) 0 0);
   --border: var(--vscode-widget-border, var(--vscode-panel-border, color-mix(in srgb, CanvasText 20%, Canvas)));
   --input: var(--vscode-input-border, var(--vscode-dropdown-border, var(--border)));
   --input-background: var(--vscode-input-background, transparent);
   --ring: var(--vscode-focusBorder, Highlight);
+  --link: var(--vscode-textLink-foreground, LinkText);
   --chart-1: var(--vscode-charts-blue, #3794ff);
   --chart-2: var(--vscode-charts-orange, #d18616);
   --chart-3: var(--vscode-charts-green, #89d185);
@@ -70,6 +73,12 @@
   color-scheme: dark;
 }
 :root.light { color-scheme: light; }
+/* A theme without a button background (Dark High Contrast draws buttons as outlines): primary is the text
+   color, with the background color on it, so filled buttons, badges and bars stay readable (set by the runtime). */
+:root.cx-no-button-bg {
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+}
 /* High contrast: every edge visible, focus in the theme's active border. */
 :root.hc {
   --border: var(--vscode-contrastBorder, CanvasText);

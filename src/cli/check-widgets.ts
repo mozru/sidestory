@@ -1,12 +1,15 @@
 // The standalone widget checker (docs/WIDGETS-PLAN.md §2 "Checking"), bundled as dist/check.cjs:
 //
-//   node <extension>/dist/check.cjs <explainer-dir> [--json] [--pin [--yes-widgets-may-read]]
+//   node <extension>/dist/check.cjs <explainer-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]
 //
 // Finds explainer.html's <explain-widget> elements, compiles each with the extension's widget compiler,
 // validates their props, checks the anchor ids widget code names against manifest.json, reports anchors
 // read through useAnchorCode that widgets won't get (not pinned, secret-looking files …) and placement
 // problems visible in the HTML and CSS. Prints `file:line: severity code: message`; exits 1 on errors.
 // Runs nothing from the repository (compiling isn't running), so it needs no consent.
+//
+// --types also writes .explain/tsconfig.json and .explain/.types/*.d.ts (as "Add Widget Types" does), so
+// `npx -y -p typescript tsc -p .explain` typechecks the widgets.
 //
 // --pin records each anchor's current code from the files on disk, as "Pin Anchors" does, never for
 // secret-looking files, and never for anchors widgets read unless --yes-widgets-may-read is given: those
@@ -24,6 +27,7 @@ import { realPathInside, writeFileAtomic } from '../extension/paths.ts';
 import { WidgetCompiler, type CompileResult, type WidgetCompilerOptions } from '../extension/widgets/compile.ts';
 import { anchorsRead } from '../extension/widgets/html.ts';
 import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-files.ts';
+import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { scanHtml, type WidgetElement } from './html.ts';
 
@@ -566,12 +570,13 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
   return out.join('\n');
 }
 
-const USAGE = 'usage: node check.cjs <explainer-dir> [--json] [--pin [--yes-widgets-may-read]]';
+const USAGE = 'usage: node check.cjs <explainer-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]';
+const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
-export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions): Promise<number> {
+export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types')): Promise<number> {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
   const args = argv.filter((a) => !a.startsWith('--'));
-  const known = new Set(['--json', '--pin', '--yes-widgets-may-read', '--help']);
+  const known = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help']);
   const unknown = [...flags].filter((f) => !known.has(f));
   if (flags.has('--help')) {
     io.out(USAGE);
@@ -584,6 +589,18 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   if (flags.has('--yes-widgets-may-read') && !flags.has('--pin')) {
     io.err(`--yes-widgets-may-read only goes with --pin\n${USAGE}`);
     return 2;
+  }
+  // --types: what "Add Widget Types" writes, for a terminal (typecheck with TYPECHECK_COMMAND).
+  if (flags.has('--types')) {
+    let dir = resolve(args[0]!);
+    if (/explainer\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
+    const explain = dirname(dir);
+    if (!typesDir || basename(explain) !== '.explain') {
+      io.err(!typesDir ? 'check.cjs: the widget types are missing next to it' : `--types writes into the .explain folder, and ${dir} isn't in one`);
+      return 2;
+    }
+    const written = await writeWidgetTypes(explain, typesDir);
+    io.err(`Wrote ${written.length} files to ${explain} (tsconfig.json, .types/). Typecheck the widgets with: ${TYPECHECK_COMMAND}`);
   }
   const report = await checkExplainer(args[0]!, { pin: flags.has('--pin'), yesWidgetsMayRead: flags.has('--yes-widgets-may-read'), compiler });
   io.out(flags.has('--json') ? JSON.stringify(report, null, 2) : formatReport(report));

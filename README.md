@@ -164,15 +164,16 @@ export default function Refill({ width = 64 }: { width?: number }) {
 }
 ```
 
-**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, `codeExplainer.widgets.enabled` is on in your user settings (a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked again when widget code arrives through git (checkout, pull, merge), not after your own edits. **Code Explainer: Revoke Widget Consent** takes it back. What widgets can and can't reach is in `SECURITY.md`.
+**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, the `codeExplainer.widgets.enabled` setting is on (it is by default; it's a user setting, so a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked once per explainer, and again when widget code arrives through git (checkout, pull, merge), not after your own edits or when you switch back to a version you already agreed to. Consent is kept in VS Code's workspace storage (in browser VS Code, per browser profile). **Code Explainer: Revoke Widget Consent** takes it back. A widget that freezes the panel is turned off by a watchdog: its box offers **Try again**, and **Code Explainer: Enable Widgets** turns every widget the watchdog stopped back on (and the setting, if it's off). What widgets can and can't reach is in `SECURITY.md`.
 
-**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Code Explainer: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Code Explainer: Add Widget Types** adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
+**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Code Explainer: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Code Explainer: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
 
 ### Settings
 
 | Setting | Default | |
 |---|---|---|
 | `codeExplainer.dimUnfocused` | `true` | Fade the rest of the file while you step through the explainer (never in high contrast themes). |
+| `codeExplainer.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ### Troubleshooting
 

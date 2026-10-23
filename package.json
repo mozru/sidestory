@@ -83,6 +83,21 @@
         "command": "codeExplainer.enableWidgets",
         "title": "Enable Widgets",
         "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.checkWidgets",
+        "title": "Check Widgets",
+        "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.copyWidgetCheckCommand",
+        "title": "Copy Widget Check Command",
+        "category": "Code Explainer"
+      },
+      {
+        "command": "codeExplainer.addWidgetTypes",
+        "title": "Add Widget Types",
+        "category": "Code Explainer"
       }
     ],
     "keybindings": [
@@ -150,6 +165,26 @@
         "defaults": {
           "dark": "#00000000",
           "light": "#00000000",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "codeExplainer.widgetHighlightBackground",
+        "description": "Background of the lines a widget highlights in the editor.",
+        "defaults": {
+          "dark": "editor.wordHighlightBackground",
+          "light": "editor.wordHighlightBackground",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      },
+      {
+        "id": "codeExplainer.widgetHighlightBorder",
+        "description": "Border of the lines a widget highlights in the editor (high contrast themes, where backgrounds are transparent).",
+        "defaults": {
+          "dark": "editor.wordHighlightBorder",
+          "light": "editor.wordHighlightBorder",
           "highContrast": "contrastActiveBorder",
           "highContrastLight": "contrastActiveBorder"
         }

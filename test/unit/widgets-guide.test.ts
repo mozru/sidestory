@@ -156,6 +156,12 @@ describe('widget types (src/widget-types)', () => {
     for (const v of values) expect(exports.react, v).toContain(v);
   });
 
+  it('ship in the package next to the checker, which ships too (the guide tells Claude to run dist/check.cjs)', () => {
+    const ignore = readFileSync(join(repo, '.vscodeignore'), 'utf8').split('\n');
+    expect(ignore).toContain('!dist/check.cjs');
+    expect(ignore).toContain('!dist/widget-types/**');
+  });
+
   it('libraries.d.ts and lucide-react.d.ts are up to date, and all of it stays small', () => {
     execFileSync(process.execPath, [join(repo, 'scripts/widget-types.ts'), '--check'], { cwd: repo });
     const total = WIDGET_TYPE_FILES.reduce((n, f) => n + statSync(join(typesDir, f)).size, 0);

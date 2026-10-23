@@ -17,6 +17,7 @@ export default function Probe({ name = 'w', start = 0, onStep = '' }: { name?: s
   const [n, setN] = useWidgetState('n', start);
   const [extra, setExtra] = useState(0);
   const [result, setResult] = useState('');
+  const [key, setKey] = useState('');
   const step = useActiveStep();
   window.__probe = {
     // Focus through a scriptless child frame's unpatched focus(): the runtime's guard can't see it.
@@ -39,8 +40,9 @@ export default function Probe({ name = 'w', start = 0, onStep = '' }: { name?: s
   useEffect(() => {
     if (onStep === 'highlight' && step) highlight([2, 3], { anchor: 'ring', identifiers: ['x'] });
   }, [step]);
-  return <div className="p-2" style={{ minHeight: 100 + extra }}>
+  return <div className="p-2" style={{ minHeight: 100 + extra }} onKeyDown={(e) => setKey(e.key)}>
     <p data-testid="out">{name}:{n}|{step}|{result}</p>
+    <p data-testid="key">{key}</p>
     <Button data-testid="inc" onClick={() => setN(n + 1)}>inc</Button>
     <Button data-testid="reveal" onClick={() => { reveal('ring').then((ok) => setResult('reveal:' + ok)); }}>reveal</Button>
     <Button data-testid="later" onClick={async () => { await new Promise((r) => setTimeout(r, 600)); setResult('later:' + await reveal('ring')); }}>later</Button>
@@ -141,7 +143,7 @@ test.describe('mounting and rendering', () => {
     const err = placeholder(page).locator('.cx-widget-error');
     await expect(err).toBeVisible();
     await expect(err).toContainText('Three.js');
-    await expect(err.locator('code')).toHaveText('w/bad.tsx:1');
+    await expect(err.locator('code')).toHaveText('w/bad.tsx:1:25'); // file:line:column
     await err.getByRole('button', { name: 'Show fallback' }).click();
     await expect(err).toBeHidden();
     expect((await posted(page)).some((m) => m.type === 'widgetLog' && m.level === 'error' && m.message.includes('Three.js'))).toBe(true);
@@ -188,7 +190,33 @@ test.describe('reveal, goToStep and focus need the reader’s interaction with t
       await expect.poll(() => contentFocus(page)).toBe('explain-widget');
     }
     expect(await reveals(page)).toEqual([]);
-    expect((await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('took focus without a click'))).toBe(true);
+    await expect.poll(async () => (await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('took focus without a click'))).toBe(true);
+  });
+
+  test('instant clicks (automation, assistive technology) right after a click on a step button never stop the widget', async ({ page }) => {
+    await openProbe(page, { active: 'intro' });
+    await page.locator('.cx-step', { hasText: 'Ring' }).click();
+    await page.waitForTimeout(400); // the step's scroll settles
+    // Playwright's clicks arrive at once, with no pointer travel the panel could see.
+    for (let i = 0; i < 5; i++) await widgetFrame(page).getByTestId('inc').click();
+    await expect(out(widgetFrame(page))).toContainText('w:5');
+    await page.waitForTimeout(600);
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+    expect((await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('took focus without a click'))).toBe(false);
+  });
+
+  test('a widget stopped for taking focus offers "Restart widget", which runs it again', async ({ page }) => {
+    await openProbe(page);
+    for (let i = 0; i < 3; i++) {
+      await page.locator('.cx-step', { hasText: i % 2 ? 'Ring' : 'Intro' }).click();
+      if (await frames(page).count()) await widgetEval(page, 0, 'steal').catch(() => {});
+      await page.waitForTimeout(500);
+    }
+    const err = placeholder(page).locator('.cx-widget-error');
+    await expect(err).toContainText('kept taking focus');
+    await err.getByRole('button', { name: 'Restart widget' }).click();
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
   });
 
   test('pressing J, then moving to the widget that came up and clicking it, works at once', async ({ page }) => {
@@ -253,6 +281,18 @@ test.describe('reveal, goToStep and focus need the reader’s interaction with t
     expect(await contentFocus(page)).toBe('widget');
   });
 
+  test('Enter on the placeholder focuses the widget’s root, so a key handler on it hears keys at once', async ({ page }) => {
+    await openProbe(page);
+    await placeholder(page).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => contentFocus(page)).toBe('widget');
+    await page.keyboard.press('k');
+    await expect(widgetFrame(page).getByTestId('key')).toHaveText('k');
+    // Tab then goes to the widget's first control.
+    await page.keyboard.press('Tab');
+    await expect(widgetFrame(page).getByTestId('inc')).toBeFocused();
+  });
+
   test('a click on a step button, then leaving past the widget through the panel edge: a focus() is theft', async ({ page }) => {
     await openProbe(page);
     await page.locator('.cx-step', { hasText: 'Tail' }).click();
@@ -314,6 +354,20 @@ test.describe('highlight, steps, keys and focus exits', () => {
     expect((await posted(page)).filter((m) => m.type === 'widgetLog' && m.message.includes('highlight() only works'))).toHaveLength(1);
   });
 
+  test('a widget highlights another anchor that is the current step (or inside it) while its own step isn’t current', async ({ page }) => {
+    // The widget sits in "ring"; the reader is on "tail" (a timing diagram lighting up another section's code).
+    await openProbe(page, { active: 'ring' });
+    await page.locator('.cx-step', { hasText: 'Tail' }).click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    await clearPosted(page);
+    await widgetEval(page, 0, 'highlight', [2, 3], 'tail');
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'widgetHighlight')).toEqual([{ type: 'widgetHighlight', anchor: 'tail', lines: [2, 3] }]);
+    // Its own anchor isn't the current step: dropped.
+    await widgetEval(page, 0, 'highlight', [1, 1]);
+    await page.waitForTimeout(200);
+    expect((await posted(page)).filter((m) => m.type === 'widgetHighlight')).toHaveLength(1);
+  });
+
   test('highlight is limited to 10 a second, the latest call delivered', async ({ page }) => {
     await openProbe(page, { active: 'ring' });
     await clearPosted(page);
@@ -322,6 +376,8 @@ test.describe('highlight, steps, keys and focus exits', () => {
     const hl = (await posted(page)).filter((m): m is Extract<FromWebview, { type: 'widgetHighlight' }> => m.type === 'widgetHighlight');
     expect(hl.length).toBeLessThanOrEqual(12);
     expect(hl.at(-1)!.lines).toEqual([25, 25]);
+    // Authors hear that calls were dropped, once.
+    expect((await posted(page)).filter((m) => m.type === 'widgetLog' && m.message.includes('highlight() calls a second'))).toHaveLength(1);
   });
 
   test('Escape leaves the widget to its placeholder; Tab past its end goes on in reading order', async ({ page }) => {
@@ -389,6 +445,23 @@ test.describe('placement', () => {
     expect((await posted(page)).some((m) => m.type === 'widgetLog' && /geometry/.test(m.message))).toBe(false);
   });
 
+  test('a placement error that goes away (the CSS removed in a live edit) leaves no note, and no Tab stop, behind', async ({ page }) => {
+    const styled = (css: string) => explainerHtml(`<style>${css}</style><div class="card">${probeTag()}</div>`);
+    await openWith(page, styled('.card { transform: translateX(1px) }'), builds, { active: 'ring' });
+    const err = placeholder(page).locator('.cx-widget-error');
+    await expect(err).toContainText("can't be shown here");
+    await send(page, { type: 'content', title: 'Widgets', html: styled('.card { color: inherit }') });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+    await expect(err).toBeHidden();
+    await expect(err).toHaveJSProperty('hidden', true);
+    await expect(err).toHaveJSProperty('inert', true);
+    // Tab from the placeholder goes on to the prose's next stop, never to the hidden "Show fallback".
+    await placeholder(page).focus();
+    await page.keyboard.press('Tab');
+    expect(await content(page).locator('body').evaluate((b) => b.ownerDocument.activeElement?.className ?? '')).not.toContain('cx-widget-fallback');
+  });
+
   test('a clipping ancestor clips the frame to its padding box', async ({ page }) => {
     await openWith(page, explainerHtml(`<div style="overflow: hidden; height: 80px">${probeTag()}</div>`), builds);
     await expect(out(widgetFrame(page))).toContainText('w:0');
@@ -448,6 +521,27 @@ test.describe('heights, state, caps', () => {
     await expect(out(widgetFrame(page))).toContainText('q!2');
     // The panel's saved state carries it (a hidden panel is rebuilt from it).
     await expect.poll(() => page.evaluate(() => JSON.stringify((window as unknown as { __state: { widgets?: unknown } }).__state.widgets ?? null))).toContain('{\\"n\\":2}');
+  });
+
+  test('state goes to the extension too (coalesced), and comes back in a panel that lost its own (a window reload, the panel reopened)', async ({ page }) => {
+    await openWith(page, explainerHtml(probeTag(' id="p"')), builds, { active: 'ring' });
+    const f = widgetFrame(page);
+    await f.getByTestId('inc').click();
+    await f.getByTestId('inc').click();
+    await expect(out(f)).toContainText('w:2');
+    const sent = async () => (await posted(page)).filter((m): m is Extract<FromWebview, { type: 'widgetStates' }> => m.type === 'widgetStates');
+    await expect.poll(async () => (await sent()).at(-1)?.states).toEqual([['#p', '{"n":2}']]);
+    expect((await sent()).at(-1)!.dir).toBe('file:///ws/.explain/w');
+    expect((await sent()).length).toBeLessThanOrEqual(2); // coalesced, not one message per click
+    // A fresh page with no saved state of its own: the extension's copy arrives before the gate.
+    await page.goto('/test/webview/harness.html');
+    await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+    await serve(page, builds);
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+    await send(page, { type: 'init', title: 'Widgets', html: explainerHtml(probeTag(' id="p"')), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.explain/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
+    await send(page, { type: 'widgetStates', states: [['#p', '{"n":2}']] });
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:2');
   });
 
   test('an HTML edit elsewhere keeps the widget mounted (same frame)', async ({ page }) => {
@@ -737,9 +831,15 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     // A runtime error badge, while the widget keeps running.
     const f = (await (await frames(page).first().elementHandle())!.contentFrame())!;
     await f.evaluate(() => setTimeout(() => { throw new Error('boom'); }));
-    await expect(note).toContainText('error: boom');
+    // Readers see a short note; the message itself goes to Output, for the author.
+    await expect(note).toHaveText('hit an error (details in Output)');
     await expect(note).toHaveClass(/cx-error/);
     await expect(placeholder(page)).toHaveAttribute('data-cx-wstate', 'live');
+    await expect.poll(async () => (await posted(page)).some((m) => m.type === 'widgetLog' && m.level === 'error' && m.message.includes('boom'))).toBe(true);
+    // An author-level message (a bad highlight() argument) stays out of the reader's view too.
+    await widgetEval(page, 0, 'highlight', [0, 1]);
+    await expect.poll(async () => (await posted(page)).some((m) => m.type === 'widgetLog' && m.message.includes('lines must be'))).toBe(true);
+    expect(await note.textContent()).not.toContain('lines must be');
   });
 
   test('a watchdog suspension ends with a new gate or another explainer; a stopped explainer says why', async ({ page }) => {
@@ -758,6 +858,20 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     await send(page, { type: 'init', title: 'Other', html: explainerHtml(probeTag()), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.explain/other', base, trail: [{ name: 'other', title: 'Other' }] });
     await send(page, { type: 'widgets', gate: ON });
     await expect(out(widgetFrame(page))).toContainText('w:0');
+  });
+
+  test('a widget the watchdog turned off offers "Try again" in its box: the extension is asked to turn it on', async ({ page }) => {
+    await openProbe(page);
+    await send(page, { type: 'widgets', gate: { ...ON, disabled: ['w/probe.tsx'] } });
+    const err = placeholder(page).locator('.cx-widget-error');
+    await expect(err).toContainText('stopped responding');
+    await clearPosted(page);
+    await err.getByRole('button', { name: 'Try again' }).click();
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'widgetRetry')).toEqual([{ type: 'widgetRetry', src: 'w/probe.tsx' }]);
+    // The extension's answer: a gate without it.
+    await send(page, { type: 'widgets', gate: ON });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect(err).toBeHidden();
   });
 
   test('"Show fallback" on a broken widget shows the whole fallback, not clipped at the widget’s height', async ({ page }) => {

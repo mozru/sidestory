@@ -469,6 +469,9 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'widgetsReset':
       widgets?.reset(m.phase);
       break;
+    case 'widgetStates':
+      widgets?.restoreStates(m.states);
+      break;
     case 'focusQuery':
       widgets?.focusAnswer(m.id);
       break;

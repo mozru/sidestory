@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest';
 import type { Anchor } from '../../src/core/manifest.ts';
 import type { Resolution } from '../../src/core/resolve.ts';
 import { decideCodeAccess, matchedInFull, quoteIn, type CodeAccessInput } from '../../src/extension/widgets/code-access.ts';
-import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, type WidgetFile } from '../../src/extension/widgets/consent.ts';
+import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, linesCovered, type WidgetFile } from '../../src/extension/widgets/consent.ts';
 import { anchorsRead, scanWidgets, widgetSources } from '../../src/extension/widgets/html.ts';
-import { Escalations, HeartbeatWatchdog } from '../../src/extension/widgets/watchdog.ts';
+import { Escalations, HeartbeatWatchdog, QuietPeriods } from '../../src/extension/widgets/watchdog.ts';
 import { WIDGET_BOOTSTRAP } from '../../src/shared/widget-bootstrap.ts';
 import { ActivationEvidence, rayEntry, rayHits } from '../../src/webview/activation.ts';
 import { closeWidgetTags } from '../../src/webview/sanitize.ts';
-import { MAX_STATE_PER_PANEL, MAX_STATE_PER_WIDGET, WidgetStates } from '../../src/webview/widget-state.ts';
+import { MAX_STATE_PER_PANEL, MAX_STATE_PER_WIDGET, WidgetStates } from '../../src/shared/widget-state.ts';
 
 describe('consent', () => {
   const file = (path: string, hash: string, git: WidgetFile['git'] = { kind: 'none' }): WidgetFile => ({ path, hash, git });
@@ -77,8 +77,41 @@ describe('consent', () => {
 
   it('git: a file never seen that is in HEAD (a pull brought a new widget, or a clone) asks as new; a new untracked file doesn’t', () => {
     const rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'h1', repo('b1', 'h1'))], true);
-    expect(decideConsent(rec, [file('new.tsx', 'n1', repo('nb', 'n1'))])).toMatchObject({ ask: true, changed: [], added: ['new.tsx'] });
-    expect(decideConsent(rec, [file('new.tsx', 'n1', repo(null))]).ask).toBe(false);
+    const a = file('a.tsx', 'h1', repo('b1', 'h1'));
+    expect(decideConsent(rec, [a, file('new.tsx', 'n1', repo('nb', 'n1'))])).toMatchObject({ ask: true, first: false, changed: [], added: ['new.tsx'] });
+    expect(decideConsent(rec, [a, file('new.tsx', 'n1', repo(null))]).ask).toBe(false);
+  });
+
+  it('an explainer whose widgets never ran here asks the first time, with or without git (an unzipped or copied-in explainer)', () => {
+    const rec = acknowledge(EMPTY_CONSENT, [file('.explain/a/w.tsx', 'h1')], true);
+    expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2')])).toMatchObject({ ask: true, first: true });
+    expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2', repo(null))])).toMatchObject({ ask: true, first: true });
+    // Agreed to: from then on, edits are the user's own.
+    const after = acknowledge(rec, [file('.explain/b/w.tsx', 'h2')], true);
+    expect(decideConsent(after, [file('.explain/b/w.tsx', 'h3'), file('.explain/b/x.ts', 'h4')])).toMatchObject({ ask: false, first: false });
+  });
+
+  it('git: switching back to a branch already agreed to doesn’t ask again; another version of it does', () => {
+    // Agreed on main, then on the teammate's branch (asked: git changed it).
+    let rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'main', repo('bm', 'main'))], true);
+    expect(decideConsent(rec, [file('a.tsx', 'mate', repo('bt', 'mate'))]).ask).toBe(true);
+    rec = acknowledge(rec, [file('a.tsx', 'mate', repo('bt', 'mate'))], true);
+    // Back to main, and to the teammate's branch again: both agreed to before.
+    const back = decideConsent(rec, [file('a.tsx', 'main', repo('bm', 'main'))]);
+    expect(back).toMatchObject({ ask: false, observed: [{ path: 'a.tsx' }] });
+    rec = acknowledge(rec, back.observed, false);
+    expect(decideConsent(rec, [file('a.tsx', 'mate', repo('bt', 'mate'))]).ask).toBe(false);
+    // The same bytes under another blob (a pull read half-way), or a new version: asks.
+    expect(decideConsent(rec, [file('a.tsx', 'mate', repo('bx', 'other'))]).ask).toBe(true);
+    expect(decideConsent(rec, [file('a.tsx', 'new', repo('bn', 'new'))]).ask).toBe(true);
+  });
+
+  it('remembers a bounded number of earlier versions per file', () => {
+    let rec = acknowledge(EMPTY_CONSENT, [file('a.tsx', 'v0', repo('b0', 'v0'))], true);
+    for (let i = 1; i <= 30; i++) rec = acknowledge(rec, [file('a.tsx', `v${i}`, repo(`b${i}`, `v${i}`))], true);
+    expect(rec.files['a.tsx']!.seen).toHaveLength(16);
+    expect(decideConsent(rec, [file('a.tsx', 'v29', repo('b29', 'v29'))]).ask).toBe(false);
+    expect(decideConsent(rec, [file('a.tsx', 'v1', repo('b1', 'v1'))]).ask).toBe(true);
   });
 
   it('git: an untracked widget file the user edits doesn’t ask (a recorded null blob is a value)', () => {
@@ -105,6 +138,15 @@ describe('consent', () => {
     expect(Object.keys(rec.files)).toHaveLength(5000);
     expect(rec.files.f5099).toBeDefined();
     expect(rec.files.f0).toBeUndefined();
+  });
+});
+
+describe('the consent bar’s line count', () => {
+  it('counts overlapping and nested anchors’ lines once', () => {
+    // A loop (11–14) inside its function (7–27): 21 lines, not 25.
+    expect(linesCovered([{ start: 7, end: 27 }, { start: 11, end: 14 }])).toBe(21);
+    expect(linesCovered([{ start: 1, end: 5 }, { start: 4, end: 9 }, { start: 20, end: 20 }])).toBe(10);
+    expect(linesCovered([])).toBe(0);
   });
 });
 
@@ -142,6 +184,12 @@ describe('what widgets may read (useAnchorCode)', () => {
     expect(reason({ anchor: anchor({ file: 'src/deploy.key' }) })).toBe('secret-file');
     // A quote shaped like ordinary code, over a link whose target holds secrets.
     expect(reason({ realName: 'credentials.json' })).toBe('secret-file');
+  });
+
+  it('serves source files named like tokens, and files in folders named like secrets', () => {
+    for (const file of ['src/tokenBucket.ts', 'src/tokens/lexer.ts', 'src/secrets/vault.ts', 'src/id_utils.ts']) {
+      expect(decideCodeAccess(input({ anchor: anchor({ file }), realName: file.split('/').pop() })).status, file).toBe('ok');
+    }
   });
 
   it('an ignored file is refused also when the code matched only approximately', () => {
@@ -318,24 +366,64 @@ describe('activation evidence (§5.3)', () => {
 describe('watchdog (§4)', () => {
   const beat = (delay = 0, visible = true) => ({ delay, visible, mounted: ['w/a.tsx'], mounting: null, recent: 'w/a.tsx' });
 
-  it('trips when beats stop for 10 s from a visible panel with widgets', () => {
+  it('trips when beats stop for 10 s and come back late by the panel’s own clock (it was frozen)', () => {
     const w = new HeartbeatWatchdog();
     w.beat(beat(), 0);
-    for (let t = 1000; t < 10_000; t += 1000) expect(w.tick(t)).toBeUndefined();
-    expect(w.tick(10_000)).toBe('trip');
-    expect(w.tick(11_000)).toBeUndefined(); // once
+    for (let t = 1000; t <= 12_000; t += 1000) expect(w.tick(t)).toBeUndefined();
+    expect(w.beat(beat(11_500), 12_500)).toBe('trip');
     expect(w.suspect()).toBe('w/a.tsx');
+  });
+
+  it('beats that stopped and came back on time were held up on the way (a dialog, the browser): no trip', () => {
+    const w = new HeartbeatWatchdog();
+    w.beat(beat(), 0);
+    for (let t = 1000; t <= 15_000; t += 1000) expect(w.tick(t)).toBeUndefined();
+    expect(w.beat(beat(40), 15_500)).toBeUndefined();
+    for (let t = 16_000; t <= 24_000; t += 1000) expect(w.tick(t)).toBeUndefined();
+  });
+
+  it('trips when beats stay missing for 20 s (still frozen), once', () => {
+    const w = new HeartbeatWatchdog();
+    w.beat(beat(), 0);
+    for (let t = 1000; t < 20_000; t += 1000) expect(w.tick(t)).toBeUndefined();
+    expect(w.tick(20_000)).toBe('trip');
+    expect(w.tick(21_000)).toBeUndefined(); // once
   });
 
   it('isn’t armed by a hidden panel or one without widgets; ignores gaps its own timer saw too', () => {
     const w = new HeartbeatWatchdog();
     w.beat(beat(0, false), 0);
-    expect(w.tick(20_000)).toBeUndefined();
+    expect(w.tick(30_000)).toBeUndefined();
     const v = new HeartbeatWatchdog();
     v.beat(beat(), 0);
     v.tick(1000);
-    expect(v.tick(15_000)).toBeUndefined(); // the extension host was frozen too
-    expect(v.tick(16_000)).toBeUndefined();
+    expect(v.tick(25_000)).toBeUndefined(); // the extension host was frozen too
+    expect(v.tick(26_000)).toBeUndefined();
+  });
+
+  it('a modal dialog of ours open (and 5 s after it closes) is a quiet period: silence and late beats aren’t held against the panel', () => {
+    const q = new QuietPeriods();
+    const w = new HeartbeatWatchdog();
+    w.beat(beat(), 0);
+    q.begin(); // the consent dialog, left open for a minute
+    for (let t = 1000; t <= 60_000; t += 1000) expect(w.tick(t, true, q.active(t))).toBeUndefined();
+    expect(w.beat(beat(30_000), 60_500, q.active(60_500))).toBeUndefined();
+    q.end(61_000);
+    expect(q.active(65_000)).toBe(true);
+    expect(q.active(66_001)).toBe(false);
+    for (let t = 62_000; t < 85_000; t += 1000) expect(w.tick(t, true, q.active(t))).toBeUndefined();
+    // Silence counts again from the end of the quiet period.
+    expect(w.tick(86_000, true, q.active(86_000))).toBe('trip');
+  });
+
+  it('blames a widget only on evidence: the one mounting, the one that did work, or the only one mounted', () => {
+    const w = new HeartbeatWatchdog();
+    w.beat({ delay: 0, visible: true, mounted: ['a.tsx', 'b.tsx'], mounting: null, recent: null }, 0);
+    expect(w.suspect()).toBeUndefined();
+    w.beat({ delay: 0, visible: true, mounted: ['a.tsx', 'b.tsx'], mounting: null, recent: 'b.tsx' }, 1000);
+    expect(w.suspect()).toBe('b.tsx');
+    w.beat({ delay: 0, visible: true, mounted: ['a.tsx'], mounting: null, recent: null }, 2000);
+    expect(w.suspect()).toBe('a.tsx');
   });
 
   it('trips on 3 beats in 60 s more than 2 s late', () => {

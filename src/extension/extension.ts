@@ -11,6 +11,8 @@ import type { SessionHost, SessionOptions } from './session.ts';
 import { ExplainerSession } from './session.ts';
 import { disposeWidgetCompiler } from './widgets/compile.ts';
 import { WidgetHost } from './widgets/host.ts';
+import { ourModal } from './widgets/watchdog.ts';
+import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -177,11 +179,42 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('codeExplainer.enableWidgets', async () => {
       if (!widgets.enabled()) {
         const on = 'Turn On';
-        const choice = await vscode.window.showInformationMessage('Widgets are turned off in settings (codeExplainer.widgets.enabled). Turn them on?', { modal: true, detail: 'Each workspace still asks before running its widgets.' }, on);
+        const choice = await ourModal(() => vscode.window.showInformationMessage('Widgets are turned off in settings (codeExplainer.widgets.enabled). Turn them on?', { modal: true, detail: 'Each workspace still asks before running its widgets.' }, on));
         if (choice !== on) return;
         await vscode.workspace.getConfiguration('codeExplainer').update('widgets.enabled', true, vscode.ConfigurationTarget.Global);
       }
       await widgets.enableAll();
+    }),
+    vscode.commands.registerCommand('codeExplainer.checkWidgets', async (dir?: vscode.Uri | string) => {
+      const ref = await explainerFor(dir);
+      if (!ref) return;
+      if (!vscode.workspace.isTrusted) {
+        void vscode.window.showInformationMessage('Widgets are checked in trusted workspaces only.');
+        return;
+      }
+      const results = await widgets.check(ref);
+      const errors = results.reduce((n, r) => n + r.errors.length, 0);
+      const warnings = results.reduce((n, r) => n + r.warnings.length, 0);
+      void vscode.window.showInformationMessage(`${ref.name}: ${results.length} widget source${results.length === 1 ? '' : 's'} checked, ${errors} error(s), ${warnings} warning(s)${errors + warnings ? ', in the Problems panel' : ''}.`);
+      if (errors + warnings) void vscode.commands.executeCommand('workbench.actions.view.problems');
+    }),
+    vscode.commands.registerCommand('codeExplainer.copyWidgetCheckCommand', async (dir?: vscode.Uri | string) => {
+      const ref = await explainerFor(dir);
+      const target = ref ? vscode.workspace.asRelativePath(ref.dir, false) : '.explain/<name>';
+      const cmd = `node "${vscode.Uri.joinPath(context.extensionUri, 'dist', 'check.cjs').fsPath}" ${JSON.stringify(target)}`;
+      await vscode.env.clipboard.writeText(cmd);
+      void vscode.window.showInformationMessage(`Copied: ${cmd}`);
+    }),
+    vscode.commands.registerCommand('codeExplainer.addWidgetTypes', async (dir?: vscode.Uri | string) => {
+      const ref = await explainerFor(dir);
+      if (!ref) return;
+      const explain = vscode.Uri.joinPath(ref.dir, '..');
+      try {
+        const written = await writeWidgetTypes(explain.fsPath, vscode.Uri.joinPath(context.extensionUri, 'dist', 'widget-types').fsPath);
+        void vscode.window.showInformationMessage(`Wrote ${written.length} files to ${vscode.workspace.asRelativePath(explain, false)} (tsconfig.json, .types/): IntelliSense and tsc now know the widget libraries. From a terminal: ${TYPECHECK_COMMAND}`);
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Couldn't write the widget types: ${(e as Error).message}`);
+      }
     }),
     vscode.commands.registerCommand('codeExplainer.nextStep', () => target()?.navigate(1)),
     vscode.commands.registerCommand('codeExplainer.prevStep', () => target()?.navigate(-1)),

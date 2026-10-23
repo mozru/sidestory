@@ -34,7 +34,7 @@ export type Init = Omit<Extract<ToWidget, { type: 'init' }>, 'type'>;
 export function theme(name: ThemeName): Init['theme'] {
   const t = THEMES[name];
   return {
-    kind: name === 'hc' ? 'high-contrast' : name,
+    kind: name === 'hc' ? 'high-contrast' : name === 'hc-light' ? 'high-contrast-light' : name,
     bodyClass: t.bodyClass,
     vars: Object.fromEntries(Object.entries(t.vars).map(([k, v]) => [`--vscode-${k}`, v])),
   };

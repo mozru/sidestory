@@ -12,7 +12,7 @@ import { fromWidgetSchema } from '../shared/widget-protocol.ts';
 import { ActivationEvidence, ENTRY_PX, rayEntry, type Box } from './activation.ts';
 import { MAX_WIDGET_PROPS, WIDGET_PROPS_ATTR } from './sanitize.ts';
 import { widgetSrcdoc } from './trusted.ts';
-import { WidgetStates, type SavedWidgetStates } from './widget-state.ts';
+import { WidgetStates, type SavedWidgetStates } from '../shared/widget-state.ts';
 
 /** What the frame host needs from the panel (main.ts). */
 export interface WidgetPanel {
@@ -81,7 +81,8 @@ interface Widget {
   /** Height of the widget's area, in px. */
   height: number;
   status: Status;
-  error?: { message: string; where?: string };
+  /** `action`: what the box offers besides the fallback (the watchdog's Try again, or restarting a widget the panel stopped). */
+  error?: { message: string; where?: string; action?: 'retry' | 'restart' };
   /** A problem shown as a badge while the widget keeps running (a runtime error, a failed recompile). */
   badge?: string;
   showFallback: boolean;
@@ -99,6 +100,8 @@ interface Widget {
   lastPong: number;
   pingN: number;
   thefts: number;
+  /** When the frame last said the reader pressed a pointer or key in it (its own claim: never allows anything). */
+  lastInput?: number;
   pendingHeight?: number;
   heightTimer?: ReturnType<typeof setTimeout>;
   lastHeightAt: number;
@@ -131,6 +134,10 @@ const MAX_HEIGHTS = 200;
 const MAX_MESSAGE_CHARS = 80_000;
 const MAX_MESSAGES_PER_SECOND = 200;
 const MAX_FOCUS_THEFTS = 3;
+/** A refusal counts against a widget only when its frame reported no input of its own this close to it. */
+const INPUT_CLAIM_MS = 1500;
+/** How long a refusal waits for that report (with site isolation it can arrive after focus did). */
+const CLAIM_WAIT_MS = 400;
 const MAX_RESETS = 2;
 const MAX_LOGS_PER_WIDGET = 20;
 const HINT_MS = 4000;
@@ -180,6 +187,9 @@ export class WidgetFrames {
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatDue = 0;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Widget state to send the extension (which keeps it across reloads and closing the panel), by explainer and key. */
+  private readonly statesToSend = new Map<string, Map<string, string>>();
+  private statesTimer: ReturnType<typeof setTimeout> | undefined;
   private heightsTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly heightsToSend = new Map<string, number>();
   private unresponsiveReported = false;
@@ -253,7 +263,9 @@ export class WidgetFrames {
     on(doc, 'pointercancel', () => this.onPointerUp());
     on(doc, 'touchstart', () => this.evidence.gesture(now()));
     on(doc, 'keydown', () => this.evidence.gesture(now()));
-    for (const type of ['scroll', 'load', 'toggle', 'transitionend', 'animationend']) on(doc, type, () => this.schedule());
+    // Anything that may change placement: an animation or transition starting, ending or being cancelled (a
+    // live edit removing the CSS that ran it), images, <details>, scrolling boxes.
+    for (const type of ['scroll', 'load', 'toggle', 'transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel']) on(doc, type, () => this.schedule());
     on(doc, 'keydown', (e) => this.onPlaceholderKey(e as KeyboardEvent), { capture: false });
     on(doc, 'click', (e) => this.onPlaceholderClick(e as MouseEvent), { capture: false });
     const fonts = (doc as Document & { fonts?: FontFaceSet }).fonts;
@@ -386,15 +398,25 @@ export class WidgetFrames {
         err.setAttribute('role', 'alert');
         const text = make('span', 'cx-widget-error-text');
         const where = make('code', 'cx-widget-error-where');
+        const buttons = make('div', 'cx-widget-actions');
+        const act = make('button', 'cx-widget-action') as HTMLButtonElement;
+        act.type = 'button';
         const fb = make('button', 'cx-widget-fallback') as HTMLButtonElement;
         fb.type = 'button';
         fb.textContent = 'Show fallback';
-        err.append(text, where, fb);
+        buttons.append(act, fb);
+        err.append(text, where, buttons);
         el.append(err);
       }
-      err.hidden = !(w?.error && !w.showFallback && status !== 'off');
+      const act = err.querySelector<HTMLButtonElement>('.cx-widget-action');
+      if (act) {
+        const label = w?.error?.action === 'retry' ? 'Try again' : w?.error?.action === 'restart' ? 'Restart widget' : '';
+        setText(act, label);
+        act.hidden = !label;
+      }
       setText(err.querySelector('.cx-widget-error-text')!, w?.error?.message ?? '');
       setText(err.querySelector('.cx-widget-error-where')!, w?.error?.where ?? '');
+      syncErrorBox(err, w, status);
       if (w) this.syncLabelNote(w);
     }
   }
@@ -485,8 +507,8 @@ export class WidgetFrames {
       if (gate.disabled.includes(w.src)) {
         this.unmount(w, true);
         this.fail(w, gate.stopped
-          ? "This explainer's widgets kept freezing the panel, so they were stopped. Run Code Explainer: Enable Widgets to try again."
-          : 'This widget was turned off because it stopped responding. It runs again when its code changes.');
+          ? "This explainer's widgets kept freezing the panel, so they were stopped."
+          : 'This widget was turned off because it stopped responding.', undefined, 'retry');
       } else if ((was.disabled.includes(w.src) || was.stopped) && w.status === 'error') {
         w.error = undefined;
         w.status = 'idle';
@@ -506,8 +528,9 @@ export class WidgetFrames {
       for (const w of this.widgets.values()) {
         if (w.src !== src) continue;
         const e = build.errors[0]!;
-        w.badge = `compile error: ${e.message.slice(0, 120)}`;
-        this.log(w, 'error', `${e.file}${e.line ? `:${e.line}` : ''}: ${e.message}`);
+        // Readers get a short note; the error itself is the author's (Output, the Problems panel).
+        w.badge = 'compile error; the last good version runs (details in Output)';
+        this.log(w, 'error', `${place(e)}: ${e.message}`);
       }
       this.decorate(this.panel.contentRoot());
       return;
@@ -865,8 +888,8 @@ export class WidgetFrames {
     }
     if (build.errors.length) {
       const e = build.errors[0]!;
-      this.fail(w, e.message, `${e.file}${e.line ? `:${e.line}` : ''}`);
-      this.log(w, 'error', `${e.file}${e.line ? `:${e.line}` : ''}: ${e.message}`);
+      this.fail(w, e.message, place(e));
+      this.log(w, 'error', `${place(e)}: ${e.message}`);
       return;
     }
     const missing = build.libraries.filter((id) => !this.libs.has(id));
@@ -907,7 +930,7 @@ export class WidgetFrames {
     // A second load: the frame navigated (or tried to). It never gets code or state again: start over.
     this.log(w, 'error', `${w.src}: the widget's frame navigated; it was reset.`);
     this.unmount(w, false);
-    if (++w.resets > MAX_RESETS) this.fail(w, 'This widget kept reloading itself, so it was stopped.');
+    if (++w.resets > MAX_RESETS) this.fail(w, 'This widget kept reloading itself, so it was stopped.', undefined, 'restart');
     this.schedule();
   }
 
@@ -955,6 +978,7 @@ export class WidgetFrames {
     if (this.recent === w) this.recent = undefined;
     if (w.status === 'live' || w.status === 'loading') this.setStatus(w, 'idle');
     this.persistStates(false); // on unmount, now
+    this.sendStates(true);
     if (w.remount) {
       w.remount = false;
       this.schedule();
@@ -967,14 +991,17 @@ export class WidgetFrames {
     w.status = status;
     w.el.setAttribute('data-cx-wstate', status);
     pinBox(w.el, status, w.showFallback);
+    // The error box follows: a problem that went away (placement fine again) leaves no note behind.
+    const err = [...w.el.children].find((c) => c.getAttribute('data-cx-box') === this.panel.boxToken && c.classList.contains('cx-widget-error')) as HTMLElement | undefined;
+    if (err) syncErrorBox(err, w, status);
     const note = w.el.querySelector<HTMLElement>(':scope > .cx-widget-bar .cx-widget-note');
     if (note && !w.badge) setText(note, status === 'off' ? this.offNote() : '');
     this.syncLabelNote(w);
   }
 
   /** Shows a problem in the widget's box (the reader sees the message; authors get details in Output). */
-  private fail(w: Widget, message: string, where?: string): void {
-    w.error = { message, where };
+  private fail(w: Widget, message: string, where?: string, action?: 'retry' | 'restart'): void {
+    w.error = { message, where, ...(action ? { action } : {}) };
     w.status = 'error';
     w.el.setAttribute('data-cx-wstate', 'error');
     this.decorate(this.panel.contentRoot());
@@ -1008,6 +1035,8 @@ export class WidgetFrames {
     if (!parsed.success) return;
     const m = parsed.data;
     if (m.type !== 'pong' && m.type !== 'height') this.recent = w;
+    // Before judging focus: the frame's report of the reader's input, which may explain focus arriving.
+    if (m.type === 'input') w.lastInput = t;
     this.checkFocus();
     switch (m.type) {
       case 'boot':
@@ -1042,12 +1071,14 @@ export class WidgetFrames {
         break;
       case 'state':
         if (!this.states.set(this.stateKey(w), m.json)) this.logOnce(w, 'state', `${w.src}: its state is over 64 KB and isn't saved.`);
+        else this.queueState(w, m.json);
         this.persistStates(false);
         if (w.unmounting) this.remove(w);
         break;
       case 'error': {
         const where = m.file ? `${m.file}${m.line ? `:${m.line}` : ''}` : '';
-        w.badge = `error: ${m.message.slice(0, 120)}`;
+        // Readers get a short note (a message like "highlight(): lines must be …" is for the author, in Output).
+        w.badge = 'hit an error (details in Output)';
         this.decorate(this.panel.contentRoot());
         this.log(w, 'error', `${w.src}${where ? ` (${where})` : ''}: ${m.message}`);
         break;
@@ -1174,6 +1205,7 @@ export class WidgetFrames {
       if (l.times.length < per * 5) this.deliver(w, m); // code requests: each anchor is asked for once anyway
       return;
     }
+    if (l.latest && kind === 'highlight') this.logOnce(w, 'highlight-rate', `${w.src}: more than ${per} highlight() calls a second; the calls in between were dropped (the latest is delivered). Keep animations that highlight at about 8 steps a second or slower.`);
     l.latest = m;
     l.timer ??= setTimeout(() => {
       const lim = w.limits.get(kind);
@@ -1191,15 +1223,16 @@ export class WidgetFrames {
   }
 
   /**
-   * Decoration needs no click: lines of the widget's own anchor, or any anchor that is the current step or
-   * inside it, while that step is current. Never scrolls, opens files or takes focus.
+   * Decoration needs no click: lines of any anchor that is the current step or inside it (by default the
+   * widget's own anchor), wherever the widget sits. The editor already shows that step's code; this never
+   * scrolls, opens files or takes focus.
    */
   private highlight(w: Widget, m: Extract<FromWidget, { type: 'highlight' }>): void {
     const anchor = m.anchor ?? w.anchor;
     const step = this.panel.activeStepEl();
     const section = anchor ? this.panel.sectionEl(anchor) : null;
-    if (!anchor || !step || !section || !step.contains(section) || !step.contains(w.el)) {
-      this.logOnce(w, 'highlight', `${w.src}: highlight() only works on the current step's anchor (or one inside it), while the widget's step is current; the call was dropped.`);
+    if (!anchor || !step || !section || !step.contains(section)) {
+      this.logOnce(w, 'highlight', `${w.src}: highlight() only works on an anchor that is the current step or inside it (now: '${this.panel.active() ?? 'none'}'; asked: '${anchor ?? 'no anchor'}'); the call was dropped.`);
       return;
     }
     this.highlighted = true;
@@ -1301,23 +1334,34 @@ export class WidgetFrames {
   }
 
   /**
-   * Focus arrived without evidence of the reader's interaction: given back. `unsure`: the pointer is on the
-   * widget (it just can't be told apart from one that moved under it), so it isn't counted against the widget.
+   * Focus arrived without evidence of the reader's interaction: given back, always (the security rule). Counted
+   * against the widget, toward stopping it, only when the panel is sure: not `unsure` (the pointer is on the
+   * widget; it just can't be told apart from one that moved under it), and not while the frame reports the
+   * reader's own pointer or key input around that moment (an instant click by automation or assistive
+   * technology, with no pointer travel the panel could see). That report is the widget's claim: it can spare
+   * the widget from being stopped, never grant focus. Focus pulled from outside the webview (the editor)
+   * always counts.
    */
   private theft(w: Widget, fromOutside: boolean, unsure = false): void {
-    this.lastTheftAt = now();
+    const at = now();
+    this.lastTheftAt = at;
     this.owner = undefined;
-    if (!unsure) {
-      w.thefts++;
-      this.logOnce(w, 'focus', `${w.src}: took focus without a click in it; focus was given back.`);
-    }
     this.panel.focusSelf(w.el);
     // From the editor: the extension puts focus back there.
     if (fromOutside) this.panel.post({ type: 'focusTheft' });
-    if (w.thefts >= MAX_FOCUS_THEFTS) {
-      this.unmount(w, true);
-      this.fail(w, 'This widget kept taking focus, so it was stopped.');
-    }
+    if (unsure) return;
+    // Judged a moment later: the frame's report of input may still be on its way.
+    setTimeout(() => {
+      if (!w.frame || w.status === 'error') return;
+      const claimed = w.lastInput !== undefined && w.lastInput >= at - INPUT_CLAIM_MS && w.lastInput <= at + CLAIM_WAIT_MS;
+      if (claimed && !fromOutside) return;
+      w.thefts++;
+      this.logOnce(w, 'focus', `${w.src}: took focus without a click in it; focus was given back.`);
+      if (w.thefts >= MAX_FOCUS_THEFTS) {
+        this.unmount(w, true);
+        this.fail(w, 'This widget kept taking focus, so it was stopped.', undefined, 'restart');
+      }
+    }, CLAIM_WAIT_MS);
   }
 
   /** Enter or a click on a placeholder: the panel moves focus into the widget itself (always legitimate). */
@@ -1360,13 +1404,38 @@ export class WidgetFrames {
     const el = t.closest?.<HTMLElement>('explain-widget[data-cx-w]');
     const w = el ? this.widgets.get(el.getAttribute('data-cx-w') ?? '') : undefined;
     if (!w || w.el !== el) return;
+    const own = (b: Element | null) => !!b && b.parentElement?.parentElement?.getAttribute('data-cx-box') === this.panel.boxToken;
     const fb = t.closest('.cx-widget-fallback');
-    if (fb && fb.parentElement?.getAttribute('data-cx-box') === this.panel.boxToken) {
+    if (own(fb)) {
       w.showFallback = true;
       this.decorate(this.panel.contentRoot());
       return;
     }
+    const act = t.closest('.cx-widget-action');
+    if (own(act) && w.error?.action) {
+      this.act(w, w.error.action);
+      return;
+    }
     this.focusWidget(w);
+  }
+
+  /**
+   * The reader's remedy in a stopped widget's box. `retry`: the extension turns on what its watchdog turned
+   * off (it still counts toward stopping the explainer); `restart`: a widget the panel stopped (it kept taking
+   * focus, or reloading itself) mounts again, its count started over.
+   */
+  private act(w: Widget, action: 'retry' | 'restart'): void {
+    this.panel.focusSelf(w.el); // the button goes away with the error
+    if (action === 'retry') {
+      this.panel.post({ type: 'widgetRetry', src: w.src });
+      return;
+    }
+    w.thefts = 0;
+    w.resets = 0;
+    w.error = undefined;
+    this.setStatus(w, 'idle');
+    this.decorate(this.panel.contentRoot());
+    this.schedule();
   }
 
   /** The runtime gives focus back: Tab past the end goes on in reading order; anything else to the placeholder. */
@@ -1478,8 +1547,10 @@ export class WidgetFrames {
       w.visible = hidden ? false : undefined;
       if (hidden) this.send(w, { type: 'visible', visible: false });
     }
-    if (hidden) this.persistStates(false);
-    else {
+    if (hidden) {
+      this.persistStates(false);
+      this.sendStates(true);
+    } else {
       for (const w of this.widgets.values()) w.lastPong = now(); // a hidden page's pongs wait; don't count that
       this.lastPingAt = 0;
       this.schedule();
@@ -1503,6 +1574,37 @@ export class WidgetFrames {
     this.saveTimer ??= setTimeout(write, STATE_SAVE_MS);
   }
 
+  /** State the extension keeps (by explainer and widget key), sent at most once a second, and at once on unmount and hide. */
+  private queueState(w: Widget, json: string): void {
+    let m = this.statesToSend.get(w.dir);
+    if (!m) this.statesToSend.set(w.dir, (m = new Map()));
+    m.delete(w.key);
+    m.set(w.key, json);
+    this.sendStates(false);
+  }
+
+  private sendStates(now: boolean): void {
+    const send = () => {
+      clearTimeout(this.statesTimer);
+      this.statesTimer = undefined;
+      for (const [dir, m] of this.statesToSend) this.panel.post({ type: 'widgetStates', dir, states: [...m].slice(-MAX_WIDGETS) });
+      this.statesToSend.clear();
+    };
+    if (now) send();
+    else this.statesTimer ??= setTimeout(send, STATE_SAVE_MS);
+  }
+
+  /**
+   * The state the extension kept for the explainer shown (after a window reload, or the panel closed and
+   * opened again): it fills in what the panel's own state lacks (which, when there, is the newer).
+   */
+  restoreStates(entries: [string, string][]): void {
+    for (const [key, json] of entries) {
+      const k = `${this.panel.dir()}\n${key}`;
+      if (typeof key === 'string' && typeof json === 'string' && !this.states.has(k)) this.states.set(k, json);
+    }
+  }
+
   private log(w: Widget, level: 'error' | 'warn' | 'info', message: string): void {
     if (w.logged.size >= MAX_LOGS_PER_WIDGET) return;
     w.logged.add(`${level}:${message}`);
@@ -1522,6 +1624,11 @@ export class WidgetFrames {
 }
 
 // ---- helpers ----
+
+/** Where a compile error is, as `file:line:column` (as far as known). */
+function place(e: { file: string; line?: number; column?: number }): string {
+  return `${e.file}${e.line ? `:${e.line}${e.column ? `:${e.column}` : ''}` : ''}`;
+}
 
 /** A short, stable hash (FNV-1a) for capping long placeholder keys (ids, sources) in messages. */
 function hash(s: string): string {
@@ -1583,6 +1690,16 @@ function pinBox(el: HTMLElement, status: Status, showFallback: boolean): void {
     ['max-height', 'none'], ['padding', `${BAR_PX}px 0 0`], ['overflow', off ? 'visible' : 'hidden'], ['visibility', 'visible'],
   ];
   for (const [k, v] of props) if (el.style.getPropertyValue(k) !== v || el.style.getPropertyPriority(k) !== 'important') el.style.setProperty(k, v, 'important');
+}
+
+/**
+ * The error box shows only while there is an error and no frame is live over it; hidden, it is inert, so its
+ * "Show fallback" button is no Tab stop (author CSS could display a hidden element; inert still holds).
+ */
+function syncErrorBox(err: HTMLElement, w: Widget | undefined, status: Status): void {
+  const show = !!w?.error && !w.showFallback && status === 'error';
+  if (err.hidden === show) err.hidden = !show;
+  if (err.inert === show) err.inert = !show;
 }
 
 function pinLabel(bar: HTMLElement): void {

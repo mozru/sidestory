@@ -99,12 +99,14 @@ html, body {
   background: color-mix(in srgb, var(--cx-accent) 7%, transparent);
 }
 
-/* Section states. "moved" and "exact" look normal. */
-[data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::after {
+/* Section states. "moved" and "exact" look normal. The badge floats at the section's top right, so the
+   heading wraps around it on a narrow panel instead of running under it. */
+[data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::before {
   content: attr(data-cx-label);
-  position: absolute;
-  top: 6px;
-  right: 8px;
+  float: right;
+  position: relative;
+  z-index: 1;
+  margin: 6px 0 4px 8px;
   padding: 1px 8px;
   border-radius: 10px;
   font-size: 0.8em;
@@ -120,6 +122,7 @@ html, body {
   outline-offset: -1px;
 }
 
+[data-explain-anchor][data-cx-state='stale']::before,
 [data-explain-anchor][data-cx-state='stale']::after {
   color: var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
   border-color: currentColor;
@@ -130,6 +133,7 @@ html, body {
   outline-offset: -1px;
 }
 
+[data-explain-anchor][data-cx-state='lost']::before,
 [data-explain-anchor][data-cx-state='lost']::after {
   color: var(--vscode-codeExplainer-lostForeground, var(--vscode-editorError-foreground));
   border-color: currentColor;
@@ -237,11 +241,23 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
   color: var(--vscode-descriptionForeground);
 }
 
-/* A nested section's badge goes below its content: in a small block, a corner badge would cover it. */
+/* A nested section's badge goes below its content: in a small block, a corner badge would crowd it. */
+[data-explain-anchor] [data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::before {
+  content: none;
+}
+
 [data-explain-anchor] [data-explain-anchor]:is([data-cx-state='changed'], [data-cx-state='stale'], [data-cx-state='lost'], [data-cx-state='unknown'])::after {
-  position: static;
+  content: attr(data-cx-label);
   display: inline-block;
   margin-top: 4px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  line-height: 1.6;
+  pointer-events: none;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border, var(--vscode-editorGroup-border));
+  background: var(--vscode-editor-background);
 }
 
 /* Sections far off screen (main.ts): animations wait until the reader gets there. */
@@ -349,8 +365,9 @@ explain-widget > .cx-widget-error {
   color: var(--vscode-errorForeground);
 }
 
-explain-widget > .cx-widget-error[hidden] {
-  display: none;
+explain-widget > .cx-widget-error[hidden],
+explain-widget:is([data-cx-wstate='live'], [data-cx-wstate='loading']) > .cx-widget-error {
+  display: none !important;
 }
 
 explain-widget .cx-widget-error-where {
@@ -358,6 +375,17 @@ explain-widget .cx-widget-error-where {
   color: var(--vscode-descriptionForeground);
 }
 
+explain-widget .cx-widget-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+explain-widget .cx-widget-action[hidden] {
+  display: none;
+}
+
+explain-widget .cx-widget-action,
 explain-widget .cx-widget-fallback {
   padding: 2px 0;
   border: 0;
@@ -367,6 +395,7 @@ explain-widget .cx-widget-fallback {
   cursor: pointer;
 }
 
+explain-widget .cx-widget-action:focus-visible,
 explain-widget .cx-widget-fallback:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 2px;

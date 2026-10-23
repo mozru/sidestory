@@ -86,7 +86,8 @@ test('dark: follows the theme class on <html>, and theme updates restyle the wid
   await expect(step).toHaveCSS('color', /oklch\(0\.637 0\.237 25|rgb\(251, 44, 54\)/); // red-500
   await expect(f.getByTestId('inc')).toHaveCSS('background-color', /rgb\(0, 95, 184\)|rgb\(0, 120, 212\)/);
   await harness.send(id, { type: 'theme', ...theme('hc') });
-  await expect(f.locator('html')).toHaveClass('dark hc');
+  // Dark High Contrast has no button background: primary falls back to the text color (cx-no-button-bg).
+  await expect(f.locator('html')).toHaveClass('dark hc cx-no-button-bg');
   await expect(f.locator('body')).toHaveClass(theme('hc').bodyClass);
 });
 
@@ -675,3 +676,57 @@ exports.default = function W() {
   await harness.waitFor(id, 'height', (m) => m.px > 30);
   expect(await frame.evaluate(() => performance.getEntriesByType('mark').map((e) => e.name))).toEqual(['mine']);
 });
+
+const SHIMS = `
+var _button = require("@/components/ui/button");
+var _badge = require("@/components/ui/badge");
+var j = _jsxruntime.jsx, js = _jsxruntime.jsxs;
+function W() {
+  return js("div", { className: "flex flex-wrap gap-2 p-2", children: [
+    ["default", "destructive", "outline", "secondary", "ghost", "link"].map((v) => j(_button.Button, { variant: v, "data-contrast": "Button " + v, children: v }, "b" + v)),
+    ["default", "secondary", "destructive", "outline"].map((v) => j(_badge.Badge, { variant: v, "data-contrast": "Badge " + v, children: v }, "g" + v)),
+    j("span", { className: "text-muted-foreground", "data-contrast": "muted text", children: "muted" }),
+  ] });
+}
+exports.default = W;
+`;
+
+for (const name of ['dark', 'light', 'hc', 'hc-light'] as const) {
+  test(`the ui components' text reads at 4.5:1 or better on their own background (${name})`, async ({ harness }) => {
+    const t = theme(name);
+    const id = await harness.mount({ libs: libsFor(['react', 'ui', 'clsx']), init: one(SHIMS, { theme: t }) });
+    const f = harness.frame(id);
+    await expect(f.locator('[data-contrast]')).toHaveCount(11);
+    const ratios = await f.locator('body').evaluate((_b, page) => {
+      // Any CSS color (rgb, oklch, oklab, color-mix) as RGBA, through a canvas.
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+      const rgba = (c: string) => {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = '#000';
+        ctx.fillStyle = c;
+        ctx.fillRect(0, 0, 1, 1);
+        const d = ctx.getImageData(0, 0, 1, 1).data;
+        return [d[0]!, d[1]!, d[2]!, d[3]! / 255] as const;
+      };
+      const over = (top: readonly [number, number, number, number], under: readonly [number, number, number]) =>
+        [0, 1, 2].map((i) => top[i]! * top[3] + under[i]! * (1 - top[3])) as [number, number, number];
+      const lum = (c: readonly number[]) => {
+        const [r, g, b] = c.map((v) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4));
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+      };
+      const out: Record<string, number> = {};
+      for (const el of document.querySelectorAll<HTMLElement>('[data-contrast]')) {
+        // The frame is transparent over the panel: what shows through is the editor background.
+        const layers: Element[] = [];
+        for (let e: Element | null = el; e; e = e.parentElement) layers.unshift(e);
+        let bg = over(rgba(page), [0, 0, 0]);
+        for (const e of layers) bg = over(rgba(getComputedStyle(e).backgroundColor), bg);
+        const fg = over(rgba(getComputedStyle(el).color), bg);
+        const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+        out[el.dataset.contrast!] = Math.round(((a! + 0.05) / (b! + 0.05)) * 100) / 100;
+      }
+      return out;
+    }, t.vars['--vscode-editor-background']!);
+    for (const [what, ratio] of Object.entries(ratios)) expect(ratio, `${what} in ${name}`).toBeGreaterThanOrEqual(4.5);
+  });
+}

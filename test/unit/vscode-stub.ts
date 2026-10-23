@@ -72,7 +72,7 @@ export class TabInputWebview {}
 export const ViewColumn = { Active: -1, Beside: -2, One: 1, Two: 2 };
 export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 };
 export const TextEditorSelectionChangeKind = { Keyboard: 1, Mouse: 2, Command: 3 };
-export const TextEditorRevealType = { InCenterIfOutsideViewport: 2 };
+export const TextEditorRevealType = { Default: 0, InCenterIfOutsideViewport: 2 };
 
 /** Events the test fires, as VS Code would. */
 export const events = {
@@ -122,7 +122,7 @@ export const extensions = {
   getExtension: (id: string) => (id === 'vscode.git' && extensions.git ? { isActive: true, exports: { getAPI: () => extensions.git } } : undefined),
 };
 /** What modal questions answer (the button to "click"), set by the test; and the questions asked. */
-export const modal = { answer: undefined as string | undefined, asked: [] as string[] };
+export const modal = { answer: undefined as string | undefined, asked: [] as string[], details: [] as string[], buttons: [] as string[][] };
 
 export const workspace = {
   /** The folder workspace URIs resolve against; set by the test. */
@@ -161,13 +161,29 @@ export const window = {
   createOutputChannel: () => ({ info() {}, warn() {}, error() {}, dispose() {} }),
   showInformationMessage: async () => undefined,
   showWarningMessage: async (message: string, ...rest: unknown[]) => {
-    const opts = rest[0] as { modal?: boolean } | undefined;
+    const opts = rest[0] as { modal?: boolean; detail?: string } | undefined;
     if (!opts?.modal) return undefined;
     modal.asked.push(message);
+    modal.details.push(opts.detail ?? '');
+    modal.buttons.push(rest.slice(1) as string[]);
     return modal.answer;
   },
   showErrorMessage: async () => undefined,
   setStatusBarMessage: () => ({ dispose() {} }),
+};
+
+export class ThemeColor {
+  readonly id: string;
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+export const OverviewRulerLane = { Left: 1, Center: 2, Right: 4, Full: 7 };
+/** Options of every decoration type created, in order. */
+export const decorationTypes: Record<string, unknown>[] = [];
+(window as Record<string, unknown>).createTextEditorDecorationType = (options: Record<string, unknown>) => {
+  decorationTypes.push(options);
+  return { dispose() {} };
 };
 
 export const commands = { executeCommand: async () => undefined };

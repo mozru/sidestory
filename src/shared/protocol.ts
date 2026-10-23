@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
-import type { WidgetCode } from './widget-protocol.ts';
+import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
 
 export interface AnchorView {
   id: string;
@@ -55,7 +55,7 @@ export interface WidgetBuild {
   libraries: string[];
   icons: Record<string, unknown>;
   /** Problems, relative paths only; the first error is shown in the widget's box. */
-  errors: { file: string; line?: number; message: string }[];
+  errors: { file: string; line?: number; column?: number; message: string }[];
   /** Over the import closure: tells versions apart. */
   hash: string;
 }
@@ -102,6 +102,8 @@ export type ToWebview =
   | { type: 'widgetCode'; src: string; code: WidgetCode }
   /** The watchdog: remove every widget frame now (`unmount`), or mount them again (`remount`). */
   | { type: 'widgetsReset'; phase: 'unmount' | 'remount' }
+  /** What readers set in this explainer's widgets (`useWidgetState`), kept by the extension: [widget key, JSON]. */
+  | { type: 'widgetStates'; states: [string, string][] }
   /** The panel just became active: did focus arrive legitimately? Answered with `focusAnswer`. */
   | { type: 'focusQuery'; id: number };
 
@@ -133,6 +135,8 @@ export type FromWebview =
   | { type: 'widgetConfirmAnchors' }
   /** Compiled code for a widget source (refused without trust, the setting and consent). */
   | { type: 'widgetCompile'; src: string }
+  /** The reader's "Try again" on a widget the watchdog turned off. */
+  | { type: 'widgetRetry'; src: string }
   /** Library texts for widget frames. */
   | { type: 'widgetLibs'; ids: string[] }
   /** A widget wants an anchor's code (`useAnchorCode`); the panel forwards the answer to the widgets that asked. */
@@ -145,6 +149,8 @@ export type FromWebview =
   | { type: 'widgetLog'; src: string; level: 'error' | 'warn' | 'info'; message: string }
   /** Last heights by widget key, coalesced. */
   | { type: 'widgetHeights'; heights: Record<string, number> }
+  /** Widget state (`useWidgetState`) that changed, by widget key, for the explainer `dir`: kept by the extension. */
+  | { type: 'widgetStates'; dir: string; states: [string, string][] }
   /** Every second while visible: the extension-side watchdog (docs/WIDGETS-PLAN.md §4). */
   | { type: 'heartbeat'; delay: number; visible: boolean; mounted: string[]; mounting: string | null; recent: string | null }
   /** The panel-side watchdog: mounted widgets stopped answering pings. */
@@ -193,11 +199,13 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('widgetTrust') }),
   z.object({ type: z.literal('widgetConfirmAnchors') }),
   z.object({ type: z.literal('widgetCompile'), src: widgetSrcSchema }),
+  z.object({ type: z.literal('widgetRetry'), src: widgetSrcSchema }),
   z.object({ type: z.literal('widgetLibs'), ids: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(20) }),
   z.object({ type: z.literal('widgetCode'), src: widgetSrcSchema, anchor: anchorIdSchema }),
   z.object({ type: z.literal('widgetHighlight'), anchor: anchorIdSchema.optional(), lines: lineRangeSchema.optional(), identifiers: z.array(identifierSchema).max(20).optional() }),
   z.object({ type: z.literal('widgetReveal'), anchor: anchorIdSchema, lines: lineRangeSchema.optional(), highlight: z.array(identifierSchema).max(20).optional() }),
   z.object({ type: z.literal('widgetLog'), src: z.string().max(512), level: z.enum(['error', 'warn', 'info']), message: z.string().max(4096) }),
+  z.object({ type: z.literal('widgetStates'), dir: z.string().max(4096), states: z.array(z.tuple([widgetKeySchema, z.string().max(MAX_WIDGET_STATE_BYTES)])).max(MAX_WIDGETS) }),
   z.object({ type: z.literal('widgetHeights'), heights: z.record(widgetKeySchema, z.number().int().min(0).max(20_000)).refine((h) => Object.keys(h).length <= 200) }),
   z.object({ type: z.literal('heartbeat'), delay: z.number().finite().min(0).max(3_600_000), visible: z.boolean(), ...breadcrumbs }),
   z.object({ type: z.literal('widgetsUnresponsive'), ...breadcrumbs }),

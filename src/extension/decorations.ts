@@ -35,9 +35,13 @@ export class Decorations implements vscode.Disposable {
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Center,
   });
+  // High contrast themes leave highlight backgrounds transparent: there, a border marks the lines.
   private readonly widgetType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
-    backgroundColor: new vscode.ThemeColor('editor.wordHighlightBackground'),
+    backgroundColor: new vscode.ThemeColor('codeExplainer.widgetHighlightBackground'),
+    borderColor: new vscode.ThemeColor('codeExplainer.widgetHighlightBorder'),
+    borderStyle: 'solid',
+    borderWidth: '1px',
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.wordHighlightForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Right,
   });

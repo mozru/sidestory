@@ -16,6 +16,12 @@ const { ExplainerSession } = await import('../../src/extension/session.ts');
 const { refFromDir } = await import('../../src/extension/explainers.ts');
 const { WidgetHost } = await import('../../src/extension/widgets/host.ts');
 const { configureWidgetCompiler, disposeWidgetCompiler } = await import('../../src/extension/widgets/compile.ts');
+const { QUIET } = await import('../../src/extension/widgets/watchdog.ts');
+/** Sends a report of unresponsive widgets outside any quiet period (a dialog just closed, a gate just mounted widgets). */
+const unresponsive = (p: { send(m: unknown): void }, crumbs: { mounted: string[]; mounting: string | null; recent: string | null }) => {
+  QUIET.clear();
+  p.send({ type: 'widgetsUnresponsive', ...crumbs });
+};
 
 let root = '';
 let extDir = '';
@@ -71,6 +77,8 @@ afterEach(async () => {
   state.clear();
   modal.answer = undefined;
   modal.asked = [];
+  modal.details = [];
+  modal.buttons = [];
   workspace.isTrusted = true;
   await new Promise((r) => setTimeout(r, 200));
   expect(Object.values(events).reduce((n, e) => n + e.listeners.size, 0)).toBe(0);
@@ -125,6 +133,25 @@ describe('the widget gate, enforced in the extension', () => {
     await vi.waitFor(() => expect(p.last('widget')).toEqual({ type: 'widget', src: 'widgets/other.tsx', build: null }));
   });
 
+  it('one modal for both: running widgets that read unconfirmed code can confirm it too, listing files and lines', async () => {
+    const p = open();
+    await p.session.load();
+    p.send({ type: 'ready' });
+    await gate(p, 'ask');
+    modal.answer = 'Run Widgets and Let Them Read';
+    p.send({ type: 'widgetConsent' });
+    await gate(p, 'on');
+    expect(modal.asked).toHaveLength(1);
+    expect(modal.buttons[0]).toEqual(['Run Widgets and Let Them Read', 'Run Widgets']);
+    expect(modal.details[0]).toContain('src/retry.ts: lines 14–18 (delay)');
+    expect(modal.details[0]).toContain("haven't run in this workspace before");
+    // No second question: the code is served.
+    await vi.waitFor(() => expect(p.last('widgets')?.gate.unconfirmed).toBeNull());
+    p.send({ type: 'widgetCode', src: 'widgets/backoff.tsx', anchor: 'delay' });
+    await vi.waitFor(() => expect(p.last('widgetCode')?.code.status).toBe('ok'));
+    expect(modal.asked).toHaveLength(1);
+  });
+
   it('code: an unconfirmed quote is refused until the reader confirms it in the modal', async () => {
     modal.answer = 'Run Widgets';
     const p = open();
@@ -151,7 +178,7 @@ describe('the widget gate, enforced in the extension', () => {
     await gate(p, 'ask');
     p.send({ type: 'widgetConsent' });
     await gate(p, 'on');
-    p.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    unresponsive(p, { mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
     await vi.waitFor(() => expect(p.posted).toContainEqual({ type: 'widgetsReset', phase: 'unmount' }));
     await vi.waitFor(() => expect(p.last('widgets')?.gate.disabled).toEqual(['widgets/backoff.tsx']), { timeout: 5000 });
     p.send({ type: 'widgetCompile', src: 'widgets/backoff.tsx' });
@@ -224,8 +251,8 @@ describe('review regressions (extension side)', () => {
     const a = await consented({ host });
     const b = await consented({ host });
     // Panel A was mounting backoff; panel B last saw activity from a widget it shares the process with.
-    a.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
-    b.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: null, recent: 'widgets/backoff.tsx' });
+    unresponsive(a, { mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    unresponsive(b, { mounted: ['widgets/backoff.tsx'], mounting: null, recent: 'widgets/backoff.tsx' });
     for (const p of [a, b]) await vi.waitFor(() => expect(p.posted).toContainEqual({ type: 'widgetsReset', phase: 'remount' }), { timeout: 5000 });
     for (const p of [a, b]) {
       expect(p.posted.filter((m) => m.type === 'widgetsReset')).toEqual([{ type: 'widgetsReset', phase: 'unmount' }, { type: 'widgetsReset', phase: 'remount' }]);
@@ -236,9 +263,9 @@ describe('review regressions (extension side)', () => {
     }
     // One escalation (the suspect), not one per panel: a second incident escalates to "all", a third stops.
     const resets = () => a.posted.filter((m) => m.type === 'widgetsReset').length;
-    a.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    unresponsive(a, { mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
     await vi.waitFor(() => expect(resets()).toBe(4), { timeout: 5000 });
-    a.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    unresponsive(a, { mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
     // Third: the watchdog gives up on this explainer. Its gate stops every widget, with the reason, and the
     // panels remount (nothing of this explainer runs).
     await vi.waitFor(() => expect(resets()).toBe(6), { timeout: 5000 });
@@ -250,9 +277,47 @@ describe('review regressions (extension side)', () => {
     expect(a.last('widgets')?.gate.disabled).toEqual([]);
   }, 30_000);
 
+  it('widgets slow to answer while a dialog of ours is open aren’t held against them; "Try again" turns a disabled widget on again', async () => {
+    const p = await consented();
+    QUIET.begin(); // say, the consent dialog left open
+    p.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    await vi.waitFor(() => expect(p.posted).toContainEqual({ type: 'widgetsReset', phase: 'remount' }));
+    expect(p.posted).not.toContainEqual({ type: 'widgetsReset', phase: 'unmount' });
+    QUIET.end(Date.now());
+    await new Promise((r) => setTimeout(r, 700));
+    expect(p.last('widgets')?.gate.disabled).toEqual([]);
+    // A real hang, later: turned off; the reader's Try again (in the widget's box) turns it on.
+    unresponsive(p, { mounted: ['widgets/backoff.tsx'], mounting: 'widgets/backoff.tsx', recent: null });
+    await vi.waitFor(() => expect(p.last('widgets')?.gate.disabled).toEqual(['widgets/backoff.tsx']), { timeout: 5000 });
+    p.send({ type: 'widgetRetry', src: 'widgets/backoff.tsx' });
+    await vi.waitFor(() => expect(p.last('widgets')?.gate.disabled).toEqual([]));
+    p.send({ type: 'widgetCompile', src: 'widgets/backoff.tsx' });
+    await vi.waitFor(() => expect(p.last('widget')?.build?.entry).toBe('widgets/backoff.tsx'));
+  });
+
+  it('widget state is kept by the extension: a new panel (window reload, panel reopened) gets it before the gate', async () => {
+    const host = newHost();
+    closers.push(() => host.dispose());
+    const p = await consented({ host });
+    const dir = Uri.file(`${root}/.explain/retry-backoff`).toString();
+    p.send({ type: 'widgetStates', dir, states: [['delay|widgets/backoff.tsx|0', '{"seed":7}']] });
+    // Not an explainer this panel showed: ignored.
+    p.send({ type: 'widgetStates', dir: Uri.file(`${root}/.explain/other`).toString(), states: [['k', '{"x":1}']] });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(Object.keys(state.get('codeExplainer.widgetStates') as object)).toEqual([dir]);
+    // The panel is closed and opened again (or the window reloads): same workspace state.
+    const q = open({ host });
+    await q.session.load();
+    q.send({ type: 'ready' });
+    await vi.waitFor(() => expect(q.last('widgetStates')).toEqual({ type: 'widgetStates', states: [['delay|widgets/backoff.tsx|0', '{"seed":7}']] }));
+    const at = q.posted.findIndex((m) => m.type === 'widgetStates');
+    const gateAt = q.posted.findIndex((m) => m.type === 'widgets');
+    expect(gateAt === -1 || at < gateAt).toBe(true);
+  });
+
   it('a hang nobody can attribute (no widget mounting or recently active) blames no explainer: panels just remount', async () => {
     const p = await consented();
-    p.send({ type: 'widgetsUnresponsive', mounted: ['widgets/backoff.tsx'], mounting: null, recent: null });
+    unresponsive(p, { mounted: ['widgets/backoff.tsx'], mounting: null, recent: null });
     await vi.waitFor(() => expect(p.posted).toContainEqual({ type: 'widgetsReset', phase: 'remount' }), { timeout: 5000 });
     expect(p.last('widgets')?.gate.disabled).toEqual([]);
   });

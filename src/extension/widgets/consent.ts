@@ -12,14 +12,17 @@ export interface ConsentRecord {
   granted: boolean;
   /**
    * Workspace-relative path → acknowledged content (contentHash) and git's blob for the file at HEAD when it
-   * was acknowledged (null: not in HEAD, or no repository).
+   * was acknowledged (null: not in HEAD, or no repository); `seen`: earlier acknowledged versions, as
+   * [contentHash, headBlob] pairs, newest last (switching back to a branch already agreed to doesn't ask).
    */
-  files: Record<string, { hash: string; headBlob?: string | null }>;
+  files: Record<string, { hash: string; headBlob?: string | null; seen?: [string, string | null][] }>;
 }
 
 export const EMPTY_CONSENT: ConsentRecord = { granted: false, files: {} };
 /** Acknowledged files kept per workspace; the oldest are dropped past this. */
 export const MAX_CONSENT_FILES = 5000;
+/** Earlier versions remembered per file. */
+export const MAX_SEEN_VERSIONS = 16;
 
 /** Git's view of one widget file. */
 export type FileGit =
@@ -44,6 +47,8 @@ export interface WidgetFile {
 export interface ConsentDecision {
   /** Ask the reader (in the modal) before running. */
   ask: boolean;
+  /** None of the explainer's widget files was ever acknowledged: its widgets haven't run in this workspace. */
+  first: boolean;
   /** Files acknowledged before whose new bytes need consent (named in the modal). */
   changed: string[];
   /** Files never acknowledged that arrived through git (named in the modal). */
@@ -58,15 +63,26 @@ export function contentHash(bytes: Uint8Array | string): string {
   return createHash('sha256').update(text.replace(/\r\n/g, '\n'), typeof bytes === 'string' ? 'utf8' : 'latin1').digest('hex');
 }
 
-/** Decides for one explainer's widget files (the union of its widgets' import closures). */
+/**
+ * Decides for one explainer's widget files (the union of its widgets' import closures). An explainer none of
+ * whose files was ever acknowledged asks the first time, with or without git: a copied-in or unzipped
+ * explainer doesn't run on the strength of another one's consent. `seen` versions (earlier acknowledged
+ * bytes under the same git blob) count as acknowledged.
+ */
 export function decideConsent(record: ConsentRecord, files: readonly WidgetFile[]): ConsentDecision {
-  if (!record.granted) return { ask: true, changed: [], added: [], observed: [] };
+  if (!record.granted) return { ask: true, first: true, changed: [], added: [], observed: [] };
   const changed: string[] = [];
   const added: string[] = [];
   const observed: WidgetFile[] = [];
+  const first = files.length > 0 && !files.some((f) => Object.hasOwn(record.files, f.path));
   for (const f of files) {
     const known = Object.hasOwn(record.files, f.path) ? record.files[f.path] : undefined;
     const g = f.git;
+    // A version agreed to (or observed) before, under the same git state: a branch switched back to.
+    if (known && known.hash !== f.hash && known.seen?.some(([h, b]) => h === f.hash && (g.kind !== 'repo' || b === g.headBlob))) {
+      observed.push(f);
+      continue;
+    }
     // What git had when the file was acknowledged: null (not in HEAD) is a value; undefined only in records
     // from before blobs were kept.
     const recorded = known && 'headBlob' in known ? known.headBlob : undefined;
@@ -94,17 +110,35 @@ export function decideConsent(record: ConsentRecord, files: readonly WidgetFile[
       else observed.push(f);
     }
   }
-  return { ask: changed.length + added.length > 0, changed, added, observed };
+  return { ask: first || changed.length + added.length > 0, first, changed, added, observed };
 }
 
 /** The record after the reader agreed (to these files) or edits were observed. */
 export function acknowledge(record: ConsentRecord, files: readonly WidgetFile[], grant: boolean): ConsentRecord {
   const next: ConsentRecord['files'] = { ...record.files };
   for (const f of files) {
+    const old = Object.hasOwn(next, f.path) ? next[f.path] : undefined;
+    const headBlob = f.git.kind === 'repo' ? f.git.headBlob : null;
+    // The version this one replaces joins the earlier ones (without duplicates, the newest last).
+    let seen = (old?.seen ?? []).filter(([h, b]) => !(h === f.hash && b === headBlob));
+    if (old && !(old.hash === f.hash && (old.headBlob ?? null) === headBlob)) seen = [...seen.filter(([h, b]) => !(h === old.hash && b === (old.headBlob ?? null))), [old.hash, old.headBlob ?? null]];
     delete next[f.path]; // re-inserted last: the most recent are kept longest
-    next[f.path] = { hash: f.hash, headBlob: f.git.kind === 'repo' ? f.git.headBlob : null };
+    next[f.path] = { hash: f.hash, headBlob, ...(seen.length ? { seen: seen.slice(-MAX_SEEN_VERSIONS) } : {}) };
   }
   const keys = Object.keys(next);
   for (const k of keys.slice(0, Math.max(0, keys.length - MAX_CONSENT_FILES))) delete next[k];
   return { granted: record.granted || grant, files: next };
+}
+
+/** How many lines these ranges cover together (overlapping and nested anchors counted once), for the consent bar. */
+export function linesCovered(ranges: readonly { start: number; end: number }[]): number {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  let total = 0;
+  let end = -Infinity;
+  for (const r of sorted) {
+    const start = Math.max(r.start, end + 1);
+    if (r.end >= start) total += r.end - start + 1;
+    end = Math.max(end, r.end);
+  }
+  return total;
 }

@@ -1,6 +1,7 @@
 // What readers set in widgets (`useWidgetState`), kept by the panel across unmounts, live edits and the
-// panel being hidden (docs/WIDGETS-PLAN.md §5.3 "State"): at most 64 KB per widget and 256 KB per panel,
-// least recently used dropped first. Pure, so the caps can be unit tested.
+// panel being hidden, and by the extension (workspaceState) across window reloads and the panel being
+// closed (docs/WIDGETS-PLAN.md §5.3 "State"): at most 64 KB per widget and 256 KB per panel (per explainer in
+// the extension), least recently used dropped first. Pure, so the caps can be unit tested.
 
 export const MAX_STATE_PER_WIDGET = 64 * 1024;
 export const MAX_STATE_PER_PANEL = 256 * 1024;
@@ -49,6 +50,10 @@ export class WidgetStates {
       this.total -= cost(k, v);
     }
     return true;
+  }
+
+  has(key: string): boolean {
+    return this.map.has(key);
   }
 
   delete(key: string): void {

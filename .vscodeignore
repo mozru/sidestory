@@ -2,6 +2,8 @@
 !dist/extension.cjs
 !dist/webview/**
 !dist/compile-worker.cjs
+!dist/check.cjs
+!dist/widget-types/**
 !dist/widget-data/**
 !dist/widget-libs/**
 !package.json

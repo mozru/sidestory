@@ -81,7 +81,7 @@ const rootEl = document.createElement('div');
 rootEl.id = 'cx-root';
 document.body.append(rootEl);
 installShims({ viewportHeight: () => store.value.viewportHeight, onNetwork: () => notice(NETWORK_MESSAGE) });
-installFocus(post);
+installFocus(post, rootEl);
 
 // ---- theme ----
 let themeVars: string[] = [];
@@ -99,6 +99,9 @@ function applyTheme(t: { kind: Init['theme']['kind']; vars: Record<string, strin
   html.classList.toggle('dark', dark);
   html.classList.toggle('light', !dark);
   html.classList.toggle('hc', t.kind === 'high-contrast' || t.kind === 'high-contrast-light');
+  // No button background (Dark High Contrast): primary falls back to the text color (theme.css).
+  const buttonBg = String(t.vars?.['--vscode-button-background'] ?? '').trim();
+  html.classList.toggle('cx-no-button-bg', !buttonBg || /^(transparent|#[0-9a-f]{6}00|#[0-9a-f]{3}0)$/i.test(buttonBg));
   html.style.colorScheme = dark ? 'dark' : 'light';
   document.body.className = String(t.bodyClass ?? '').replace(/[^\w -]/g, '');
   store.set({ themeKind: t.kind, themeVersion: store.value.themeVersion + 1, ...(typeof t.reducedMotion === 'boolean' ? { reducedMotion: t.reducedMotion } : {}) });

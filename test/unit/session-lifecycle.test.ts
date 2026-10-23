@@ -22,7 +22,7 @@ beforeAll(() => {
 /** Panels opened by the test, closed after it. */
 const panels: { dispose(): void }[] = [];
 
-function open(name: string) {
+function open(name: string, decorations: Record<string, unknown> = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} }) {
   const ref = refFromDir(Uri.file(`${root}/.explain/${name}`) as never)!;
   const posted: ToWebview[] = [];
   const messages = new EventEmitter<unknown>();
@@ -41,7 +41,6 @@ function open(name: string) {
     onDidDispose: disposed.event,
     dispose: () => disposed.fire(),
   };
-  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} };
   const memento = { get: <T>(_k: string, d: T) => d, update: async () => {} };
   panels.push(panel);
   const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: memento as never, reanchor() {} });
@@ -110,5 +109,21 @@ describe('ExplainerSession lifecycle', () => {
     // The cursor in the detail's code still finds its section (an anchor the overview doesn't have).
     events.selectionChanged.fire({ textEditor: { document: { uri: Uri.file(`${root}/rtl/bit_reader.sv`) } }, selections: [{ active: { line: 35 } }], kind: 1 });
     await vi.waitFor(() => expect(posted).toContainEqual({ type: 'syncTo', anchorId: 'refill' }));
+  });
+});
+
+describe('the cursor and the code', () => {
+  it('Go to Line (a selection change of kind Command) is the reader moving in the code, like a click: the fading stops', async () => {
+    const sets: { dim: boolean }[] = [];
+    const decorations = { set: (f?: { dim: boolean }) => f && sets.push(f), setWidget() {}, isDimmed: () => true, refresh() {}, flash() {} };
+    const { session, lastInit, send } = open('bit-reader', decorations);
+    await session.load();
+    send({ type: 'ready' });
+    await vi.waitFor(() => expect(lastInit()?.anchors.every((a) => a.state !== 'pending')).toBe(true));
+    send({ type: 'focusAnchor', anchorId: 'refill', source: 'step' });
+    sets.length = 0;
+    const doc = { uri: Uri.file(`${root}/rtl/bit_reader.sv`) };
+    events.selectionChanged.fire({ textEditor: { document: doc }, selections: [{ active: { line: 35 } }], kind: 3 });
+    expect(sets.at(-1)).toMatchObject({ dim: false });
   });
 });

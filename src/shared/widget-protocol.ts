@@ -21,6 +21,8 @@ export const fromWidgetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('state'), json: z.string().max(MAX_WIDGET_STATE_BYTES) }),
   z.object({ type: z.literal('error'), message: z.string().max(2048), file: z.string().max(512).optional(), line: z.number().int().optional() }),
   z.object({ type: z.literal('activity') }),
+  /** The reader pressed a pointer or key in the frame (the frame's own claim: spares it from being stopped, never grants anything). */
+  z.object({ type: z.literal('input') }),
   z.object({ type: z.literal('focusExit'), dir: z.enum(['forward', 'backward', 'escape', 'pointer', 'shortcut']) }),
   z.object({ type: z.literal('requestCode'), anchor: anchorIdSchema }),
   z.object({ type: z.literal('pong'), n: z.number().int() }),

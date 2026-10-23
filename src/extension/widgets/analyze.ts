@@ -6,6 +6,7 @@
 import { parse, type Node, type Program } from 'acorn';
 import { fullAncestor } from 'acorn-walk';
 import { transform, type Transform } from 'sucrase';
+import * as sucraseTokens from 'sucrase/dist/TokenProcessor.js';
 import { applyEdits, type TextEdit } from './edits.ts';
 import { loopGuardEdits } from './loop-guards.ts';
 import type { Diag } from './types.ts';
@@ -46,22 +47,56 @@ function transformsFor(file: string): Transform[] {
   return ['jsx'];
 }
 
-/** Line and column (1-based) of a parser error, read from the error or its "(line:col)" suffix. */
-function errorLocation(e: unknown): { line?: number; column?: number } {
+/**
+ * The token Sucrase's transformers were on. Their own errors ("Unexpected token when processing JSX
+ * children", "Invalid scope depth") carry no position, unlike its parser's; the token they threw at gives it.
+ * Recorded through TokenProcessor's prototype (the instance `transform` makes is internal), cheaply: only
+ * which processor is current.
+ */
+interface TokenCursor { tokens: { start: number }[]; tokenIndex: number }
+let lastProcessor: TokenCursor | undefined;
+{
+  const mod = sucraseTokens as unknown as { default?: unknown };
+  // CommonJS default export: `default` is the class when bundled, the module object under Node's ESM interop.
+  const cls = (typeof mod.default === 'function' ? mod.default : (mod.default as { default?: unknown } | undefined)?.default) as { prototype: Record<string, unknown> } | undefined;
+  const proto = cls?.prototype;
+  const original = proto?.matches1 as ((this: TokenCursor, ...a: unknown[]) => boolean) | undefined;
+  if (proto && original) {
+    proto.matches1 = function matches1(this: TokenCursor, ...a: unknown[]) {
+      lastProcessor = this;
+      return original.apply(this, a);
+    };
+  }
+}
+
+/** Line and column (1-based) of `offset` in `text`. */
+function position(text: string, offset: number): { line: number; column: number } {
+  const before = text.slice(0, Math.max(0, Math.min(offset, text.length)));
+  const lines = before.split(/\r\n|\r|\n|\u2028|\u2029/);
+  return { line: lines.length, column: lines.at(-1)!.length + 1 };
+}
+
+/** Line and column (1-based) of a compile error: from the error, its "(line:col)" suffix, or the token Sucrase was on. */
+function errorLocation(e: unknown, source?: string): { line?: number; column?: number } {
   const loc = (e as { loc?: { line: number; column: number } }).loc;
   if (loc && typeof loc.line === 'number') return { line: loc.line, column: loc.column + 1 };
   const m = /\((\d+):(\d+)\)\s*$/.exec(String((e as Error)?.message ?? ''));
-  return m ? { line: Number(m[1]), column: Number(m[2]) + 1 } : {};
+  if (m) return { line: Number(m[1]), column: Number(m[2]) + 1 };
+  const p = lastProcessor;
+  if (source === undefined || !p?.tokens.length) return {};
+  const token = p.tokens[Math.min(p.tokenIndex, p.tokens.length - 1)]!;
+  return position(source, p.tokenIndex >= p.tokens.length ? source.length : token.start);
 }
 
 function isStackOverflow(e: unknown): boolean {
   return e instanceof RangeError && /call stack/i.test(e.message);
 }
 
-function failure(file: string, e: unknown, stage: string): ModuleAnalysis {
+function failure(file: string, e: unknown, stage: string, source?: string): ModuleAnalysis {
+  const message = String((e as Error)?.message ?? e).replace(/\s*\(\d+:\d+\)\s*$/, '').replace(/^Error transforming [^:]*: /, '');
   const err: Diag = isStackOverflow(e)
     ? { file, code: 'too-complex', message: 'This file is nested too deeply to compile.' }
-    : { file, code: 'syntax', message: `${stage}: ${String((e as Error)?.message ?? e).replace(/\s*\(\d+:\d+\)\s*$/, '')}`, ...errorLocation(e) };
+    : { file, code: 'syntax', message: `${stage}: ${message}`, ...errorLocation(e, source) };
   return { code: '', edits: [], imports: [], exports: [], exportStar: false, warnings: [], errors: [err] };
 }
 
@@ -75,6 +110,20 @@ const RE_FULL_HEIGHT = /(?<![\w-])(?:min-|max-)?h-(?:screen|dvh|svh|lvh)(?![\w-]
 const RE_REMOTE_URL = /\bhttps?:\/\/(?!www\.w3\.org\/)[^\s"'`]/i;
 const RE_HSL_VAR = /hsl\(\s*var\(\s*--/;
 const RE_TW3_OPACITY = /(?<![\w-])(?:bg|text|border|ring|divide|placeholder)-opacity-\d+/;
+/** A page background on a widget's outermost element (artifacts paint the page; a widget sits on the panel). */
+const RE_PAGE_BG = /(?<![\w-])(?:[a-z]+:)*bg-(?:white|black|(?:gray|slate|zinc|neutral|stone)-\d{2,3})(?![\w-])/;
+/** Palette greys for text: fixed colors that vanish on the opposite theme (text-gray-900 in Dark). */
+const RE_PALETTE_TEXT = /(?<![\w:-])text-(?:gray|slate|zinc|neutral|stone)-\d{2,3}(?![\w-])/;
+const RE_DARK_TEXT = /(?<![\w-])dark:text-/;
+/** A fixed width in pixels, class form. */
+const RE_PX_WIDTH = /(?<![\w:-])w-\[(\d+(?:\.\d+)?)px\]/g;
+/** Wider than this doesn't fit a panel beside the code. */
+const NARROW_PX = 360;
+/** A fixed height on the parent of a ResponsiveContainer (h-64, h-[300px], h-px). */
+const RE_FIXED_HEIGHT = /(?<![\w:-])h-(?:\d+(?:\.\d+)?|px|\[\d+(?:\.\d+)?(?:px|rem|em)\])(?![\w-])/;
+const RE_HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+/** JSX props that take a color (SVG and Recharts). */
+const COLOR_PROPS = new Set(['stroke', 'fill', 'color', 'stopColor', 'floodColor', 'lightingColor', 'background', 'backgroundColor']);
 
 type AnyNode = Node & Record<string, any>;
 
@@ -121,9 +170,12 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
   const source = text.replace(/^﻿/, '');
   let code: string;
   try {
+    lastProcessor = undefined;
     code = transform(source, { ...SUCRASE_COMMON, transforms: transformsFor(file), filePath: file }).code;
   } catch (e) {
-    return failure(file, e, 'Syntax error');
+    return failure(file, e, 'Syntax error', source);
+  } finally {
+    lastProcessor = undefined;
   }
   let ast: Program;
   try {
@@ -153,6 +205,10 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
 
   // Names bound by imports, used to recognize JSX calls and explainer navigation calls.
   const jsxLocals = new Set<string>();
+  /** highlight and reveal from 'explainer', by local name. */
+  const sdkLocals = new Map<string, 'highlight' | 'reveal'>();
+  /** Icons from lucide-react. */
+  const iconLocals = new Set<string>();
   const navLocals = new Set<string>(); // reveal, goToStep, and next/prev destructured from useStep()
   const explainerNamespaces = new Set<string>();
   const useStepLocals = new Set<string>();
@@ -167,9 +223,57 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
         if (s.type === 'ImportNamespaceSpecifier') explainerNamespaces.add(s.local.name);
         if (imported === 'reveal' || imported === 'goToStep') navLocals.add(s.local.name);
         if (imported === 'useStep') useStepLocals.add(s.local.name);
+        if (imported === 'highlight' || imported === 'reveal') sdkLocals.set(s.local.name, imported);
       }
+      if (from === 'lucide-react' && s.type === 'ImportSpecifier') iconLocals.add(s.local.name);
     }
   }
+  // The component the widget renders: the default export (a function, or a name bound to one).
+  const defaultFns = new Set<AnyNode>();
+  {
+    const byName = new Map<string, AnyNode>();
+    for (const stmt of ast.body as AnyNode[]) {
+      const d = stmt.type === 'ExportNamedDeclaration' && stmt.declaration ? stmt.declaration : stmt;
+      if (d.type === 'FunctionDeclaration' && d.id) byName.set(d.id.name, d);
+      if (d.type === 'VariableDeclaration') for (const v of d.declarations as AnyNode[]) if (v.id.type === 'Identifier' && v.init && FUNCTIONS.has(v.init.type)) byName.set(v.id.name, v.init);
+    }
+    for (const stmt of ast.body as AnyNode[]) {
+      if (stmt.type !== 'ExportDefaultDeclaration') continue;
+      const d = stmt.declaration as AnyNode;
+      if (FUNCTIONS.has(d.type)) defaultFns.add(d);
+      else if (d.type === 'Identifier' && byName.has(d.name)) defaultFns.add(byName.get(d.name)!);
+    }
+  }
+  /** Every string in an expression (a className, cn(...) arguments, a template). */
+  const strings = (n: AnyNode | undefined): string[] => {
+    const out: string[] = [];
+    const walk = (x: AnyNode | null | undefined) => {
+      if (!x || typeof x !== 'object') return;
+      if (x.type === 'Literal' && typeof x.value === 'string') out.push(x.value);
+      else if (x.type === 'TemplateElement' && typeof x.value?.cooked === 'string') out.push(x.value.cooked);
+      for (const k of Object.keys(x)) {
+        if (k === 'loc' || k === 'start' || k === 'end') continue;
+        const v = (x as Record<string, unknown>)[k];
+        if (Array.isArray(v)) for (const c of v) walk(c as AnyNode);
+        else if (v && typeof v === 'object' && 'type' in (v as object)) walk(v as AnyNode);
+      }
+    };
+    walk(n);
+    return out;
+  };
+  const prop = (props: AnyNode | undefined, name: string): AnyNode | undefined =>
+    props?.type === 'ObjectExpression' ? (props.properties as AnyNode[]).find((p) => p.type === 'Property' && !p.computed && nameOf(p.key) === name) : undefined;
+  /** A literal line number (or [first, last]) a call would drop: below 1, or not a whole number. */
+  const badLines = (n: AnyNode | undefined): string | undefined => {
+    if (!n) return undefined;
+    const nums = n.type === 'ArrayExpression' ? (n.elements as (AnyNode | null)[]) : [n];
+    for (const e of nums) {
+      if (!e) continue;
+      const v = e.type === 'Literal' && typeof e.value === 'number' ? e.value : e.type === 'UnaryExpression' && e.operator === '-' && e.argument.type === 'Literal' && typeof e.argument.value === 'number' ? -e.argument.value : undefined;
+      if (v !== undefined && (!Number.isInteger(v) || v < 1)) return String(v);
+    }
+    return undefined;
+  };
   const isUseStepCall = (n: AnyNode | null | undefined): boolean =>
     !!n &&
     n.type === 'CallExpression' &&
@@ -262,12 +366,58 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
               }
             }
           }
-          const tagName = tag?.type === 'Identifier' ? tag.name : tag?.type === 'MemberExpression' ? nameOf(tag.property) : undefined;
+          const tagName = tag?.type === 'Identifier' ? tag.name : tag?.type === 'MemberExpression' ? nameOf(tag.property) : tag?.type === 'Literal' ? String(tag.value) : undefined;
+          const outer = (ancestors as AnyNode[]).filter((a) => a !== node && isJsxCall(a));
           if (tagName === 'ResponsiveContainer') {
-            const height = props?.type === 'ObjectExpression' ? (props.properties as AnyNode[]).find((p) => p.type === 'Property' && nameOf(p.key) === 'height') : undefined;
-            if (!height || (height.value.type === 'Literal' && height.value.value === '100%')) {
-              warn('responsive-height', node, 'ResponsiveContainer with height="100%" needs a parent with a set height, which a widget\'s box doesn\'t have; give it a number (height={300}) or an aspect.', 'ResponsiveContainer');
+            const height = prop(props, 'height');
+            // A parent with a set height (h-64, h-[300px], style={{height: 300}}) gives 100% something to resolve against.
+            const parent = outer.at(-1)?.arguments[1] as AnyNode | undefined;
+            const parentHeight = strings(prop(parent, 'className')?.value).some((c) => RE_FIXED_HEIGHT.test(c)) || !!prop(prop(parent, 'style')?.value, 'height');
+            if (!parentHeight && (!height || (height.value.type === 'Literal' && height.value.value === '100%'))) {
+              warn('responsive-height', node, 'ResponsiveContainer with height="100%" needs a parent with a set height (h-64), which a widget\'s box doesn\'t have; give it a number (height={300}), an aspect, or a parent with a fixed height.', 'ResponsiveContainer');
             }
+          }
+          // The outermost element the component returns: a page background paints a slab on the panel.
+          const chain = ancestors as AnyNode[];
+          let fnAt = chain.length - 2;
+          while (fnAt >= 0 && !FUNCTIONS.has(chain[fnAt]!.type)) fnAt--;
+          const fn = chain[fnAt];
+          const returned = !!fn && defaultFns.has(fn) && (fn.body === node || chain.slice(fnAt + 1, -1).some((a) => a.type === 'ReturnStatement'));
+          if (outer.length === 0 && returned) {
+            const bg = strings(prop(props, 'className')?.value).map((c) => RE_PAGE_BG.exec(c)?.[0]).find(Boolean);
+            if (bg) warn('page-background', node, `${bg} on the widget's outermost element paints a page background over the panel (a slab in other themes); leave the root transparent, and use bg-card or bg-muted for a panel inside it.`, bg.replace(/^.*:/, ''));
+          }
+          // Hard-coded colors in color props ignore the theme.
+          for (const p of props?.type === 'ObjectExpression' ? (props.properties as AnyNode[]) : []) {
+            const key = p.type === 'Property' && !p.computed ? nameOf(p.key) : undefined;
+            if (key && COLOR_PROPS.has(key) && p.value.type === 'Literal' && typeof p.value.value === 'string' && RE_HEX.test(p.value.value)) {
+              warn('hex-color', p, `${key}="${p.value.value}" is fixed: it ignores the VS Code theme (and high contrast). Use a theme color: var(--chart-1) … var(--chart-6), var(--primary), var(--muted-foreground) or currentColor.`, p.value.value.slice(1));
+            }
+          }
+          // An icon-only button needs a name for screen readers.
+          if (tagName === 'Button' || tagName === 'button') {
+            const children = prop(props, 'children')?.value as AnyNode | undefined;
+            const kids = children?.type === 'ArrayExpression' ? (children.elements as AnyNode[]) : children ? [children] : [];
+            const iconOnly = kids.length > 0 && kids.every((k) => k && isJsxCall(k) && k.arguments[0]?.type === 'Identifier' && iconLocals.has(k.arguments[0].name));
+            if (iconOnly && !['aria-label', 'aria-labelledby', 'title'].some((n) => prop(props, n))) {
+              warn('icon-button-label', node, 'This button shows only an icon: give it aria-label="…" (what it does), so screen readers can name it.', tagName);
+            }
+          }
+        }
+        // highlight() and reveal() arguments the runtime would drop.
+        const sdk = callee.type === 'Identifier' ? sdkLocals.get(callee.name)
+          : callee.type === 'MemberExpression' && callee.object.type === 'Identifier' && explainerNamespaces.has(callee.object.name) && ['highlight', 'reveal'].includes(nameOf(callee.property) ?? '') ? (nameOf(callee.property) as 'highlight' | 'reveal') : undefined;
+        if (sdk === 'highlight') {
+          const bad = badLines(node.arguments[0]);
+          if (bad !== undefined) warn('highlight-lines', node, `highlight(${bad}): lines are whole numbers from 1, counted from the anchor's first line (pair them with useAnchorCode().startLine); this call is dropped.`, 'highlight');
+        }
+        if (sdk === 'reveal') {
+          const opts = node.arguments[1] as AnyNode | undefined;
+          const bad = badLines(prop(opts, 'lines')?.value);
+          if (bad !== undefined) warn('reveal-lines', node, `reveal(…, {lines: ${bad}}): lines are whole numbers from 1, counted from the anchor's first line; this call returns false.`, 'reveal');
+          const hl = prop(opts, 'highlight')?.value as AnyNode | undefined;
+          if (hl && (hl.type === 'Literal' || hl.type === 'ObjectExpression' || hl.type === 'TemplateLiteral')) {
+            warn('reveal-highlight', node, `reveal(…, {highlight}) takes a list of identifiers to mark in the code (highlight: ['wr', 'rd']), not ${hl.type === 'Literal' ? JSON.stringify(hl.value) : 'that'}; this call returns false.`, 'reveal');
           }
         }
         // Navigation from explainer (reveal, goToStep, next/prev) — collected, judged after the walk.
@@ -326,6 +476,12 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
     if (RE_REMOTE_URL.test(s)) warn('remote-url', node, 'Widgets can\'t load remote URLs; put the file in the explainer folder and import it (./image.png, ./data.json).');
     if (RE_HSL_VAR.test(s)) warn('hsl-var', node, 'hsl(var(--…)) doesn\'t work here: theme variables are complete colors; use var(--primary) or the Tailwind class (bg-primary).');
     if ((m = RE_TW3_OPACITY.exec(s))) warn('tw3-opacity', node, `${m[0]} is Tailwind v3; Tailwind v4 uses a slash: bg-black/50.`, m[0]);
+    if ((m = RE_PALETTE_TEXT.exec(s)) && !RE_DARK_TEXT.test(s)) warn('palette-text', node, `${m[0]} is a fixed grey: it nearly vanishes in dark (or light) themes. Use text-foreground or text-muted-foreground, which follow the theme.`, m[0]);
+    for (const w of s.matchAll(RE_PX_WIDTH)) {
+      if (Number(w[1]) <= NARROW_PX) continue;
+      warn('fixed-width', node, `${w[0]} is wider than a narrow panel (about ${NARROW_PX} px beside the code), where it gets clipped. Use w-full max-w-[${w[1]}px]; for content that must be wide (a waveform, a table), wrap it in a div with overflow-x-auto.`, w[0]);
+      break;
+    }
   }
 
   for (const call of navCalls) {

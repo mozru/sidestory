@@ -3,6 +3,7 @@ import * as esbuild from 'esbuild';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import { WIDGET_BOOTSTRAP } from '../src/shared/widget-bootstrap.ts';
+import { WIDGET_TYPE_FILES } from '../src/widget-types/index.ts';
 import { buildWidgetLibs } from './build-widget-libs.mjs';
 import { generateWidgetData } from './widget-data.ts';
 
@@ -32,6 +33,9 @@ mkdirSync('dist/webview/codicons', { recursive: true });
 for (const f of ['codicon.css', 'codicon.ttf']) {
   cpSync(`node_modules/@vscode/codicons/dist/${f}`, `dist/webview/codicons/${f}`);
 }
+// The declaration files "Add Widget Types" and `check.cjs --types` write for widget authors.
+mkdirSync('dist/widget-types', { recursive: true });
+for (const f of WIDGET_TYPE_FILES) cpSync(`src/widget-types/${f}`, `dist/widget-types/${f}`);
 
 if (watch) {
   for (const b of builds) await (await esbuild.context(b)).watch();

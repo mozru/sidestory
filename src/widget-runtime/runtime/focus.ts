@@ -30,12 +30,43 @@ function tabbables(): HTMLElement[] {
       document.querySelector(`input[type=radio][name="${CSS.escape(el.name)}"]:checked`)));
 }
 
-export function installFocus(post: (m: FromWidget) => void): { interacting: () => boolean } {
+/**
+ * Where focus goes when the panel moves it into the widget (Enter on its placeholder): the widget's own root
+ * element, made focusable with tabindex=-1 if it isn't, so key handlers on the root (a component's
+ * `onKeyDown`) see keys at once and Tab goes on to its first control. Focusing the frame alone would leave
+ * focus on <body>, outside the widget's tree.
+ */
+function focusEntry(root: HTMLElement, focus: (el: HTMLElement) => void): void {
+  const a = document.activeElement;
+  if (a && a !== document.body && a !== document.documentElement) return;
+  const el = root.firstElementChild;
+  if (!(el instanceof HTMLElement) && !(el instanceof SVGElement)) return;
+  if (!el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex < 0) el.setAttribute('tabindex', '-1');
+  focus(el as HTMLElement);
+}
+
+export function installFocus(post: (m: FromWidget) => void, root?: HTMLElement): { interacting: () => boolean } {
   let lastInteraction = -Infinity;
   const interacting = () => performance.now() - lastInteraction < INTERACTION_MS;
-  const mark = () => { lastInteraction = performance.now(); };
+  let lastReported = -Infinity;
+  const mark = () => {
+    lastInteraction = performance.now();
+    // Told to the panel (throttled): a click that moves focus here with no pointer travel the panel saw (an
+    // instant click by automation or assistive technology) isn't held against the widget.
+    if (lastInteraction - lastReported >= ACTIVITY_MS) {
+      lastReported = lastInteraction;
+      post({ type: 'input' });
+    }
+  };
   window.addEventListener('pointerdown', mark, true);
   window.addEventListener('keydown', mark, true);
+
+  const htmlFocus = HTMLElement.prototype.focus;
+  const svgFocus = SVGElement.prototype.focus;
+  // The frame got focus (the panel focused it, or a click landed on no control): into the widget's tree.
+  if (root) {
+    window.addEventListener('focus', () => focusEntry(root, (el) => (el instanceof SVGElement ? svgFocus : htmlFocus).call(el, { preventScroll: true })));
+  }
 
   // focus(): only while the reader is interacting here (or the frame already has focus: moving it within
   // the frame takes nothing from anyone). React's autoFocus calls this too.

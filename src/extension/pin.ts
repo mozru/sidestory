@@ -22,6 +22,7 @@ import { minimalReplacement, patchManifest } from './manifest-edit.ts';
 import { realPathInside, writeFileAtomic } from './paths.ts';
 import type { PinWidgetHooks } from './widgets/host.ts';
 import { isSecretPath } from './widgets/secret-files.ts';
+import { ourModal } from './widgets/watchdog.ts';
 
 /** Why an anchor wasn't pinned outright. */
 type Refusal = 'changed' | 'stale' | 'lost' | 'ambiguous' | 'missing' | 'unpinnable' | 'widgets-declined' | 'widgets-secret';
@@ -315,7 +316,7 @@ export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, e
   const where = `${file}:${rangeText(pin.range)}`;
   if (confirm) {
     const ok = 'Re-anchor';
-    const choice = await vscode.window.showInformationMessage(`Re-anchor “${anchorId}” to ${where}?`, { modal: true, detail: 'This updates its entry in manifest.json.' }, ok);
+    const choice = await ourModal(() => vscode.window.showInformationMessage(`Re-anchor “${anchorId}” to ${where}?`, { modal: true, detail: 'This updates its entry in manifest.json.' }, ok));
     if (choice !== ok) return;
   }
   const uri = manifestUri(ref);
