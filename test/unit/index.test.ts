@@ -1,0 +1,404 @@
+// The workspace index (docs/NAVIGATION-PLAN.md §6, §12.1): discovery, watching, budgets, caps, quote slices.
+import { rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { code, manifestText, story, tempRoot, waitFor, write } from './nav-fixtures.ts';
+import { config, counts, events, findFilesCalls, Uri, watchers, workspace } from './vscode-stub.ts';
+
+vi.mock('vscode', () => import('./vscode-stub.ts'));
+
+const { SidestoryIndex, INDEX_LIMITS } = await import('../../src/extension/nav/index.ts');
+const { SidestoryWatcher } = await import('../../src/extension/nav/watcher.ts');
+const { uriKey } = await import('../../src/extension/explainers.ts');
+
+type Index = InstanceType<typeof SidestoryIndex>;
+const limits = INDEX_LIMITS as unknown as Record<string, number>;
+const saved = { ...limits };
+
+let root = '';
+let index: Index;
+let watcher: InstanceType<typeof SidestoryWatcher>;
+const open: { dispose(): void }[] = [];
+
+const key = (p: string) => uriKey(Uri.file(p) as never);
+const dirOf = (pkg: string, name: string) => join(root, pkg, '.sidestory', name);
+const entryOf = (pkg: string, name: string) => index.entry(key(dirOf(pkg, name)));
+const fire = (kind: 'change' | 'create' | 'delete', path: string) => {
+  const w = watchers.find((x) => x.pattern === '**/.sidestory/**')!;
+  if (kind === 'change') w.fireChange(Uri.file(path));
+  else if (kind === 'create') w.fireCreate(Uri.file(path));
+  else w.fireDelete(Uri.file(path));
+};
+
+async function start(): Promise<Index> {
+  watcher = new SidestoryWatcher();
+  index = new SidestoryIndex(watcher);
+  open.push(index, watcher);
+  await index.refresh();
+  return index;
+}
+
+beforeAll(() => {
+  limits.debounceMs = 20;
+  limits.debounceMaxMs = 100;
+});
+
+beforeEach(() => {
+  root = tempRoot('cx-index-');
+  workspace.root = Uri.file(root);
+  workspace.textDocuments = [];
+  workspace.findFilesImpl = undefined;
+  findFilesCalls.length = 0;
+  for (const k of Object.keys(config)) delete config[k];
+});
+
+afterEach(() => {
+  for (const d of open.splice(0)) d.dispose();
+  Object.assign(limits, saved, { debounceMs: 20, debounceMaxMs: 100 });
+  rmSync(root, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  Object.assign(limits, saved);
+});
+
+describe('discovery', () => {
+  it('reads titles, outlines, groups and the detail graph per package', async () => {
+    write(join(root, 'src/a.ts'), code(40));
+    story(root, '', 'overview', { title: 'Overview', anchors: { one: { file: 'src/a.ts', range: [1, 5] } }, details: ['detail', 'missing'] });
+    story(root, '', 'detail', { title: 'Detail', summary: 'A detail.', anchors: { two: { file: 'src/a.ts', range: [10, 12] }, three: { file: 'src/a.ts', range: [20, 30] } } });
+    story(root, 'svc', 'other', { title: 'Other', group: 'Storage', anchors: {} });
+    await start();
+    expect(index.state).toBe('ready');
+    expect(index.size).toBe(3);
+    expect(index.packages().map((p) => p.label).sort()).toEqual([root.split('/').at(-1), 'svc'].sort());
+    const d = entryOf('', 'detail')!;
+    expect(d.title).toBe('Detail');
+    expect(d.steps.map((s) => s.title)).toEqual(['Step two', 'Step three']);
+    expect(index.pathLabel(d)).toBe('Overview › Detail');
+    expect(index.packageOf(entryOf('', 'overview')!)!.graph.brokenLinks('overview')).toEqual(['missing']);
+    expect(entryOf('svc', 'other')!.group).toBe('Storage');
+    expect(index.stepCount(d.ref.dir as never)).toBe(2);
+    const fileKey = key(join(root, 'src/a.ts'));
+    expect(index.isAnchored(fileKey)).toBe(true);
+    expect(index.anchorsIn(fileKey)).toHaveLength(3);
+    expect(index.anchorsCovering(fileKey, 11, 21).map((s) => s.entry.ids[s.index]).sort()).toEqual(['three', 'two']);
+    expect(index.anchorsCovering(fileKey, 6, 9)).toEqual([]);
+    expect(index.packagesForFile(fileKey).size).toBe(1);
+  });
+
+  it('keeps a stable cut: the first by path, whatever order findFiles returns', async () => {
+    limits.sidestories = 10;
+    const all: string[] = [];
+    for (let i = 0; i < 30; i++) all.push(story(root, '', `s${String(i).padStart(2, '0')}`, { title: `S${i}` }));
+    let seed = 3;
+    workspace.findFilesImpl = () => {
+      const shuffled = [...all].sort(() => ((seed = (seed * 16807) % 2147483647) % 3) - 1);
+      return shuffled.map((d) => Uri.file(join(d, 'manifest.json')));
+    };
+    await start();
+    expect(index.size).toBe(10);
+    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => d.split('/').at(-1)).sort());
+    expect(index.discoveryCut).toEqual({ found: 30, atLeast: false });
+    await index.refresh(); // another order, the same cut
+    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => d.split('/').at(-1)).sort());
+  });
+
+  it('passes the merged exclusions to findFiles: true entries only, braces expanded, never nested', async () => {
+    config['files.exclude'] = { '**/gen': true, '**/keep': false, '**/*.js': { when: 'x' }, 'docs/{a,b}': true };
+    await start();
+    const exclude = String(findFilesCalls.at(-1)![1]);
+    expect(exclude).toContain('**/gen/**');
+    expect(exclude).toContain('docs/a/**');
+    expect(exclude).toContain('docs/b/**');
+    expect(exclude).toContain('**/node_modules/**');
+    expect(exclude).not.toContain('keep');
+    expect(exclude).not.toContain('*.js');
+    expect(exclude.slice(1, -1)).not.toMatch(/[{}]/);
+    expect(findFilesCalls.at(-1)![2]).toBe(20_000);
+  });
+
+  it('is empty, not ready, in a workspace without sidestories', async () => {
+    await start();
+    expect(index.state).toBe('empty');
+  });
+});
+
+describe('watching', () => {
+  it('re-reads a changed manifest, adds a created sidestory, and removes deleted folders', async () => {
+    story(root, '', 'a', { title: 'A' });
+    await start();
+    write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ title: 'A2' }));
+    fire('change', join(dirOf('', 'a'), 'manifest.json'));
+    await waitFor(() => entryOf('', 'a')!.title === 'A2');
+    story(root, '', 'b', { title: 'B' });
+    fire('create', join(dirOf('', 'b'), 'manifest.json'));
+    await waitFor(() => entryOf('', 'b')?.title === 'B');
+    // The whole Sidestory folder deleted: everything under it goes.
+    rmSync(join(root, '.sidestory'), { recursive: true });
+    fire('delete', join(root, '.sidestory'));
+    expect(index.size).toBe(0);
+  });
+
+  it('removes sidestories under a folder deleted inside VS Code (an ancestor)', async () => {
+    story(root, 'services/auth', 'x', { title: 'X' });
+    story(root, '', 'y', { title: 'Y' });
+    await start();
+    events.filesDeleted.fire({ files: [Uri.file(join(root, 'services'))] });
+    expect([...index.all()].map((e) => e.ref.name)).toEqual(['y']);
+  });
+
+  it('reconciles deletes nobody reported, at most every 30 s unless forced', async () => {
+    story(root, 'a', 'x', { title: 'X' });
+    story(root, 'b', 'y', { title: 'Y' });
+    story(root, 'c', 'z', { title: 'Z' });
+    await start();
+    rmSync(join(root, 'a'), { recursive: true });
+    events.windowState.fire({ focused: true });
+    await waitFor(() => !entryOf('a', 'x'));
+    rmSync(join(root, 'b'), { recursive: true });
+    await index.reconcile(); // throttled
+    expect(entryOf('b', 'y')).toBeDefined();
+    await index.reconcile(true); // a git HEAD change
+    expect(entryOf('b', 'y')).toBeUndefined();
+    expect(entryOf('c', 'z')).toBeDefined();
+  });
+
+  it('turns a burst of 300 events into one batch', async () => {
+    story(root, '', 'a', { title: 'A' });
+    await start();
+    let changes = 0;
+    index.onDidChange(() => changes++);
+    const manifest = join(dirOf('', 'a'), 'manifest.json');
+    write(manifest, manifestText({ title: 'Burst' }));
+    const before = counts.readPaths.filter((p) => p.endsWith('/a/manifest.json')).length;
+    for (let i = 0; i < 300; i++) fire('change', manifest);
+    await waitFor(() => entryOf('', 'a')!.title === 'Burst');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(counts.readPaths.filter((p) => p.endsWith('/a/manifest.json')).length - before).toBe(1);
+    expect(changes).toBe(1);
+  });
+
+  it('reads an open, dirty manifest from its buffer', async () => {
+    story(root, '', 'a', { title: 'On disk' });
+    await start();
+    const uri = Uri.file(join(dirOf('', 'a'), 'manifest.json'));
+    const doc = { uri, isDirty: true, version: 7, isClosed: false, getText: () => manifestText({ title: 'In the buffer' }) };
+    workspace.textDocuments = [doc];
+    events.documentChanged.fire({ document: doc, contentChanges: [{}] });
+    await waitFor(() => entryOf('', 'a')!.title === 'In the buffer');
+    expect(entryOf('', 'a')!.manifestStamp).toBe('d7');
+  });
+
+  it('drops a read that a newer change overtook', async () => {
+    story(root, '', 'a', { title: 'First' });
+    await start();
+    const manifest = join(dirOf('', 'a'), 'manifest.json');
+    const fs = workspace.fs as { readFile: (u: Uri) => Promise<Uint8Array> };
+    const real = fs.readFile;
+    let raced = false;
+    fs.readFile = async (u: Uri) => {
+      const bytes = await real(u);
+      if (!raced && u.path.endsWith('/a/manifest.json')) {
+        raced = true;
+        // While this read is in flight, the file changes again.
+        write(manifest, manifestText({ title: 'Third' }));
+        fire('change', manifest);
+      }
+      return bytes;
+    };
+    try {
+      write(manifest, manifestText({ title: 'Second' }));
+      fire('change', manifest);
+      await waitFor(() => entryOf('', 'a')!.title === 'Third');
+      expect(raced).toBe(true);
+    } finally {
+      fs.readFile = real;
+    }
+  });
+
+  it('keeps the file map current when anchors move to another file', async () => {
+    write(join(root, 'a.ts'), code(10));
+    write(join(root, 'b.ts'), code(10));
+    story(root, '', 's', { anchors: { x: { file: 'a.ts', range: [1, 2] } } });
+    await start();
+    expect(index.isAnchored(key(join(root, 'a.ts')))).toBe(true);
+    write(join(dirOf('', 's'), 'manifest.json'), manifestText({ anchors: { x: { file: 'b.ts', range: [1, 2] } } }));
+    fire('change', join(dirOf('', 's'), 'manifest.json'));
+    await waitFor(() => index.isAnchored(key(join(root, 'b.ts'))));
+    expect(index.isAnchored(key(join(root, 'a.ts')))).toBe(false);
+    expect(index.anchorsIn(key(join(root, 'a.ts')))).toEqual([]);
+  });
+
+  it('dispose leaves no watchers or listeners', async () => {
+    const before = counts.watchers;
+    story(root, '', 'a', {});
+    await start();
+    expect(counts.watchers).toBe(before + 1);
+    for (const d of open.splice(0)) d.dispose();
+    expect(counts.watchers).toBe(before);
+    expect(Object.values(events).reduce((n, e) => n + e.listeners.size, 0)).toBe(0);
+  });
+});
+
+describe('budgets and caps', () => {
+  it('stops at the per-batch byte budget, says so, and reads the rest in a follow-up batch', async () => {
+    for (let i = 0; i < 4; i++) story(root, '', `s${i}`, { title: `S${i}` });
+    const size = statSync(join(dirOf('', 's0'), 'manifest.json')).size;
+    limits.manifestBytesPerBatch = size * 2 + 1;
+    limits.followUpMs = 50;
+    await start();
+    const states = () => [...index.all()].map((e) => e.state);
+    expect(states().filter((s) => s === 'not-read')).toHaveLength(2);
+    limits.manifestBytesPerBatch = saved.manifestBytesPerBatch!;
+    await waitFor(() => states().every((s) => s === 'ready'));
+  });
+
+  it('stops outlining at the per-batch scan-time budget', async () => {
+    for (let i = 0; i < 3; i++) story(root, '', `s${i}`, { title: `S${i}` });
+    limits.scanMsPerBatch = 0;
+    limits.followUpMs = 60_000;
+    await start();
+    expect([...index.all()].every((e) => e.state === 'not-outlined' && !e.outlined)).toBe(true);
+  });
+
+  it('gives each file at most 200 anchors from one sidestory, in-use sidestories first', async () => {
+    write(join(root, 'f.ts'), code(600));
+    const many: Record<string, { file: string; range: [number, number] }> = {};
+    for (let i = 0; i < 500; i++) many[`a${i}`] = { file: 'f.ts', range: [i + 1, i + 1] };
+    story(root, '', 'big', { anchors: many });
+    story(root, '', 'small', { anchors: { s1: { file: 'f.ts', range: [1, 3] }, s2: { file: 'f.ts', range: [5, 6] } } });
+    await start();
+    const f = key(join(root, 'f.ts'));
+    const slots = index.anchorsIn(f);
+    expect(slots.filter((s) => s.entry.ref.name === 'big')).toHaveLength(200);
+    expect(slots.filter((s) => s.entry.ref.name === 'small')).toHaveLength(2);
+    expect(slots[0]!.entry.ref.name).toBe('big'); // by name, with nothing in use
+    expect(slots.map((s) => s.entry.ids[s.index])).toEqual(index.anchorsIn(f).map((s) => s.entry.ids[s.index])); // deterministic
+    // A sidestory in use comes first (the table is rebuilt on the next change).
+    index.priority = (k) => (k === entryOf('', 'small')!.key ? 0 : 1);
+    write(join(dirOf('', 'small'), 'manifest.json'), manifestText({ anchors: { s1: { file: 'f.ts', range: [1, 4] }, s2: { file: 'f.ts', range: [5, 6] } } }));
+    fire('change', join(dirOf('', 'small'), 'manifest.json'));
+    await waitFor(() => index.anchorsIn(f)[0]?.entry.ref.name === 'small');
+  });
+
+  it('caps a file’s anchors at 2,000 in all', async () => {
+    limits.anchorsPerFile = 250;
+    write(join(root, 'f.ts'), code(600));
+    for (const n of ['a', 'b']) {
+      const many: Record<string, { file: string; range: [number, number] }> = {};
+      for (let i = 0; i < 200; i++) many[`x${i}`] = { file: 'f.ts', range: [i + 1, i + 1] };
+      story(root, '', n, { anchors: many });
+    }
+    await start();
+    const slots = index.anchorsIn(key(join(root, 'f.ts')));
+    expect(slots).toHaveLength(250);
+    expect(slots.filter((s) => s.entry.ref.name === 'b')).toHaveLength(50);
+  });
+
+  it('caps anchors in total, and says so', async () => {
+    limits.anchors = 600;
+    write(join(root, 'f.ts'), code(600));
+    for (const n of ['a', 'b']) {
+      const many: Record<string, { file: string; range: [number, number] }> = {};
+      for (let i = 0; i < 500; i++) many[`x${i}`] = { file: 'f.ts', range: [i + 1, i + 1] };
+      story(root, '', n, { anchors: many });
+    }
+    await start();
+    expect(index.stats().anchors).toBe(600);
+    expect(index.capped).toBe(true);
+    expect([...index.all()].some((e) => e.capped)).toBe(true);
+  });
+
+  it('caps detail links in total', async () => {
+    limits.edges = 1;
+    story(root, '', 'top', { details: ['d1', 'd2'] });
+    story(root, '', 'd1', {});
+    story(root, '', 'd2', {});
+    await start();
+    const g = index.packages()[0]!.graph;
+    expect(g.edgeCount).toBe(1);
+    expect(g.edgesCapped).toBe(true);
+    expect(index.capped).toBe(true);
+  });
+});
+
+describe('quote slices', () => {
+  /** A pinned anchor on `f.ts` line 3, in a manifest padded to about `pad` bytes. */
+  function pinned(name: string, pad: number, title = name) {
+    return story(root, '', name, { title, anchors: { q: { file: 'f.ts', range: [3, 3], quote: 'line 3' } }, extra: { pad: 'x'.repeat(pad) } });
+  }
+
+  it('one file anchored by many sidestories with big manifests: reads only the slices', async () => {
+    write(join(root, 'f.ts'), code(10));
+    const n = 30;
+    for (let i = 0; i < n; i++) pinned(`s${i}`, 200_000);
+    await start();
+    const store = (index as unknown as { quotes: { bytesRead: number } }).quotes;
+    const slots = index.anchorsIn(key(join(root, 'f.ts')));
+    expect(slots).toHaveLength(n);
+    for (const s of slots) {
+      const q = await index.quotesFor(s.entry, [s.index], () => true);
+      expect(q.get(s.index)).toMatchObject({ exact: 'line 3' });
+    }
+    expect(store.bytesRead).toBeLessThan(n * 200); // a few dozen bytes each, never 200 KB manifests
+    // Cached: a second round reads nothing.
+    const before = store.bytesRead;
+    for (const s of slots) await index.quotesFor(s.entry, [s.index], () => true);
+    expect(store.bytesRead).toBe(before);
+  });
+
+  it('catches a same-size edit the stamp can’t see (hash), and marks the manifest for a re-read', async () => {
+    write(join(root, 'f.ts'), code(10));
+    const dir = pinned('s', 10);
+    const manifest = join(dir, 'manifest.json');
+    const t = 1_700_000_000; // whole seconds: the same mtime survives a rewrite on every file system
+    utimesSync(manifest, t, t);
+    await start();
+    const e = entryOf('', 's')!;
+    const st = statSync(manifest);
+    // Same size, same mtime: only the quote's bytes differ.
+    writeFileSync(manifest, manifestText({ title: 's', anchors: { q: { file: 'f.ts', range: [3, 3], quote: 'line 4' } }, extra: { pad: 'x'.repeat(10) } }));
+    utimesSync(manifest, t, t);
+    expect(statSync(manifest).size).toBe(st.size);
+    const version = e.version;
+    const now = statSync(manifest);
+    expect(`${Math.floor(now.mtimeMs)}:${now.size}`).toBe(e.manifestStamp);
+    expect([e.qOff[0], e.qLen[0], e.noSlices]).toEqual([expect.any(Number), expect.any(Number), false]);
+    const q = await index.quotesFor(e, [0], () => true);
+    expect(q.get(0)).toBeNull();
+    expect(e.version).toBeGreaterThan(version);
+    // The re-read records the new quote, which is then served.
+    await waitFor(() => e.state === 'ready' && e.ids.length === 1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await index.quotesFor(entryOf('', 's')!, [0], () => true)).get(0)).toMatchObject({ exact: 'line 4' });
+  });
+
+  it('reads the right bytes in a manifest with non-ASCII text', async () => {
+    write(join(root, 'f.ts'), code(10));
+    story(root, '', 'u', { title: 'Ünïcödé 🚀 — “title”', summary: 'ßüé 漢字 🎉', anchors: { q: { file: 'f.ts', range: [3, 3], quote: 'line 3' } } });
+    await start();
+    const e = entryOf('', 'u')!;
+    expect(e.title).toBe('Ünïcödé 🚀 — “title”');
+    const q = await index.quotesFor(e, [0], () => true);
+    expect(q.get(0)).toMatchObject({ exact: 'line 3' });
+  });
+
+  it('takes quotes of an open, dirty manifest from its buffer', async () => {
+    write(join(root, 'f.ts'), code(10));
+    const dir = pinned('s', 10);
+    await start();
+    const uri = Uri.file(join(dir, 'manifest.json'));
+    const text = manifestText({ title: 's', anchors: { q: { file: 'f.ts', range: [3, 3], quote: 'line 3' } } });
+    const doc = { uri, isDirty: true, version: 3, isClosed: false, getText: () => text };
+    workspace.textDocuments = [doc];
+    events.documentChanged.fire({ document: doc, contentChanges: [{}] });
+    const e = entryOf('', 's')!;
+    await waitFor(() => e.manifestStamp === 'd3');
+    const store = (index as unknown as { quotes: { bytesRead: number } }).quotes;
+    const before = store.bytesRead;
+    const q = await index.quotesFor(e, [0], () => true);
+    expect(q.get(0)).toMatchObject({ exact: 'line 3' });
+    expect(store.bytesRead).toBe(before);
+  });
+});

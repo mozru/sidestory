@@ -98,6 +98,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     highlight,
     prepared,
     stepCount: (dir) => index.stepCount(dir),
+    titleOf: (dir) => index.entry(dir)?.title || undefined,
     opened: (ref) => navigator?.noteOpened(ref),
   };
 

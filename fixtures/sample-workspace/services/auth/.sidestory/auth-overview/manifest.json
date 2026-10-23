@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "title": "Auth overview",
+  "summary": "How a user logs in and gets a session token.",
+  "anchors": {
+    "login": {
+      "file": "src/login.ts",
+      "range": [9, 12],
+      "quote": {
+        "exact": "export async function login(user: User, password: string, verify: (hash: string, password: string) => Promise<boolean>): Promise<Token | null> {\n  if (!(await verify(user.passwordHash, password))) return null;\n  return issueToken();\n}",
+        "prefix": "  passwordHash: string;\n}\n",
+        "suffix": "",
+        "norm": "ws"
+      }
+    },
+    "issue": {
+      "file": "src/tokens.ts",
+      "range": [15, 18],
+      "quote": {
+        "exact": "export function issueToken(now = Date.now()): Token {\n  const value = randomBytes(TOKEN_BYTES).toString('base64url');\n  return { value, digest: digestOf(value), expiresAt: now + LIFETIME_MS };\n}",
+        "prefix": "const TOKEN_BYTES = 32;\nconst LIFETIME_MS = 30 * 60 * 1000;\n",
+        "suffix": "\nfunction digestOf(value: string): string {\n  return createHash('sha256').update(value).digest('hex');",
+        "norm": "ws"
+      }
+    }
+  }
+}

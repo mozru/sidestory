@@ -7,6 +7,13 @@ import { excludePatterns, globMatcher, joinGlobs } from '../core/glob.ts';
 import { AVAILABLE_KEY, COMMANDS, PANEL_VIEW_TYPE } from './bootstrap-shared.ts';
 import type { FullApi } from './extension.ts';
 
+/** How full.cjs is loaded; tests replace it. */
+export const loader = {
+  // A path esbuild can't follow, so full.cjs stays its own file.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  load: (): { activateFull(c: vscode.ExtensionContext): FullApi } => require(['.', 'full.cjs'].join('/')),
+};
+
 let full: Promise<FullApi> | undefined;
 let api: FullApi | undefined;
 
@@ -14,10 +21,7 @@ let api: FullApi | undefined;
 function load(context: vscode.ExtensionContext): Promise<FullApi> {
   full ??= Promise.resolve().then(() => {
     void vscode.commands.executeCommand('setContext', 'sidestory.indexState', 'loading');
-    // A path esbuild can't follow, so full.cjs stays its own file.
-    const name = './full.cjs';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(name) as { activateFull(c: vscode.ExtensionContext): FullApi };
+    const mod = loader.load();
     api = mod.activateFull(context);
     return api;
   });
@@ -81,7 +85,7 @@ export function activate(context: vscode.ExtensionContext): void {
  * `<root>/.sidestory/<name>/manifest.json` inside a workspace folder, with no other `.sidestory` between the folder
  * and the root (the full extension's `refFromDir` rule, without its imports).
  */
-function looksLikeSidestory(manifest: vscode.Uri): boolean {
+export function looksLikeSidestory(manifest: vscode.Uri): boolean {
   const parts = manifest.path.split('/').filter(Boolean);
   if (parts.at(-1) !== 'manifest.json' || parts.at(-3) !== '.sidestory') return false;
   const folder = vscode.workspace.getWorkspaceFolder(manifest);

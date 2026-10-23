@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "title": "Session tokens",
+  "summary": "Random, opaque tokens, stored as digests and checked in constant time.",
+  "group": "Security",
+  "anchors": {
+    "shape": {
+      "file": "src/tokens.ts",
+      "range": [4, 10],
+      "quote": {
+        "exact": "export interface Token {\n  /** What the client holds. */\n  value: string;\n  /** What the server stores: never the token itself. */\n  digest: string;\n  expiresAt: number;\n}",
+        "prefix": "// Session tokens: random, opaque, and checked in constant time.\nimport { createHash, randomBytes, timingSafeEqual } from 'node:crypto';\n",
+        "suffix": "\nconst TOKEN_BYTES = 32;\nconst LIFETIME_MS = 30 * 60 * 1000;",
+        "norm": "ws"
+      }
+    },
+    "check": {
+      "file": "src/tokens.ts",
+      "range": [24, 29],
+      "quote": {
+        "exact": "export function checkToken(presented: string, stored: Token, now = Date.now()): boolean {\n  if (now >= stored.expiresAt) return false;\n  const a = Buffer.from(digestOf(presented), 'hex');\n  const b = Buffer.from(stored.digest, 'hex');\n  return a.length === b.length && timingSafeEqual(a, b);\n}",
+        "prefix": "  return createHash('sha256').update(value).digest('hex');\n}\n",
+        "suffix": "",
+        "norm": "ws"
+      }
+    }
+  }
+}

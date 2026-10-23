@@ -13,7 +13,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   forbidOnly: !!process.env.CI,
   use: {
-    baseURL: 'http://127.0.0.1:3100',
+    baseURL: `http://127.0.0.1:${process.env.CX_E2E_PORT ?? 3100}`,
     viewport: { width: 1440, height: 900 },
     screenshot: 'only-on-failure',
     // Headless Chromium turns site isolation off; desktop browsers (and Electron) isolate cross-site frames.

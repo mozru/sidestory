@@ -280,6 +280,11 @@ describe('group and top', () => {
     expect(r.ok && r.manifest.group).toBeUndefined();
     expect(r.ok && r.diagnostics.map((d) => d.message).join()).toMatch(new RegExp(`^group: .*${msg}.*; ignored$`));
   });
+  it('tolerates unknown top-level fields (a future "change": {"base": "main"}) and keeps them in raw', () => {
+    const r = parseManifest(JSON.stringify({ ...base, change: { base: 'main' } }));
+    expect(r.ok && r.diagnostics).toEqual([]);
+    expect(r.ok && r.manifest.raw.change).toEqual({ base: 'main' });
+  });
   it('ignores a non-boolean top with a diagnostic', () => {
     const r = parseManifest(JSON.stringify({ ...base, top: 'yes' }));
     expect(r.ok && r.manifest.top).toBeUndefined();

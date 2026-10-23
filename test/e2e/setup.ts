@@ -4,8 +4,10 @@ import { execSync } from 'node:child_process';
 import { statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-export const PORT = 3100;
+// CX_E2E_CONTAINER, CX_E2E_PORT and CX_E2E_IMAGE let two checkouts run the suite at once without colliding.
+export const PORT = Number(process.env.CX_E2E_PORT ?? 3100);
 export const CONTAINER = process.env.CX_E2E_CONTAINER ?? 'cx-e2e';
+const IMAGE = process.env.CX_E2E_IMAGE ?? 'sidestory-e2e';
 export const WORKSPACE = '/home/workspace/sample';
 const run = (cmd: string) => execSync(cmd, { stdio: ['ignore', 'pipe', 'inherit'], cwd: new URL('../..', import.meta.url).pathname });
 
@@ -26,11 +28,11 @@ function checkDiskSpace(): void {
 export default async function setup(): Promise<() => void> {
   checkDiskSpace();
   run('npm run package');
-  run('docker build -q -f test/e2e/Dockerfile -t sidestory-e2e .');
+  run(`docker build -q -f test/e2e/Dockerfile -t ${IMAGE} .`);
   // Each rebuild leaves the previous image untagged; remove those (ours only, by label) so runs don't pile up.
   run('docker image prune -f --filter label=org.sidestory.test=e2e');
   run(`docker rm -f ${CONTAINER} || true`);
-  run(`docker run -d --name ${CONTAINER} -p 127.0.0.1:${PORT}:3000 sidestory-e2e`);
+  run(`docker run -d --name ${CONTAINER} -p 127.0.0.1:${PORT}:3000 ${IMAGE}`);
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
     try {

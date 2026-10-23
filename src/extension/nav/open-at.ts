@@ -133,7 +133,6 @@ export class Navigator {
       const showing = current && same(current) ? current : sessions.find(same);
       if (showing) {
         showing.panel.reveal(undefined, true);
-        if (anchor) showing.goTo(anchor);
         session = showing;
       } else if (current && sessions.includes(current) && uriKey(current.trailRefs[0]!.dir) === uriKey(trail[0].dir)) {
         // 2. The current panel's trail starts at the same top: the trail's Back still leads to all they saw.

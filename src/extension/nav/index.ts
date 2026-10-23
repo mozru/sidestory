@@ -273,6 +273,16 @@ export class SidestoryIndex implements vscode.Disposable {
     return table;
   }
 
+  /**
+   * The anchors whose manifest ranges overlap lines `start`–`end` (1-based, inclusive) of a file: a cheap answer
+   * from memory, no I/O, O(anchors kept for the file). For callers outside CodeLens too (a future "Changes"
+   * view asking which changed hunks are explained). Live positions in an open document come from
+   * ExplainedHere.covering / .all, which resolve against the buffer.
+   */
+  anchorsCovering(fileKey: string, start: number, end: number): FileSlot[] {
+    return this.anchorsIn(fileKey).filter((s) => s.entry.start[s.index]! <= end && s.entry.end[s.index]! >= start);
+  }
+
   /** An anchor as the resolver needs it, with its quote (fetched by `quotesFor`). */
   anchorAt(e: IndexEntry, i: number, quote?: Quote): Anchor {
     return { id: e.ids[i]!, file: '', range: { start: e.start[i]!, end: e.end[i]! }, quote, highlight: [] };
@@ -498,6 +508,8 @@ export class SidestoryIndex implements vscode.Disposable {
   markDirty(e: IndexEntry): void {
     if (!this.entries.has(e.key)) return;
     e.version++;
+    // Forget the stamp: a same-size edit within the stamp's granularity looks unchanged, and must be re-read.
+    e.manifestStamp = undefined;
     this.dirty.add(e.key);
     this.schedule();
   }

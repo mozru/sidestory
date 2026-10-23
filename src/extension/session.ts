@@ -55,6 +55,8 @@ export interface SessionHost {
   prepared?: PreparedTextCache;
   /** The outline's step count for a sidestory (one number in the tree and the peek, §8.2). */
   stepCount?(dir: vscode.Uri): number | undefined;
+  /** A sidestory's title from the workspace index, for trail crumbs of sidestories this panel hasn't loaded. */
+  titleOf?(dir: vscode.Uri): string | undefined;
   /** A sidestory was shown in this panel (open, switch, dive): the recent list (§7.5). */
   opened?(ref: ExplainerRef): void;
 }
@@ -369,7 +371,7 @@ export class ExplainerSession implements vscode.Disposable {
       active: this.active,
       dir: this.ref.dir.toString(),
       base: `${this.panel.webview.asWebviewUri(this.ref.dir).toString()}/`,
-      trail: this.trail.map((t) => ({ name: t.name, title: this.titles.get(t.dir.toString()) || t.name })),
+      trail: this.trail.map((t) => ({ name: t.name, title: this.titles.get(t.dir.toString()) || this.host.titleOf?.(t.dir) || t.name })),
     });
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
     if (this.previewing) this.post({ type: 'preview', on: true });

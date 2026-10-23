@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session tokens</title>
+</head>
+<body>
+<section data-explain-anchor="shape" data-explain-title="What a token is">
+  <h2>What a token is</h2>
+  <p>The client holds the value. The server stores its SHA-256 digest and an expiry time.</p>
+</section>
+
+<section data-explain-anchor="check" data-explain-title="Checking a token">
+  <h2>Checking a token</h2>
+  <p>Expired tokens fail first. Then the digests are compared in constant time, so timing reveals nothing.</p>
+</section>
+</body>
+</html>

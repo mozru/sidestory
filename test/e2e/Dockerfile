@@ -7,6 +7,11 @@ USER root
 COPY dist/sidestory.vsix /tmp/sidestory.vsix
 COPY fixtures/sample-workspace /home/workspace/sample
 COPY fixtures/sample-workspace /home/workspace/.fixture
+# A second, larger package (docs/NAVIGATION-PLAN.md §12.3): stream-dma, beside services/auth.
+COPY examples/stream-dma/.sidestory /home/workspace/sample/stream-dma/.sidestory
+COPY examples/stream-dma/rtl /home/workspace/sample/stream-dma/rtl
+COPY examples/stream-dma/.sidestory /home/workspace/.fixture/stream-dma/.sidestory
+COPY examples/stream-dma/rtl /home/workspace/.fixture/stream-dma/rtl
 COPY test/e2e/settings.json /home/workspace/.openvscode-server/data/Machine/settings.json
 COPY test/e2e/settings.json /home/workspace/.openvscode-server/data/User/settings.json
 COPY test/e2e/settings.json /home/workspace/.settings.json

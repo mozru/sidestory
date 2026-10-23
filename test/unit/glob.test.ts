@@ -1,0 +1,63 @@
+// Discovery exclusions (docs/NAVIGATION-PLAN.md §6.3): the built-in list merged with files.exclude.
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_EXCLUDES, excludePatterns, expandBraces, globMatcher, joinGlobs } from '../../src/core/glob.ts';
+
+describe('excludePatterns', () => {
+  it('adds files.exclude entries set to true, and drops false and `when` entries', () => {
+    const p = excludePatterns({ '**/gen': true, '**/keep': false, '**/*.js': { when: '$(basename).ts' }, '**/vendor/': true });
+    expect(p.slice(0, DEFAULT_EXCLUDES.length)).toEqual(DEFAULT_EXCLUDES);
+    expect(p).toContain('**/gen');
+    expect(p).toContain('**/gen/**');
+    expect(p).toContain('**/vendor');
+    expect(p.join()).not.toContain('keep');
+    expect(p.join()).not.toContain('*.js');
+  });
+  it('tolerates a missing or malformed setting', () => {
+    expect(excludePatterns(undefined)).toEqual(DEFAULT_EXCLUDES);
+    expect(excludePatterns(['x'])).toEqual(DEFAULT_EXCLUDES);
+    expect(excludePatterns('x')).toEqual(DEFAULT_EXCLUDES);
+  });
+});
+
+describe('braces', () => {
+  it('expands groups, nested too, so one glob never nests a brace group', () => {
+    expect(expandBraces('a/{b,c}/d')).toEqual(['a/b/d', 'a/c/d']);
+    expect(expandBraces('{x,{y,z}}.ts').sort()).toEqual(['x.ts', 'y.ts', 'z.ts']);
+    expect(expandBraces('plain')).toEqual(['plain']);
+    expect(expandBraces('broken{a,b')).toEqual(['brokena,b']);
+  });
+  it('caps a pattern at 64 alternatives', () => {
+    const big = `{${Array.from({ length: 10 }, (_, i) => i).join(',')}}{${Array.from({ length: 10 }, (_, i) => i).join(',')}}`;
+    expect(expandBraces(big).length).toBeLessThanOrEqual(64);
+  });
+  it('joins into one group with no nested braces', () => {
+    const g = joinGlobs(['**/a/**', '**/{b,c}/**']);
+    expect(g).toBe('{**/a/**,**/b/**,**/c/**}');
+    expect(g.slice(1, -1)).not.toMatch(/[{}]/);
+    expect(joinGlobs(['only'])).toBe('only');
+  });
+});
+
+describe('globMatcher', () => {
+  const m = globMatcher(excludePatterns({ '**/gen': true, 'docs/{a,b}': true }));
+  it.each([
+    ['node_modules/x/.sidestory/a/manifest.json', true],
+    ['pkg/node_modules/.sidestory/a/manifest.json', true],
+    ['gen/.sidestory/a/manifest.json', true],
+    ['src/gen/.sidestory/a/manifest.json', true],
+    ['docs/a/.sidestory/x/manifest.json', true],
+    ['docs/c/.sidestory/x/manifest.json', false],
+    ['.sidestory/a/manifest.json', false],
+    ['generated/.sidestory/a/manifest.json', false],
+  ])('%s → %s', (path, excluded) => {
+    expect(m(path)).toBe(excluded);
+  });
+  it('supports ? and [] classes', () => {
+    const g = globMatcher(['a?c', 'x[0-9]', 'y[!0-9]']);
+    expect(g('abc')).toBe(true);
+    expect(g('a/c')).toBe(false);
+    expect(g('x5')).toBe(true);
+    expect(g('ya')).toBe(true);
+    expect(g('y5')).toBe(false);
+  });
+});
