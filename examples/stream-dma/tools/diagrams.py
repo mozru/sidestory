@@ -127,14 +127,14 @@ def overview():
     d.block('wrag', 800, 235, 170, 80, 'dma_addr_gen', 'u_wr_agen · destination', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'])
     # data plane
     d.block('rdbus', 10, 390, 50, 130, 'rd', 'bus', kind='ext', on=DATA + BP + ERR)
-    d.block('rdp', 140, 390, 150, 130, 'dma_rd_port', 'read requests', kind='data', ref='m-rdport', lines=['one burst at a time', 'beats → FIFO'], on=DATA + BP + ERR + ['m-rdport'])
+    d.block('rdp', 140, 390, 150, 130, 'dma_rd_port', 'read requests', kind='data', ref='m-rdport', lines=['one burst at a time', 'beats → FIFO'], on=CTL + DATA + BP + ERR + ['m-rdport'])
     d.block('fifo', 370, 390, 130, 130, 'dma_fifo', '32 × 64 bits', kind='data', ref='m-fifo', lines=['first word', 'falls through'], on=DATA + BP + ERR + ['m-fifo'])
-    d.block('pack', 580, 390, 150, 130, 'dma_packer', 'byte realign', kind='data', ref='m-packer', lines=['rotate by dst−src', 'strobes at the ends'], on=DATA + BP + ERR + ['m-packer'])
-    d.block('wrp', 810, 390, 150, 130, 'dma_wr_port', 'write bursts', kind='data', ref='m-wrport', lines=['last beat, response', 'stalls on ready'], on=DATA + BP + ERR + ['m-wrport'])
+    d.block('pack', 580, 390, 150, 130, 'dma_packer', 'byte realign', kind='data', ref='m-packer', lines=['rotate by dst−src', 'strobes at the ends'], on=CTL + DATA + BP + ERR + ['m-packer'])
+    d.block('wrp', 810, 390, 150, 130, 'dma_wr_port', 'write bursts', kind='data', ref='m-wrport', lines=['last beat, response', 'stalls on ready'], on=CTL + DATA + BP + ERR + ['m-wrport'])
     d.block('wrbus', 1040, 390, 50, 130, 'wr', 'bus', kind='ext', on=DATA + BP + ERR)
 
     # data beats (thick)
-    d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0]', (100, 424), on=DATA)
+    d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0] · err', (100, 424), on=DATA + ERR)
     d.wire('fifo_wdata', 'data', [(290, 450), (370, 450)], 'fifo_wdata|[63:0]', (330, 424), on=DATA)
     d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424), on=DATA)
     d.wire('packed_data', 'data', [(730, 450), (810, 450)], 'packed_data|[63:0] +strb', (770, 424), on=DATA)

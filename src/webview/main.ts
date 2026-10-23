@@ -111,6 +111,9 @@ let lastTabAt = 0;
  * then: focus that arrives otherwise (an in-page link's target, a dialog, a widget giving focus back) isn't aimed.
  */
 let aimedLink: Element | null = null;
+/** What the aimed link pointed at when the reader aimed: a live edit that retargets it needs a new aim. */
+let aimedKey = '';
+const linkKey = (el: Element) => `${el.getAttribute('data-explain-ref') ?? ''}#${el.getAttribute('data-explain-code') ?? ''}`;
 let lastFocused: HTMLElement | undefined;
 let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
@@ -1143,7 +1146,9 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('keydown', noteKey, true);
   d.addEventListener('focusin', onContentFocus);
   d.addEventListener('pointerdown', (e) => {
-    if (e.isTrusted) aimedLink = linkedTarget(e.target) ?? null;
+    if (!e.isTrusted) return;
+    lastTabAt = 0; // the pointer, not the Tab, is the reader's last input
+    aim(linkedTarget(e.target) ?? null);
   }, true);
 }
 
@@ -1156,8 +1161,10 @@ document.addEventListener('keydown', noteKey, true);
 /** Tabbing into a section makes it the current step, as scrolling to it would. */
 function onContentFocus(e: FocusEvent): void {
   lastFocused = e.target as HTMLElement;
+  // Aimed only when the reader's last input was a Tab that landed on the link itself (not on a control inside it, and
+  // not an Enter on an in-page link whose target took focus).
   const link = linkedTarget(e.target) ?? null;
-  if (link !== aimedLink) aimedLink = link && !focusingSelf && Date.now() - lastTabAt < 500 ? link : null;
+  if (link !== aimedLink) aim(link && link === e.target && !focusingSelf && lastKeyAt === lastTabAt && Date.now() - lastTabAt < 500 ? link : null);
   if (focusingSelf || Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
   const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
@@ -1193,6 +1200,11 @@ const offscreen = new IntersectionObserver(
 function openRef(ref: HTMLElement): void {
   const id = ref.dataset.explainRef!;
   if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
+}
+
+function aim(link: Element | null): void {
+  aimedLink = link;
+  aimedKey = link ? linkKey(link) : '';
 }
 
 /**
@@ -1298,7 +1310,9 @@ function onContentClick(e: MouseEvent): void {
     return;
   }
   const linked = linkedTarget(target);
-  if (linked) {
+  // A link or summary inside a linked element is what the reader clicked: it acts as itself.
+  const inner = target.closest('a[href], area[href], summary');
+  if (linked && !(inner && inner !== linked && linked.contains(inner))) {
     const handled = e.defaultPrevented;
     e.preventDefault();
     if (e.isTrusted && !handled) openLinked(linked);
@@ -1359,7 +1373,7 @@ function onContentKey(e: KeyboardEvent): void {
   if (linked && e.key === 'Enter') {
     const handled = e.defaultPrevented;
     e.preventDefault();
-    if (e.isTrusted && !handled && !e.repeat && linked === aimedLink) openLinked(linked);
+    if (e.isTrusted && !handled && !e.repeat && linked === e.target && linked === aimedLink && linkKey(linked) === aimedKey) openLinked(linked);
     return;
   }
   // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.

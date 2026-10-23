@@ -68,6 +68,7 @@ const LINKS = `<section data-explain-anchor="interface"><h2>Interface</h2>
   <p id="san" accesskey="k" autofocus data-cx-hl="1" data-cx-state="lost" data-cx-whatever="1">sanitized</p>
   <button id="cmd" type="button" commandfor="dlg" command="show-modal" interestfor="dlg">open</button><dialog id="dlg"><span data-explain-code="rtl/bit_reader.sv">in a dialog</span></dialog>
   <p><a id="jump" href="#frag-target">jump</a></p>
+  <div id="outer" data-explain-code="rtl/bit_reader.sv#L2" data-explain-plain><a id="inner" href="#frag-target">inner</a></div>
   <span id="frag-target" data-explain-code="rtl/bit_reader.sv#L7">a fragment target</span>
   <span id="wlink" data-explain-code="rtl/bit_reader.sv#L9"><explain-widget src="widgets/w.tsx" title="w"><p id="wfb">a widget's fallback</p></explain-widget></span>
   <div data-explain-anchor="state"><p>nested</p></div>
@@ -307,6 +308,19 @@ test.describe('linked elements', () => {
     await el(page, 'frag-target').evaluate((x) => x.focus());
     await page.keyboard.press('Space');
     await page.keyboard.press('Enter');
+    // The same by keyboard, fast: Tab to the in-page link, Enter (its target takes focus), Enter again.
+    await el(page, 'jump').focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    // A link inside a code link acts as itself, by click or by Enter.
+    await el(page, 'inner').click();
+    await el(page, 'inner').focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(el(page, 'inner')).toBeFocused();
+    await page.keyboard.press('Enter');
     // Space never opens a link (it scrolls); a held Enter opens once.
     await el(page, 'text-code').focus();
     await page.keyboard.press('Shift+Tab');
@@ -337,7 +351,7 @@ test.describe('linked elements', () => {
   test('the page tells the extension what it links to, once per change', async ({ page }) => {
     await open(page, LINKS);
     const targets = (await posted(page)).filter((m) => m.type === 'codeTargets');
-    expect(targets).toEqual([{ type: 'codeTargets', sections: ['interface', 'state', 'refill'], refs: ['refill', 'state', 'consume'], links: ['rtl/bit_reader.sv#driver(count_q)', 'rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L1', 'rtl/bit_reader.sv', 'rtl/bit_reader.sv#L7', 'rtl/bit_reader.sv#L9'] }]);
+    expect(targets).toEqual([{ type: 'codeTargets', sections: ['interface', 'state', 'refill'], refs: ['refill', 'state', 'consume'], links: ['rtl/bit_reader.sv#driver(count_q)', 'rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L1', 'rtl/bit_reader.sv', 'rtl/bit_reader.sv#L2', 'rtl/bit_reader.sv#L7', 'rtl/bit_reader.sv#L9'] }]);
     await clearPosted(page);
     await send(page, { type: 'content', title: MANIFEST.title, html: LINKS.replace('<p>Refill.</p>', '<p>Refill!</p>') });
     await expect(frame(page).getByText('Refill!')).toBeVisible();

@@ -33,7 +33,7 @@ Look at existing sidestories in `.sidestory/` and match their style.
      - Ids must match manifest anchor ids exactly; a wrong one silently never lights, so check each against the manifest.
      - Put each wire's path, arrowhead and label in one `<g>`, and tag the group.
      - Light both ends of every lit wire, and the block driving each signal the step's text names. Add a box's own anchor id to its list when it has a card or nested section.
-     - Add a rule for lit parts, e.g. `.cx-on .box { stroke: var(--cx-on); stroke-width: 2.5 }` and thicker lit wires: without one, only the fading marks them, and high-contrast themes don't fade.
+     - Add a rule for lit parts, e.g. `.box.cx-on rect { stroke: var(--cx-on); stroke-width: 2.5 }` and `.wire.cx-on path { stroke-width: 3 }` for tagged `<g class="box">` and `<g class="wire">`: without one, only the fading marks them, and high-contrast themes don't fade.
    - **Make every box a link:** `data-explain-ref="<anchor>"` on its `<g>` when a manifest anchor covers it; for small parts, `data-explain-code="#symbol"` (`#u_fifo`, `#driver(state_q)`, `#driver(state_d).case(IDLE)`, `#u_rd_port(.start)` for a connection in a top-level module, where `driver()` doesn't reach into instances) with `data-explain-code-file="<path>"` on the figure, or `data-explain-code="<path>#L10-L20"`. Links get a built-in look; don't restyle their colors.
    - Give a diagram with links `role="group"` and an `aria-label`; one without links `role="img"` and an `aria-label`. Name each linked `<g>` with a `<title>`.
 5. **Check and pin** with the checker that ships inside the extension:

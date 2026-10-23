@@ -5,7 +5,8 @@
  * which also gives them Tailwind names in theme.css). Authors write `stroke: var(--cx-wire-data)`, never a hex value.
  *
  * Every rule is inside :where(), so an author's own rule always wins. Tokens derived from other tokens are
- * computed where they're declared, so each override below repeats them. --cx-on is declared again on the content
+ * computed where they're declared, so each override below repeats them. The theme overrides (light, high contrast) are
+ * set on <body>, so to change a token everywhere set it on body or lower, not on :root. --cx-on is declared again on the content
  * and on every diagram (it follows the step's color), so set your own on the diagram, not on :root.
  */
 
