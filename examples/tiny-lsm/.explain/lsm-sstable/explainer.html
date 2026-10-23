@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SSTables</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia.bytes, .dia.mergefig, .dia.memfig { max-width: 820px; }
+  .dia.bloomfig, .dia.compfig { max-width: 1000px; }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-write .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-write .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-read .w-line { stroke: var(--vscode-charts-green); stroke-width: 2.5; }
+  .dia .w-read .w-head { fill: var(--vscode-charts-green); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-rec .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-rec .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-level .blk-box { stroke: var(--vscode-charts-blue); stroke-width: 1.2; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.lvl-title { font-size: 20px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .sst { fill: color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent); stroke: var(--vscode-charts-blue); stroke-width: 1; }
+  .dia .sst.in { stroke: var(--vscode-charts-orange); stroke-width: 2.5; }
+  .dia .sst.out { stroke: var(--vscode-charts-green); stroke-width: 2.5; }
+  .dia text.sst-label { font-size: 10px; }
+  .dia text.row-title { font-size: 11.5px; font-weight: 600; }
+  .dia .lvl-band { fill: none; stroke: var(--vscode-panel-border); }
+  .dia .cell rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-panel-border); }
+  .dia .cell-key rect { fill: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia .cell-val rect { fill: color-mix(in srgb, var(--vscode-charts-green) 22%, transparent); stroke: var(--vscode-charts-green); }
+  .dia .cell-kind rect, .dia .cell-footer rect { fill: color-mix(in srgb, var(--vscode-charts-orange) 22%, transparent); stroke: var(--vscode-charts-orange); }
+  .dia .cell-block rect { fill: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia .cell-index rect { fill: color-mix(in srgb, var(--vscode-charts-purple) 22%, transparent); stroke: var(--vscode-charts-purple); }
+  .dia .cell-bloom rect { fill: color-mix(in srgb, var(--vscode-charts-green) 22%, transparent); stroke: var(--vscode-charts-green); }
+  .dia text.cell-label { font-size: 11px; }
+  .dia text.cell-sub { font-size: 9.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .zoom, .dia .brace { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1; stroke-dasharray: 3 3; }
+  .dia .brace { stroke-dasharray: none; }
+  .dia .bit { fill: none; stroke: var(--vscode-panel-border); stroke-width: 1.2; }
+  .dia .bit.on { fill: color-mix(in srgb, var(--vscode-charts-blue) 35%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia text.bit-label { font-size: 11px; }
+  .dia .probe { stroke: var(--vscode-charts-blue); stroke-width: 1; fill: none; }
+  .dia .probe-query { stroke: var(--vscode-charts-green); stroke-dasharray: 3 2; }
+  .dia .probe-miss { stroke: var(--vscode-charts-red); }
+  .dia .dot-add { fill: var(--vscode-charts-blue); }
+  .dia .dot-query { fill: var(--vscode-charts-green); }
+  .dia .dot-miss { fill: var(--vscode-charts-red); }
+  .dia .ent rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-panel-border); }
+  .dia .ent text, .dia .hp text { font-size: 11px; }
+  .dia .ent.done { opacity: .35; }
+  .dia .ent.head rect { stroke: var(--vscode-charts-green); stroke-width: 1.5; }
+  .dia .ent.pop rect { fill: color-mix(in srgb, var(--vscode-charts-green) 30%, transparent); stroke-width: 2.5; }
+  .dia .ent.shadow rect { stroke: var(--vscode-charts-red); stroke-dasharray: 3 2; }
+  .dia .hp rect { fill: none; stroke: var(--vscode-panel-border); }
+  .dia .hp.top rect { stroke: var(--vscode-charts-green); stroke-width: 2; }
+  .dia text.verdict-line { font-size: 12px; font-weight: 600; }
+  /* one path in focus: the rest fades */
+  .focus-write .dia .w:not(.legend):not(.g-write), .focus-read .dia .w:not(.legend):not(.g-read),
+  .focus-scan .dia .w:not(.legend):not(.g-scan), .focus-ctl .dia .w:not(.legend):not(.g-ctl),
+  .focus-rec .dia .w:not(.legend):not(.g-rec) { opacity: .15; }
+  .focus-write .dia .blk:not(.g-write), .focus-read .dia .blk:not(.g-read), .focus-scan .dia .blk:not(.g-scan),
+  .focus-ctl .dia .blk:not(.g-ctl), .focus-rec .dia .blk:not(.g-rec), .focus-rec .dia .sst-sample { opacity: .4; }
+  .focus-write .dia .g-write .w-line, .focus-read .dia .g-read .w-line, .focus-scan .dia .g-scan .w-line,
+  .focus-ctl .dia .g-ctl.w-ctl .w-line, .focus-rec .dia .g-rec .w-line { stroke-width: 3; }
+  .focus-write .dia .g-write.w-write .w-line { stroke-width: 6; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-rec .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  .muted { color: var(--vscode-descriptionForeground); }
+  figure { margin: 10px 0; }
+  figcaption { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+  pre { margin: 8px 0; padding: 8px 10px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); font-size: 0.92em; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 10px 3px 0; text-align: left; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+  ol.reads li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<p class="lede">An SSTable (sorted string table) is a memtable frozen to disk: entries in key order, written once and never changed. Its shape is chosen so a reader can find any key with one disk read, after keeping a few kilobytes of it in memory: the index and the bloom filter.</p>
+
+<section data-explain-anchor="ss-layout" data-explain-title="The file">
+  <h2>The file, byte by byte</h2>
+  <p>A real table written by tiny_lsm (nine fruits, <code>block_bytes=48</code>): data blocks first, then the index, the bloom filter and a footer. Everything a reader needs to find its way is at the end, because only when the last block is written does the writer know where the blocks are.</p>
+  <figure>
+<!-- diagram:layout -->
+<svg class="dia bytes" viewBox="0 0 1000 370" role="img" aria-label="Byte layout of a real 281-byte SSTable written by tiny_lsm with 9 entries: 3 data blocks, then the index (66 bytes), the bloom filter (17 bytes) and a 40-byte footer. Block 0 holds entries, each a 7-byte header, the key and the value, then a CRC32. The index lists each block&#x27;s first key, offset and size, then the table&#x27;s last key. The footer holds the offsets and sizes of the index and the bloom filter, the entry count and the magic TINYLSM1."><text class="row-title" x="20" y="22">the file, to scale: 281 bytes, 9 entries in 3 blocks</text><g class="cell cell-block"><rect x="20.0" y="32" width="184.5" height="40" rx="3"/><text class="cell-label" x="112.2" y="49" text-anchor="middle">block 0</text><text class="cell-sub" x="112.2" y="63" text-anchor="middle">54 B</text></g><g class="cell cell-block"><rect x="204.5" y="32" width="181.1" height="40" rx="3"/><text class="cell-label" x="295.0" y="49" text-anchor="middle">block 1</text><text class="cell-sub" x="295.0" y="63" text-anchor="middle">53 B</text></g><g class="cell cell-block"><rect x="385.6" y="32" width="174.2" height="40" rx="3"/><text class="cell-label" x="472.7" y="49" text-anchor="middle">block 2</text><text class="cell-sub" x="472.7" y="63" text-anchor="middle">51 B</text></g><g class="cell cell-index"><rect x="559.8" y="32" width="225.5" height="40" rx="3"/><text class="cell-label" x="672.5" y="49" text-anchor="middle">index</text><text class="cell-sub" x="672.5" y="63" text-anchor="middle">66 B</text></g><g class="cell cell-bloom"><rect x="785.3" y="32" width="58.1" height="40" rx="3"/><text class="cell-label" x="814.3" y="49" text-anchor="middle">bloom</text><text class="cell-sub" x="814.3" y="63" text-anchor="middle">17 B</text></g><g class="cell cell-footer"><rect x="843.3" y="32" width="136.7" height="40" rx="3"/><text class="cell-label" x="911.7" y="49" text-anchor="middle">footer</text><text class="cell-sub" x="911.7" y="63" text-anchor="middle">40 B</text></g><text class="w-label" x="22.0" y="84">0</text><text class="w-label" x="206.5" y="84">54</text><text class="w-label" x="387.6" y="84">107</text><text class="w-label" x="561.8" y="84">158</text><text class="w-label" x="787.3" y="84">224</text><text class="w-label" x="845.3" y="84">241</text><text class="row-title" x="20" y="118">block 0, byte by byte: entries, then a CRC32 of them</text><g class="cell cell-meta "><rect x="20.0" y="128" width="124.4" height="40" rx="3"/><text class="cell-label" x="82.2" y="146.0" text-anchor="middle">h</text><text class="cell-sub" x="82.2" y="159.0" text-anchor="middle">7 B</text></g><g class="cell cell-key "><rect x="144.4" y="128" width="88.9" height="40" rx="3"/><text class="cell-label" x="188.9" y="146.0" text-anchor="middle">apple</text><text class="cell-sub" x="188.9" y="159.0" text-anchor="middle">5 B</text></g><g class="cell cell-val "><rect x="233.3" y="128" width="53.3" height="40" rx="3"/><text class="cell-label" x="260.0" y="146.0" text-anchor="middle">red</text><text class="cell-sub" x="260.0" y="159.0" text-anchor="middle">3 B</text></g><g class="cell cell-meta "><rect x="286.7" y="128" width="124.4" height="40" rx="3"/><text class="cell-label" x="348.9" y="146.0" text-anchor="middle">h</text><text class="cell-sub" x="348.9" y="159.0" text-anchor="middle">7 B</text></g><g class="cell cell-key "><rect x="411.1" y="128" width="106.7" height="40" rx="3"/><text class="cell-label" x="464.4" y="146.0" text-anchor="middle">banana</text><text class="cell-sub" x="464.4" y="159.0" text-anchor="middle">6 B</text></g><g class="cell cell-val "><rect x="517.8" y="128" width="106.7" height="40" rx="3"/><text class="cell-label" x="571.1" y="146.0" text-anchor="middle">yellow</text><text class="cell-sub" x="571.1" y="159.0" text-anchor="middle">6 B</text></g><g class="cell cell-meta "><rect x="624.4" y="128" width="124.4" height="40" rx="3"/><text class="cell-label" x="686.7" y="146.0" text-anchor="middle">h</text><text class="cell-sub" x="686.7" y="159.0" text-anchor="middle">7 B</text></g><g class="cell cell-key "><rect x="748.9" y="128" width="106.7" height="40" rx="3"/><text class="cell-label" x="802.2" y="146.0" text-anchor="middle">cherry</text><text class="cell-sub" x="802.2" y="159.0" text-anchor="middle">6 B</text></g><g class="cell cell-val "><rect x="855.6" y="128" width="53.3" height="40" rx="3"/><text class="cell-label" x="882.2" y="146.0" text-anchor="middle">red</text><text class="cell-sub" x="882.2" y="159.0" text-anchor="middle">3 B</text></g><g class="cell cell-meta "><rect x="908.9" y="128" width="71.1" height="40" rx="3"/><text class="cell-label" x="944.4" y="146.0" text-anchor="middle">crc32</text><text class="cell-sub" x="944.4" y="159.0" text-anchor="middle">4 B</text></g><path class="zoom" d="M20.0,72 L20,128 M204.5,72 L980,128"/><text class="w-label" x="20" y="182">h = kind · key_len · value_len (encoding.py). Keys are sorted; a block ends once it holds block_bytes.</text><text class="row-title" x="20" y="216">the index: each block's first key, offset and size, then the table's last key</text><g class="cell cell-meta "><rect x="20.0" y="226" width="58.2" height="40" rx="3"/><text class="cell-label" x="49.1" y="244.0" text-anchor="middle">count</text><text class="cell-sub" x="49.1" y="257.0" text-anchor="middle">3</text></g><g class="cell cell-key "><rect x="78.2" y="226" width="101.8" height="40" rx="3"/><text class="cell-label" x="129.1" y="244.0" text-anchor="middle">apple</text><text class="cell-sub" x="129.1" y="257.0" text-anchor="middle">first key</text></g><g class="cell cell-meta "><rect x="180.0" y="226" width="116.4" height="40" rx="3"/><text class="cell-label" x="238.2" y="244.0" text-anchor="middle">@0</text><text class="cell-sub" x="238.2" y="257.0" text-anchor="middle">offset</text></g><g class="cell cell-meta "><rect x="296.4" y="226" width="58.2" height="40" rx="3"/><text class="cell-label" x="325.5" y="244.0" text-anchor="middle">54</text><text class="cell-sub" x="325.5" y="257.0" text-anchor="middle">size</text></g><g class="cell cell-key "><rect x="354.5" y="226" width="87.3" height="40" rx="3"/><text class="cell-label" x="398.2" y="244.0" text-anchor="middle">date</text><text class="cell-sub" x="398.2" y="257.0" text-anchor="middle">first key</text></g><g class="cell cell-meta "><rect x="441.8" y="226" width="116.4" height="40" rx="3"/><text class="cell-label" x="500.0" y="244.0" text-anchor="middle">@54</text><text class="cell-sub" x="500.0" y="257.0" text-anchor="middle">offset</text></g><g class="cell cell-meta "><rect x="558.2" y="226" width="58.2" height="40" rx="3"/><text class="cell-label" x="587.3" y="244.0" text-anchor="middle">53</text><text class="cell-sub" x="587.3" y="257.0" text-anchor="middle">size</text></g><g class="cell cell-key "><rect x="616.4" y="226" width="87.3" height="40" rx="3"/><text class="cell-label" x="660.0" y="244.0" text-anchor="middle">kiwi</text><text class="cell-sub" x="660.0" y="257.0" text-anchor="middle">first key</text></g><g class="cell cell-meta "><rect x="703.6" y="226" width="116.4" height="40" rx="3"/><text class="cell-label" x="761.8" y="244.0" text-anchor="middle">@107</text><text class="cell-sub" x="761.8" y="257.0" text-anchor="middle">offset</text></g><g class="cell cell-meta "><rect x="820.0" y="226" width="58.2" height="40" rx="3"/><text class="cell-label" x="849.1" y="244.0" text-anchor="middle">51</text><text class="cell-sub" x="849.1" y="257.0" text-anchor="middle">size</text></g><g class="cell cell-key "><rect x="878.2" y="226" width="101.8" height="40" rx="3"/><text class="cell-label" x="929.1" y="244.0" text-anchor="middle">mango</text><text class="cell-sub" x="929.1" y="257.0" text-anchor="middle">last key</text></g><text class="row-title" x="20" y="306">the footer: a fixed 40 bytes at the end, so a reader can find everything else</text><g class="cell cell-meta "><rect x="20.0" y="316" width="192.0" height="40" rx="3"/><text class="cell-label" x="116.0" y="334.0" text-anchor="middle">index_offset</text><text class="cell-sub" x="116.0" y="347.0" text-anchor="middle">158</text></g><g class="cell cell-meta "><rect x="212.0" y="316" width="96.0" height="40" rx="3"/><text class="cell-label" x="260.0" y="334.0" text-anchor="middle">index_size</text><text class="cell-sub" x="260.0" y="347.0" text-anchor="middle">66</text></g><g class="cell cell-meta "><rect x="308.0" y="316" width="192.0" height="40" rx="3"/><text class="cell-label" x="404.0" y="334.0" text-anchor="middle">bloom_offset</text><text class="cell-sub" x="404.0" y="347.0" text-anchor="middle">224</text></g><g class="cell cell-meta "><rect x="500.0" y="316" width="96.0" height="40" rx="3"/><text class="cell-label" x="548.0" y="334.0" text-anchor="middle">bloom_size</text><text class="cell-sub" x="548.0" y="347.0" text-anchor="middle">17</text></g><g class="cell cell-meta "><rect x="596.0" y="316" width="192.0" height="40" rx="3"/><text class="cell-label" x="692.0" y="334.0" text-anchor="middle">entries</text><text class="cell-sub" x="692.0" y="347.0" text-anchor="middle">9</text></g><g class="cell cell-footer "><rect x="788.0" y="316" width="192.0" height="40" rx="3"/><text class="cell-label" x="884.0" y="334.0" text-anchor="middle">magic</text><text class="cell-sub" x="884.0" y="347.0" text-anchor="middle">TINYLSM1</text></g></svg>
+<!-- /diagram:layout -->
+    <figcaption>Drawn by tools/diagrams.py from a table the real code wrote. kiwi has no value cell: it is a tombstone.</figcaption>
+  </figure>
+</section>
+
+<section data-explain-anchor="ss-add" data-explain-title="Blocks">
+  <h2>Writing: cut a block every block_bytes</h2>
+  <p><code>add</code> appends encoded entries to the current block and refuses keys out of order: sorted input is the whole point. When a block holds <code>block_bytes</code> (4 KB by default), <code>_finish_block</code> appends a CRC32, writes it out, and fills in the index entry it opened with the block's first key.</p>
+  <p>A block is the unit of reading: big enough that one disk read fetches many neighbouring keys, small enough that a point lookup doesn't read much it doesn't need.</p>
+</section>
+
+<section data-explain-anchor="ss-finish" data-explain-title="Index and footer">
+  <h2>finish: index, bloom filter, footer, fsync</h2>
+  <pre><code class="language-python">index_offset, bloom_offset = self._offset, self._offset + len(index)
+footer = FOOTER.pack(index_offset, len(index), bloom_offset, len(bloom), len(self._keys), MAGIC)
+self._file.write(index + bloom + footer)
+self._file.flush()
+os.fsync(self._file.fileno())  # durable before the manifest may name it</code></pre>
+  <p>The index is <em>sparse</em>: one entry per block, not per key, so it stays small enough to keep in memory. It ends with the table's last key, so the table knows its key range (first key of block 0 to last key) without reading a block. The fsync matters: the manifest will soon name this file, and a name must never point at bytes still in a cache.</p>
+</section>
+
+<section data-explain-anchor="ss-open" data-explain-title="Opening">
+  <h2>Opening: read from the end</h2>
+  <ol class="reads">
+    <li>Seek to the end: the last 40 bytes are the footer. A wrong <code>magic</code> means this isn't a table.</li>
+    <li>The footer gives the index's offset and size: read it, decode first keys and block positions.</li>
+    <li>The same for the bloom filter.</li>
+  </ol>
+  <p>Three reads, once per table. From then on, <code>min_key</code>, <code>max_key</code>, the first keys and the filter live in memory; blocks stay on disk.</p>
+</section>
+
+<section data-explain-anchor="ss-get" data-explain-title="A lookup">
+  <h2>get: rule out, then read one block</h2>
+  <table class="sig">
+    <tr><th>check</th><th>costs</th><th>answers</th></tr>
+    <tr><td>key outside <code>min_key</code>…<code>max_key</code></td><td>a comparison</td><td>MISSING</td></tr>
+    <tr><td>the bloom filter says no</td><td>k bit tests</td><td>MISSING (about 99% of absent keys)</td></tr>
+    <tr><td><code>bisect_right(first_keys, key) - 1</code></td><td>a binary search</td><td>the one block that can hold key</td></tr>
+    <tr><td>scan that block</td><td>one disk read</td><td>the value, a tombstone, or MISSING</td></tr>
+  </table>
+  <p>The block search relies on the keys being sorted: the block whose first key is the last one ≤ key is the only place it can be. Scanning inside the block stops early at the first larger key.</p>
+</section>
+
+<section data-explain-anchor="ss-items" data-explain-title="A range">
+  <h2>items: a range, one block at a time</h2>
+  <p>A scan starts at the block that may hold <code>start</code>, skips the keys before it, and stops at the first key ≥ <code>end</code>. It's a generator: blocks are read only as the merge asks for more, so a scan that's abandoned after ten keys reads one or two blocks of each table, not the whole table.</p>
+</section>
+
+<section data-explain-anchor="ss-crc" data-explain-title="Checksums">
+  <h2>Every block is checked</h2>
+  <p>A block that fails its CRC raises <code>CorruptionError</code> instead of returning wrong data. Unlike the log, a table is never truncated or repaired: it was complete when the manifest named it, so damage is a disk fault, and the right response is to stop and say so.</p>
+</section>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bloom filters</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia.bytes, .dia.mergefig, .dia.memfig { max-width: 820px; }
+  .dia.bloomfig, .dia.compfig { max-width: 1000px; }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-write .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-write .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-read .w-line { stroke: var(--vscode-charts-green); stroke-width: 2.5; }
+  .dia .w-read .w-head { fill: var(--vscode-charts-green); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-rec .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-rec .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-level .blk-box { stroke: var(--vscode-charts-blue); stroke-width: 1.2; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.lvl-title { font-size: 20px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .sst { fill: color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent); stroke: var(--vscode-charts-blue); stroke-width: 1; }
+  .dia .sst.in { stroke: var(--vscode-charts-orange); stroke-width: 2.5; }
+  .dia .sst.out { stroke: var(--vscode-charts-green); stroke-width: 2.5; }
+  .dia text.sst-label { font-size: 10px; }
+  .dia text.row-title { font-size: 11.5px; font-weight: 600; }
+  .dia .lvl-band { fill: none; stroke: var(--vscode-panel-border); }
+  .dia .cell rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-panel-border); }
+  .dia .cell-key rect { fill: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia .cell-val rect { fill: color-mix(in srgb, var(--vscode-charts-green) 22%, transparent); stroke: var(--vscode-charts-green); }
+  .dia .cell-kind rect, .dia .cell-footer rect { fill: color-mix(in srgb, var(--vscode-charts-orange) 22%, transparent); stroke: var(--vscode-charts-orange); }
+  .dia .cell-block rect { fill: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia .cell-index rect { fill: color-mix(in srgb, var(--vscode-charts-purple) 22%, transparent); stroke: var(--vscode-charts-purple); }
+  .dia .cell-bloom rect { fill: color-mix(in srgb, var(--vscode-charts-green) 22%, transparent); stroke: var(--vscode-charts-green); }
+  .dia text.cell-label { font-size: 11px; }
+  .dia text.cell-sub { font-size: 9.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .zoom, .dia .brace { fill: none; stroke: var(--vscode-descriptionForeground); stroke-width: 1; stroke-dasharray: 3 3; }
+  .dia .brace { stroke-dasharray: none; }
+  .dia .bit { fill: none; stroke: var(--vscode-panel-border); stroke-width: 1.2; }
+  .dia .bit.on { fill: color-mix(in srgb, var(--vscode-charts-blue) 35%, transparent); stroke: var(--vscode-charts-blue); }
+  .dia text.bit-label { font-size: 11px; }
+  .dia .probe { stroke: var(--vscode-charts-blue); stroke-width: 1; fill: none; }
+  .dia .probe-query { stroke: var(--vscode-charts-green); stroke-dasharray: 3 2; }
+  .dia .probe-miss { stroke: var(--vscode-charts-red); }
+  .dia .dot-add { fill: var(--vscode-charts-blue); }
+  .dia .dot-query { fill: var(--vscode-charts-green); }
+  .dia .dot-miss { fill: var(--vscode-charts-red); }
+  .dia .ent rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-panel-border); }
+  .dia .ent text, .dia .hp text { font-size: 11px; }
+  .dia .ent.done { opacity: .35; }
+  .dia .ent.head rect { stroke: var(--vscode-charts-green); stroke-width: 1.5; }
+  .dia .ent.pop rect { fill: color-mix(in srgb, var(--vscode-charts-green) 30%, transparent); stroke-width: 2.5; }
+  .dia .ent.shadow rect { stroke: var(--vscode-charts-red); stroke-dasharray: 3 2; }
+  .dia .hp rect { fill: none; stroke: var(--vscode-panel-border); }
+  .dia .hp.top rect { stroke: var(--vscode-charts-green); stroke-width: 2; }
+  .dia text.verdict-line { font-size: 12px; font-weight: 600; }
+  /* one path in focus: the rest fades */
+  .focus-write .dia .w:not(.legend):not(.g-write), .focus-read .dia .w:not(.legend):not(.g-read),
+  .focus-scan .dia .w:not(.legend):not(.g-scan), .focus-ctl .dia .w:not(.legend):not(.g-ctl),
+  .focus-rec .dia .w:not(.legend):not(.g-rec) { opacity: .15; }
+  .focus-write .dia .blk:not(.g-write), .focus-read .dia .blk:not(.g-read), .focus-scan .dia .blk:not(.g-scan),
+  .focus-ctl .dia .blk:not(.g-ctl), .focus-rec .dia .blk:not(.g-rec), .focus-rec .dia .sst-sample { opacity: .4; }
+  .focus-write .dia .g-write .w-line, .focus-read .dia .g-read .w-line, .focus-scan .dia .g-scan .w-line,
+  .focus-ctl .dia .g-ctl.w-ctl .w-line, .focus-rec .dia .g-rec .w-line { stroke-width: 3; }
+  .focus-write .dia .g-write.w-write .w-line { stroke-width: 6; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-rec .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  .muted { color: var(--vscode-descriptionForeground); }
+  figure { margin: 10px 0; }
+  figcaption { font-size: 0.85em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+  pre { margin: 8px 0; padding: 8px 10px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); font-size: 0.92em; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: right; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+  table.sig tr.ours td { font-weight: 600; color: var(--vscode-charts-green); }
+  .fallback-note { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<p class="lede">A get that misses the memtable may have to ask every L0 table and one table per level. Most of them don't have the key. A bloom filter lets each table say so from memory, in a few bit tests, so a get reads about one block no matter how many tables it passes.</p>
+
+<section data-explain-anchor="bl-idea" data-explain-title="The idea">
+  <h2>Bits that can only say "no" for sure</h2>
+  <p>Adding a key sets k bits of an m-bit array. A lookup checks the same k bits: if any is 0, the key was never added, guaranteed. If all are 1, the key was <em>probably</em> added, or other keys happened to set all its bits: a false positive. There are no false negatives, which is the property a read path needs: a filter may waste a read, never miss a value.</p>
+  <figure>
+<!-- diagram:bits -->
+<svg class="dia bloomfig" viewBox="0 0 1196 238" role="img" aria-label="A 32-bit bloom filter with 3 hashes, from bloom.py. Adding apple, banana, cherry sets bits 0, 9, 11, 12, 17, 22, 24, 26. Looking up date finds a 0 among its bits 10, 5, 0: definitely absent. Looking up pineapple finds all its bits 12, 17, 22 set: maybe present, a false positive."><rect class="bit on" x="70" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="82.5" y="137" text-anchor="middle">1</text><text class="w-label" x="82.5" y="160" text-anchor="middle">0</text><rect class="bit" x="98" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="110.5" y="137" text-anchor="middle">0</text><text class="w-label" x="110.5" y="160" text-anchor="middle">1</text><rect class="bit" x="126" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="138.5" y="137" text-anchor="middle">0</text><text class="w-label" x="138.5" y="160" text-anchor="middle">2</text><rect class="bit" x="154" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="166.5" y="137" text-anchor="middle">0</text><text class="w-label" x="166.5" y="160" text-anchor="middle">3</text><rect class="bit" x="182" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="194.5" y="137" text-anchor="middle">0</text><text class="w-label" x="194.5" y="160" text-anchor="middle">4</text><rect class="bit" x="210" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="222.5" y="137" text-anchor="middle">0</text><text class="w-label" x="222.5" y="160" text-anchor="middle">5</text><rect class="bit" x="238" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="250.5" y="137" text-anchor="middle">0</text><text class="w-label" x="250.5" y="160" text-anchor="middle">6</text><rect class="bit" x="266" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="278.5" y="137" text-anchor="middle">0</text><text class="w-label" x="278.5" y="160" text-anchor="middle">7</text><rect class="bit" x="294" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="306.5" y="137" text-anchor="middle">0</text><text class="w-label" x="306.5" y="160" text-anchor="middle">8</text><rect class="bit on" x="322" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="334.5" y="137" text-anchor="middle">1</text><text class="w-label" x="334.5" y="160" text-anchor="middle">9</text><rect class="bit" x="350" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="362.5" y="137" text-anchor="middle">0</text><text class="w-label" x="362.5" y="160" text-anchor="middle">10</text><rect class="bit on" x="378" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="390.5" y="137" text-anchor="middle">1</text><text class="w-label" x="390.5" y="160" text-anchor="middle">11</text><rect class="bit on" x="406" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="418.5" y="137" text-anchor="middle">1</text><text class="w-label" x="418.5" y="160" text-anchor="middle">12</text><rect class="bit" x="434" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="446.5" y="137" text-anchor="middle">0</text><text class="w-label" x="446.5" y="160" text-anchor="middle">13</text><rect class="bit" x="462" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="474.5" y="137" text-anchor="middle">0</text><text class="w-label" x="474.5" y="160" text-anchor="middle">14</text><rect class="bit" x="490" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="502.5" y="137" text-anchor="middle">0</text><text class="w-label" x="502.5" y="160" text-anchor="middle">15</text><rect class="bit" x="518" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="530.5" y="137" text-anchor="middle">0</text><text class="w-label" x="530.5" y="160" text-anchor="middle">16</text><rect class="bit on" x="546" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="558.5" y="137" text-anchor="middle">1</text><text class="w-label" x="558.5" y="160" text-anchor="middle">17</text><rect class="bit" x="574" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="586.5" y="137" text-anchor="middle">0</text><text class="w-label" x="586.5" y="160" text-anchor="middle">18</text><rect class="bit" x="602" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="614.5" y="137" text-anchor="middle">0</text><text class="w-label" x="614.5" y="160" text-anchor="middle">19</text><rect class="bit" x="630" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="642.5" y="137" text-anchor="middle">0</text><text class="w-label" x="642.5" y="160" text-anchor="middle">20</text><rect class="bit" x="658" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="670.5" y="137" text-anchor="middle">0</text><text class="w-label" x="670.5" y="160" text-anchor="middle">21</text><rect class="bit on" x="686" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="698.5" y="137" text-anchor="middle">1</text><text class="w-label" x="698.5" y="160" text-anchor="middle">22</text><rect class="bit" x="714" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="726.5" y="137" text-anchor="middle">0</text><text class="w-label" x="726.5" y="160" text-anchor="middle">23</text><rect class="bit on" x="742" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="754.5" y="137" text-anchor="middle">1</text><text class="w-label" x="754.5" y="160" text-anchor="middle">24</text><rect class="bit" x="770" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="782.5" y="137" text-anchor="middle">0</text><text class="w-label" x="782.5" y="160" text-anchor="middle">25</text><rect class="bit on" x="798" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="810.5" y="137" text-anchor="middle">1</text><text class="w-label" x="810.5" y="160" text-anchor="middle">26</text><rect class="bit" x="826" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="838.5" y="137" text-anchor="middle">0</text><text class="w-label" x="838.5" y="160" text-anchor="middle">27</text><rect class="bit" x="854" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="866.5" y="137" text-anchor="middle">0</text><text class="w-label" x="866.5" y="160" text-anchor="middle">28</text><rect class="bit" x="882" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="894.5" y="137" text-anchor="middle">0</text><text class="w-label" x="894.5" y="160" text-anchor="middle">29</text><rect class="bit" x="910" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="922.5" y="137" text-anchor="middle">0</text><text class="w-label" x="922.5" y="160" text-anchor="middle">30</text><rect class="bit" x="938" y="120" width="25" height="26" rx="3"/><text class="bit-label" x="950.5" y="137" text-anchor="middle">0</text><text class="w-label" x="950.5" y="160" text-anchor="middle">31</text><text class="w-label key-add" x="62" y="24" text-anchor="end">add apple</text><path class="probe probe-add" d="M698.5,26 L698.5,118"/><circle class="dot-add" cx="698.5" cy="20" r="3.5"/><path class="probe probe-add" d="M558.5,26 L558.5,118"/><circle class="dot-add" cx="558.5" cy="20" r="3.5"/><path class="probe probe-add" d="M418.5,26 L418.5,118"/><circle class="dot-add" cx="418.5" cy="20" r="3.5"/><text class="w-label key-add" x="62" y="42" text-anchor="end">add banana</text><path class="probe probe-add" d="M698.5,44 L698.5,118"/><circle class="dot-add" cx="698.5" cy="38" r="3.5"/><path class="probe probe-add" d="M390.5,44 L390.5,118"/><circle class="dot-add" cx="390.5" cy="38" r="3.5"/><path class="probe probe-add" d="M82.5,44 L82.5,118"/><circle class="dot-add" cx="82.5" cy="38" r="3.5"/><text class="w-label key-add" x="62" y="60" text-anchor="end">add cherry</text><path class="probe probe-add" d="M810.5,62 L810.5,118"/><circle class="dot-add" cx="810.5" cy="56" r="3.5"/><path class="probe probe-add" d="M334.5,62 L334.5,118"/><circle class="dot-add" cx="334.5" cy="56" r="3.5"/><path class="probe probe-add" d="M754.5,62 L754.5,118"/><circle class="dot-add" cx="754.5" cy="56" r="3.5"/><text class="w-label key-query" x="62" y="200" text-anchor="end">date?</text><path class="probe probe-query probe-miss" d="M362.5,190 L362.5,148"/><circle class="dot-query dot-miss" cx="362.5" cy="196" r="3.5"/><path class="probe probe-query probe-miss" d="M222.5,190 L222.5,148"/><circle class="dot-query dot-miss" cx="222.5" cy="196" r="3.5"/><path class="probe probe-query" d="M82.5,190 L82.5,148"/><circle class="dot-query" cx="82.5" cy="196" r="3.5"/><text class="w-label verdict" x="972" y="200">no: a bit is 0, so it was never added</text><text class="w-label key-query" x="62" y="218" text-anchor="end">pineapple?</text><path class="probe probe-query" d="M418.5,208 L418.5,148"/><circle class="dot-query" cx="418.5" cy="214" r="3.5"/><path class="probe probe-query" d="M558.5,208 L558.5,148"/><circle class="dot-query" cx="558.5" cy="214" r="3.5"/><path class="probe probe-query" d="M698.5,208 L698.5,148"/><circle class="dot-query" cx="698.5" cy="214" r="3.5"/><text class="w-label verdict" x="972" y="218">maybe: all 3 bits set (a false positive)</text></svg>
+<!-- /diagram:bits -->
+    <figcaption>A 32-bit, 3-hash filter from bloom.py: three keys in, two lookups.</figcaption>
+  </figure>
+</section>
+
+<section data-explain-anchor="bl-hash" data-explain-title="One hash">
+  <h2>One 64-bit hash</h2>
+  <p>FNV-1a is a few lines and fast, but similar keys (<code>key00041</code>, <code>key00042</code>) come out with similar bits. MurmurHash3's finalizer (shift, multiply, shift, multiply, shift) mixes every input bit into every output bit; without it, a table of 500 such keys (every other number) answered "maybe" for 5–6% of the numbers in between instead of 1%.</p>
+</section>
+
+<section data-explain-anchor="bl-play" data-explain-title="Try it">
+  <h2>k positions from two halves</h2>
+  <p>Computing k separate hashes would be slow. Double hashing takes the hash's low half as a start and its high half as a step: <code>(h1 + i·h2) mod m</code> for i = 0…k−1, which in theory and practice is as good as k independent hashes. Add keys, look some up, and change m and k; the editor follows <code>add</code> and <code>might_contain</code>.</p>
+  <explain-widget src="widgets/bloom-playground.tsx" title="Bloom filter playground" height="640">
+    <p>With 48 bits and 3 hashes, apple, banana and cherry set up to 9 bits. A lookup of a key that was never added almost always finds a 0 among its 3 bits: the formula (1 − e<sup>−kn/m</sup>)<sup>k</sup> gives about 0.5% false positives. With twelve keys in the same 48 bits it is about 15%.</p>
+  </explain-widget>
+</section>
+
+<section data-explain-anchor="bl-size" data-explain-title="Sizing">
+  <h2>Sizing: bits per key, and the best k</h2>
+  <p><code>for_keys</code> gives every table <code>bits_per_key</code> bits per key (10) and k = round(bits_per_key · ln 2), the k that minimises false positives. More hashes set more bits; fewer hashes check fewer; ln 2 is where the array ends up about half full.</p>
+  <table class="sig">
+    <tr><th>bits per key</th><th>k</th><th>formula</th><th>measured</th></tr>
+    <tr><td>4</td><td>3</td><td>14.7%</td><td>14.8%</td></tr>
+    <tr><td>6</td><td>4</td><td>5.6%</td><td>5.6%</td></tr>
+    <tr><td>8</td><td>6</td><td>2.2%</td><td>2.1%</td></tr>
+    <tr class="ours"><td>10</td><td>7</td><td>0.82%</td><td>0.80%</td></tr>
+    <tr><td>12</td><td>8</td><td>0.31%</td><td>0.29%</td></tr>
+    <tr><td>16</td><td>11</td><td>0.05%</td><td>0.03%</td></tr>
+  </table>
+  <p class="muted">Measured with bloom.py: 5,000 keys in, 20,000 absent keys looked up. 10 bits a key is 1.25 bytes: a table of 64 KB with 2,000 entries carries a 2.5 KB filter.</p>
+</section>
+
+<section data-explain-anchor="bl-use" data-explain-title="Where it's used">
+  <h2>Where it pays: SSTable.get</h2>
+  <pre><code class="language-python">if not self.min_key &lt;= key &lt;= self.max_key or not self.bloom.might_contain(key):
+    return MISSING  # without touching the disk</code></pre>
+  <p>Only point lookups use it. A scan wants every key in a range, and a filter can't list keys or answer "anything between c and m?" (prefix and range filters exist, but they're different structures).</p>
+</section>
+</body>
+</html>

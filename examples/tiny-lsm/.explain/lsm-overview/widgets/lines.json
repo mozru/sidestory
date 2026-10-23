@@ -1,0 +1,57 @@
+{
+ "write": {
+  "w-append": 2,
+  "w-insert": 3,
+  "w-check": 4,
+  "f-write": 11,
+  "f-commit": [
+   14,
+   16
+  ],
+  "f-newlog": [
+   17,
+   19
+  ],
+  "f-compact": [
+   20,
+   21
+  ]
+ },
+ "read": {
+  "g-mem": 3,
+  "g-mem-hit": [
+   4,
+   5
+  ],
+  "g-tables": 6,
+  "g-table": 7,
+  "g-hit": [
+   8,
+   9
+  ],
+  "g-none": 10
+ },
+ "scan": {
+  "s-mem": 3,
+  "s-tables": 4,
+  "s-merge": 5
+ },
+ "compaction": {
+  "c-pick0": [
+   3,
+   6
+  ],
+  "c-pickn": [
+   8,
+   12
+  ],
+  "c-merge": [
+   19,
+   29
+  ],
+  "c-commit": [
+   32,
+   39
+  ]
+ }
+}
