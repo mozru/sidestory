@@ -11,10 +11,17 @@ import { parseInert } from './trusted.ts';
 const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
 /**
- * Attributes that are dropped outright: popovers render in the top layer, above any containment; `data-cx-hl`
- * marks code blocks the panel colored (src/webview/highlight.ts), never the author's.
+ * Attributes that are dropped outright: popovers render in the top layer, above any containment; `accesskey` lets
+ * a keystroke anywhere click an element, and `autofocus` puts focus on one so the next Enter activates it, so either
+ * could fire a code link the reader didn't aim at (docs/AUTHORING-PLAN.md §8.1, §9.4).
  */
-const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping', 'data-cx-hl']);
+const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping', 'accesskey', 'autofocus']);
+/**
+ * The panel's own attributes start with this (`data-cx-ref`, `data-cx-hl`, `data-cx-box`, …): every author attribute
+ * with the prefix is dropped, so new panel state can't be forged and the list can't fall behind (§9.4). The one
+ * exception, WIDGET_PROPS_ATTR on `<explain-widget>`, is set only by this sanitizer.
+ */
+const PANEL_ATTR_PREFIX = 'data-cx-';
 /** Elements whose `name` becomes a property of the document (DOM clobbering). */
 const NAMED = new Set(['img', 'embed', 'object', 'form', 'iframe', 'frame', 'frameset']);
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */
@@ -87,7 +94,7 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
         else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
         continue;
       }
-      if (name.startsWith('on') || DROP_ATTRS.has(name) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
+      if (name.startsWith('on') || DROP_ATTRS.has(name) || name.startsWith(PANEL_ATTR_PREFIX) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
       else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
         const fixed = rewriteUrl(el.localName, name, attr.value, baseUrl);
