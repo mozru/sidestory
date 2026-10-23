@@ -17,7 +17,7 @@ export const MAX_CODE_BYTES = 10_000_000;
 
 /**
  * Builds a ref for `<root>/.sidestory/<name>`, or undefined if the folder isn't laid out like that inside the workspace.
- * A root that itself lies inside a Sidestory folder (`.sidestory/x/.sidestory/y`) is refused.
+ * A root that itself lies inside a Sidestory folder below the workspace folder (`.sidestory/x/.sidestory/y`) is refused.
  */
 export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   const parts = dir.path.split('/').filter(Boolean);

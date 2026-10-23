@@ -38,7 +38,7 @@ jobs:
       - run: npm test
 
   panel:
-    # The explainer panel and widget frames in Chromium, on each OS's fonts, paths and line endings.
+    # The sidestory panel and widget frames in Chromium, on each OS's fonts, paths and line endings.
     strategy:
       fail-fast: false
       matrix:
