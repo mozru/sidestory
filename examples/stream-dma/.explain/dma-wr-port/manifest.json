@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "title": "dma_wr_port: write bursts and backpressure",
+  "summary": "Streams packer beats onto the write data channel, marks the last beat, waits for the response; wr_dat_ready stalls the packer.",
+  "anchors": {
+    "wp-data": {
+      "file": "rtl/dma_wr_port.sv",
+      "range": [
+        54,
+        57
+      ],
+      "highlight": [
+        "wr_dat_data",
+        "wr_dat_strb",
+        "wr_dat_last"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "  // ---- datapath: beats pass straight through\n  assign wr_dat_data  = pk_data;\n  assign wr_dat_strb  = pk_strb;\n  assign wr_dat_last  = left_q == BLW'(1);",
+        "prefix": "  assign pk_ready     = wr_dat_ready && sending;\n  assign beat         = wr_dat_valid && wr_dat_ready;\n",
+        "suffix": "\n  assign wr_req_valid = req_q;\n  assign wr_req_addr  = addr_q;",
+        "norm": "ws"
+      }
+    },
+    "wp-beats": {
+      "file": "rtl/dma_wr_port.sv",
+      "range": [
+        48,
+        52
+      ],
+      "highlight": [
+        "pk_ready",
+        "wr_dat_ready"
+      ],
+      "color": "charts.red",
+      "quote": {
+        "exact": "  // ---- handshakes: the bus's wr_dat_ready is the packer's pk_ready (backpressure)\n  assign sending      = left_q != '0;\n  assign wr_dat_valid = pk_valid && sending;\n  assign pk_ready     = wr_dat_ready && sending;\n  assign beat         = wr_dat_valid && wr_dat_ready;",
+        "prefix": "  logic           sending;\n  logic           beat;\n",
+        "suffix": "\n  // ---- datapath: beats pass straight through\n  assign wr_dat_data  = pk_data;",
+        "norm": "ws"
+      }
+    },
+    "wp-req": {
+      "file": "rtl/dma_wr_port.sv",
+      "range": [
+        63,
+        83
+      ],
+      "highlight": [
+        "req_q",
+        "rsp_q",
+        "left_q"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin\n      req_q  <= 1'b0;\n      rsp_q  <= 1'b0;\n      addr_q <= '0;\n      len_q  <= '0;\n      left_q <= '0;\n    end else if (start) begin\n      req_q  <= 1'b1;\n      addr_q <= addr;\n      len_q  <= len;\n      left_q <= len;\n    end else begin\n      if (wr_req_valid && wr_req_ready) req_q <= 1'b0;\n      if (beat) begin\n        left_q <= left_q - 1'b1;\n        if (wr_dat_last) rsp_q <= 1'b1;\n      end\n      if (rsp_q && wr_rsp_valid) rsp_q <= 1'b0;\n    end\n  end",
+        "prefix": "  assign wr_req_addr  = addr_q;\n  assign wr_req_len   = len_q;\n",
+        "suffix": "\n  assign busy = req_q || sending || rsp_q;\n  assign done = rsp_q && wr_rsp_valid;",
+        "norm": "ws"
+      }
+    },
+    "wp-status": {
+      "file": "rtl/dma_wr_port.sv",
+      "range": [
+        85,
+        87
+      ],
+      "highlight": [
+        "busy"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  assign busy = req_q || sending || rsp_q;\n  assign done = rsp_q && wr_rsp_valid;\n  assign err  = wr_rsp_err;",
+        "prefix": "    end\n  end\n",
+        "suffix": "\nendmodule\n",
+        "norm": "ws"
+      }
+    }
+  }
+}

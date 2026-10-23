@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dma_packer: realigning bytes</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-addr .w-line { stroke: var(--vscode-charts-purple); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--vscode-charts-purple); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-err .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-err .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-addr .blk-box { stroke: var(--vscode-charts-purple); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .st rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-charts-orange); stroke-width: 1.5; }
+  .dia .st.st-idle rect { stroke-width: 3; }
+  .dia .st.st-end rect { stroke: var(--vscode-charts-green); }
+  .dia .st text { font-size: 12px; font-weight: 600; }
+  .dia text.fsm-elabel { font-size: 10px; paint-order: stroke; stroke: var(--vscode-editor-background); stroke-width: 3px; }
+  /* one path in focus: the rest fades */
+  .focus-data .dia .w-ctl:not(.legend):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]), .focus-data .dia .w-addr:not(.legend) { opacity: .15; }
+  .focus-data .dia .blk-ctl, .focus-data .dia .blk-addr { opacity: .4; }
+  .focus-control .dia .w-data:not(.legend), .focus-control .dia [data-wire$=ready], .focus-control .dia [data-wire=fifo_full], .focus-control .dia [data-wire=fifo_pop] { opacity: .15; }
+  .focus-control .dia .blk-data { opacity: .4; }
+  .focus-bp .dia .w:not(.legend):not([data-wire=almost_full]):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]):not([data-wire=c_wrp]) { opacity: .15; }
+  .focus-bp .dia [data-wire=almost_full] .w-line, .focus-bp .dia [data-wire$=ready] .w-line, .focus-bp .dia [data-wire=fifo_full] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  .focus-err .dia .w:not(.legend):not([data-wire=status]):not([data-wire=irq]):not([data-wire=c_rdp]):not([data-wire=c_wrp]):not([data-wire=c_pack]) { opacity: .15; }
+  .focus-err .dia [data-wire=status] .w-line, .focus-err .dia [data-wire=irq] .w-line, .focus-err .dia [data-wire=c_rdp] .w-line, .focus-err .dia [data-wire=c_wrp] .w-line, .focus-err .dia [data-wire=c_pack] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-err .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  .eq { font-family: var(--vscode-editor-font-family); padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: left; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+  .lanes { display: grid; grid-template-columns: auto repeat(8, 1fr); gap: 2px; max-width: 420px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; margin: 8px 0; }
+  .lanes > span { text-align: center; padding: 3px 0; border: 1px solid var(--vscode-panel-border); border-radius: 3px; }
+  .lanes > .h { border: none; color: var(--vscode-descriptionForeground); text-align: right; padding-right: 6px; }
+  .lanes > .v { background: color-mix(in srgb, var(--vscode-charts-blue) 30%, transparent); }
+  .lanes > .e { border-style: dashed; color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<p class="lede">The source and destination can start at any byte. The packer moves every byte from its source lane to its destination lane, one 64-bit beat at a time, and marks the bytes that are real with strobes.</p>
+
+<section data-explain-anchor="pk-iface" data-explain-title="Inside">
+  <h2>Inside dma_packer</h2>
+  <p>The datapath is a register and a barrel shifter. The control decides when a beat comes in, when one goes out, and which bytes of it count. Click a block to see its code.</p>
+<!-- diagram:inside -->
+<svg class="dia" viewBox="0 0 760 315" role="img" aria-label="Inside dma_packer: in_data and the previous beat prev_q form a 128-bit window; a barrel shift by (8 − shift) bytes cuts out_data. Control: the in_left and out_left counters, the prime and first flags, and the strobe masks; they produce in_ready, out_valid and out_strb."><g class="w w-data" data-wire="in"><path class="w-line" d="M20,140 L220,140 L220,70 L240,70"/><polygon class="w-head" points="240.0,70.0 231.2,75.5 231.2,64.5"/><text class="w-label" x="120" y="132" text-anchor="middle">in_data</text></g><g class="w w-data" data-wire="pv"><path class="w-line" d="M170,70 L240,70"/><polygon class="w-head" points="240.0,70.0 231.2,75.5 231.2,64.5"/></g><g class="w w-data" data-wire="fb"><path class="w-line" d="M200,140 L200,120 L100,120 L100,100"/><polygon class="w-head" points="100.0,100.0 105.5,108.8 94.5,108.8"/></g><g class="w w-data" data-wire="w"><path class="w-line" d="M410,70 L480,70"/><polygon class="w-head" points="480.0,70.0 471.2,75.5 471.2,64.5"/></g><g class="w w-data" data-wire="o"><path class="w-line" d="M640,70 L740,70"/><polygon class="w-head" points="740.0,70.0 731.2,75.5 731.2,64.5"/><text class="w-label" x="690" y="62" text-anchor="middle">out_data</text></g><g class="w w-ctl" data-wire="sh"><path class="w-line" d="M420,170 L420,130 L560,130 L560,110"/><polygon class="w-head" points="560.0,110.0 564.0,116.4 556.0,116.4"/><text class="w-label" x="490" y="125" text-anchor="middle">shift_q · flush</text></g><g class="w w-ctl" data-wire="hs"><path class="w-line" d="M20,215 L240,215"/><polygon class="w-head" points="240.0,215.0 233.6,219.0 233.6,211.0"/><text class="w-label" x="130" y="207" text-anchor="middle">in_valid · out_ready</text></g><g class="w w-ctl" data-wire="rd"><path class="w-line" d="M240,245 L20,245"/><polygon class="w-head" points="20.0,245.0 26.4,241.0 26.4,249.0"/><text class="w-label" x="130" y="260" text-anchor="middle">in_ready</text></g><g class="w w-ctl" data-wire="st"><path class="w-line" d="M700,215 L740,215"/><polygon class="w-head" points="740.0,215.0 733.6,219.0 733.6,211.0"/></g><g class="w w-ctl" data-wire="ov"><path class="w-line" d="M470,250 L500,250 L500,280 L740,280"/><polygon class="w-head" points="740.0,280.0 733.6,284.0 733.6,276.0"/><text class="w-label" x="690" y="274" text-anchor="middle">out_valid</text></g><g class="blk blk-data" data-block="prev" data-explain-ref="pk-window" aria-label="prev_q: show its code"><rect class="blk-box" x="30" y="40" width="140" height="60" rx="6"/><rect class="blk-bar" x="30" y="40" width="140" height="5" rx="2"/><text class="blk-title" x="100.0" y="64" text-anchor="middle">prev_q</text><text class="blk-sub" x="100.0" y="80" text-anchor="middle">last input beat</text></g><g class="blk blk-data" data-block="win" data-explain-ref="pk-window" aria-label="window: show its code"><rect class="blk-box" x="240" y="30" width="170" height="80" rx="6"/><rect class="blk-bar" x="240" y="30" width="170" height="5" rx="2"/><text class="blk-title" x="325.0" y="54" text-anchor="middle">window</text><text class="blk-sub" x="325.0" y="70" text-anchor="middle">{in_data, prev_q} · 128 b</text></g><g class="blk blk-data" data-block="rot" data-explain-ref="pk-window" aria-label="rotate: show its code"><rect class="blk-box" x="480" y="30" width="160" height="80" rx="6"/><rect class="blk-bar" x="480" y="30" width="160" height="5" rx="2"/><text class="blk-title" x="560.0" y="54" text-anchor="middle">rotate</text><text class="blk-sub" x="560.0" y="70" text-anchor="middle">&gt;&gt; (8 − shift) × 8</text></g><g class="blk blk-ctl" data-block="ctl" data-explain-ref="pk-handshake" aria-label="beat control: show its code"><rect class="blk-box" x="240" y="170" width="230" height="90" rx="6"/><rect class="blk-bar" x="240" y="170" width="230" height="5" rx="2"/><text class="blk-title" x="355.0" y="194" text-anchor="middle">beat control</text><text class="blk-sub" x="355.0" y="210" text-anchor="middle">prime · flush · in_left · out_left</text></g><g class="blk blk-ctl" data-block="strb" data-explain-ref="pk-strobes" aria-label="strobes: show its code"><rect class="blk-box" x="540" y="170" width="160" height="90" rx="6"/><rect class="blk-bar" x="540" y="170" width="160" height="5" rx="2"/><text class="blk-title" x="620.0" y="194" text-anchor="middle">strobes</text><text class="blk-sub" x="620.0" y="210" text-anchor="middle">first_strb &amp; last_strb</text></g><text class="w-label" x="745" y="212" text-anchor="end"> </text><g class="w w-data legend"><path class="w-line" d="M20,300 L64,300"/><polygon class="w-head" points="72.0,300.0 64.8,304.5 64.8,295.5"/><text class="w-label" x="80" y="304">bytes</text></g><g class="w w-ctl legend"><path class="w-line" d="M280,300 L324,300"/><polygon class="w-head" points="332.0,300.0 324.8,304.5 324.8,295.5"/><text class="w-label" x="340" y="304">control</text></g></svg>
+<!-- /diagram:inside -->
+</section>
+
+<section data-explain-anchor="pk-window" data-explain-title="Byte lanes">
+  <h2>Two beats in, one beat out</h2>
+  <p>A byte in source lane <i>i</i> belongs in destination lane <i>(i + shift) mod 8</i>, with <span class="mono">shift = dst_off − src_off</span>. Lanes that wrap past 7 belong to the <em>next</em> output beat, so each output beat is cut from a 16-byte window of the current and the previous input beat:</p>
+  <p class="eq">out_data = {in_data, prev_q} &gt;&gt; (8 − shift) × 8</p>
+  <explain-widget src="widgets/byte-lanes.tsx" title="Byte lanes through the packer" height="560">
+    <script type="application/json">{"src": 5, "dst": 2, "len": 27}</script>
+    <p>27 bytes from offset 5 to offset 2 (shift = 5 lanes, with a prime). Input beat 0 holds bytes 0–2 in lanes 5–7; output beat 0 needs bytes 0–5 in lanes 2–7, so it takes bytes 0–2 from input beat 0 (the previous beat) and 3–5 from input beat 1:</p>
+    <div class="lanes" role="img" aria-label="Input beat 0: bytes 0, 1, 2 in lanes 5 to 7. Output beat 0: bytes 0 to 5 in lanes 2 to 7.">
+      <span class="h">lane</span><span class="h" style="text-align:center">7</span><span class="h" style="text-align:center">6</span><span class="h" style="text-align:center">5</span><span class="h" style="text-align:center">4</span><span class="h" style="text-align:center">3</span><span class="h" style="text-align:center">2</span><span class="h" style="text-align:center">1</span><span class="h" style="text-align:center">0</span>
+      <span class="h">in 0</span><span class="v">2</span><span class="v">1</span><span class="v">0</span><span class="e">·</span><span class="e">·</span><span class="e">·</span><span class="e">·</span><span class="e">·</span>
+      <span class="h">in 1</span><span class="v">10</span><span class="v">9</span><span class="v">8</span><span class="v">7</span><span class="v">6</span><span class="v">5</span><span class="v">4</span><span class="v">3</span>
+      <span class="h">out 0</span><span class="v">5</span><span class="v">4</span><span class="v">3</span><span class="v">2</span><span class="v">1</span><span class="v">0</span><span class="e">·</span><span class="e">·</span>
+    </div>
+  </explain-widget>
+</section>
+
+<section data-explain-anchor="pk-handshake" data-explain-title="Prime and flush">
+  <h2>Prime and flush</h2>
+  <table class="sig">
+    <tr><th>case</th><th>when</th><th>what the packer does</th></tr>
+    <tr><td><b>prime</b></td><td><span class="mono">dst_off &lt; src_off</span></td><td>Output beat 0 needs input beat 1, so take input beat 0 into <span class="mono">prev_q</span> without emitting (<span class="mono">in_ready</span> without <span class="mono">out_valid</span>).</td></tr>
+    <tr><td><b>steady</b></td><td>otherwise</td><td>One in, one out, in the same cycle: <span class="mono">in_ready</span> follows <span class="mono">out_ready</span>.</td></tr>
+    <tr><td><b>flush</b></td><td><span class="mono">in_left_q == 0</span></td><td>The last output beat may need only bytes already in <span class="mono">prev_q</span>: emit it with zeros on top, consuming nothing.</td></tr>
+  </table>
+  <p>That's why <span class="mono">dma_ctrl</span>'s credit check adds one beat when it primes, and why input and output beat counts can differ by one.</p>
+</section>
+
+<section data-explain-anchor="pk-strobes" data-explain-title="Strobes">
+  <h2>Strobes: which bytes are real</h2>
+  <p>The first output beat starts at <span class="mono">dst_off</span>; the last ends at <span class="mono">(dst_off + len − 1) mod 8</span>. Both masks are computed once, at <span class="mono">load</span>; a one-beat transfer gets both. While draining after an error, every strobe is 0, so the beats that finish an open write burst write nothing.</p>
+  <table class="sig">
+    <tr><th>dst_off, len</th><th>first strb</th><th>last strb</th></tr>
+    <tr><td class="mono">2, 400</td><td class="mono">1111_1100</td><td class="mono">0000_0011</td></tr>
+    <tr><td class="mono">0, 64</td><td class="mono">1111_1111</td><td class="mono">1111_1111</td></tr>
+    <tr><td class="mono">3, 2</td><td colspan="2" class="mono">0001_1000 (both)</td></tr>
+  </table>
+</section>
+</body>
+</html>

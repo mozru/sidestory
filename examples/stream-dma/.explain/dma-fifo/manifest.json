@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "title": "dma_fifo: slack between read and write",
+  "summary": "A 32 \u00d7 64-bit first-word-fall-through FIFO; almost_full (more than 16 held) is the read side's brake.",
+  "anchors": {
+    "ff-store": {
+      "file": "rtl/dma_fifo.sv",
+      "range": [
+        25,
+        38
+      ],
+      "highlight": [
+        "mem",
+        "wptr_q",
+        "rptr_q"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "  // ---- datapath: storage and the two pointers\n  logic [DW-1:0] mem [DEPTH];\n  logic [PW-1:0] wptr_q, rptr_q;\n  logic [PW:0]   count_q;\n  logic          do_push, do_pop;\n\n  assign do_push = push && !full;\n  assign do_pop  = pop && !empty;\n\n  always_ff @(posedge clk) begin\n    if (do_push) mem[wptr_q] <= wdata;\n  end\n\n  assign rdata = mem[rptr_q];   // first word falls through",
+        "prefix": "  output logic [PW:0]   level\n);\n",
+        "suffix": "\n  // ---- control: pointers and occupancy\n  always_ff @(posedge clk or negedge rst_n) begin",
+        "norm": "ws"
+      }
+    },
+    "ff-count": {
+      "file": "rtl/dma_fifo.sv",
+      "range": [
+        40,
+        59
+      ],
+      "highlight": [
+        "count_q"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  // ---- control: pointers and occupancy\n  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin\n      wptr_q  <= '0;\n      rptr_q  <= '0;\n      count_q <= '0;\n    end else if (clear) begin\n      wptr_q  <= '0;\n      rptr_q  <= '0;\n      count_q <= '0;\n    end else begin\n      if (do_push) wptr_q <= wptr_q + 1'b1;\n      if (do_pop)  rptr_q <= rptr_q + 1'b1;\n      unique case ({do_push, do_pop})\n        2'b10:   count_q <= count_q + 1'b1;\n        2'b01:   count_q <= count_q - 1'b1;\n        default: ;\n      endcase\n    end\n  end",
+        "prefix": "\n  assign rdata = mem[rptr_q];   // first word falls through\n",
+        "suffix": "\n  assign full        = count_q == (PW+1)'(DEPTH);\n  assign empty       = count_q == '0;",
+        "norm": "ws"
+      }
+    },
+    "ff-flags": {
+      "file": "rtl/dma_fifo.sv",
+      "range": [
+        61,
+        64
+      ],
+      "highlight": [
+        "almost_full",
+        "full",
+        "empty"
+      ],
+      "color": "charts.red",
+      "quote": {
+        "exact": "  assign full        = count_q == (PW+1)'(DEPTH);\n  assign empty       = count_q == '0;\n  assign almost_full = count_q > (PW+1)'(AF_LEVEL);\n  assign level       = count_q;",
+        "prefix": "    end\n  end\n",
+        "suffix": "\nendmodule\n",
+        "norm": "ws"
+      }
+    }
+  }
+}

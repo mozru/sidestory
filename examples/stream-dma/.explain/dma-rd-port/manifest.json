@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "title": "dma_rd_port: one read burst at a time",
+  "summary": "Holds a read request until the bus takes it, then counts the response beats into the FIFO.",
+  "anchors": {
+    "rp-data": {
+      "file": "rtl/dma_rd_port.sv",
+      "range": [
+        47,
+        49
+      ],
+      "highlight": [
+        "fifo_wdata",
+        "rd_rsp_data"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "  // ---- datapath: response data goes straight into the FIFO\n  assign fifo_push  = beat;\n  assign fifo_wdata = rd_rsp_data;",
+        "prefix": "  assign rd_rsp_ready = (left_q != '0) && !fifo_full;\n  assign beat         = rd_rsp_valid && rd_rsp_ready;\n",
+        "suffix": "\n  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin",
+        "norm": "ws"
+      }
+    },
+    "rp-beats": {
+      "file": "rtl/dma_rd_port.sv",
+      "range": [
+        40,
+        45
+      ],
+      "highlight": [
+        "rd_rsp_ready",
+        "beat"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  // ---- handshakes\n  assign rd_req_valid = req_q;\n  assign rd_req_addr  = addr_q;\n  assign rd_req_len   = len_q;\n  assign rd_rsp_ready = (left_q != '0) && !fifo_full;\n  assign beat         = rd_rsp_valid && rd_rsp_ready;",
+        "prefix": "  logic           err_q;\n  logic           beat;\n",
+        "suffix": "\n  // ---- datapath: response data goes straight into the FIFO\n  assign fifo_push  = beat;",
+        "norm": "ws"
+      }
+    },
+    "rp-req": {
+      "file": "rtl/dma_rd_port.sv",
+      "range": [
+        51,
+        71
+      ],
+      "highlight": [
+        "req_q",
+        "left_q"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin\n      req_q  <= 1'b0;\n      addr_q <= '0;\n      len_q  <= '0;\n      left_q <= '0;\n      err_q  <= 1'b0;\n    end else if (start) begin\n      req_q  <= 1'b1;\n      addr_q <= addr;\n      len_q  <= len;\n      left_q <= len;\n      err_q  <= 1'b0;\n    end else begin\n      if (rd_req_valid && rd_req_ready) req_q <= 1'b0;\n      if (beat) begin\n        left_q <= left_q - 1'b1;\n        err_q  <= err_q | rd_rsp_err;\n      end\n    end\n  end",
+        "prefix": "  assign fifo_push  = beat;\n  assign fifo_wdata = rd_rsp_data;\n",
+        "suffix": "\n  assign busy = req_q || (left_q != '0);\n  assign done = beat && (left_q == BLW'(1));",
+        "norm": "ws"
+      }
+    },
+    "rp-status": {
+      "file": "rtl/dma_rd_port.sv",
+      "range": [
+        73,
+        75
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  assign busy = req_q || (left_q != '0);\n  assign done = beat && (left_q == BLW'(1));\n  assign err  = err_q || rd_rsp_err;",
+        "prefix": "    end\n  end\n",
+        "suffix": "\nendmodule\n",
+        "norm": "ws"
+      }
+    }
+  }
+}

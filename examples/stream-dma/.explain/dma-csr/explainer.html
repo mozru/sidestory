@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dma_csr: the registers software sees</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-addr .w-line { stroke: var(--vscode-charts-purple); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--vscode-charts-purple); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-err .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-err .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-addr .blk-box { stroke: var(--vscode-charts-purple); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .st rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-charts-orange); stroke-width: 1.5; }
+  .dia .st.st-idle rect { stroke-width: 3; }
+  .dia .st.st-end rect { stroke: var(--vscode-charts-green); }
+  .dia .st text { font-size: 12px; font-weight: 600; }
+  .dia text.fsm-elabel { font-size: 10px; paint-order: stroke; stroke: var(--vscode-editor-background); stroke-width: 3px; }
+  /* one path in focus: the rest fades */
+  .focus-data .dia .w-ctl:not(.legend):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]), .focus-data .dia .w-addr:not(.legend) { opacity: .15; }
+  .focus-data .dia .blk-ctl, .focus-data .dia .blk-addr { opacity: .4; }
+  .focus-control .dia .w-data:not(.legend), .focus-control .dia [data-wire$=ready], .focus-control .dia [data-wire=fifo_full], .focus-control .dia [data-wire=fifo_pop] { opacity: .15; }
+  .focus-control .dia .blk-data { opacity: .4; }
+  .focus-bp .dia .w:not(.legend):not([data-wire=almost_full]):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]):not([data-wire=c_wrp]) { opacity: .15; }
+  .focus-bp .dia [data-wire=almost_full] .w-line, .focus-bp .dia [data-wire$=ready] .w-line, .focus-bp .dia [data-wire=fifo_full] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  .focus-err .dia .w:not(.legend):not([data-wire=status]):not([data-wire=irq]):not([data-wire=c_rdp]):not([data-wire=c_wrp]):not([data-wire=c_pack]) { opacity: .15; }
+  .focus-err .dia [data-wire=status] .w-line, .focus-err .dia [data-wire=irq] .w-line, .focus-err .dia [data-wire=c_rdp] .w-line, .focus-err .dia [data-wire=c_wrp] .w-line, .focus-err .dia [data-wire=c_pack] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-err .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: left; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+</style>
+</head>
+<body>
+<p class="lede">Six registers on a simple word-addressed bus. The engine reads its configuration from here and reports back through two strobes.</p>
+
+<section data-explain-anchor="csr-map" data-explain-title="Map">
+  <h2>Register map</h2>
+  <table class="sig">
+    <tr><th>offset</th><th>name</th><th>bits</th></tr>
+    <tr><td class="mono">0x00</td><td>CTRL</td><td>[0] start (write 1), [1] irq_en</td></tr>
+    <tr><td class="mono">0x04</td><td>STATUS</td><td>[0] busy, [1] done (W1C), [2] error (W1C)</td></tr>
+    <tr><td class="mono">0x08</td><td>SRC</td><td>source byte address</td></tr>
+    <tr><td class="mono">0x0C</td><td>DST</td><td>destination byte address</td></tr>
+    <tr><td class="mono">0x10</td><td>LEN</td><td>length in bytes</td></tr>
+    <tr><td class="mono">0x14</td><td>ERR</td><td>1 zero length, 2 read, 3 write</td></tr>
+  </table>
+<!-- diagram:inside -->
+<svg class="dia" viewBox="0 0 760 250" role="img" aria-label="Inside dma_csr: a write decoder updates the configuration registers (SRC, DST, LEN, irq_en) and clears status bits; start is a one-cycle pulse; done and error are set by dma_ctrl; irq is irq_en and (done or error)."><g class="w w-addr" data-wire="bus"><path class="w-line" d="M20,55 L200,55"/><polygon class="w-head" points="200.0,55.0 192.8,59.5 192.8,50.5"/><text class="w-label" x="110" y="47" text-anchor="middle">csr bus</text></g><g class="w w-data" data-wire="cfgw"><path class="w-line" d="M380,55 L450,55"/><polygon class="w-head" points="450.0,55.0 441.2,60.5 441.2,49.5"/></g><g class="w w-addr" data-wire="cfgo"><path class="w-line" d="M630,55 L740,55"/><polygon class="w-head" points="740.0,55.0 732.8,59.5 732.8,50.5"/><text class="w-label" x="685" y="47" text-anchor="middle">src · dst · len</text></g><g class="w w-ctl" data-wire="set"><path class="w-line" d="M20,175 L200,175"/><polygon class="w-head" points="200.0,175.0 193.6,179.0 193.6,171.0"/><text class="w-label" x="110" y="167" text-anchor="middle">done_set · err_set</text></g><g class="w w-ctl" data-wire="i"><path class="w-line" d="M380,175 L450,175"/><polygon class="w-head" points="450.0,175.0 443.6,179.0 443.6,171.0"/></g><g class="w w-ctl" data-wire="io"><path class="w-line" d="M630,175 L740,175"/><polygon class="w-head" points="740.0,175.0 733.6,179.0 733.6,171.0"/><text class="w-label" x="685" y="167" text-anchor="middle">irq</text></g><g class="w w-ctl" data-wire="stt"><path class="w-line" d="M290,90 L290,140"/><polygon class="w-head" points="290.0,140.0 286.0,133.6 294.0,133.6"/><text class="w-label" x="298" y="120" text-anchor="start">start (pulse)</text></g><g class="blk blk-ctl" data-block="dec" data-explain-ref="csr-write" aria-label="write decode: show its code"><rect class="blk-box" x="200" y="20" width="180" height="70" rx="6"/><rect class="blk-bar" x="200" y="20" width="180" height="5" rx="2"/><text class="blk-title" x="290.0" y="44" text-anchor="middle">write decode</text><text class="blk-sub" x="290.0" y="60" text-anchor="middle">csr_addr · csr_we</text></g><g class="blk blk-data" data-block="cfg" data-explain-ref="csr-write" aria-label="SRC · DST · LEN: show its code"><rect class="blk-box" x="450" y="20" width="180" height="70" rx="6"/><rect class="blk-bar" x="450" y="20" width="180" height="5" rx="2"/><text class="blk-title" x="540.0" y="44" text-anchor="middle">SRC · DST · LEN</text><text class="blk-sub" x="540.0" y="60" text-anchor="middle">config registers</text></g><g class="blk blk-ctl" data-block="st" data-explain-ref="csr-write" aria-label="done_q · err_q: show its code"><rect class="blk-box" x="200" y="140" width="180" height="70" rx="6"/><rect class="blk-bar" x="200" y="140" width="180" height="5" rx="2"/><text class="blk-title" x="290.0" y="164" text-anchor="middle">done_q · err_q</text><text class="blk-sub" x="290.0" y="180" text-anchor="middle">status (W1C)</text></g><g class="blk blk-ctl" data-block="irq" data-explain-ref="csr-irq" aria-label="irq: show its code"><rect class="blk-box" x="450" y="140" width="180" height="70" rx="6"/><rect class="blk-bar" x="450" y="140" width="180" height="5" rx="2"/><text class="blk-title" x="540.0" y="164" text-anchor="middle">irq</text><text class="blk-sub" x="540.0" y="180" text-anchor="middle">irq_en &amp; (done | err)</text></g><g class="w w-data legend"><path class="w-line" d="M20,236 L64,236"/><polygon class="w-head" points="72.0,236.0 64.8,240.5 64.8,231.5"/><text class="w-label" x="80" y="240">register values</text></g><g class="w w-addr legend"><path class="w-line" d="M280,236 L324,236"/><polygon class="w-head" points="332.0,236.0 324.8,240.5 324.8,231.5"/><text class="w-label" x="340" y="240">bus / config out</text></g><g class="w w-ctl legend"><path class="w-line" d="M540,236 L584,236"/><polygon class="w-head" points="592.0,236.0 584.8,240.5 584.8,231.5"/><text class="w-label" x="600" y="240">control</text></g></svg>
+<!-- /diagram:inside -->
+</section>
+
+<section data-explain-anchor="csr-write" data-explain-title="Writes">
+  <h2>Writes, start, and the outcome</h2>
+  <p>A write to CTRL with bit 0 set while idle is the <span class="mono">start</span> pulse. SRC, DST and LEN ignore writes while busy, so a running transfer's configuration can't change under it. <span class="mono">start</span> clears the previous outcome; <span class="mono">done_set</span> and <span class="mono">err_set</span> from dma_ctrl set the new one.</p>
+</section>
+
+<section data-explain-anchor="csr-read" data-explain-title="Reads">
+  <h2>Read mux</h2>
+  <p>A plain combinational mux on the word address; unused bits read 0.</p>
+</section>
+
+<section data-explain-anchor="csr-irq" data-explain-title="irq">
+  <h2>The interrupt</h2>
+  <p>A level: <span class="mono">irq_en &amp;&amp; (done || error)</span>. Software acknowledges by writing 1s to STATUS, or by starting the next transfer.</p>
+</section>
+</body>
+</html>

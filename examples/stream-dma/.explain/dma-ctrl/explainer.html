@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dma_ctrl: the control FSM</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-addr .w-line { stroke: var(--vscode-charts-purple); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--vscode-charts-purple); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-err .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-err .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-addr .blk-box { stroke: var(--vscode-charts-purple); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .st rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-charts-orange); stroke-width: 1.5; }
+  .dia .st.st-idle rect { stroke-width: 3; }
+  .dia .st.st-end rect { stroke: var(--vscode-charts-green); }
+  .dia .st text { font-size: 12px; font-weight: 600; }
+  .dia text.fsm-elabel { font-size: 10px; paint-order: stroke; stroke: var(--vscode-editor-background); stroke-width: 3px; }
+  /* one path in focus: the rest fades */
+  .focus-data .dia .w-ctl:not(.legend):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]), .focus-data .dia .w-addr:not(.legend) { opacity: .15; }
+  .focus-data .dia .blk-ctl, .focus-data .dia .blk-addr { opacity: .4; }
+  .focus-control .dia .w-data:not(.legend), .focus-control .dia [data-wire$=ready], .focus-control .dia [data-wire=fifo_full], .focus-control .dia [data-wire=fifo_pop] { opacity: .15; }
+  .focus-control .dia .blk-data { opacity: .4; }
+  .focus-bp .dia .w:not(.legend):not([data-wire=almost_full]):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]):not([data-wire=c_wrp]) { opacity: .15; }
+  .focus-bp .dia [data-wire=almost_full] .w-line, .focus-bp .dia [data-wire$=ready] .w-line, .focus-bp .dia [data-wire=fifo_full] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  .focus-err .dia .w:not(.legend):not([data-wire=status]):not([data-wire=irq]):not([data-wire=c_rdp]):not([data-wire=c_wrp]):not([data-wire=c_pack]) { opacity: .15; }
+  .focus-err .dia [data-wire=status] .w-line, .focus-err .dia [data-wire=irq] .w-line, .focus-err .dia [data-wire=c_rdp] .w-line, .focus-err .dia [data-wire=c_wrp] .w-line, .focus-err .dia [data-wire=c_pack] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-err .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  .muted { color: var(--vscode-descriptionForeground); }
+  .k { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin: 0 4px 0 2px; }
+  .k-data { border-top: 5px solid var(--vscode-charts-blue); }
+  .k-ctl { border-top: 2px dashed var(--vscode-charts-orange); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: left; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+  .eq { font-family: var(--vscode-editor-font-family); padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+</style>
+</head>
+<body>
+<p class="lede">The only block in the engine that decides anything. It moves no data: it reads facts from the datapath (bursts left, beats arrived, FIFO almost full, done, error) and answers with one-cycle strobes.</p>
+
+<section data-explain-anchor="ports" data-explain-title="Inside">
+  <h2>Inside dma_ctrl</h2>
+  <p>Control (<span class="k k-ctl"></span>orange): the state register and the next-state logic. A small datapath (<span class="k k-data"></span>blue): two beat counters and a comparator that together answer one question, <em>is there enough data to start a write burst?</em> Click a block to see its code.</p>
+<!-- diagram:inside -->
+<svg class="dia" viewBox="0 0 760 330" role="img" aria-label="Inside dma_ctrl: the state register and next-state logic (control) take start, done, error and almost_full inputs and the credit check; the credit check compares two beat counters (in_rcvd_q, counting FIFO pushes, and out_issued_q, adding each write burst length). Outputs are one-cycle strobes: load, rd_start, wr_start, done_set, err_set."><g class="w w-ctl" data-wire="in"><path class="w-line" d="M20,60 L250,60"/><polygon class="w-head" points="250.0,60.0 243.6,64.0 243.6,56.0"/><text class="w-label" x="135" y="40" text-anchor="middle">start · rd_done · wr_done</text><text class="w-label" x="135" y="52" text-anchor="middle">has_burst · almost_full · errs</text></g><g class="w w-ctl" data-wire="nsq"><path class="w-line" d="M470,80 L530,80"/><polygon class="w-head" points="530.0,80.0 523.6,84.0 523.6,76.0"/><text class="w-label" x="500" y="72" text-anchor="middle">state_d</text></g><g class="w w-ctl" data-wire="fb"><path class="w-line" d="M590,120 L590,160 L360,160 L360,140"/><polygon class="w-head" points="360.0,140.0 364.0,146.4 356.0,146.4"/><text class="w-label" x="480" y="175" text-anchor="middle">state_q</text></g><g class="w w-data" data-wire="cc"><path class="w-line" d="M220,245 L290,245"/><polygon class="w-head" points="290.0,245.0 281.2,250.5 281.2,239.5"/></g><g class="w w-ctl" data-wire="ok"><path class="w-line" d="M380,205 L380,140"/><polygon class="w-head" points="380.0,140.0 384.0,146.4 376.0,146.4"/><text class="w-label" x="386" y="180" text-anchor="start">credit_ok</text></g><g class="w w-ctl" data-wire="push"><path class="w-line" d="M120,160 L120,190"/><polygon class="w-head" points="120.0,190.0 116.0,183.6 124.0,183.6"/><text class="w-label" x="128" y="176" text-anchor="start">fifo_push · wr_start</text></g><g class="w w-ctl" data-wire="out"><path class="w-line" d="M650,80 L740,80"/><polygon class="w-head" points="740.0,80.0 733.6,84.0 733.6,76.0"/><text class="w-label" x="695" y="72" text-anchor="middle">busy</text></g><g class="w w-ctl" data-wire="strobes"><path class="w-line" d="M470,115 L510,115 L510,260 L740,260"/><polygon class="w-head" points="740.0,260.0 733.6,264.0 733.6,256.0"/><text class="w-label" x="630" y="240" text-anchor="middle">load · rd_start · wr_start</text><text class="w-label" x="630" y="252" text-anchor="middle">done_set · err_set</text></g><g class="blk blk-ctl" data-block="ns" data-explain-ref="fsm" aria-label="next-state logic: show its code"><rect class="blk-box" x="250" y="20" width="220" height="120" rx="6"/><rect class="blk-bar" x="250" y="20" width="220" height="5" rx="2"/><text class="blk-title" x="360.0" y="44" text-anchor="middle">next-state logic</text><text class="blk-sub" x="360.0" y="60" text-anchor="middle">always_comb · unique case</text><text class="blk-line" x="360.0" y="78" text-anchor="middle">8 states</text><text class="blk-line" x="360.0" y="91" text-anchor="middle">one strobe per state</text></g><g class="blk blk-ctl" data-block="sq" data-explain-ref="regs" aria-label="state_q: show its code"><rect class="blk-box" x="530" y="40" width="120" height="80" rx="6"/><rect class="blk-bar" x="530" y="40" width="120" height="5" rx="2"/><text class="blk-title" x="590.0" y="64" text-anchor="middle">state_q</text><text class="blk-sub" x="590.0" y="80" text-anchor="middle">register</text></g><g class="blk blk-data" data-block="cnt" data-explain-ref="regs" aria-label="beat counters: show its code"><rect class="blk-box" x="20" y="190" width="200" height="110" rx="6"/><rect class="blk-bar" x="20" y="190" width="200" height="5" rx="2"/><text class="blk-title" x="120.0" y="214" text-anchor="middle">beat counters</text><text class="blk-sub" x="120.0" y="230" text-anchor="middle">in_rcvd_q · out_issued_q</text><text class="blk-line" x="120.0" y="248" text-anchor="middle">+1 per FIFO push</text><text class="blk-line" x="120.0" y="261" text-anchor="middle">+len per wr_start</text></g><g class="blk blk-data" data-block="cr" data-explain-ref="credit" aria-label="credit_ok: show its code"><rect class="blk-box" x="290" y="205" width="180" height="80" rx="6"/><rect class="blk-bar" x="290" y="205" width="180" height="5" rx="2"/><text class="blk-title" x="380.0" y="229" text-anchor="middle">credit_ok</text><text class="blk-sub" x="380.0" y="245" text-anchor="middle">comparator</text></g><g class="w w-data legend"><path class="w-line" d="M20,318 L64,318"/><polygon class="w-head" points="72.0,318.0 64.8,322.5 64.8,313.5"/><text class="w-label" x="80" y="322">counters, comparison</text></g><g class="w w-ctl legend"><path class="w-line" d="M280,318 L324,318"/><polygon class="w-head" points="332.0,318.0 324.8,322.5 324.8,313.5"/><text class="w-label" x="340" y="322">state, strobes</text></g></svg>
+<!-- /diagram:inside -->
+  <table class="sig">
+    <tr><th>in</th><td class="mono">start, len_zero, rd_has_burst, rd_busy, rd_done, rd_err, fifo_push, fifo_almost_full, wr_has_burst, wr_burst_len, wr_busy, wr_done, wr_err</td></tr>
+    <tr><th>out</th><td class="mono">load, rd_start, wr_start, done_set, err_set, drain, busy, err_code</td></tr>
+  </table>
+</section>
+
+<section data-explain-anchor="fsm" data-explain-title="State graph">
+  <h2>The state graph, read from the code</h2>
+  <p>Eight states. The loop in the middle is the engine's heartbeat: <span class="mono">READ_BURST → WAIT_DATA → WRITE_BURST → READ_BURST</span>, with a write running in the background while the next read goes out. Hover a transition to highlight the line that takes it; click a state to highlight its case item.</p>
+  <explain-widget src="widgets/fsm-graph.tsx" title="dma_ctrl state graph, parsed from the case statement" height="900">
+<!-- diagram:fsm -->
+<svg class="dia fsm" viewBox="0 -14 900 530" role="img" aria-label="State graph of dma_ctrl. IDLE goes to LOAD on start. LOAD goes to READ_BURST, or to ERROR on a zero length. READ_BURST issues a read (rd_start) and waits in WAIT_DATA, or goes to WRITE_BURST when nothing is left to read or the FIFO is almost full. WAIT_DATA goes to WRITE_BURST when there is credit, else back to READ_BURST, or to ERROR on a read error. WRITE_BURST starts a write and goes back to READ_BURST while it runs, waits in WAIT_WRITE while the write port is busy, or goes to DONE when no writes remain. WAIT_WRITE returns to READ_BURST on wr_done. A write error from any state goes to ERROR, which drains the datapath until both ports are idle. DONE and ERROR return to IDLE."><g class="w w-ctl"><path class="w-line" d="M100.2,181.0 Q125.0,135.0 148.7,91.0"/><polygon class="w-head" points="148.7,91.0 149.2,99.5 141.3,95.2"/><text class="w-label fsm-elabel" x="124.7" y="139.5" text-anchor="middle">start</text></g><g class="w w-ctl"><path class="w-line" d="M224.0,70.0 Q260.0,70.0 294.0,70.0"/><polygon class="w-head" points="294.0,70.0 286.8,74.5 286.8,65.5"/></g><g class="w w-err"><path class="w-line" d="M198.4,51.0 Q544.5,-120.2 811.3,179.0"/><polygon class="w-head" points="811.3,179.0 803.1,176.6 809.8,170.6"/><text class="w-label fsm-elabel" x="524.7" y="1.4" text-anchor="middle">len_zero</text></g><g class="w w-ctl"><path class="w-line" d="M424.0,85.5 Q500.0,104.0 574.0,86.0"/><polygon class="w-head" points="574.0,86.0 568.1,92.1 565.9,83.4"/><text class="w-label fsm-elabel" x="499.5" y="98.9" text-anchor="middle">rd_start</text></g><g class="w w-ctl"><path class="w-line" d="M374.3,89.0 Q476.9,224.9 607.4,309.0"/><polygon class="w-head" points="607.4,309.0 598.9,308.9 603.8,301.3"/><text class="w-label fsm-elabel" x="483.9" y="216.0" text-anchor="middle">no reads left | almost_full</text></g><g class="w w-ctl"><path class="w-line" d="M640.0,89.0 Q640.0,200.0 640.0,309.0"/><polygon class="w-head" points="640.0,309.0 635.5,301.8 644.5,301.8"/><text class="w-label fsm-elabel" x="640.0" y="203.5" text-anchor="middle">rd_done, credit_ok</text></g><g class="w w-ctl"><path class="w-line" d="M576.0,54.5 Q500.0,36.0 426.0,54.0"/><polygon class="w-head" points="426.0,54.0 431.9,47.9 434.1,56.6"/><text class="w-label fsm-elabel" x="500.5" y="49.1" text-anchor="middle">rd_done, no credit</text></g><g class="w w-err"><path class="w-line" d="M667.8,89.0 Q735.0,135.0 799.3,179.0"/><polygon class="w-head" points="799.3,179.0 790.8,178.6 795.9,171.2"/><text class="w-label fsm-elabel" x="734.3" y="138.5" text-anchor="middle">rd_err</text></g><g class="w w-ctl"><path class="w-line" d="M625.7,311.0 Q523.1,175.1 392.6,91.0"/><polygon class="w-head" points="392.6,91.0 401.1,91.1 396.2,98.7"/><text class="w-label fsm-elabel" x="516.1" y="192.0" text-anchor="middle">wr_start, or no credit</text></g><g class="w w-ctl"><path class="w-line" d="M576.0,330.0 Q500.0,330.0 426.0,330.0"/><polygon class="w-head" points="426.0,330.0 433.2,325.5 433.2,334.5"/><text class="w-label fsm-elabel" x="500.5" y="334.0" text-anchor="middle">wr_busy</text></g><g class="w w-ctl"><path class="w-line" d="M576.0,331.6 Q412.0,335.8 252.9,399.0"/><polygon class="w-head" points="252.9,399.0 257.9,392.2 261.2,400.5"/><text class="w-label fsm-elabel" x="413.2" y="354.6" text-anchor="middle">no writes left</text></g><g class="w w-ctl"><path class="w-line" d="M360.0,311.0 Q360.0,200.0 360.0,91.0"/><polygon class="w-head" points="360.0,91.0 364.5,98.2 355.5,98.2"/><text class="w-label fsm-elabel" x="360.0" y="204.5" text-anchor="middle">wr_done</text></g><g class="w w-ctl"><path class="w-line" d="M178.4,401.0 Q100.3,332.4 91.6,221.0"/><polygon class="w-head" points="91.6,221.0 96.7,227.8 87.7,228.5"/><text class="w-label fsm-elabel" x="117.6" y="325.7" text-anchor="middle">done_set</text></g><g class="w w-ctl"><path class="w-line" d="M818.3,219.0 Q460.0,800.0 103.0,221.0"/><polygon class="w-head" points="103.0,221.0 110.6,224.8 102.9,229.5"/><text class="w-label fsm-elabel" x="460.3" y="514.0" text-anchor="middle">ports idle: err_set</text></g><g class="st st-idle"><rect x="28.0" y="183.0" width="124" height="34" rx="17"/><text x="90" y="204" text-anchor="middle">IDLE</text></g><g class="st "><rect x="98.0" y="53.0" width="124" height="34" rx="17"/><text x="160" y="74" text-anchor="middle">LOAD</text></g><g class="st "><rect x="298.0" y="53.0" width="124" height="34" rx="17"/><text x="360" y="74" text-anchor="middle">READ_BURST</text></g><g class="st "><rect x="578.0" y="53.0" width="124" height="34" rx="17"/><text x="640" y="74" text-anchor="middle">WAIT_DATA</text></g><g class="st "><rect x="578.0" y="313.0" width="124" height="34" rx="17"/><text x="640" y="334" text-anchor="middle">WRITE_BURST</text></g><g class="st "><rect x="298.0" y="313.0" width="124" height="34" rx="17"/><text x="360" y="334" text-anchor="middle">WAIT_WRITE</text></g><g class="st st-end"><rect x="138.0" y="403.0" width="124" height="34" rx="17"/><text x="200" y="424" text-anchor="middle">DONE</text></g><g class="st st-end"><rect x="768.0" y="183.0" width="124" height="34" rx="17"/><text x="830" y="204" text-anchor="middle">ERROR</text></g><text class="w-label" x="830" y="240" text-anchor="middle">+ wr_err from any state</text></svg>
+<!-- /diagram:fsm -->
+    <p>The same graph, drawn when the code was written: IDLE → LOAD on start; LOAD → READ_BURST (or ERROR on a zero length); READ_BURST → WAIT_DATA after issuing a read, or → WRITE_BURST when nothing is left to read or the FIFO is almost full; WAIT_DATA → WRITE_BURST with credit, else back to READ_BURST; WRITE_BURST starts a write and returns to READ_BURST, waits in WAIT_WRITE while the port is busy, or finishes in DONE.</p>
+  </explain-widget>
+</section>
+
+<section data-explain-anchor="credit" data-explain-title="Credit">
+  <h2>The credit check</h2>
+  <p>A write burst must never wait for data that hasn't been requested: the write port would hold the bus while the FSM, waiting for it, never issues the read that would feed it. So a write of <span class="mono">wr_burst_len</span> beats starts only when the beats already in hand cover it:</p>
+  <p class="eq">in_rcvd_q ≥ out_issued_q + wr_burst_len + extra_q</p>
+  <p><span class="mono">extra_q</span> is the packer's priming beat: when the destination's lane offset is smaller than the source's, the first output beat needs bytes from the <em>second</em> input beat, so every output beat runs one input beat behind. Once every read is in (<span class="mono">!rd_has_burst</span>) credit is unconditional.</p>
+  <table class="sig">
+    <tr><th>example</th><th>in_rcvd</th><th>out_issued</th><th>burst</th><th>extra</th><th>credit</th></tr>
+    <tr><td>after the first read (12 beats, cut at 4 KB)</td><td>12</td><td>0</td><td>16</td><td>1</td><td>no: read again</td></tr>
+    <tr><td>after the second read</td><td>28</td><td>0</td><td>16</td><td>1</td><td>yes: write 16</td></tr>
+    <tr><td>after the third read</td><td>44</td><td>16</td><td>16</td><td>1</td><td>yes: write 16</td></tr>
+  </table>
+</section>
+
+<section data-explain-anchor="abort" data-explain-title="Write errors">
+  <h2>Write errors can come at any time</h2>
+  <p>Because a write burst runs while the FSM is already reading, its response can arrive in <span class="mono">READ_BURST</span> or <span class="mono">WAIT_DATA</span>. Rather than repeat the check in every state, the end of the <span class="mono">always_comb</span> overrides whatever the case statement chose: cancel this cycle's strobes, record error code 3, go to <span class="mono">ERROR</span>. In <span class="mono">ERROR</span>, <span class="mono">drain</span> stays high until both ports are idle, so no burst is left half-done on the bus.</p>
+</section>
+
+<section data-explain-anchor="regs" data-explain-title="Registers">
+  <h2>Registers</h2>
+  <p>The state register, the error code, and the two counters behind the credit check. <span class="mono">load</span> clears the counters and latches <span class="mono">extra_q</span>; after that, <span class="mono">in_rcvd_q</span> counts every FIFO push and <span class="mono">out_issued_q</span> adds each write burst's length as it is issued (not as it completes: credit is about promises).</p>
+</section>
+</body>
+</html>

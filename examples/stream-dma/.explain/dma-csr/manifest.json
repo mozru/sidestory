@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "title": "dma_csr: the registers software sees",
+  "summary": "SRC, DST, LEN, CTRL.start and irq_en, STATUS (busy, done, error) and ERR; irq = irq_en && (done || error).",
+  "anchors": {
+    "csr-map": {
+      "file": "rtl/dma_csr.sv",
+      "range": [
+        1,
+        10
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "// dma_csr: the software-visible registers of the DMA engine.\n//\n//   0x00 CTRL    [0] start (write 1, self-clearing)   [1] irq_en\n//   0x04 STATUS  [0] busy (RO)   [1] done (W1C)   [2] error (W1C)\n//   0x08 SRC     source byte address (any alignment)\n//   0x0C DST     destination byte address (any alignment)\n//   0x10 LEN     transfer length in bytes\n//   0x14 ERR     [1:0] error code: 1 zero length, 2 read error, 3 write error\n//\n// SRC, DST and LEN are ignored while the engine is busy, so a transfer's configuration",
+        "prefix": "",
+        "suffix": "// can't change under it.\nmodule dma_csr #(\n  parameter int AW = 32,",
+        "norm": "ws"
+      }
+    },
+    "csr-write": {
+      "file": "rtl/dma_csr.sv",
+      "range": [
+        45,
+        82
+      ],
+      "highlight": [
+        "start",
+        "done_q",
+        "err_q"
+      ],
+      "color": "charts.orange",
+      "quote": {
+        "exact": "  // A write of CTRL.start while idle launches a transfer (one-cycle pulse).\n  assign start = csr_we && (csr_addr == A_CTRL) && csr_wdata[0] && !busy;\n\n  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin\n      irq_en_q   <= 1'b0;\n      done_q     <= 1'b0;\n      err_q      <= 1'b0;\n      err_code_q <= 2'd0;\n      src_q      <= '0;\n      dst_q      <= '0;\n      len_q      <= '0;\n    end else begin\n      if (csr_we) begin\n        unique case (csr_addr)\n          A_CTRL:   irq_en_q <= csr_wdata[1];\n          A_STATUS: begin  // write 1 to clear\n            if (csr_wdata[1]) done_q <= 1'b0;\n            if (csr_wdata[2]) err_q  <= 1'b0;\n          end\n          A_SRC:    if (!busy) src_q <= csr_wdata[AW-1:0];\n          A_DST:    if (!busy) dst_q <= csr_wdata[AW-1:0];\n          A_LEN:    if (!busy) len_q <= csr_wdata[LW-1:0];\n          default:  ;\n        endcase\n      end\n      // A new transfer clears the old outcome; the engine's strobes set the new one.\n      if (start) begin\n        done_q <= 1'b0;\n        err_q  <= 1'b0;\n      end\n      if (done_set) done_q <= 1'b1;\n      if (err_set) begin\n        err_q      <= 1'b1;\n        err_code_q <= err_code;\n      end\n    end\n  end",
+        "prefix": "  logic [AW-1:0] src_q, dst_q;\n  logic [LW-1:0] len_q;\n",
+        "suffix": "\n  // Read mux.\n  always_comb begin",
+        "norm": "ws"
+      }
+    },
+    "csr-read": {
+      "file": "rtl/dma_csr.sv",
+      "range": [
+        84,
+        96
+      ],
+      "highlight": [
+        "csr_rdata"
+      ],
+      "color": "charts.blue",
+      "quote": {
+        "exact": "  // Read mux.\n  always_comb begin\n    csr_rdata = '0;\n    unique case (csr_addr)\n      A_CTRL:   csr_rdata[1]      = irq_en_q;\n      A_STATUS: csr_rdata[2:0]    = {err_q, done_q, busy};\n      A_SRC:    csr_rdata[AW-1:0] = src_q;\n      A_DST:    csr_rdata[AW-1:0] = dst_q;\n      A_LEN:    csr_rdata[LW-1:0] = len_q;\n      A_ERR:    csr_rdata[1:0]    = err_code_q;\n      default:  ;\n    endcase\n  end",
+        "prefix": "    end\n  end\n",
+        "suffix": "\n  assign src_base = src_q;\n  assign dst_base = dst_q;",
+        "norm": "ws"
+      }
+    },
+    "csr-irq": {
+      "file": "rtl/dma_csr.sv",
+      "range": [
+        98,
+        101
+      ],
+      "highlight": [
+        "irq"
+      ],
+      "color": "charts.red",
+      "quote": {
+        "exact": "  assign src_base = src_q;\n  assign dst_base = dst_q;\n  assign len      = len_q;\n  assign irq      = irq_en_q && (done_q || err_q);",
+        "prefix": "    endcase\n  end\n",
+        "suffix": "\nendmodule\n",
+        "norm": "ws"
+      }
+    }
+  }
+}

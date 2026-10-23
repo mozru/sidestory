@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dma_rd_port: one read burst at a time</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-addr .w-line { stroke: var(--vscode-charts-purple); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--vscode-charts-purple); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-err .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-err .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-addr .blk-box { stroke: var(--vscode-charts-purple); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .st rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-charts-orange); stroke-width: 1.5; }
+  .dia .st.st-idle rect { stroke-width: 3; }
+  .dia .st.st-end rect { stroke: var(--vscode-charts-green); }
+  .dia .st text { font-size: 12px; font-weight: 600; }
+  .dia text.fsm-elabel { font-size: 10px; paint-order: stroke; stroke: var(--vscode-editor-background); stroke-width: 3px; }
+  /* one path in focus: the rest fades */
+  .focus-data .dia .w-ctl:not(.legend):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]), .focus-data .dia .w-addr:not(.legend) { opacity: .15; }
+  .focus-data .dia .blk-ctl, .focus-data .dia .blk-addr { opacity: .4; }
+  .focus-control .dia .w-data:not(.legend), .focus-control .dia [data-wire$=ready], .focus-control .dia [data-wire=fifo_full], .focus-control .dia [data-wire=fifo_pop] { opacity: .15; }
+  .focus-control .dia .blk-data { opacity: .4; }
+  .focus-bp .dia .w:not(.legend):not([data-wire=almost_full]):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]):not([data-wire=c_wrp]) { opacity: .15; }
+  .focus-bp .dia [data-wire=almost_full] .w-line, .focus-bp .dia [data-wire$=ready] .w-line, .focus-bp .dia [data-wire=fifo_full] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  .focus-err .dia .w:not(.legend):not([data-wire=status]):not([data-wire=irq]):not([data-wire=c_rdp]):not([data-wire=c_wrp]):not([data-wire=c_pack]) { opacity: .15; }
+  .focus-err .dia [data-wire=status] .w-line, .focus-err .dia [data-wire=irq] .w-line, .focus-err .dia [data-wire=c_rdp] .w-line, .focus-err .dia [data-wire=c_wrp] .w-line, .focus-err .dia [data-wire=c_pack] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-err .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: left; vertical-align: top; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+</style>
+</head>
+<body>
+<p class="lede">The simplest block on the data path: a request register, a beat counter, and wires.</p>
+
+<section data-explain-anchor="rp-data" data-explain-title="Inside">
+  <h2>Inside dma_rd_port</h2>
+  <p>Response data goes straight from the bus into the FIFO; only the handshake is logic. Click a block to see its code.</p>
+<!-- diagram:inside -->
+<svg class="dia" viewBox="0 0 760 275" role="img" aria-label="Inside dma_rd_port: a request register (valid until the bus takes it), a beat counter, and a straight data path from the read response to the FIFO."><g class="w w-ctl" data-wire="start"><path class="w-line" d="M20,40 L250,40"/><polygon class="w-head" points="250.0,40.0 243.6,44.0 243.6,36.0"/><text class="w-label" x="135" y="32" text-anchor="middle">start · addr · len</text></g><g class="w w-addr" data-wire="req"><path class="w-line" d="M470,40 L740,40"/><polygon class="w-head" points="740.0,40.0 732.8,44.5 732.8,35.5"/><text class="w-label" x="605" y="32" text-anchor="middle">rd_req_valid · addr · len</text></g><g class="w w-data" data-wire="d"><path class="w-line" d="M740,125 L470,125"/><polygon class="w-head" points="470.0,125.0 478.8,119.5 478.8,130.5"/><text class="w-label" x="605" y="117" text-anchor="middle">rd_rsp_data</text></g><g class="w w-data" data-wire="f"><path class="w-line" d="M250,125 L20,125"/><polygon class="w-head" points="20.0,125.0 28.8,119.5 28.8,130.5"/><text class="w-label" x="135" y="117" text-anchor="middle">fifo_wdata</text></g><g class="w w-ctl" data-wire="rdy"><path class="w-line" d="M470,200 L740,200"/><polygon class="w-head" points="740.0,200.0 733.6,204.0 733.6,196.0"/><text class="w-label" x="605" y="192" text-anchor="middle">rd_rsp_ready</text></g><g class="w w-ctl" data-wire="full"><path class="w-line" d="M20,215 L250,215"/><polygon class="w-head" points="250.0,215.0 243.6,219.0 243.6,211.0"/><text class="w-label" x="135" y="207" text-anchor="middle">fifo_full</text></g><g class="w w-ctl" data-wire="done"><path class="w-line" d="M250,185 L20,185"/><polygon class="w-head" points="20.0,185.0 26.4,181.0 26.4,189.0"/><text class="w-label" x="135" y="177" text-anchor="middle">done · err</text></g><g class="blk blk-ctl" data-block="req" data-explain-ref="rp-req" aria-label="req_q · addr_q · len_q: show its code"><rect class="blk-box" x="250" y="20" width="220" height="60" rx="6"/><rect class="blk-bar" x="250" y="20" width="220" height="5" rx="2"/><text class="blk-title" x="360.0" y="44" text-anchor="middle">req_q · addr_q · len_q</text><text class="blk-sub" x="360.0" y="60" text-anchor="middle">request register</text></g><g class="blk blk-ctl" data-block="cnt" data-explain-ref="rp-beats" aria-label="left_q: show its code"><rect class="blk-box" x="250" y="170" width="220" height="60" rx="6"/><rect class="blk-bar" x="250" y="170" width="220" height="5" rx="2"/><text class="blk-title" x="360.0" y="194" text-anchor="middle">left_q</text><text class="blk-sub" x="360.0" y="210" text-anchor="middle">beats to go</text></g><g class="blk blk-data" data-block="dp" data-explain-ref="rp-data" aria-label="data (wires only): show its code"><rect class="blk-box" x="250" y="100" width="220" height="50" rx="6"/><rect class="blk-bar" x="250" y="100" width="220" height="5" rx="2"/><text class="blk-title" x="360.0" y="124" text-anchor="middle">data (wires only)</text></g><g class="w w-data legend"><path class="w-line" d="M20,262 L64,262"/><polygon class="w-head" points="72.0,262.0 64.8,266.5 64.8,257.5"/><text class="w-label" x="80" y="266">beats</text></g><g class="w w-addr legend"><path class="w-line" d="M280,262 L324,262"/><polygon class="w-head" points="332.0,262.0 324.8,266.5 324.8,257.5"/><text class="w-label" x="340" y="266">request</text></g><g class="w w-ctl legend"><path class="w-line" d="M540,262 L584,262"/><polygon class="w-head" points="592.0,262.0 584.8,266.5 584.8,257.5"/><text class="w-label" x="600" y="266">control</text></g></svg>
+<!-- /diagram:inside -->
+</section>
+
+<section data-explain-anchor="rp-beats" data-explain-title="Handshakes">
+  <h2>Ready only while a burst is open and the FIFO has room</h2>
+  <p><span class="mono">rd_rsp_ready = (left_q != 0) &amp;&amp; !fifo_full</span>. A beat moves when the bus says valid and we say ready; that is also the FIFO's push, and the FSM's <span class="mono">fifo_push</span> count.</p>
+</section>
+
+<section data-explain-anchor="rp-req" data-explain-title="Request">
+  <h2>The request register</h2>
+  <p><span class="mono">start</span> (dma_ctrl's <span class="mono">rd_start</span>) loads address and length and raises <span class="mono">rd_req_valid</span>, which stays up until <span class="mono">rd_req_ready</span>. <span class="mono">left_q</span> counts the response beats still expected; any beat with an error makes the burst's <span class="mono">err</span> sticky.</p>
+</section>
+
+<section data-explain-anchor="rp-status" data-explain-title="Done">
+  <h2>busy, done, err</h2>
+  <p><span class="mono">done</span> pulses with the last beat, <span class="mono">err</span> alongside it; <span class="mono">busy</span> covers the whole burst, so the FSM's ERROR state can wait for it to finish.</p>
+</section>
+</body>
+</html>

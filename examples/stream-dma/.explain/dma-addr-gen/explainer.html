@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dma_addr_gen: bursts that never cross 4 KB</title>
+<style>
+  /* dia-css */
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--vscode-editor-foreground); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--vscode-charts-blue); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--vscode-charts-blue); }
+  .dia .w-addr .w-line { stroke: var(--vscode-charts-purple); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--vscode-charts-purple); }
+  .dia .w-ctl .w-line { stroke: var(--vscode-charts-orange); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dia .w-ctl .w-head { fill: var(--vscode-charts-orange); }
+  .dia .w-err .w-line { stroke: var(--vscode-charts-red); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .dia .w-err .w-head { fill: var(--vscode-charts-red); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia .blk-box { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border)); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--vscode-charts-blue); }
+  .dia .blk-ctl .blk-bar { fill: var(--vscode-charts-orange); }
+  .dia .blk-addr .blk-box { stroke: var(--vscode-charts-purple); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--vscode-descriptionForeground); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--vscode-descriptionForeground); }
+  .dia [data-explain-ref] { cursor: pointer; text-decoration: none; }
+  .dia [data-explain-ref]:hover .blk-box, .dia [data-explain-ref]:focus-visible .blk-box { stroke: var(--vscode-focusBorder); stroke-width: 2.5; }
+  .dia [data-explain-ref]:focus-visible { outline: none; }
+  .dia .st rect { fill: var(--vscode-editorWidget-background, var(--vscode-editor-background)); stroke: var(--vscode-charts-orange); stroke-width: 1.5; }
+  .dia .st.st-idle rect { stroke-width: 3; }
+  .dia .st.st-end rect { stroke: var(--vscode-charts-green); }
+  .dia .st text { font-size: 12px; font-weight: 600; }
+  .dia text.fsm-elabel { font-size: 10px; paint-order: stroke; stroke: var(--vscode-editor-background); stroke-width: 3px; }
+  /* one path in focus: the rest fades */
+  .focus-data .dia .w-ctl:not(.legend):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]), .focus-data .dia .w-addr:not(.legend) { opacity: .15; }
+  .focus-data .dia .blk-ctl, .focus-data .dia .blk-addr { opacity: .4; }
+  .focus-control .dia .w-data:not(.legend), .focus-control .dia [data-wire$=ready], .focus-control .dia [data-wire=fifo_full], .focus-control .dia [data-wire=fifo_pop] { opacity: .15; }
+  .focus-control .dia .blk-data { opacity: .4; }
+  .focus-bp .dia .w:not(.legend):not([data-wire=almost_full]):not([data-wire$=ready]):not([data-wire=fifo_full]):not([data-wire=fifo_pop]):not([data-wire=c_wrp]) { opacity: .15; }
+  .focus-bp .dia [data-wire=almost_full] .w-line, .focus-bp .dia [data-wire$=ready] .w-line, .focus-bp .dia [data-wire=fifo_full] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  .focus-err .dia .w:not(.legend):not([data-wire=status]):not([data-wire=irq]):not([data-wire=c_rdp]):not([data-wire=c_wrp]):not([data-wire=c_pack]) { opacity: .15; }
+  .focus-err .dia [data-wire=status] .w-line, .focus-err .dia [data-wire=irq] .w-line, .focus-err .dia [data-wire=c_rdp] .w-line, .focus-err .dia [data-wire=c_wrp] .w-line, .focus-err .dia [data-wire=c_pack] .w-line { stroke-width: 3; stroke-dasharray: none; }
+  @media (forced-colors: active) { .dia .w-ctl .w-line, .dia .w-err .w-line { stroke-dasharray: 5 4; } }
+  /* /dia-css */
+  .lede { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+  section { padding: 14px 16px; margin: 0 0 14px; }
+  section > h2 { font-size: 1.15em; margin: 0 0 6px; }
+  .mono, code { font-family: var(--vscode-editor-font-family); }
+  .eq { font-family: var(--vscode-editor-font-family); padding: 8px 12px; border-left: 3px solid var(--cx-accent); background: var(--vscode-textBlockQuote-background); }
+  table.sig { border-collapse: collapse; margin-top: 8px; font-size: 0.92em; }
+  table.sig td, table.sig th { padding: 3px 12px 3px 0; text-align: left; }
+  table.sig th { color: var(--vscode-descriptionForeground); font-weight: 500; }
+  .ruler { display: flex; height: 26px; margin: 8px 0 2px; font-family: var(--vscode-editor-font-family); font-size: 0.8em; }
+  .ruler > span { display: flex; align-items: center; justify-content: center; border: 1px solid var(--vscode-panel-border); margin-right: 2px; border-radius: 3px; }
+  .ruler > .b4k { background: color-mix(in srgb, var(--vscode-charts-red) 35%, transparent); }
+  .ruler > .bmax { background: color-mix(in srgb, var(--vscode-charts-blue) 35%, transparent); }
+  .ruler > .btail { background: color-mix(in srgb, var(--vscode-charts-green) 35%, transparent); }
+  .ruler > .edge { border: none; border-left: 2px dashed var(--vscode-editor-foreground); border-radius: 0; width: 0; margin-right: 2px; }
+</style>
+</head>
+<body>
+<p class="lede">Two instances walk the transfer: <span class="mono">u_rd_agen</span> over the source, <span class="mono">u_wr_agen</span> over the destination. Each hands <span class="mono">dma_ctrl</span> one burst at a time.</p>
+
+<section data-explain-anchor="iface" data-explain-title="Inside">
+  <h2>Inside dma_addr_gen</h2>
+  <p>All datapath, except two control wires: <span class="mono">load</span> and <span class="mono">burst_ack</span> in, <span class="mono">has_burst</span> out. Click a block to see its code.</p>
+<!-- diagram:inside -->
+<svg class="dia" viewBox="0 0 760 300" role="img" aria-label="Inside dma_addr_gen: two registers, addr_q and left_q, hold where the next burst starts and how many beats remain. Three limits feed a minimum: MAX_BURST, left_q and the beats to the next 4 KB boundary. burst_ack from dma_ctrl advances both registers by the chosen burst length."><g class="w w-data" data-wire="a"><path class="w-line" d="M190,60 L260,60"/><polygon class="w-head" points="260.0,60.0 251.2,65.5 251.2,54.5"/><text class="w-label" x="225" y="52" text-anchor="middle">addr_q</text></g><g class="w w-data" data-wire="b"><path class="w-line" d="M420,50 L455,50 L455,90 L490,90"/><polygon class="w-head" points="490.0,90.0 481.2,95.5 481.2,84.5"/></g><g class="w w-data" data-wire="c"><path class="w-line" d="M190,120 L490,120"/><polygon class="w-head" points="490.0,120.0 481.2,125.5 481.2,114.5"/><text class="w-label" x="340" y="112" text-anchor="middle">left_q</text></g><g class="w w-data" data-wire="len"><path class="w-line" d="M640,110 L740,110"/><polygon class="w-head" points="740.0,110.0 731.2,115.5 731.2,104.5"/><text class="w-label" x="690" y="102" text-anchor="middle">burst_len</text></g><g class="w w-data" data-wire="ad"><path class="w-line" d="M105,140 L105,180 L740,180"/><polygon class="w-head" points="740.0,180.0 731.2,185.5 731.2,174.5"/><text class="w-label" x="690" y="172" text-anchor="middle">burst_addr</text></g><g class="w w-addr" data-wire="tt"><path class="w-line" d="M260,235 L60,235 L60,140"/><polygon class="w-head" points="60.0,140.0 64.5,147.2 55.5,147.2"/><text class="w-label" x="160" y="228" text-anchor="middle">base · len</text></g><g class="w w-ctl" data-wire="ack"><path class="w-line" d="M740,250 L560,250 L560,230 L130,230 L130,140"/><polygon class="w-head" points="130.0,140.0 134.0,146.4 126.0,146.4"/><text class="w-label" x="650" y="243" text-anchor="middle">load · burst_ack</text></g><g class="w w-ctl" data-wire="hb"><path class="w-line" d="M150,140 L150,160 L740,160"/><polygon class="w-head" points="740.0,160.0 733.6,164.0 733.6,156.0"/><text class="w-label" x="690" y="155" text-anchor="middle">has_burst</text></g><g class="blk blk-data" data-block="regs" data-explain-ref="agen-regs" aria-label="addr_q · left_q: show its code"><rect class="blk-box" x="20" y="40" width="170" height="100" rx="6"/><rect class="blk-bar" x="20" y="40" width="170" height="5" rx="2"/><text class="blk-title" x="105.0" y="64" text-anchor="middle">addr_q · left_q</text><text class="blk-sub" x="105.0" y="80" text-anchor="middle">registers</text><text class="blk-line" x="105.0" y="98" text-anchor="middle">load: base, total_beats</text><text class="blk-line" x="105.0" y="111" text-anchor="middle">ack: += / −= burst_len</text></g><g class="blk blk-data" data-block="to4k" data-explain-ref="agen-4k" aria-label="to_4k: show its code"><rect class="blk-box" x="260" y="20" width="160" height="60" rx="6"/><rect class="blk-bar" x="260" y="20" width="160" height="5" rx="2"/><text class="blk-title" x="340.0" y="44" text-anchor="middle">to_4k</text><text class="blk-sub" x="340.0" y="60" text-anchor="middle">512 − addr_q[11:3]</text></g><g class="blk blk-data" data-block="min" data-explain-ref="agen-limits" aria-label="min of three: show its code"><rect class="blk-box" x="490" y="60" width="150" height="100" rx="6"/><rect class="blk-bar" x="490" y="60" width="150" height="5" rx="2"/><text class="blk-title" x="565.0" y="84" text-anchor="middle">min of three</text><text class="blk-sub" x="565.0" y="100" text-anchor="middle">MAX_BURST · to_4k · left_q</text></g><g class="blk blk-data" data-block="tot" data-explain-ref="agen-total" aria-label="total_beats: show its code"><rect class="blk-box" x="260" y="200" width="160" height="70" rx="6"/><rect class="blk-bar" x="260" y="200" width="160" height="5" rx="2"/><text class="blk-title" x="340.0" y="224" text-anchor="middle">total_beats</text><text class="blk-sub" x="340.0" y="240" text-anchor="middle">(off + len + 7) / 8</text></g><g class="w w-data legend"><path class="w-line" d="M20,290 L64,290"/><polygon class="w-head" points="72.0,290.0 64.8,294.5 64.8,285.5"/><text class="w-label" x="80" y="294">addresses and counts</text></g><g class="w w-addr legend"><path class="w-line" d="M280,290 L324,290"/><polygon class="w-head" points="332.0,290.0 324.8,294.5 324.8,285.5"/><text class="w-label" x="340" y="294">configuration</text></g><g class="w w-ctl legend"><path class="w-line" d="M540,290 L584,290"/><polygon class="w-head" points="592.0,290.0 584.8,294.5 584.8,285.5"/><text class="w-label" x="600" y="294">control</text></g></svg>
+<!-- /diagram:inside -->
+</section>
+
+<section data-explain-anchor="agen-total" data-explain-title="Beats">
+  <h2>How many beats the transfer touches</h2>
+  <p>A beat is 8 bytes on an 8-byte boundary. A transfer that starts 5 bytes into a beat touches those leading bytes' beat too, so the count is the offset plus the length, rounded up:</p>
+  <p class="eq">total_beats = (base[2:0] + len + 7) / 8</p>
+  <p>400 bytes from <span class="mono">0x0fa5</span>: (5 + 400 + 7) / 8 = 51 beats. The same 400 bytes to <span class="mono">0x2002</span>: (2 + 400 + 7) / 8 = 51.</p>
+</section>
+
+<section data-explain-anchor="agen-4k" data-explain-title="4 KB">
+  <h2>Distance to the next 4 KB boundary</h2>
+  <p>A burst may not cross a 4 KB page (the bus rule exists so a burst never spans two devices or two pages of a translation). In beats, the distance from <span class="mono">addr_q</span> to the next page is 512 minus the beat index within the page:</p>
+  <p class="eq">to_4k = 512 − addr_q[11:3]</p>
+  <p>At <span class="mono">0x0fa0</span>: 512 − 500 = 12 beats.</p>
+</section>
+
+<section data-explain-anchor="agen-limits" data-explain-title="Burst length">
+  <h2>The burst length: the smallest of three limits</h2>
+  <p><span class="mono">MAX_BURST</span> (16), the beats to the boundary, the beats left. Try a base just below a boundary, or a length that isn't a multiple of 128 bytes; hover a burst to highlight the line whose limit won.</p>
+  <explain-widget src="widgets/split-4k.tsx" title="4 KB burst splitter" height="430">
+    <script type="application/json">{"base": 4005, "len": 400}</script>
+    <p>400 bytes from 0x0fa5 read as bursts of 12 (cut at the 4 KB boundary at 0x1000), 16, 16 and 7 (the tail) beats:</p>
+    <div class="ruler" role="img" aria-label="Bursts of 12, 16, 16 and 7 beats; a 4 KB boundary after the first">
+      <span class="b4k" style="flex: 12">12 · 4 KB</span><span class="edge"></span><span class="bmax" style="flex: 16">16</span><span class="bmax" style="flex: 16">16</span><span class="btail" style="flex: 7">7</span>
+    </div>
+  </explain-widget>
+</section>
+
+<section data-explain-anchor="agen-regs" data-explain-title="Registers">
+  <h2>Two registers, two strobes</h2>
+  <table class="sig">
+    <tr><th>strobe</th><th><span class="mono">addr_q</span></th><th><span class="mono">left_q</span></th></tr>
+    <tr><td class="mono">load</td><td>base, rounded down to a beat</td><td>total_beats</td></tr>
+    <tr><td class="mono">burst_ack</td><td>+ burst_len × 8</td><td>− burst_len</td></tr>
+  </table>
+  <p><span class="mono">has_burst</span> is just <span class="mono">left_q != 0</span>. The burst on offer is always the current one, combinationally, so <span class="mono">dma_ctrl</span> can issue it in the same cycle it sees it.</p>
+</section>
+</body>
+</html>
