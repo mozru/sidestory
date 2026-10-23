@@ -33,6 +33,16 @@ describe('refFromDir', () => {
     expect(ref('/ws/.sidestory/x/.sidestory/y')).toBeUndefined();
     expect(ref('/ws/.sidestory')).toBeUndefined();
   });
+
+  it('accepts a workspace that itself lies under a .sidestory folder', () => {
+    workspace.root = Uri.file('/home/.sidestory/ws');
+    try {
+      expect(ref('/home/.sidestory/ws/.sidestory/x')?.root.path).toBe('/home/.sidestory/ws');
+      expect(ref('/home/.sidestory/ws/.sidestory/x/.sidestory/y')).toBeUndefined();
+    } finally {
+      workspace.root = Uri.file('/ws');
+    }
+  });
 });
 
 describe('package.json', () => {

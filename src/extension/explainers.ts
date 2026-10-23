@@ -22,10 +22,13 @@ export const MAX_CODE_BYTES = 10_000_000;
 export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   const parts = dir.path.split('/').filter(Boolean);
   const name = parts.at(-1);
-  if (!name || parts.at(-2) !== '.sidestory' || parts.slice(0, -2).includes('.sidestory')) return undefined;
+  if (!name || parts.at(-2) !== '.sidestory') return undefined;
   const root = vscode.Uri.joinPath(dir, '..', '..');
   const folder = vscode.workspace.getWorkspaceFolder(dir);
   if (!folder || !(root.path + '/').startsWith(folder.uri.path.replace(/\/?$/, '/'))) return undefined;
+  // Only below the workspace folder: a workspace that itself sits under some `.sidestory` folder still works.
+  const inside = parts.slice(folder.uri.path.split('/').filter(Boolean).length, -2);
+  if (inside.includes('.sidestory')) return undefined;
   return { name, dir, root };
 }
 

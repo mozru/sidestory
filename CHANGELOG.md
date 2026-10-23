@@ -4,7 +4,7 @@
 
 - **Explainers are now sidestories.** The folder is `.sidestory/<name>/` (was `.explain/<name>/`) and the page is `sidestory.html` (was `explainer.html`); rename both in your repository. Commands, settings, messages and the checker say "sidestory", and **Open Explainer** is now **Open Sidestory…**. The panel's tab shows the sidestory's title with the Sidestory icon. The HTML format is unchanged: `data-explain-*`, `<explain-widget>` and `import … from 'explainer'` stay as they are. Widgets ask for consent once more after the move.
 - The checker's `--json` report names the folder `sidestory` (was `explainer`), and its `not-in-explain` warning is now `not-in-sidestory`.
-- Code blocks (`<pre><code class="language-…">`) are colored in your VS Code theme, for 27 languages.
+- Code blocks (`<pre><code class="language-…">`) are colored in your VS Code theme, for 23 languages.
 - A second example, `examples/tiny-lsm`: a log-structured merge-tree key-value store in Python, with seven sidestories and three widgets.
 - A Claude Code plugin with a skill that writes sidestories: `/plugin marketplace add mozru/sidestory`, then `/plugin install sidestory@sidestory`.
 - Fixes: a sidestory copied into a workspace where widgets were once allowed asks before running its widgets; Next Step pressed while a sidestory is still rendering is applied once it has; restored editor state no longer snaps the panel back to an earlier step; a resize keeps the step you chose in view.

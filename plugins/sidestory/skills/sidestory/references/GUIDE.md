@@ -224,7 +224,7 @@ export default function Refill({ width = 64 }: { width?: number }) {
 
 | Setting | Default | |
 |---|---|---|
-| `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through the sidestory (never in high contrast themes). |
+| `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ## Troubleshooting

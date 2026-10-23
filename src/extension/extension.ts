@@ -279,7 +279,7 @@ function target(): ExplainerSession | undefined {
 async function pickExplainer(): Promise<ExplainerRef | undefined> {
   const all = await findExplainers();
   if (all.length === 0) {
-    void vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with a page and manifest.json.');
+    void vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with sidestory.html and manifest.json.');
     return undefined;
   }
   if (all.length === 1) return all[0];

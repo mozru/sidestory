@@ -140,7 +140,7 @@ Exactly these, checked by the compiler with "did you mean" suggestions (anything
 | `motion/react`; also `motion` and `framer-motion` | Motion (Framer Motion). |
 | `lucide-react` | Icons, by name: `import { Play, Pause } from 'lucide-react'` (also `PlayIcon`, `LucidePlay`). Not `import * as Icons`: only the icons you name are sent. |
 | `lodash` | `import _ from 'lodash'` or named imports. |
-| `explainer` | The SDK (§6). Widgets import helpers from the module `explainer`: the format's name, like `data-explain-*` and `<explain-widget>`; a sidestory is the folder. |
+| `explainer` | The SDK (§6). Widgets import helpers from the module `explainer`. That is the format's name, like `data-explain-*` and `<explain-widget>`; a sidestory is the folder. |
 | `./file.tsx`, `./file.ts`, `./file.jsx`, `./file.js` | Your own modules in the sidestory folder (extension optional; `./dir` finds `index.tsx`). |
 | `./data.json` | JSON data, imported as a value. |
 | `./image.svg`, `.png`, `.webp`, `.jpg`, `.jpeg`, `.gif` | The image as a data URL: `import url from './ring.svg'`, then `<img src={url} alt="…">`. |

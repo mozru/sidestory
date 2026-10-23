@@ -821,12 +821,19 @@ test('the panel chrome says "sidestory": no accessible name, tooltip or visible 
     base: await base(page, 'retry-backoff'),
     trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Retry with backoff' }],
   });
+  await send(page, { type: 'details', items: [{ name: 'missing', found: false, title: '', summary: '', steps: 0 }] });
   await expect(page.getByRole('navigation', { name: 'Sidestory path' })).toBeVisible();
   await expect(page.getByRole('main', { name: 'Sidestory' })).toBeAttached();
+  await expect(frame(page).getByRole('button', { name: 'No sidestory named “missing”' })).toBeVisible();
+  // The panel's own document and the content frame (where detail boxes live): names, tooltips and text.
   const chrome = await page.evaluate(() => {
-    const out = [document.title, document.body.innerText];
-    for (const el of document.querySelectorAll('[aria-label], [title], [placeholder], [alt]')) {
-      for (const a of ['aria-label', 'title', 'placeholder', 'alt']) out.push(el.getAttribute(a) ?? '');
+    const out: string[] = [];
+    const docs = [document, document.querySelector<HTMLIFrameElement>('iframe.cx-content-frame')!.contentDocument!];
+    for (const doc of docs) {
+      out.push(doc.body.innerText);
+      for (const el of doc.querySelectorAll('[aria-label], [title], [placeholder], [alt]')) {
+        for (const a of ['aria-label', 'title', 'placeholder', 'alt']) out.push(el.getAttribute(a) ?? '');
+      }
     }
     return out.join('\n');
   });
