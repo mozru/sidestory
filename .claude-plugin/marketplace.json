@@ -1,0 +1,14 @@
+{
+  "name": "sidestory",
+  "owner": { "name": "Sidestory contributors" },
+  "metadata": {
+    "description": "Claude Code plugins for Sidestory, the VS Code extension that shows explainers beside your code."
+  },
+  "plugins": [
+    {
+      "name": "sidestory",
+      "source": "./plugins/sidestory",
+      "description": "Write Sidestory explainers: step-by-step walkthroughs of code with diagrams and interactive widgets, beside the code in VS Code."
+    }
+  ]
+}

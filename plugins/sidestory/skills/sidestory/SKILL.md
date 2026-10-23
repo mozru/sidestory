@@ -1,0 +1,47 @@
+---
+name: sidestory
+description: Write or update Sidestory explainers — step-by-step walkthroughs of code with diagrams and optional interactive React widgets, shown beside the code in VS Code and linked to it both ways. Use when the user asks to explain, walk through, document or visualize code "with Sidestory", asks for an explainer, a code walkthrough or a block diagram of how some code works, or mentions `.explain/`, explainer.html or manifest.json in a `.explain/` folder.
+---
+
+# Writing Sidestory explainers
+
+A Sidestory explainer is a folder `.explain/<name>/` at the repository root (the folder that holds `.explain/`):
+
+- `explainer.html`: any HTML and CSS, no script. Sections marked `data-explain-anchor` are the steps.
+- `manifest.json`: which code each anchor is about.
+- `assets/` (optional), plus widget `.tsx` files when the explainer has interactive widgets.
+
+The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code. The editor follows the steps, and the steps follow the cursor.
+
+## Before writing
+
+Read the reference that ships with this skill:
+
+- [references/GUIDE.md](references/GUIDE.md), section "Writing an explainer": the anchors, the manifest, overview → detail explainers, styling, and what's supported. Read it every time.
+- [references/WIDGETS.md](references/WIDGETS.md): read all of it before writing an interactive widget. Most explanations don't need one, and CSS-only interactivity comes first.
+
+Look at existing explainers in `.explain/` and match their style.
+
+## Workflow
+
+1. **Understand the code** the user named. Read it properly, follow the data and control flow, and find the non-obvious parts (invariants, edge cases, the reason it's built this way).
+2. **Plan the steps**, usually 4–10: the big picture first (what it is, its interface, a block diagram), then the parts in the order data or control flows through them. For a big system, write an overview explainer plus one detail explainer per part, linked with `data-explain-detail`.
+3. **Write `manifest.json`.** Give it a `title`, a one-line `summary`, and one anchor per step: `file` (path from the repository root, `/` separators), `range` (1-based first and last line), `highlight` (identifiers worth marking), and `color` (a theme color id such as `charts.blue`, never a hex value). Start from the `version: 1` form in the guide and let the checker pin it.
+4. **Write `explainer.html`.** One `<section data-explain-anchor="…" data-explain-title="…">` per step, each with a heading, tight prose and a diagram where it helps. Draw diagrams in inline SVG or HTML/CSS using the theme's CSS variables (`var(--vscode-…)`, `var(--cx-accent)`), so they work in light and dark themes. Use `<a data-explain-ref="anchor">…</a>` to point at other code from inside a step. Give diagrams `role="img"` and an `aria-label`.
+5. **Check and pin** with the checker that ships inside the extension:
+
+   ```bash
+   node "$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs ~/.cursor*/extensions/paperkite.sidestory-*/dist/check.cjs 2>/dev/null | tail -n 1)" .explain/<name> --pin
+   ```
+
+   Fix every error and read every warning, then run it again until it's clean.
+   - If no checker is found, the extension isn't installed here. Tell the user to install `paperkite.sidestory`, and in VS Code run **Sidestory: Pin Anchors to the Current Code**.
+   - **Never pass `--yes-widgets-may-read` on your own.** If the checker says some anchors weren't pinned because widgets read their code, show the user the files and line ranges, explain that the widgets will be able to read that code, and add the flag only if they agree.
+6. **Tell the user** the explainer's name, and that they open it with **Sidestory: Open Explainer**. If it has widgets, also say that VS Code will ask them once before running the widgets.
+
+## Style
+
+- Explain *why* and *how it fits together*, not a line-by-line paraphrase. The code is right beside the text.
+- Keep each step short enough to read while looking at the code: a heading, a few sentences, and at most one figure.
+- Name real signals, functions and variables in `<span class="mono">` or `<code>`, and make the anchors point at exactly the code the step talks about.
+- When updating an existing explainer after code changes, run the checker first. It reports anchors whose code changed or was lost. Fix the text and the ranges, then pin again.

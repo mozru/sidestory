@@ -1,0 +1,10 @@
+{
+  "name": "sidestory",
+  "description": "Teaches Claude to write Sidestory explainers: step-by-step walkthroughs of code with diagrams and interactive widgets, shown beside the code in VS Code.",
+  "version": "0.1.0",
+  "author": { "name": "Sidestory contributors" },
+  "homepage": "https://github.com/mozru/sidestory",
+  "repository": "https://github.com/mozru/sidestory",
+  "license": "MIT",
+  "keywords": ["explainer", "walkthrough", "documentation", "diagram", "vscode"]
+}
