@@ -22,6 +22,7 @@ import { decideCodeAccess, languageOf, type GitFacts } from './code-access.ts';
 import { compileWidget, type CompileResult } from './compile.ts';
 import { acknowledge, contentHash, decideConsent, EMPTY_CONSENT, linesCovered, type ConsentRecord, type FileGit, type WidgetFile } from './consent.ts';
 import { Git } from './git.ts';
+import type { SidestoryWatcher } from '../nav/watcher.ts';
 import { anchorsRead, scanWidgets, widgetSources } from './html.ts';
 import { isSecretPath } from './secret-files.ts';
 import { Escalations, HeartbeatWatchdog, ourModal, QUIET, TICK_MS } from './watchdog.ts';
@@ -124,17 +125,21 @@ export class WidgetHost implements vscode.Disposable {
   /** Recreates a panel in the same column at the same place (watchdog recovery); set by the extension. */
   recreate: (port: WidgetSessionPort) => void = () => {};
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, shared?: SidestoryWatcher) {
     this.context = context;
     // Widget files are observed in every explainer, not only while a panel is open, so edits are recorded
-    // as the user's own (and diagnostics stay current).
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.sidestory/*/**');
-    const changed = (uri: vscode.Uri) => this.onWorkspaceFile(uri);
+    // as the user's own (and diagnostics stay current). The extension's one watcher on .sidestory/ is shared
+    // (docs/NAVIGATION-PLAN.md §6.4); without it (tests), a watcher of our own.
+    if (shared) {
+      this.subscriptions.push(shared.onDidChange((e) => {
+        if (e.ref && e.rel) this.onWorkspaceFile(e.uri);
+      }));
+    } else {
+      const watcher = vscode.workspace.createFileSystemWatcher('**/.sidestory/*/**');
+      const changed = (uri: vscode.Uri) => this.onWorkspaceFile(uri);
+      this.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
+    }
     this.subscriptions.push(
-      watcher,
-      watcher.onDidChange(changed),
-      watcher.onDidCreate(changed),
-      watcher.onDidDelete(changed),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.widgets.enabled')) this.refreshAll();
       }),

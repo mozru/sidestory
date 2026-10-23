@@ -5,7 +5,7 @@ import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
 import { explainerNameSchema, parseManifest } from '../core/manifest.ts';
 import type { Resolution } from '../core/resolve.ts';
 import { resolveAnchor } from '../core/resolve.ts';
-import { anchorAtLine } from '../core/sections.ts';
+import { displayText, plainForMessage } from '../core/display-text.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
@@ -14,6 +14,7 @@ import type { GroupView } from './columns.ts';
 import type { Requester } from './highlight/host.ts';
 import type { HighlightService } from './highlight/service.ts';
 import { codeColumnFor } from './columns.ts';
+import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
@@ -21,6 +22,7 @@ import { log } from './log.ts';
 import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
 import type { AnchorStates } from './pin.ts';
+import type { PreparedTextCache } from './prepared-cache.ts';
 import type { PanelWidgets, WidgetHost, WidgetSessionPort } from './widgets/host.ts';
 import { ourModal } from './widgets/watchdog.ts';
 
@@ -49,6 +51,12 @@ export interface SessionHost {
   widgets?: WidgetHost;
   /** Code block highlighting (docs/HIGHLIGHT-PLAN.md); without it, code blocks stay plain. */
   highlight?: HighlightService;
+  /** Prepared texts shared with the workspace index (docs/NAVIGATION-PLAN.md §7.2). */
+  prepared?: PreparedTextCache;
+  /** The outline's step count for a sidestory (one number in the tree and the peek, §8.2). */
+  stepCount?(dir: vscode.Uri): number | undefined;
+  /** A sidestory was shown in this panel (open, switch, dive): the recent list (§7.5). */
+  opened?(ref: ExplainerRef): void;
 }
 
 export interface SessionOptions {
@@ -116,6 +124,17 @@ export class ExplainerSession implements vscode.Disposable {
   private highlightTimes: number[] = [];
   private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposeEmitter.event;
+  private readonly resolveEmitter = new vscode.EventEmitter<string>();
+  /** A file's anchors were resolved again (its URI string): the index's overlay reads `resolutionsFor`. */
+  readonly onDidResolve = this.resolveEmitter.event;
+  private readonly switchEmitter = new vscode.EventEmitter<void>();
+  /** The panel moved to another sidestory (dive, Back, `openAt`): overlays from before are void. */
+  readonly onDidSwitch = this.switchEmitter.event;
+  private readonly navigateEmitter = new vscode.EventEmitter<void>();
+  /** The reader acted in the panel (a step, a dive or Back, a widget input, a scroll that moved the section). */
+  readonly onDidNavigate = this.navigateEmitter.event;
+  /** A preview panel: the next sidestory opened from code or a list replaces it (§7.5). */
+  private previewing = false;
 
   private readonly host: SessionHost;
   private readonly widgets: PanelWidgets | undefined;
@@ -140,7 +159,11 @@ export class ExplainerSession implements vscode.Disposable {
       }));
     }
     this.watchExplainer();
+    host.opened?.(this.ref);
     this.subscriptions.push(
+      this.resolveEmitter,
+      this.switchEmitter,
+      this.navigateEmitter,
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
       panel.onDidDispose(() => this.dispose()),
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
@@ -152,6 +175,62 @@ export class ExplainerSession implements vscode.Disposable {
   /** The explainer shown now. */
   get ref(): ExplainerRef {
     return this.trail[this.trail.length - 1]!;
+  }
+
+  /** Bumped whenever the trail changes; overlays are tagged with it and checked when read. */
+  get currentGeneration(): number {
+    return this.generation;
+  }
+
+  /** The trail's refs, root first. */
+  get trailRefs(): readonly ExplainerRef[] {
+    return this.trail;
+  }
+
+  /**
+   * This sidestory's resolutions in one file, while it still shows `dir` at `generation` (§7.2): the index uses
+   * them instead of resolving the same anchors again. Undefined when the panel moved on, or knows nothing yet.
+   */
+  resolutionsFor(uri: string, dir: string, generation: number): Map<string, Resolution> | undefined {
+    if (this.disposed || generation !== this.generation || this.ref.dir.toString() !== dir || !this.manifest) return undefined;
+    const out = new Map<string, Resolution>();
+    for (const a of this.anchorsIn(uri)) {
+      const r = this.resolutions.get(a.id);
+      if (r) out.set(a.id, r);
+    }
+    return out;
+  }
+
+  /** Whether this is a preview panel (§7.5). */
+  get preview(): boolean {
+    return this.previewing;
+  }
+
+  set preview(on: boolean) {
+    if (on === this.previewing) return;
+    this.previewing = on;
+    this.post({ type: 'preview', on });
+  }
+
+  /**
+   * Shows a section: makes it active, moves the panel there and reveals its code without moving the cursor.
+   * During a switch (until the page has the new sidestory), only the pending `active` is set; `init` carries it.
+   */
+  goTo(anchorId: string): void {
+    if (this.initGeneration !== this.generation || !this.manifest) {
+      this.active = anchorId;
+      return;
+    }
+    if (!this.manifest.anchors.has(anchorId)) return;
+    this.setActive(anchorId);
+    this.post({ type: 'syncTo', anchorId });
+    this.requestReveal(anchorId, false);
+  }
+
+  /** Shows another trail in this panel (§7.5 `openAt`), at a section if given. */
+  async show(trail: readonly [ExplainerRef, ...ExplainerRef[]], active?: string): Promise<void> {
+    this.navRequest++; // a dive still waiting is overtaken
+    await this.switchTo([...trail], active);
   }
 
   /** The trail (root first) and the active section, to recreate this panel elsewhere. */
@@ -228,14 +307,14 @@ export class ExplainerSession implements vscode.Disposable {
       return;
     }
     if (this.trail.length >= MAX_TRAIL) {
-      void vscode.window.showInformationMessage(`Can't open "${name}": details nest at most ${MAX_TRAIL} levels deep.`);
+      void vscode.window.showInformationMessage(`Can't open "${plainForMessage(name, 64)}": details nest at most ${MAX_TRAIL} levels deep.`);
       return;
     }
     const found = (await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES)) !== undefined;
     // Another dive or Back came in meanwhile (a double click, say): the newer one wins.
     if (request !== this.navRequest || this.disposed || this.trail.some(onTrail)) return;
     if (!found) {
-      void vscode.window.showWarningMessage(`There's no sidestory called "${name}" next to this one.`);
+      void vscode.window.showWarningMessage(`There's no sidestory called "${plainForMessage(name, 64)}" next to this one.`);
       return;
     }
     await this.switchTo([...this.trail, child], section);
@@ -244,6 +323,7 @@ export class ExplainerSession implements vscode.Disposable {
   /** Shows another explainer in this panel: resets everything that belongs to the current one. */
   private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
     const generation = ++this.generation;
+    this.switchEmitter.fire();
     this.widgets?.onSwitch();
     this.recovered = false;
     this.positions.set(this.ref.dir.toString(), this.active);
@@ -257,7 +337,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.manifestError = null;
     this.html = '';
     this.title = this.titles.get(this.ref.dir.toString()) ?? '';
-    this.panel.title = this.title || this.ref.name;
+    this.panel.title = displayText(this.title || this.ref.name, 120) || 'Sidestory';
     this.lastError = null;
     this.warnings = null;
     this.resolutions.clear();
@@ -272,6 +352,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.active = active ?? this.positions.get(this.ref.dir.toString());
     this.decorations.set(undefined);
     this.watchExplainer();
+    this.host.opened?.(this.ref);
     await this.reload();
     // A later switch took over while this one loaded: it sends its own `init`.
     if (generation !== this.generation || this.disposed) return;
@@ -291,6 +372,7 @@ export class ExplainerSession implements vscode.Disposable {
       trail: this.trail.map((t) => ({ name: t.name, title: this.titles.get(t.dir.toString()) || t.name })),
     });
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
+    if (this.previewing) this.post({ type: 'preview', on: true });
     this.widgets?.onInit();
   }
 
@@ -311,7 +393,8 @@ export class ExplainerSession implements vscode.Disposable {
       const m = parsed.manifest;
       this.titles.set(child.dir.toString(), m.title);
       this.detailFiles.set(name, { title: m.title || name, files: new Set([...m.anchors.values()].map((a) => vscode.Uri.joinPath(child.root, a.file).toString())) });
-      items.push({ name, found: true, title: m.title || name, summary: m.summary ?? '', steps: m.anchors.size });
+      // The outline's step count when the index knows it, so the tree and the peek never disagree (§8.2).
+      items.push({ name, found: true, title: m.title || name, summary: m.summary ?? '', steps: this.host.stepCount?.(child.dir) ?? m.anchors.size });
     }
     this.post({ type: 'details', items });
   }
@@ -431,7 +514,8 @@ export class ExplainerSession implements vscode.Disposable {
   private setTitle(title: string): void {
     this.title = title;
     this.titles.set(this.ref.dir.toString(), title);
-    this.panel.title = title || this.ref.name;
+    // Plain text in the tab, but still repository text: no controls or bidirectional tricks (§11.4).
+    this.panel.title = displayText(title || this.ref.name, 120) || 'Sidestory';
   }
 
   /**
@@ -445,7 +529,7 @@ export class ExplainerSession implements vscode.Disposable {
     void this.host.memento.update(UNPINNED_NOTICE_KEY, [...seen, ref.dir.toString()].slice(-200));
     const pin = 'Pin Anchors';
     void vscode.window
-      .showInformationMessage(`Sections of “${this.title || ref.name}” can't tell when their code changes until its anchors are pinned.`, pin)
+      .showInformationMessage(`Sections of “${plainForMessage(this.title || ref.name, 120)}” can't tell when their code changes until its anchors are pinned.`, pin)
       .then((choice) => {
         if (choice === pin) void vscode.commands.executeCommand('sidestory.pin', ref.dir);
       });
@@ -509,7 +593,9 @@ export class ExplainerSession implements vscode.Disposable {
 
     const source = await readInside(vscode.Uri.parse(uri), this.ref.root, MAX_CODE_BYTES);
     if (!stillCurrent()) return;
-    const text = source === undefined ? undefined : PreparedText.from(source);
+    // An open document's text is shared with the index (one PreparedText per document version, §7.2).
+    const doc = source !== undefined && this.host.prepared ? vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri) : undefined;
+    const text = source === undefined ? undefined : doc && !doc.isClosed && this.host.prepared ? this.host.prepared.get(uriKey(uri), doc.version, () => source) : PreparedText.from(source);
     let changed = false;
     let sliceStart = Date.now();
     for (const a of this.anchorsIn(uri)) {
@@ -526,6 +612,7 @@ export class ExplainerSession implements vscode.Disposable {
       this.resolutions.set(a.id, next);
     }
     if (changed && publish) this.publishAnchors();
+    this.resolveEmitter.fire(uri);
     if (changed && this.active && this.anchorsIn(uri).some((a) => a.id === this.active)) this.decorateActive(this.decorations.isDimmed());
     this.widgets?.onResolved(uri);
   }
@@ -598,7 +685,9 @@ export class ExplainerSession implements vscode.Disposable {
     // The reader moved in the code: stop fading the rest of the file.
     if (ids.size && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
-      const id = ids.size ? anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line) : undefined;
+      // The shared cursor helper (cursor.ts): every anchor of this file counts, as before (the authoring plan's
+      // "only sections count" fix passes `sections` here once the panel reports them).
+      const id = ids.size ? anchorForCursor([...this.resolutions].filter(([k]) => ids.has(k)), line) : undefined;
       if (!id) {
         // Remembered only once the page got it: a hidden panel gets the hint next time.
         if (detail && detail[0] !== this.lastHint && this.post({ type: 'childHint', name: detail[0], title: detail[1].title })) {
@@ -620,8 +709,16 @@ export class ExplainerSession implements vscode.Disposable {
     const parsed = fromWebviewSchema.safeParse(raw);
     if (!parsed.success) return; // the webview renders untrusted HTML; ignore anything malformed
     const m: FromWebview = parsed.data;
+    if (this.previewing && endsPreview(m)) {
+      this.preview = false;
+      this.navigateEmitter.fire();
+    }
     if (this.widgets?.handle(m)) return;
     switch (m.type) {
+      case 'keepOpen':
+        this.preview = false;
+        this.navigateEmitter.fire();
+        break;
       case 'ready':
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
         this.assetBytes = 0;
@@ -862,12 +959,30 @@ export class ExplainerSession implements vscode.Disposable {
 }
 
 /**
+ * Reader actions that end a preview panel's status (§7.5): a step change, a dive or Back, a widget input, or a
+ * scroll that moved the active section. A cursor sync from the code isn't one (the panel posts nothing for it).
+ */
+function endsPreview(m: FromWebview): boolean {
+  switch (m.type) {
+    case 'focusAnchor':
+    case 'dive':
+    case 'goTo':
+    case 'openRef':
+    case 'widgetStates':
+    case 'widgetReveal':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
  * For each change, how many characters followed its end on that line before the event.
  * In the new document that tail sits right after the change's inserted text, on a line we can
  * find by adding up the line counts of the changes above it. Changes that share a line with
  * another change are skipped (their columns shift), and get no value.
  */
-function endTails(doc: vscode.TextDocument, changes: readonly vscode.TextDocumentContentChangeEvent[]): Map<vscode.TextDocumentContentChangeEvent, number> {
+export function endTails(doc: vscode.TextDocument, changes: readonly vscode.TextDocumentContentChangeEvent[]): Map<vscode.TextDocumentContentChangeEvent, number> {
   const out = new Map<vscode.TextDocumentContentChangeEvent, number>();
   const sorted = [...changes].sort((x, y) => x.range.start.compareTo(y.range.start));
   let shift = 0;

@@ -74,7 +74,8 @@
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "workspaceContains:**/.sidestory/*/manifest.json",
-    "onWebviewPanel:sidestory.explainer"
+    "onWebviewPanel:sidestory.explainer",
+    "onStartupFinished"
   ],
   "contributes": {
     "commands": [
@@ -127,6 +128,76 @@
         "command": "sidestory.addWidgetTypes",
         "title": "Add Widget Types",
         "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.goToStep",
+        "title": "Go to Step…",
+        "category": "Sidestory",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "sidestory.showHere",
+        "title": "Show Sidestories for This Code",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.showSidestories",
+        "title": "Show Sidestories",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.copyAgentPrompt",
+        "title": "Copy a Prompt for Your Agent",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.openAt",
+        "title": "Open Sidestory at a Step",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.statusOpen",
+        "title": "Open the Sidestory for This Line",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.tree.open",
+        "title": "Open",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.openInNewPanel",
+        "title": "Open in New Panel",
+        "category": "Sidestory",
+        "icon": "$(empty-window)"
+      },
+      {
+        "command": "sidestory.tree.filter",
+        "title": "Filter…",
+        "category": "Sidestory",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sidestory.tree.clearFilter",
+        "title": "Clear Filter",
+        "category": "Sidestory",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "sidestory.tree.refresh",
+        "title": "Refresh",
+        "category": "Sidestory",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sidestory.tree.revealInExplorer",
+        "title": "Reveal in Explorer",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.tree.copyPath",
+        "title": "Copy Path",
+        "category": "Sidestory"
       }
     ],
     "keybindings": [
@@ -154,6 +225,27 @@
           "default": true,
           "scope": "application",
           "markdownDescription": "Run interactive widgets in sidestories. Widgets are code from the repository: they never run in Restricted Mode, and each workspace asks before running them. A repository's own settings can't turn this on."
+        },
+        "sidestory.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "language-overridable",
+          "markdownDescription": "Show a CodeLens above code that a sidestory explains (at most 30 per file; hidden while that sidestory is open in a panel)."
+        },
+        "sidestory.gutter.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Mark the first line of code a sidestory explains with a book in the gutter, and in the overview ruler."
+        },
+        "sidestory.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show in the status bar which sidestory explains the cursor's line, when no open panel shows it."
+        },
+        "sidestory.sidebar.followPanel": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Select the sidestory a panel shows in the Sidestories view."
         }
       }
     },
@@ -237,6 +329,16 @@
           "highContrast": "editorError.foreground",
           "highContrastLight": "editorError.foreground"
         }
+      },
+      {
+        "id": "sidestory.explainedRuler",
+        "description": "Overview ruler mark for code a sidestory explains (with sidestory.gutter.enabled).",
+        "defaults": {
+          "dark": "editorInfo.foreground",
+          "light": "editorInfo.foreground",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
       }
     ],
     "menus": {
@@ -248,6 +350,42 @@
         {
           "command": "sidestory.prevStep",
           "when": "sidestory.active"
+        },
+        {
+          "command": "sidestory.tree.open",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.openAt",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.statusOpen",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.openInNewPanel",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.tree.filter",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.tree.clearFilter",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.tree.refresh",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.tree.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.tree.copyPath",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -255,6 +393,11 @@
           "command": "sidestory.reanchor",
           "when": "sidestory.active && editorHasSelection",
           "group": "navigation@90"
+        },
+        {
+          "command": "sidestory.showHere",
+          "when": "sidestory.coveredHere",
+          "group": "navigation@91"
         }
       ],
       "explorer/context": [
@@ -263,8 +406,114 @@
           "when": "explorerResourceIsFolder && resourceDirname =~ /\\.sidestory$/",
           "group": "navigation@90"
         }
+      ],
+      "view/title": [
+        {
+          "command": "sidestory.goToStep",
+          "when": "view == sidestory.tree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sidestory.tree.filter",
+          "when": "view == sidestory.tree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sidestory.tree.clearFilter",
+          "when": "view == sidestory.tree && sidestory.treeFiltered",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sidestory.tree.refresh",
+          "when": "view == sidestory.tree",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sidestory.openInNewPanel",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "inline"
+        },
+        {
+          "command": "sidestory.tree.open",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "sidestory.openInNewPanel",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "sidestory.goToStep",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "2_steps@1"
+        },
+        {
+          "command": "sidestory.pin",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "sidestory.checkWidgets",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/ && isWorkspaceTrusted",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "sidestory.copyWidgetCheckCommand",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "3_edit@3"
+        },
+        {
+          "command": "sidestory.tree.revealInExplorer",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "4_path@1"
+        },
+        {
+          "command": "sidestory.tree.copyPath",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "group": "4_path@2"
+        }
       ]
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sidestory",
+          "title": "Sidestory",
+          "icon": "media/sidestory.svg"
+        }
+      ]
+    },
+    "views": {
+      "sidestory": [
+        {
+          "id": "sidestory.tree",
+          "name": "Sidestories",
+          "when": "sidestory.available",
+          "icon": "media/sidestory.svg",
+          "contextualTitle": "Sidestory"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sidestory.tree",
+        "when": "workbenchState == empty",
+        "contents": "Open a folder to see its sidestories.\n[Open Folder](command:workbench.action.files.openFolder)"
+      },
+      {
+        "view": "sidestory.tree",
+        "when": "workbenchState != empty && sidestory.indexState == empty",
+        "contents": "No sidestories in this workspace yet. A sidestory is a folder in .sidestory/ with a page and a manifest.json, shown beside the code and linked to it.\n[Read the Guide](https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md)\n[Copy a Prompt for Your Agent](command:sidestory.copyAgentPrompt)\nOr, in Claude Code, run /plugin install sidestory@sidestory, then ask: \"Explain how … works, with Sidestory.\""
+      },
+      {
+        "view": "sidestory.tree",
+        "when": "workbenchState != empty && sidestory.indexState != empty && sidestory.indexState != ready",
+        "contents": "Looking for sidestories…"
+      }
+    ]
   },
   "scripts": {
     "build": "node scripts/build.mjs",

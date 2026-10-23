@@ -155,6 +155,7 @@ let needsIndex = true;
 app.innerHTML = staticHtml`
 <header class="cx-header">
   <nav class="cx-trail" aria-label="Sidestory path" hidden></nav>
+  <div class="cx-preview" hidden><span class="codicon codicon-eye" aria-hidden="true"></span><span class="cx-preview-text">Preview: the next sidestory you open from code or a list replaces this one.</span><button class="cx-preview-keep" type="button">Keep Open</button></div>
   <div class="cx-titlerow">
     <h1 class="cx-title"></h1>
     <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>
@@ -201,6 +202,8 @@ const trailEl = $('.cx-trail');
 const bannerOpen = $<HTMLButtonElement>('.cx-banner-open');
 const headerEl = $('.cx-header');
 const backEl = $<HTMLButtonElement>('.cx-back');
+/** Shown while this is a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
+const previewEl = $('.cx-preview');
 /** Widget frames live here, over the content, scrolling with it (docs/WIDGETS-PLAN.md §3). */
 const layerEl = $('.cx-widget-layer');
 
@@ -545,6 +548,9 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'highlightTheme':
       highlighter.onMessage(m);
       break;
+    case 'preview':
+      previewEl.hidden = !m.on;
+      break;
     case 'focusQuery':
       widgets?.focusAnswer(m.id);
       break;
@@ -616,6 +622,8 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   if (pendingInit) {
     const init = pendingInit;
     pendingInit = undefined;
+    // A section the extension asked for (Go to Step, a CodeLens) wins over the place saved for this sidestory.
+    if (init.active && init.active !== state.active) state = { ...state, scroll: undefined };
     active = init.active ?? active;
     restoreScroll();
     // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
@@ -1435,6 +1443,10 @@ pillShow.addEventListener('click', () => {
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
 backEl.addEventListener('click', () => goTo(trail.length - 2));
+$('.cx-preview-keep').addEventListener('click', () => {
+  previewEl.hidden = true;
+  vscode.postMessage({ type: 'keepOpen' });
+});
 bannerOpen.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: 'manifest.json' }));
 
 document.addEventListener('keydown', onKey);

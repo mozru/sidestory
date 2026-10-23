@@ -1,5 +1,6 @@
 **
 !dist/extension.cjs
+!dist/full.cjs
 !dist/webview/**
 !dist/compile-worker.cjs
 !dist/highlight-worker.cjs
@@ -13,5 +14,8 @@
 !LICENSE
 dist/**/*.map
 !media/icon.png
+!media/icon-preview.svg
+!media/sidestory.svg
+!media/gutter.svg
 !CHANGELOG.md
 !SECURITY.md

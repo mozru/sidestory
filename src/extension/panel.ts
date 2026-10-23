@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import { WIDGET_BOOTSTRAP } from '../shared/widget-bootstrap.ts';
+import { PANEL_VIEW_TYPE } from './bootstrap-shared.ts';
 import type { ExplainerRef } from './explainers.ts';
 
 /** CSP source allowing exactly the widget bootstrap script. */
 export const BOOTSTRAP_HASH = `sha256-${createHash('sha256').update(WIDGET_BOOTSTRAP, 'utf8').digest('base64')}`;
 
-export const VIEW_TYPE = 'sidestory.explainer';
+export const VIEW_TYPE = PANEL_VIEW_TYPE;
 
 export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscode.WebviewPanelOptions & vscode.WebviewOptions {
   return {

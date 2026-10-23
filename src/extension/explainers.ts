@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { log } from './log.ts';
+import { open as openFile } from 'node:fs/promises';
 import { assertSize, realPathInside } from './paths.ts';
 
 /** One explainer folder: `<root>/.sidestory/<name>/`. */
@@ -32,13 +33,28 @@ export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   return { name, dir, root };
 }
 
-export async function findExplainers(): Promise<ExplainerRef[]> {
-  const manifests = await vscode.workspace.findFiles('**/.sidestory/*/manifest.json', '**/{node_modules,.git,dist,out,build,target}/**', 200);
-  if (manifests.length === 200) log.warn('Found 200 or more sidestories; only the first 200 are listed.');
-  return manifests
-    .map((m) => refFromDir(vscode.Uri.joinPath(m, '..')))
-    .filter((r): r is ExplainerRef => r !== undefined)
-    .sort((a, b) => a.dir.path.localeCompare(b.dir.path));
+/**
+ * `length` bytes at `offset` of a file under `root` (symlinks followed and checked, size capped), read with a
+ * positioned read: the workspace index's quote slices (docs/NAVIGATION-PLAN.md §7.2). Undefined when the
+ * file is missing, outside, too big, shorter than the slice, or not on the local file system.
+ */
+export async function readSliceInside(uri: vscode.Uri, root: vscode.Uri, offset: number, length: number, maxBytes: number): Promise<Uint8Array | undefined> {
+  if (uri.scheme !== 'file' || root.scheme !== 'file' || offset < 0 || length <= 0 || offset + length > maxBytes) return undefined;
+  const real = await realPathInside(uri.fsPath, root.fsPath);
+  if (!real) return undefined;
+  let handle: Awaited<ReturnType<typeof openFile>> | undefined;
+  try {
+    handle = await openFile(real, 'r');
+    const size = (await handle.stat()).size;
+    if (size > maxBytes || offset + length > size) return undefined;
+    const buf = new Uint8Array(length);
+    const { bytesRead } = await handle.read(buf, 0, length, offset);
+    return bytesRead === length ? buf : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 /** File names on macOS and Windows are case-insensitive by default: a key under which `RTL/x.sv` and `rtl/x.sv` are one file. */

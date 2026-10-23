@@ -120,7 +120,9 @@ export type ToWebview =
    * `data-explain-ref` names, or a `data-explain-code` link in its canonical form (`path` or `path#target`, as
    * `codeTargets` sent it). Neither: the cursor is in none of them. The panel rings those elements (`cx-here`).
    */
-  | { type: 'here'; ref?: string; link?: string };
+  | { type: 'here'; ref?: string; link?: string }
+  /** A preview panel (docs/NAVIGATION-PLAN.md §7.5): the next sidestory opened from code or a list replaces it. */
+  | { type: 'preview'; on: boolean };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -187,7 +189,9 @@ export type FromWebview =
    * every `data-explain-anchor` id, nested ones included; `refs`: the anchors `data-explain-ref` names; `links`: the
    * distinct `data-explain-code` links, canonical (`path` or `path#target`, inheritance applied).
    */
-  | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] };
+  | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] }
+  /** Keep Open on a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
+  | { type: 'keepOpen' };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -242,6 +246,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('widgetsUnresponsive'), ...breadcrumbs }),
   z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
   z.object({ type: z.literal('focusTheft') }),
+  z.object({ type: z.literal('keepOpen') }),
   z.object({
     type: z.literal('highlight'),
     blocks: z

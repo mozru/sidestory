@@ -56,6 +56,42 @@ body {
   display: none;
 }
 
+/* A preview panel (docs/NAVIGATION-PLAN.md §7.5): reused by the next sidestory opened from code or a list. */
+.cx-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 6px;
+  font-size: 0.9em;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cx-preview[hidden] {
+  display: none;
+}
+
+.cx-preview-keep {
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font: inherit;
+  font-style: normal;
+  cursor: pointer;
+}
+
+.cx-preview-keep:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.cx-preview-keep:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
 .cx-crumb {
   overflow-wrap: anywhere;
 }
