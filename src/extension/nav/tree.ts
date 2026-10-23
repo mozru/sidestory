@@ -30,6 +30,8 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   readonly onDidChangeTreeData = this.emitter.event;
   /** Node id → node, filled as nodes are created and cleared on refresh (for `getParent` and `reveal`). */
   private readonly nodes = new Map<string, TreeNode>();
+  /** Nodes per sidestory key, for repainting one sidestory's nodes when its drift arrives. */
+  private readonly byEntry = new Map<string, TreeNode[]>();
   private filterText: string;
   private filtered: { matches: Set<string>; needed: Set<string>; shown: number; total: number } | undefined;
   view: vscode.TreeView<TreeNode> | undefined;
@@ -44,8 +46,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       this.emitter,
       index.onDidChange(() => this.refresh()),
       drift.onDidChange((key) => {
-        const changed = [...this.nodes.values()].filter((n) => (n.kind === 'sidestory' || n.kind === 'leaf') && n.entry.key === key);
-        for (const n of changed) this.emitter.fire(n);
+        for (const n of this.byEntry.get(key) ?? []) this.emitter.fire(n);
       }),
     );
   }
@@ -64,6 +65,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
 
   refresh(): void {
     this.nodes.clear();
+    this.byEntry.clear();
     this.filtered = this.filterText ? this.computeFilter(this.filterText) : undefined;
     this.updateMessage();
     this.emitter.fire();
@@ -114,7 +116,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   getChildren(node?: TreeNode): TreeNode[] {
     if (!node) {
       const pkgs = this.index.packages().filter((p) => !this.filtered || [...p.entries.keys()].some((k) => this.filtered!.matches.has(k)));
-      if (this.index.packages().length > 1) return pkgs.map((p) => this.make({ kind: 'package', id: this.id('p', p.key), pkg: p }));
+      if (this.index.packageCount > 1) return pkgs.map((p) => this.make({ kind: 'package', id: this.id('p', p.key), pkg: p }));
       const only = pkgs[0];
       return only ? this.packageChildren(only, undefined) : [];
     }
@@ -203,6 +205,11 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     const existing = this.nodes.get(n.id);
     if (existing) return existing as T;
     this.nodes.set(n.id, n);
+    if (n.kind === 'sidestory' || n.kind === 'leaf') {
+      const list = this.byEntry.get(n.entry.key);
+      if (list) list.push(n);
+      else this.byEntry.set(n.entry.key, [n]);
+    }
     return n;
   }
 
@@ -223,7 +230,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   getTreeItem(node: TreeNode): vscode.TreeItem {
     switch (node.kind) {
       case 'package': {
-        const item = new vscode.TreeItem(node.pkg.label, this.index.packages().length <= TREE_LIMITS.expandPackages ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+        const item = new vscode.TreeItem(node.pkg.label, this.index.packageCount <= TREE_LIMITS.expandPackages ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
         item.id = node.id;
         item.description = `${node.pkg.entries.size} sidestor${node.pkg.entries.size === 1 ? 'y' : 'ies'}`;
         item.iconPath = new vscode.ThemeIcon('folder-library');
@@ -283,7 +290,11 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     // naming the *other* place, so it doesn't look like a duplicate.
     if ((e.group || e.top) && parents.length) {
       if (node.path.length === 1) parts.push(`also under ${this.nameOf(pkg, parents[0]!)}${parents.length > 1 ? ` and ${parents.length - 1} more` : ''}`);
-      else parts.push(e.group ? `also in ${e.group}` : 'also at the top level');
+      else {
+        // The group as the view shows it (merged spelling); Start here is listed at the top level, not in its group.
+        const label = pkg?.groups.find((g) => g.members.includes(e.ref.name))?.label;
+        parts.push(e.group && label && pkg?.graph.startHere !== e.ref.name ? `also in ${label}` : 'also at the top level');
+      }
     }
     if (e.truncated) parts.push('page too complex to outline');
     item.description = parts.join(' · ');
@@ -337,7 +348,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
 
   /** Builds (or finds) the nodes along a path, with parents, so `reveal` can walk them. */
   private pathNode(pkg: IndexPackage, path: string[]): TreeNode | undefined {
-    const multi = this.index.packages().length > 1;
+    const multi = this.index.packageCount > 1;
     let parent: TreeNode | undefined = multi ? this.make({ kind: 'package', id: this.id('p', pkg.key), pkg }) : undefined;
     const topName = path[0]!;
     const top = this.entryByName(pkg, topName);
@@ -367,6 +378,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   dispose(): void {
     for (const d of this.subscriptions) d.dispose();
     this.nodes.clear();
+    this.byEntry.clear();
   }
 }
 

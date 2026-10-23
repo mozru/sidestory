@@ -19,9 +19,10 @@ export async function realPathInside(file: string, root: string): Promise<string
 
 export class TooLargeError extends Error {}
 
-/** Throws TooLargeError when the file is bigger than `maxBytes`. */
+/** Throws TooLargeError when the file is bigger than `maxBytes`, and an error when it isn't a regular file (a FIFO would block). */
 export async function assertSize(file: string, maxBytes: number): Promise<void> {
   const s = await stat(file);
+  if (!s.isFile()) throw new Error(`${file} is not a regular file`);
   if (s.size > maxBytes) throw new TooLargeError(`${file} is larger than ${Math.round(maxBytes / 1e6)} MB`);
 }
 

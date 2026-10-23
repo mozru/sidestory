@@ -155,7 +155,7 @@ let needsIndex = true;
 app.innerHTML = staticHtml`
 <header class="cx-header">
   <nav class="cx-trail" aria-label="Sidestory path" hidden></nav>
-  <div class="cx-preview" hidden><span class="codicon codicon-eye" aria-hidden="true"></span><span class="cx-preview-text">Preview: the next sidestory you open from code or a list replaces this one.</span><button class="cx-preview-keep" type="button">Keep Open</button></div>
+  <div class="cx-preview" role="status" hidden><span class="codicon codicon-eye" aria-hidden="true"></span><span class="cx-preview-text">Preview: the next sidestory you open from code or a list replaces this one.</span><button class="cx-preview-keep" type="button">Keep Open</button></div>
   <div class="cx-titlerow">
     <h1 class="cx-title"></h1>
     <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>

@@ -125,6 +125,34 @@ describe('drift', () => {
     expect(drift.get(entry('b'))).toEqual({ outOfDate: 7, lost: 0, unchecked: 0 });
   });
 
+  it('an invalidation that arrives while drift is being computed keeps the result dirty', async () => {
+    write(join(root, 'f.ts'), code(20));
+    story(root, '', 'b', { anchors: { x: { file: 'f.ts', range: [1, 2] } } });
+    await start();
+    const e = entry('b');
+    await driftOf('b'); // cached and clean
+    const d = drift as unknown as { compute(e: unknown): Promise<unknown> };
+    const real = d.compute.bind(drift);
+    d.compute = async (x) => {
+      const r = await real(x);
+      drift.invalidateAll(); // the file changed meanwhile
+      return r;
+    };
+    drift.invalidateAll();
+    expect(drift.get(e)).toBeUndefined(); // dirty: asks again
+    await new Promise<void>((resolve) => {
+      const sub = drift.onDidChange((k) => {
+        if (k === e.key) {
+          sub.dispose();
+          resolve();
+        }
+      });
+    });
+    d.compute = real;
+    // The mark made during the computation survived it.
+    expect((drift as unknown as { dirty: Map<string, number> }).dirty.has(e.key)).toBe(true);
+  });
+
   it('asks nothing for a sidestory the index hasn’t read yet, and keeps short stamps', async () => {
     write(join(root, 'f.ts'), code(20));
     story(root, '', 'b', { anchors: { x: { file: 'f.ts', range: [1, 2] } } });

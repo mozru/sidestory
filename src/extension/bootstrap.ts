@@ -20,16 +20,19 @@ let api: FullApi | undefined;
 /** Loads dist/full.cjs once. */
 function load(context: vscode.ExtensionContext): Promise<FullApi> {
   if (full) return full;
+  let loaded = false;
   const loading = Promise.resolve().then(() => {
     void vscode.commands.executeCommand('setContext', 'sidestory.indexState', 'loading');
     const mod = loader.load();
+    loaded = true;
     api = mod.activateFull(context);
     return api;
   });
   full = loading;
-  // A failed load isn't remembered: say so once, and let the next command try again.
+  // Said once, here. Only a failure to load the bundle is retried by the next caller: once activateFull has
+  // run, part of it may be registered, and running it again would register everything twice.
   loading.catch((e: unknown) => {
-    if (full === loading) full = undefined;
+    if (full === loading && !loaded) full = undefined;
     void vscode.window.showErrorMessage(`Sidestory couldn't start: ${e instanceof Error ? e.message : String(e)}`);
   });
   return loading;
@@ -45,7 +48,12 @@ export function activate(context: vscode.ExtensionContext): void {
   for (const id of COMMANDS) {
     context.subscriptions.push(
       vscode.commands.registerCommand(id, async (...args: unknown[]) => {
-        const a = await loadWithProgress(context);
+        let a: FullApi;
+        try {
+          a = await loadWithProgress(context);
+        } catch {
+          return undefined; // already reported by load(): one message, not a second from the command
+        }
         return a.commands[id]?.(...args);
       }),
     );

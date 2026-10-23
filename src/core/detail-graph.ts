@@ -42,7 +42,8 @@ export interface DetailGraph {
   /** Ordered by title (locale, numeric-aware), then name. */
   readonly tops: readonly string[];
   /** Top first, the node last; a top's own path is just itself. Undefined only for unknown names. */
-  primaryPath(name: string): readonly string[] | undefined;
+  /** At most the last `max` names (default 16, the trail limit), ending at `name`. */
+  primaryPath(name: string, max?: number): readonly string[] | undefined;
   readonly startHere: string | undefined;
   readonly edgeCount: number;
   /** The edge cap was reached: later links were dropped. */
@@ -50,6 +51,8 @@ export interface DetailGraph {
 }
 
 export const MAX_GRAPH_EDGES = 50_000;
+/** Primary paths are cut to this many names, the panel's trail limit (MAX_TRAIL). */
+export const MAX_PRIMARY_PATH = 16;
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -233,7 +236,6 @@ export function buildDetailGraph(nodes: readonly GraphNodeInput[], opts: { maxEd
     if (withDetails.length === 1) startHere = names[withDetails[0]!];
   }
 
-  const cache = new Map<number, readonly string[]>();
   const toNames = (list: readonly number[]) => list.map((i) => names[i]!);
   const empty: readonly string[] = [];
   return {
@@ -256,17 +258,13 @@ export function buildDetailGraph(nodes: readonly GraphNodeInput[], opts: { maxEd
       return i !== undefined && top[i] === 1;
     },
     tops: toNames(topList),
-    primaryPath: (name) => {
+    primaryPath: (name, max = MAX_PRIMARY_PATH) => {
       const i = index.get(name);
       if (i === undefined || via[i] === -2) return undefined;
-      let p = cache.get(i);
-      if (!p) {
-        const path: string[] = [];
-        for (let at = i; at >= 0; at = via[at]!) path.push(names[at]!);
-        p = path.reverse();
-        cache.set(i, p);
-      }
-      return p;
+      // Walked on demand and cut to the last `max` names: a 5,000-node chain must not cost a path per node.
+      const path: string[] = [];
+      for (let at = i; at >= 0 && path.length < max; at = via[at]!) path.push(names[at]!);
+      return path.reverse();
     },
     startHere,
     edgeCount,

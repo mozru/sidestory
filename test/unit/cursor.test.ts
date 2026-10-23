@@ -34,7 +34,7 @@ describe('coveringAnchors', () => {
 });
 
 describe('anchorForCursor', () => {
-  it('agrees with the core anchorAtLine rule on random inputs', () => {
+  it('picks the first of coveringAnchors (the same tie-break), and agrees with anchorAtLine unless only the tie-break differs', () => {
     let seed = 7;
     const rand = (n: number) => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -49,7 +49,15 @@ describe('anchorForCursor', () => {
         m.set(`a${i}`, s === 'lost' ? lost : r(start, start + rand(20), s));
       }
       const line = 1 + rand(70);
-      expect(anchorForCursor(m, line)).toBe(anchorAtLine(m, line));
+      const got = anchorForCursor(m, line);
+      expect(got).toBe(coveringAnchors(m, line)[0]?.id);
+      // anchorAtLine keeps the first of equal ranges; the shared helper breaks ties by start, then id.
+      const old = anchorAtLine(m, line);
+      if (got !== old) {
+        const size = (id: string) => m.get(id)!.range!.end - m.get(id)!.range!.start;
+        expect(size(got!)).toBe(size(old!));
+        expect(m.get(got!)!.state === 'stale').toBe(m.get(old!)!.state === 'stale');
+      }
     }
   });
   it('honours sections', () => {

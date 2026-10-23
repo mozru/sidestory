@@ -44,30 +44,29 @@ export function coveringAnchors(resolved: Resolved, line: number, opts: CursorOp
     if (stale && opts.includeStale === false) continue;
     out.push({ id, range: r.range, stale });
   }
-  return out.sort(
-    (a, b) =>
-      Number(a.stale) - Number(b.stale) ||
-      a.range.end - a.range.start - (b.range.end - b.range.start) ||
-      a.range.start - b.range.start ||
-      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  return out.sort(compare);
+}
+
+/** Best first: trustworthy before stale, then the tightest range, then the earliest start, then id. */
+function compare(a: CursorCandidate, b: CursorCandidate): number {
+  return (
+    Number(a.stale) - Number(b.stale) ||
+    a.range.end - a.range.start - (b.range.end - b.range.start) ||
+    a.range.start - b.range.start ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   );
 }
 
 export function anchorForCursor(resolved: Resolved, line: number, opts: CursorOptions = {}): string | undefined {
+  // One pass, the same order as coveringAnchors (so ties go the same way everywhere).
   let best: CursorCandidate | undefined;
   for (const [id, r] of resolved) {
     if (!r.range || line < r.range.start || line > r.range.end) continue;
     if (opts.sections && !opts.sections.has(id)) continue;
     const stale = r.state === 'stale';
     if (stale && opts.includeStale === false) continue;
-    const size = r.range.end - r.range.start;
-    if (
-      !best ||
-      (best.stale && !stale) ||
-      (best.stale === stale && size < best.range.end - best.range.start)
-    ) {
-      best = { id, range: r.range, stale };
-    }
+    const cand = { id, range: r.range, stale };
+    if (!best || compare(cand, best) < 0) best = cand;
   }
   return best?.id;
 }

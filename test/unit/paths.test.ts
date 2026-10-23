@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,5 +72,15 @@ describe('writeFileAtomic', () => {
     symlinkSync(join(dir, 'victim'), join(dir, 'link.json'), 'file');
     await expect(writeFileAtomic(join(dir, 'link.json'), 'x')).rejects.toThrow(/link/);
     expect(readFileSync(join(dir, 'victim'), 'utf8')).toBe('precious');
+  });
+});
+
+describe('assertSize', () => {
+  it.skipIf(process.platform === 'win32')('refuses what isn’t a regular file (a FIFO would block a read)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cx-fifo-'));
+    const fifo = join(dir, 'pipe');
+    execFileSync('mkfifo', [fifo]);
+    await expect(assertSize(fifo, 1000)).rejects.toThrow(/not a regular file/);
+    await expect(assertSize(dir, 1000)).rejects.toThrow(/not a regular file/);
   });
 });

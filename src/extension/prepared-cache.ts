@@ -43,7 +43,8 @@ export class PreparedTextCache {
     this.entries.set(key, e);
   }
 
-  private drop(key: string): void {
+  /** Forgets a document's prepared text (it was closed). */
+  drop(key: string): void {
     const e = this.entries.get(key);
     if (!e) return;
     clearTimeout(e.timer);

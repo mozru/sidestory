@@ -3,7 +3,7 @@
 // editors (at most 8 at a time), with quotes read as slices of their manifests (§7.2); results are kept for
 // 60 s after a document is hidden, in a 20-document LRU. Nothing here reads files that aren't anchored.
 import * as vscode from 'vscode';
-import { escapeIcons, middleTruncate } from '../../core/display-text.ts';
+import { displayText, escapeIcons, middleTruncate } from '../../core/display-text.ts';
 import type { LineRange, Quote } from '../../core/manifest.ts';
 import type { AnchorState, Resolution } from '../../core/resolve.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
@@ -60,7 +60,9 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
   /** Bumped per document on every edit and resolve: work that finds it changed stops at its next slice. */
   private readonly seq = new Map<string, number>();
   /** The resolve running per document, with the version it started for. */
-  private readonly inflight = new Map<string, { version: number; p: Promise<void> }>();
+  private readonly inflight = new Map<string, { version: number; gen: number; p: Promise<void> }>();
+  /** Bumped when the index or a panel changes: a resolve started before then is stale even for the same version. */
+  private gen = 0;
   /** Documents whose lenses VS Code asked for before the results were ready (it got []): told when they are. */
   private readonly servedEarly = new Set<string>();
   /** Resolves waiting for one of the 8 slots. */
@@ -266,10 +268,12 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const key = uriKey(doc.uri);
     const running = this.inflight.get(key);
     if (running) {
-      // A resolve for an older version gives up at its next check: start again for this one once it has.
-      return running.version === doc.version ? running.p : running.p.then(() => (this.results.get(key)?.version === doc.version || doc.isClosed ? undefined : this.resolve(doc)));
+      // Reused only for the same version and generation; an older one gives up at its next check, then this starts.
+      if (running.version === doc.version && running.gen === this.gen) return running.p;
+      return running.p.then(() => (this.results.get(key)?.version === doc.version || doc.isClosed || this.disposed ? undefined : this.resolve(doc)));
     }
     const version = doc.version;
+    const gen = this.gen;
     const p = new Promise<void>((done) => {
       const go = () => {
         this.running++;
@@ -285,7 +289,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       if (this.running < HERE_LIMITS.resolving) go();
       else this.queue.push(go);
     });
-    this.inflight.set(key, { version, p });
+    this.inflight.set(key, { version, gen, p });
     return p;
   }
 
@@ -294,8 +298,15 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const seq = (this.seq.get(key) ?? 0) + 1;
     this.seq.set(key, seq);
     const version = doc.version;
-    const current = () => !this.disposed && !doc.isClosed && this.seq.get(key) === seq && doc.version === version;
+    const gen = this.gen;
     const slots = this.index.anchorsIn(key);
+    // The index replaces an entry's arrays when it re-reads it: work on old ones stops at the next check.
+    const versions = new Map(slots.map((s) => [s.entry, s.entry.version]));
+    const entriesSame = () => {
+      for (const [e, v] of versions) if (e.version !== v) return false;
+      return true;
+    };
+    const current = () => !this.disposed && !doc.isClosed && this.seq.get(key) === seq && doc.version === version && this.gen === gen && entriesSame();
     const previous = this.results.get(key);
     const prevItems = new Map((previous?.items ?? []).map((it) => [`${it.entry.key}\u0000${it.id}`, it]));
     if (!slots.length) {
@@ -418,6 +429,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
 
   /** The index or a panel changed: resolve shown documents again. */
   private reresolveVisible(): void {
+    this.gen++;
     for (const r of this.results.values()) r.version = -1;
     this.onVisible();
     this.lensEmitter.fire();
@@ -525,7 +537,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const tooltip = [
       this.index.pathLabel(first.entry),
       this.stepTitle(first),
-      parents.length ? `Also under ${parents.slice(0, 5).map((n) => (this.index.sibling(first.entry, n) ? this.index.name(this.index.sibling(first.entry, n)!) : n)).join(', ')}${parents.length > 5 ? ` and ${parents.length - 5} more` : ''}` : '',
+      parents.length ? `Also under ${parents.slice(0, 5).map((n) => (this.index.sibling(first.entry, n) ? this.index.name(this.index.sibling(first.entry, n)!) : displayText(n, 64))).join(', ')}${parents.length > 5 ? ` and ${parents.length - 5} more` : ''}` : '',
       ...(() => {
         const more = new Set(items.map((it) => this.stepKey(it))).size - 1;
         return more > 0 ? [`${more} more cover this line`] : [];

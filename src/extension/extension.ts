@@ -80,6 +80,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const watcher = new SidestoryWatcher();
   const index = new SidestoryIndex(watcher);
   const prepared = new PreparedTextCache();
+  context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((d) => prepared.drop(uriKey(d.uri))));
   context.subscriptions.push(watcher, index, prepared);
 
   const widgets = new WidgetHost(context, watcher);
@@ -305,7 +306,9 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (!uri) return;
       const line = typeof a.line === 'number' ? a.line : editor && editor.document.uri.toString() === uri.toString() ? editor.selection.active.line + 1 : 1;
       const keys = Array.isArray(a.keys) && a.keys.length <= 200 && a.keys.every((k) => typeof k === 'string') ? (a.keys as string[]) : undefined;
-      const items = keys ? here.byKeys(uri, keys) : a.all === true ? here.all(uri) : here.covering(uri, line);
+      // The lens's own steps; if they have moved on since (a resolve landed), whatever covers the line now.
+      const counted = keys ? here.byKeys(uri, keys) : [];
+      const items = counted.length ? counted : a.all === true ? here.all(uri) : here.covering(uri, line);
       if (!items.length) {
         vscode.window.setStatusBarMessage('No sidestory covers this code.', 3000);
         return;

@@ -58,7 +58,10 @@ export function decodeEntities(s: string): string {
       const n = e[1] === 'x' || e[1] === 'X' ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
       return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
     }
-    return NAMED[e] ?? ENTITIES[e.toLowerCase()] ?? m;
+    // Own properties only: "&toString;" must not find Object.prototype.toString.
+    if (Object.hasOwn(NAMED, e)) return NAMED[e]!;
+    const lower = e.toLowerCase();
+    return Object.hasOwn(ENTITIES, lower) ? ENTITIES[lower]! : m;
   });
 }
 

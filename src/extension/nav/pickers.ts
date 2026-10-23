@@ -110,11 +110,13 @@ export async function pickSidestory(index: SidestoryIndex, recent: readonly stri
 function sidestoryItem(index: SidestoryIndex, e: IndexEntry): SidestoryItem {
   const pkg = index.packageOf(e);
   const parents = pkg?.graph.parents(e.ref.name).length ?? 0;
+  // Places other than its primary path: every parent when it is listed at the top level, else the others.
+  const others = index.primaryPath(e).length === 1 ? parents : parents - 1;
   // Folder names are repository text too (on Linux they can hold newlines and bidi controls).
   const where = displayText(`${vscode.workspace.asRelativePath(pkg?.folder ?? e.ref.dir, (vscode.workspace.workspaceFolders?.length ?? 0) > 1)}/${e.ref.name}`, 200);
   return {
     label: escapeIcons(index.pathLabel(e)),
-    description: escapeIcons(`${where}${parents > 1 ? ` · also under ${parents - 1} other${parents - 1 === 1 ? '' : 's'}` : ''}`),
+    description: escapeIcons(`${where}${others > 0 ? ` · also under ${others} other${others === 1 ? '' : 's'}` : ''}`),
     detail: e.summary ? escapeIcons(e.summary) : undefined,
     entry: e,
   };
@@ -149,7 +151,7 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
     }
     return ctx.current ? new Set([ctx.current.pkg]) : new Set();
   };
-  const multi = index.packages().length > 1;
+  const multi = index.packageCount > 1;
   const remembered = ctx.memento.get<string>(SCOPE_KEY);
   let scope: 'package' | 'all' = remembered === 'all' || remembered === 'package' ? remembered : multi && thisPackage().size ? 'package' : 'all';
   const build = () => {
@@ -162,8 +164,7 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
     let forced = false;
     if (total > PICK_LIMITS.steps && effective === 'all' && pkgs.size && multi) {
       effective = 'package';
-      forced = true;
-      scope = 'package';
+      forced = true; // the reader's own choice (scope) is kept for next time
       entries = treeOrder(index).filter((e) => pkgs.has(e.pkg));
       total = entries.reduce((n, e) => n + (e.outlined ? e.steps.length : e.ids.length), 0);
     }
@@ -193,7 +194,7 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
       if (again) qp.activeItems = [again];
     }
     qp.busy = busy || index.state === 'loading';
-    const scopeName = effective === 'one' && ctx.only ? escapeIcons(index.name(ctx.only)) : effective === 'package' ? [...pkgs].map((k) => index.packages().find((p) => p.key === k)?.label ?? '').filter(Boolean).map(escapeIcons).join(', ') || 'This package' : 'All packages';
+    const scopeName = effective === 'one' && ctx.only ? escapeIcons(index.name(ctx.only)) : effective === 'package' ? [...pkgs].map((k) => index.packageByKey(k)?.label ?? '').filter(Boolean).map(escapeIcons).join(', ') || 'This package' : 'All packages';
     // One package: the scope needs no name.
     qp.title = !multi && !ctx.only ? 'Go to Step' : `Go to Step: ${scopeName}`;
     qp.placeholder = forced

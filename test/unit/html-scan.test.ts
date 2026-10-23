@@ -36,6 +36,10 @@ describe('outlineHtml', () => {
     expect(o.steps[0]!.title).toBe('Reset → Idle — done… ‡† & &bogus;');
   });
 
+  it('never finds inherited names: "&toString;" stays as written', () => {
+    expect(outlineHtml('<section data-explain-anchor="s" data-explain-title="a &toString; &constructor; &__proto__;"></section>').steps[0]!.title).toBe('a &toString; &constructor; &__proto__;');
+  });
+
   it('skips comments, scripts, styles, templates and everything the sanitizer removes', () => {
     const o = outlineHtml(
       [

@@ -180,7 +180,12 @@ describe('detail graph', () => {
     expect(ms).toBeLessThan(50 * 3);
     const c = buildDetailGraph(chain);
     expect(c.tops).toEqual(['c0']);
-    expect(c.primaryPath('c4999')).toHaveLength(5000);
+    // Cut to the last 16 names (the trail limit), walked on demand: no path per node is kept.
+    expect(c.primaryPath('c4999')).toEqual(Array.from({ length: 16 }, (_, i) => `c${4984 + i}`));
+    expect(c.primaryPath('c4999', 5000)).toHaveLength(5000);
+    const t1 = performance.now();
+    for (const x of chain) c.primaryPath(x.name);
+    expect(performance.now() - t1).toBeLessThan(200);
   });
 });
 

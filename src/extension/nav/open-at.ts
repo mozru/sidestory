@@ -111,6 +111,7 @@ export class Navigator {
     });
     s.onDidDispose(() => {
       if (this.previewPanel === s) this.previewPanel = undefined;
+      this.lastTreeOpen = undefined; // its pending open may resolve to this closed panel
     });
   }
 
@@ -141,7 +142,8 @@ export class Navigator {
       }
     }
     const pending = this.place(ref, trail, anchor, newPanel, key);
-    if (source === 'tree') this.lastTreeOpen = { key, at: Date.now(), pending };
+    // A second click waits on this; a failed open must not reject it a second time.
+    if (source === 'tree') this.lastTreeOpen = { key, at: Date.now(), pending: pending.catch(() => undefined) };
     const session = await pending;
     if (session && doubleMode && this.previewPanel === session) this.keep(session);
     return session;

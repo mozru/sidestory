@@ -111,6 +111,26 @@ describe('bootstrap', () => {
     expect(loads).toBe(2);
   });
 
+  it('does not run activateFull twice when it threw (its partial registrations stay)', async () => {
+    const boot = await fresh();
+    let activations = 0;
+    boot.loader.load = () => {
+      loads++;
+      return {
+        activateFull: () => {
+          activations++;
+          throw new Error('half started');
+        },
+      } as never;
+    };
+    memory['sidestory.available'] = true;
+    boot.activate(context() as never);
+    await tick();
+    boot.activate(context() as never);
+    await tick();
+    expect(activations).toBe(1);
+  });
+
   it('looksLikeSidestory follows refFromDir’s layout rules', async () => {
     const { looksLikeSidestory } = await fresh();
     const u = (p: string) => stub.Uri.file(p) as never;

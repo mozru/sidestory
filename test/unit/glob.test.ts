@@ -1,6 +1,6 @@
 // Discovery exclusions (docs/NAVIGATION-PLAN.md §6.3): the built-in list merged with files.exclude.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_EXCLUDES, excludePatterns, expandBraces, globMatcher, joinGlobs } from '../../src/core/glob.ts';
+import { DEFAULT_EXCLUDES, EXCLUDE_LIMITS, excludePatterns, expandBraces, globMatcher, joinGlobs } from '../../src/core/glob.ts';
 
 describe('excludePatterns', () => {
   it('adds files.exclude entries set to true, and drops false and `when` entries', () => {
@@ -16,6 +16,28 @@ describe('excludePatterns', () => {
     expect(excludePatterns(undefined)).toEqual(DEFAULT_EXCLUDES);
     expect(excludePatterns(['x'])).toEqual(DEFAULT_EXCLUDES);
     expect(excludePatterns('x')).toEqual(DEFAULT_EXCLUDES);
+  });
+});
+
+describe('caps on files.exclude', () => {
+  it('takes at most 256 entries, deduplicated, and warns about the rest', () => {
+    const many = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`**/gen${i}`, true]));
+    const warnings: string[] = [];
+    const p = excludePatterns({ ...many, '**/node_modules': true }, (m) => warnings.push(m));
+    expect(new Set(p).size).toBe(p.length);
+    expect(p.length).toBeLessThanOrEqual(DEFAULT_EXCLUDES.length + 2 * EXCLUDE_LIMITS.entries);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/more than 256 entries/);
+  });
+
+  it('joins at most 1,024 alternatives into a glob of bounded length, defaults first', () => {
+    const braces = Array.from({ length: 300 }, (_, i) => `**/x${i}/{a,b,c,d,e,f,g,h}`);
+    const glob = joinGlobs([...DEFAULT_EXCLUDES, ...braces]);
+    expect(glob.split(',').length).toBeLessThanOrEqual(EXCLUDE_LIMITS.alternatives);
+    expect(glob.length).toBeLessThanOrEqual(EXCLUDE_LIMITS.globChars);
+    for (const d of DEFAULT_EXCLUDES) expect(glob).toContain(d);
+    const long = Array.from({ length: 200 }, (_, i) => `**/${'y'.repeat(900)}${i}`);
+    expect(joinGlobs(long).length).toBeLessThanOrEqual(EXCLUDE_LIMITS.globChars);
   });
 });
 

@@ -35,7 +35,8 @@ interface Cached {
 export class DriftQueue implements vscode.Disposable {
   private readonly index: SidestoryIndex;
   private readonly cache = new Map<string, Cached>();
-  private readonly dirty = new Set<string>();
+  /** Invalidations per key: a result is current only if none came in while it was computed. */
+  private readonly dirty = new Map<string, number>();
   private queue: string[] = [];
   private running = false;
   private lastTyped = 0;
@@ -88,13 +89,13 @@ export class DriftQueue implements vscode.Disposable {
   private invalidateFile(fileKey: string): void {
     if (!this.index.isAnchored(fileKey)) return;
     for (const s of this.index.anchorsIn(fileKey)) {
-      if (this.cache.has(s.entry.key)) this.dirty.add(s.entry.key);
+      if (this.cache.has(s.entry.key)) this.markDirty(s.entry.key);
     }
   }
 
   /** Everything is dirty (git HEAD moved, Refresh). Recomputed when shown again. */
   invalidateAll(): void {
-    for (const k of this.cache.keys()) this.dirty.add(k);
+    for (const k of this.cache.keys()) this.markDirty(k);
   }
 
   private kick(delay: number): void {
@@ -137,11 +138,13 @@ export class DriftQueue implements vscode.Disposable {
         const key = this.queue.shift()!;
         const e = this.index.entry(key);
         if (!e) continue;
+        const marks = this.dirty.get(key) ?? 0;
         const drift = await this.compute(e);
         if (drift && !this.disposed) {
           this.cache.delete(key);
           this.cache.set(key, drift);
-          this.dirty.delete(key);
+          // An invalidation that arrived during the computation keeps it dirty.
+          if ((this.dirty.get(key) ?? 0) === marks) this.dirty.delete(key);
           while (this.cache.size > DRIFT_LIMITS.cache) this.cache.delete(this.cache.keys().next().value!);
           this.emitter.fire(key);
         }
@@ -165,7 +168,12 @@ export class DriftQueue implements vscode.Disposable {
     if (!parsed.ok) return { stamp: `${e.manifestStamp}|`, drift: { outOfDate: 0, lost: 0, unchecked: 0 } };
     for (const a of parsed.manifest.anchors.values()) files.set(a.file, vscode.Uri.joinPath(e.ref.root, a.file));
     const stats = new Map<string, { mtime: number; size: number } | undefined>();
-    for (const [f, u] of files) stats.set(f, await stat(u));
+    for (const [f, u] of files) {
+      const s = await stat(u);
+      // An open document is read from its buffer: its version is part of the stamp, so unsaved edits count.
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === u.toString());
+      stats.set(f, s && doc?.isDirty ? { mtime: s.mtime, size: -doc.version } : s);
+    }
     // Kept short: the manifest's stamp and a hash of every anchored file's path and stat (a manifest can name
     // hundreds of long paths, and the cache holds 2,000 entries).
     const stamp = `${e.manifestStamp}|${hashStats(stats)}`;
@@ -213,6 +221,10 @@ export class DriftQueue implements vscode.Disposable {
   private note(bytes: number): void {
     const minute = Math.floor(Date.now() / 60_000);
     this.buckets.set(minute, (this.buckets.get(minute) ?? 0) + bytes);
+  }
+
+  private markDirty(key: string): void {
+    this.dirty.set(key, (this.dirty.get(key) ?? 0) + 1);
   }
 
   /** The cached drift of a key (tests). */

@@ -5,10 +5,10 @@
 // (§6.5, §11.1), so it runs in Restricted Mode too.
 import * as vscode from 'vscode';
 import { buildDetailGraph, MAX_GRAPH_EDGES, mergeGroups, type DetailGraph } from '../../core/detail-graph.ts';
-import { displayText } from '../../core/display-text.ts';
+import { displayText, middleTruncate } from '../../core/display-text.ts';
 import { excludePatterns, globMatcher, joinGlobs } from '../../core/glob.ts';
 import { OutlineScanner, type OutlineStep } from '../../core/html-scan.ts';
-import { anchorSpecSchema, parseManifest, type Anchor, type Quote } from '../../core/manifest.ts';
+import { anchorIdSchema, anchorSpecSchema, parseManifest, type Anchor, type Quote } from '../../core/manifest.ts';
 import { quoteHash, quotePositions } from '../../core/quote-positions.ts';
 import type { ExplainerRef } from '../explainers.ts';
 import { htmlUri, manifestUri, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readSliceInside, refFromDir, uriKey } from '../explainers.ts';
@@ -75,6 +75,8 @@ export interface IndexEntry {
   truncated: boolean;
   /** Anchors or steps cut by an aggregate cap. */
   capped: boolean;
+  anchorsCapped?: boolean;
+  stepsCapped?: boolean;
   state: EntryState;
   errors: string[];
   /** manifest.json had bytes that aren't UTF-8: offsets can't be trusted, quotes come from whole reads. */
@@ -110,6 +112,7 @@ const quoteSchema = anchorSpecSchema.shape.quote;
 export class SidestoryIndex implements vscode.Disposable {
   private readonly entries = new Map<string, IndexEntry>();
   private readonly packagesByKey = new Map<string, IndexPackage>();
+  private sortedPackages: IndexPackage[] | undefined;
   /** Interned file keys (`uriKey`): anchors store the number. */
   private readonly fileIds = new Map<string, number>();
   private readonly fileKeys: string[] = [];
@@ -185,8 +188,18 @@ export class SidestoryIndex implements vscode.Disposable {
     return this.entries.get(typeof dir === 'string' ? dir : uriKey(dir));
   }
 
-  packages(): IndexPackage[] {
-    return [...this.packagesByKey.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }) || a.key.localeCompare(b.key));
+  /** Packages sorted by label: cached until a package is added, removed or relabelled (the tree asks often). */
+  packages(): readonly IndexPackage[] {
+    this.sortedPackages ??= [...this.packagesByKey.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }) || a.key.localeCompare(b.key));
+    return this.sortedPackages;
+  }
+
+  get packageCount(): number {
+    return this.packagesByKey.size;
+  }
+
+  packageByKey(key: string): IndexPackage | undefined {
+    return this.packagesByKey.get(key);
   }
 
   packageOf(e: IndexEntry): IndexPackage | undefined {
@@ -212,15 +225,19 @@ export class SidestoryIndex implements vscode.Disposable {
     return refs as [ExplainerRef, ...ExplainerRef[]];
   }
 
-  /** "Top › Detail": the primary path's titles. */
+  /** "Top › Detail": the primary path's titles; long paths keep the first and the last two (≤ 200 characters). */
   pathLabel(e: IndexEntry): string {
     const pkg = this.packageOf(e);
-    return this.primaryPath(e)
+    const names = this.primaryPath(e);
+    const shown = names.length > 3 ? [names[0]!, '…', ...names.slice(-2)] : names;
+    const label = shown
       .map((n) => {
+        if (n === '…') return n;
         const x = pkg?.byName.get(n);
         return x ? this.name(x) : displayText(n, 120);
       })
       .join(' › ');
+    return middleTruncate(label, 200);
   }
 
   /** The entry for a sibling name in the same package. */
@@ -340,8 +357,9 @@ export class SidestoryIndex implements vscode.Disposable {
     // Caps are judged afresh; package labels follow the workspace folders (a single root may have become several).
     this.capped = false;
     for (const p of this.packagesByKey.values()) p.label = packageLabel(p.root);
+    this.sortedPackages = undefined;
     this.setState(this.entries.size ? this.stateValue : 'loading');
-    const patterns = excludePatterns(vscode.workspace.getConfiguration('files').get('exclude'));
+    const patterns = excludePatterns(vscode.workspace.getConfiguration('files').get('exclude'), (m) => log.warn(m));
     this.exclude = globMatcher(patterns);
     let found: vscode.Uri[] = [];
     try {
@@ -419,6 +437,7 @@ export class SidestoryIndex implements vscode.Disposable {
       const folder = vscode.Uri.joinPath(ref.dir, '..');
       pkg = { key: pkgKey, folder, root: ref.root, rootKey: uriKey(ref.root), label: packageLabel(ref.root), entries: new Map(), byName: new Map(), graph: EMPTY_GRAPH, groups: [], edges: 0 };
       this.packagesByKey.set(pkgKey, pkg);
+      this.sortedPackages = undefined;
     }
     pkg.entries.set(key, e);
     pkg.byName.set(ref.name, e);
@@ -438,7 +457,10 @@ export class SidestoryIndex implements vscode.Disposable {
     if (pkg) {
       pkg.entries.delete(key);
       if (pkg.byName.get(e.ref.name) === e) pkg.byName.delete(e.ref.name);
-      if (pkg.entries.size === 0) this.packagesByKey.delete(pkg.key);
+      if (pkg.entries.size === 0) {
+        this.packagesByKey.delete(pkg.key);
+        this.sortedPackages = undefined;
+      }
     }
   }
 
@@ -629,6 +651,8 @@ export class SidestoryIndex implements vscode.Disposable {
   /** Rebuilds the graphs of changed packages, forgets stale file tables, and tells readers once. */
   private commit(packages: Set<string>): void {
     this.rebuildGraphs(packages);
+    // Judged afresh after every batch: a cap that no longer bites stops being reported.
+    this.capped = [...this.entries.values()].some((e) => e.capped) || this.packages().some((p) => p.graph.edgesCapped);
     this.fileTables.clear();
     this.emitter.fire({ packages });
   }
@@ -643,7 +667,6 @@ export class SidestoryIndex implements vscode.Disposable {
         const nodes = [...p.entries.values()].map((e) => ({ name: e.ref.name, title: this.name(e), group: e.group, top: e.top, details: e.details }));
         p.graph = buildDetailGraph(nodes, { maxEdges: Math.max(0, INDEX_LIMITS.edges - used) });
         p.edges = p.graph.edgeCount;
-        if (p.graph.edgesCapped) this.capped = true;
         p.groups = mergeGroups(nodes);
       }
       used += p.edges;
@@ -765,11 +788,11 @@ export class SidestoryIndex implements vscode.Disposable {
       e.pageStamp = pageStamp;
       this.totals.steps -= e.steps.length;
       const room = Math.max(0, INDEX_LIMITS.steps - this.totals.steps);
-      e.steps = o.steps.slice(0, room).map((s) => ({ id: s.id, title: s.title, blurb: s.blurb }));
-      if (o.steps.length > room) {
-        e.capped = true;
-        this.capped = true;
-      }
+      // Step ids that aren't anchor ids can never be opened or matched: dropped here.
+      const valid = o.steps.filter((s) => anchorIdSchema.safeParse(s.id).success);
+      e.steps = valid.slice(0, room).map((s) => ({ id: s.id, title: s.title, blurb: s.blurb }));
+      e.stepsCapped = valid.length > room;
+      e.capped = !!e.anchorsCapped || e.stepsCapped;
       this.totals.steps += e.steps.length;
       // Raw names in document order: the graph validates them, and invalid ones show as broken links.
       e.details = o.details.map((d) => d.name);
@@ -805,11 +828,9 @@ export class SidestoryIndex implements vscode.Disposable {
     }
     this.totals.anchors -= e.ids.length;
     const room = Math.max(0, INDEX_LIMITS.anchors - this.totals.anchors);
-    if (anchors.length > room) {
-      e.capped = true;
-      this.capped = true;
-      anchors = anchors.slice(0, room);
-    }
+    e.anchorsCapped = anchors.length > room;
+    e.capped = e.anchorsCapped || !!e.stepsCapped;
+    if (e.anchorsCapped) anchors = anchors.slice(0, room);
     const n = anchors.length;
     e.ids = anchors.map((a) => a.id);
     e.file = new Int32Array(n);
@@ -870,6 +891,7 @@ export class SidestoryIndex implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     this.epoch++;
+    this.readyResolve(); // nobody waits forever on an index that is gone
     if (this.debounce) clearTimeout(this.debounce.timer);
     if (this.followUp) clearTimeout(this.followUp.timer);
     for (const d of this.subscriptions) d.dispose();
@@ -918,14 +940,27 @@ class QuoteStore implements vscode.Disposable {
   /** Bytes read so far (tests). */
   bytesRead = 0;
 
+  /** Cache keys per sidestory, so forgetting one costs its own quotes, not the whole cache. */
+  private readonly keysOf = new Map<string, Set<string>>();
+
   forget(e: IndexEntry): void {
-    const prefix = `${e.key}\u0000`;
-    for (const [k, q] of this.cache) {
-      if (k.startsWith(prefix)) {
+    const keys = this.keysOf.get(e.key);
+    if (!keys) return;
+    for (const k of keys) {
+      const q = this.cache.get(k);
+      if (q) {
         this.cache.delete(k);
         this.chars -= q.exact.length + q.prefix.length + q.suffix.length;
       }
     }
+    this.keysOf.delete(e.key);
+  }
+
+  private unlinkKey(k: string): void {
+    const owner = k.slice(0, k.indexOf('\u0000'));
+    const keys = this.keysOf.get(owner);
+    keys?.delete(k);
+    if (keys && keys.size === 0) this.keysOf.delete(owner);
   }
 
   private refill(): void {
@@ -969,9 +1004,14 @@ class QuoteStore implements vscode.Disposable {
     const size = q.exact.length + q.prefix.length + q.suffix.length;
     this.cache.set(key, q);
     this.chars += size;
+    const owner = key.slice(0, key.indexOf('\u0000'));
+    let keys = this.keysOf.get(owner);
+    if (!keys) this.keysOf.set(owner, (keys = new Set()));
+    keys.add(key);
     for (const [k, old] of this.cache) {
       if (this.chars <= INDEX_LIMITS.quoteCacheChars) break;
       this.cache.delete(k);
+      this.unlinkKey(k);
       this.chars -= old.exact.length + old.prefix.length + old.suffix.length;
     }
   }

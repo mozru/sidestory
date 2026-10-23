@@ -8,18 +8,41 @@ export const DEFAULT_EXCLUDES = ['**/node_modules/**', '**/.git/**', '**/dist/**
  * The exclusion patterns: the defaults plus every `files.exclude` entry set to `true`. Entries set to `false`
  * or with a `when` clause can't be expressed in one glob and are dropped.
  */
-export function excludePatterns(filesExclude: unknown): string[] {
-  const out = [...DEFAULT_EXCLUDES];
+export function excludePatterns(filesExclude: unknown, warn?: (message: string) => void): string[] {
+  const out = new Set(DEFAULT_EXCLUDES);
+  let dropped = 0;
   if (filesExclude && typeof filesExclude === 'object' && !Array.isArray(filesExclude)) {
+    let entries = 0;
     for (const [pattern, on] of Object.entries(filesExclude as Record<string, unknown>)) {
       if (on !== true || !pattern || pattern.length > 1000) continue;
+      // At most 256 entries: a repository's settings can't make discovery or every watcher event expensive.
+      if (++entries > EXCLUDE_LIMITS.entries) {
+        dropped++;
+        continue;
+      }
       // `files.exclude` patterns match a folder and, implicitly, everything in it.
       const p = pattern.replace(/\/+$/, '');
-      if (!out.includes(p)) out.push(p);
-      if (!p.endsWith('/**') && !out.includes(`${p}/**`)) out.push(`${p}/**`);
+      out.add(p);
+      if (!p.endsWith('/**')) out.add(`${p}/**`);
     }
   }
-  return out;
+  if (dropped) warn?.(`files.exclude has more than ${EXCLUDE_LIMITS.entries} entries; Sidestory ignores the other ${dropped}.`);
+  return [...out];
+}
+
+/** Bounds on what `files.exclude` can make discovery and the watchers do. */
+export const EXCLUDE_LIMITS = { entries: 256, alternatives: 1024, globChars: 64_000 } as const;
+
+/** Every pattern's brace alternatives, deduplicated, at most EXCLUDE_LIMITS.alternatives in all. */
+function alternatives(patterns: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const p of patterns) {
+    for (const a of expandBraces(p)) {
+      if (out.size >= EXCLUDE_LIMITS.alternatives) return [...out];
+      out.add(a);
+    }
+  }
+  return [...out];
 }
 
 /**
@@ -27,7 +50,14 @@ export function excludePatterns(filesExclude: unknown): string[] {
  * first, so no brace group is ever nested inside another (VS Code's glob doesn't nest them).
  */
 export function joinGlobs(patterns: readonly string[]): string {
-  const flat = patterns.flatMap(expandBraces);
+  const flat: string[] = [];
+  let chars = 2;
+  // The defaults come first, so a cut never drops them.
+  for (const a of alternatives(patterns)) {
+    if (chars + a.length + 1 > EXCLUDE_LIMITS.globChars) break;
+    flat.push(a);
+    chars += a.length + 1;
+  }
   return flat.length === 1 ? flat[0]! : `{${flat.join(',')}}`;
 }
 
@@ -77,10 +107,7 @@ type Seg = { globstar: true } | { globstar: false; toks: Tok[] };
  * algorithm, so the work is O(pattern × path) whatever the input. A malformed pattern never throws.
  */
 export function globMatcher(patterns: readonly string[]): (relPath: string) => boolean {
-  const compiled = patterns
-    .filter((p) => p.length <= MAX_PATTERN)
-    .flatMap(expandBraces)
-    .map(compile);
+  const compiled = alternatives(patterns.filter((p) => p.length <= MAX_PATTERN)).map(compile);
   return (p) => p.length <= MAX_PATH && compiled.some((c) => matchSegments(c, p.split('/')));
 }
 

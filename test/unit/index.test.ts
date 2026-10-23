@@ -272,6 +272,48 @@ describe('budgets and caps', () => {
     await waitFor(() => [...index.all()].every((e) => e.outlined && e.state === 'ready'));
   });
 
+  it('caches the sorted package list until packages change', async () => {
+    story(root, '', 'a', {});
+    story(root, 'svc', 'b', {});
+    await start();
+    const first = index.packages();
+    expect(index.packages()).toBe(first);
+    expect(index.packageCount).toBe(2);
+    expect(index.packageByKey(first[0]!.key)).toBe(first[0]);
+    story(root, 'other', 'c', {});
+    fire('create', join(dirOf('other', 'c'), 'manifest.json'));
+    await waitFor(() => index.packageCount === 3);
+    expect(index.packages()).not.toBe(first);
+    expect(index.packages()).toHaveLength(3);
+  });
+
+  it('labels a long primary path by its first and last two titles', async () => {
+    const names = Array.from({ length: 30 }, (_, i) => `n${i}`);
+    names.forEach((n, i) => story(root, '', n, { title: `T${i}`, details: i + 1 < names.length ? [names[i + 1]!] : [] }));
+    await start();
+    const last = entryOf('', 'n29')!;
+    expect(index.primaryPath(last)).toHaveLength(16);
+    expect(index.pathLabel(last)).toBe('T14 › … › T28 › T29');
+  });
+
+  it('drops step ids that aren’t anchor ids', async () => {
+    story(root, '', 'a', { html: '<section data-explain-anchor="ok"><h2>A</h2></section><section data-explain-anchor="9 bad id"><h2>B</h2></section>' });
+    await start();
+    expect(entryOf('', 'a')!.steps.map((s) => s.id)).toEqual(['ok']);
+  });
+
+  it('clears the capped flag once a re-read fits, without a refresh', async () => {
+    limits.anchors = 1;
+    write(join(root, 'f.ts'), code(10));
+    story(root, '', 'a', { anchors: { x: { file: 'f.ts', range: [1, 2] }, y: { file: 'f.ts', range: [3, 4] } } });
+    await start();
+    expect(index.capped).toBe(true);
+    write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'f.ts', range: [1, 2] } } }));
+    fire('change', join(dirOf('', 'a'), 'manifest.json'));
+    await waitFor(() => !index.capped);
+    expect(entryOf('', 'a')!.capped).toBe(false);
+  });
+
   it('forgets interned files nothing anchors any more', async () => {
     write(join(root, 'f.ts'), code(10));
     write(join(root, 'g.ts'), code(10));

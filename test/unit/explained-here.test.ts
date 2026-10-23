@@ -188,6 +188,26 @@ describe('CodeLens', () => {
     expect(await here.provideCodeLenses(d as never, token as never)).toHaveLength(1);
   });
 
+  it('a resolve running when the index changes is not reused: a fresh one follows', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    await start();
+    const real = index.quotesFor.bind(index);
+    let calls = 0;
+    index.quotesFor = async (...args) => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 150));
+      return real(...args);
+    };
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    void here.provideCodeLenses(d as never, token as never);
+    await new Promise((r) => setTimeout(r, 20));
+    (here as unknown as { reresolveVisible(): void }).reresolveVisible();
+    await here.provideCodeLenses(d as never, token as never);
+    await waitFor(() => calls >= 2, 3000);
+    expect(await lensesOf(d)).toHaveLength(1);
+  });
+
   it('a resolve still running for an old version is followed by one for the new version', async () => {
     story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
     await start();
