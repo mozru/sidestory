@@ -189,8 +189,10 @@ test.describe('data-explain-on', () => {
       await open(page, DIAGRAM, { theme, active: 'state' });
       await expect(el(page, 'g-consume')).toHaveClass(/cx-dim/);
       await expect(el(page, 'g-consume')).toHaveCSS('opacity', '1');
-      await expect(el(page, 'g-state')).toHaveCSS('outline-style', 'dashed');
-      await expect(el(page, 'g-state')).toHaveCSS('outline-color', rgb(THEMES[theme].vars.contrastActiveBorder!));
+      // A halo around lit SVG parts, a dashed outline on lit HTML elements.
+      await expect(el(page, 'g-state')).toHaveCSS('filter', /drop-shadow/);
+      await expect(el(page, 'row')).toHaveCSS('outline-style', 'dashed');
+      await expect(el(page, 'row')).toHaveCSS('outline-color', rgb(THEMES[theme].vars.contrastActiveBorder!));
       await expect(el(page, 'r-state')).toHaveCSS('stroke', rgb(THEMES[theme].vars.contrastActiveBorder!));
     });
   }

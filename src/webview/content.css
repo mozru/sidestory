@@ -166,16 +166,27 @@ html, body {
 body.vscode-reduce-motion :where([data-explain-diagram] *, svg *, [data-explain-on]) { transition: none; }
 body.vscode-reduce-motion :where(.cx-here) { animation: none; }
 
-/* High contrast: nothing fades (the tokens set --cx-dim-opacity to 1); lit elements get a dashed outline. */
-body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(.cx-on) {
+/*
+ * High contrast: nothing fades (the tokens set --cx-dim-opacity to 1). Lit HTML elements get a dashed outline; lit SVG
+ * parts a halo that follows their shape (an outline would box every wire in its bounding rectangle).
+ */
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(.cx-on:not(svg *)) {
   outline: 2px dashed var(--vscode-contrastActiveBorder);
   outline-offset: 2px;
 }
 
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on) {
+  filter: drop-shadow(0 0 1px var(--vscode-contrastActiveBorder)) drop-shadow(0 0 1px var(--vscode-contrastActiveBorder));
+}
+
 @media (forced-colors: active) {
-  :where(.cx-on) {
+  :where(.cx-on:not(svg *)) {
     outline: 2px dashed Highlight;
     outline-offset: 2px;
+  }
+
+  :where(svg .cx-on) {
+    filter: drop-shadow(0 0 1px Highlight) drop-shadow(0 0 1px Highlight);
   }
 }
 
