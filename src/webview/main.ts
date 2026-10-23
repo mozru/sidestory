@@ -113,7 +113,11 @@ let lastTabAt = 0;
 let aimedLink: Element | null = null;
 /** What the aimed link pointed at when the reader aimed: a live edit that retargets it needs a new aim. */
 let aimedKey = '';
-const linkKey = (el: Element) => `${el.getAttribute('data-explain-ref') ?? ''}#${el.getAttribute('data-explain-code') ?? ''}`;
+const linkKey = (el: Element) => {
+  const ref = el.getAttribute('data-explain-ref');
+  const link = ref === null ? codeLinkOf(el) : null;
+  return ref !== null ? `r:${ref}` : link ? `c:${formatCodeLink(link)}` : '';
+};
 let lastFocused: HTMLElement | undefined;
 let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
@@ -1370,10 +1374,11 @@ function onContentClick(e: MouseEvent): void {
 function onContentKey(e: KeyboardEvent): void {
   // Enter, as for a native link (Space is the reader's scroll key), once per press, on a link the reader focused.
   const linked = linkedTarget(e.target);
-  if (linked && e.key === 'Enter') {
+  // On a control inside the link (an <a href>, a <summary>), Enter is that control's.
+  if (linked && e.key === 'Enter' && e.target === linked) {
     const handled = e.defaultPrevented;
     e.preventDefault();
-    if (e.isTrusted && !handled && !e.repeat && linked === e.target && linked === aimedLink && linkKey(linked) === aimedKey) openLinked(linked);
+    if (e.isTrusted && !handled && !e.repeat && linked === aimedLink && linkKey(linked) === aimedKey) openLinked(linked);
     return;
   }
   // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.
