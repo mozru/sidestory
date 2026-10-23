@@ -31,7 +31,7 @@ Sidestories already do a lot without script, and that version works for every re
 | Tabs, a stepper, a before/after switch, a quiz | Radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` ([GUIDE.md, "Styling"](GUIDE.md#styling)) |
 | Footnotes, pop-outs | `:target`, `<details>` |
 | Hover callouts, highlighting parts of a diagram | `:hover`, `:focus-within`, inline SVG |
-| A diagram that changes per step | An SVG per step, or classes switched by the stepper above |
+| A diagram that changes per step | `data-explain-on` on its boxes and wires ([GUIDE.md, "Diagrams that follow the steps"](GUIDE.md#diagrams-that-follow-the-steps)) |
 | Simple animation | CSS animation (honour `prefers-reduced-motion`) |
 
 Use a widget when the reader needs **computation**: a chart of data that changes with a control, a simulation that runs, a layout computed by D3, a table parsed from the real code, anything with more state than a few radio buttons can hold. Then give it a fallback (§3) so the sidestory still reads well without it.
@@ -182,8 +182,11 @@ The widget's frame gets the reader's VS Code theme. Use **theme tokens**, never 
 | `border-border`, `border-input`, `ring-ring` / `outline-ring` | widget border, input border, focus border |
 | `var(--chart-1)` … `var(--chart-6)` (`fill-chart-1`, `stroke-chart-2`, `bg-chart-3`, …) | `charts.blue`, `orange`, `green`, `purple`, `red`, `yellow` |
 | `font-sans`, `font-mono` | the workbench font, the editor font |
+| `stroke-wire-data`, `-addr`, `-ctrl`, `-status`, `-irq`, `-clock`, `-reset`, `-muted` / `var(--cx-wire-data)` … | the diagram tokens for wires ([GUIDE.md, "Diagram tokens"](GUIDE.md#diagram-tokens)) |
+| `fill-box`, `fill-box-strong`, `stroke-box-stroke`, `fill-box-text`, `fill-label`, `stroke-grid`, `stroke-arrow`, `fill-domain-1` … `-4` / `var(--cx-box-fill)` … | the diagram tokens for blocks, labels, grids and clock domains; `var(--cx-dash-ctrl)` and the other dash tokens for `strokeDasharray` |
 
 - The variables hold **complete colors**: write `var(--primary)` or `bg-primary/20`, never `hsl(var(--primary))` (the checker warns).
+- For block diagrams, use the diagram tokens, the same ones the sidestory's own SVG uses, so a widget's diagram matches the page's in every theme, high contrast included: `className="stroke-wire-data"` or `stroke="var(--cx-wire-data)"`.
 - For SVG and chart libraries, pass the variables as colors: `stroke="var(--chart-1)"`, `fill="var(--muted-foreground)"`. `useTheme().color('--chart-1')` gives the computed value when a library needs a literal.
 - **`dark:` follows VS Code**: `<html>` has `.dark` in dark and dark high-contrast themes, `.light` otherwise, and `.hc` in both high-contrast themes. Prefer tokens over `dark:` pairs.
 - **No page backgrounds**: no `bg-white`, `bg-gray-50`, `bg-slate-900` on the root. Tailwind's palette colors (`bg-blue-500`) ignore the theme; use them only for small accents where nothing else fits, and never for text: `text-gray-900` all but vanishes in a dark theme (the checker warns about palette greys for text without a `dark:` pair; use `text-foreground` or `text-muted-foreground`). The same goes for literal colors in chart and SVG props (`stroke="#ef4444"`, warned too): use `var(--chart-1)` and the other tokens.

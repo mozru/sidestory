@@ -10,6 +10,8 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Link sections to code](#link-sections-to-code)
   - [The manifest](#the-manifest)
   - [Big systems: an overview with details](#big-systems-an-overview-with-details)
+  - [Diagrams that follow the steps](#diagrams-that-follow-the-steps)
+  - [Code links without an anchor](#code-links-without-an-anchor)
   - [How sections follow the code](#how-sections-follow-the-code)
   - [Styling](#styling)
   - [What's supported, and what's removed](#whats-supported-and-whats-removed)
@@ -63,6 +65,33 @@ Mark any element that is about some code with `data-explain-anchor`, and name it
 - `data-explain-title` sets the step's short label; otherwise the first heading is used.
 - `<a data-explain-ref="state">peek</a>` jumps the editor to another anchor's code when clicked, without changing the current step.
 - `--cx-accent` is set on each anchored element to its color, so your CSS can use `var(--cx-accent)`.
+
+#### Links on any element, diagram boxes included
+
+`data-explain-ref` works on any element, not just `<a>`: a word in the text, a table row, a card, or a box or wire in an inline SVG. Readers click it, or Tab to it and press <kbd>Enter</kbd>, and the editor jumps to that code. For a block diagram, put it on each block's `<g>`:
+
+```html
+<svg viewBox="0 0 400 120" role="group" aria-label="The FIFO between the read and write ports">
+  <g data-explain-ref="fifo">
+    <title>dma_fifo: show its code</title>
+    <rect x="150" y="20" width="100" height="60" rx="6" fill="var(--cx-box-fill)" stroke="var(--cx-box-stroke)"/>
+    <text x="200" y="55" text-anchor="middle" fill="var(--cx-box-text)">dma_fifo</text>
+  </g>
+</svg>
+```
+
+Linked elements look the same in every sidestory, and your own CSS always wins over this:
+
+| Linked element | At rest | Hover | Keyboard focus |
+|---|---|---|---|
+| Text (`a`, `span`, `code`, `b`, `strong`, `em`, `i`, `abbr`, `kbd`, `var`, `samp`) | link color, dotted underline | the active link color | a thin ring |
+| Any other HTML element (`div`, `li`, `td`, `figure`, `img`) | unchanged, pointer cursor | an outline | a thicker ring |
+| Anything inside an `<svg>` | unchanged, pointer cursor: its colors, `currentColor` and `<text>` stay as you drew them | a soft glow around its shape | a ring |
+
+- Set `--cx-link-hover` or `--cx-link-ring` to `transparent` to turn that effect off, or to another color.
+- `data-explain-plain` on a linked element removes the built-in look (only the pointer cursor stays), for a link you style yourself.
+- **Give a diagram with links `role="group"` and an `aria-label`**, not `role="img"`: screen readers don't see the children of an image, so its links would be out of their reach. Give each linked `<g>` a name with a `<title>` (which is also a tooltip) or an `aria-label`.
+- Links inside form controls (`button`, `input`, `select`, `textarea`) are ignored: a click there is for the control.
 
 ### The manifest
 
@@ -120,6 +149,59 @@ Details can have details of their own (up to 16 levels). Give each sidestory a o
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](../examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](../examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.
 
+### Diagrams that follow the steps
+
+A block diagram can light up the boxes and wires each step is about, and fade the rest. Tag them with `data-explain-on` and the ids of the anchors they matter in:
+
+```html
+<figure data-explain-diagram="step dim-rest">
+  <svg viewBox="0 0 1100 610" role="group" aria-label="Block diagram of dma_top">
+    <g data-explain-on="datapath backpressure" data-explain-ref="m-fifo">…the FIFO box…</g>
+    <g data-explain-on="datapath">…the rd_rsp_data wire…</g>
+    <g data-explain-on="control errors">…the start strobe…</g>
+    <g data-explain-keep>…the legend…</g>
+  </svg>
+</figure>
+```
+
+- **`data-explain-on="<id> …"`** (space-separated) works on any SVG or HTML element. It's **lit** while one of its ids is the current step, or the nested anchor the reader is on inside that step (a card or figure with its own `data-explain-anchor`, which the reader clicked or the editor cursor reached). An empty `data-explain-on=""` marks a part that is never lit.
+- **What fades:** while anything in a diagram is lit, the tagged parts that aren't lit fade. A part inside a lit group stays lit. With nothing lit (a step the diagram isn't about), the diagram looks exactly as you drew it.
+- **The diagram** is the nearest element with `data-explain-diagram`, or else the outermost `<svg>`. A tagged element outside both (a table row in the text) lights up, and nothing fades around it.
+- **`data-explain-diagram` takes these words:**
+  - `step` (the default): follows the current step.
+  - `section`: always shows the state of the section it's in, whatever step is current. Use it when a section has its own copy of the diagram (for a long page, where the first copy is off screen by step 5).
+  - `dim-rest`: untagged parts fade too, so you tag only what each step is about, not every background wire.
+- **`data-explain-keep`** on an element (a legend, a title) keeps it and everything inside it from fading. Arrowhead markers, gradients, patterns and the rest of `<defs>` never fade, so a lit wire keeps its arrowhead.
+- **Lit parts aren't recolored.** Style them yourself with the `.cx-on` class and the `--cx-on` color, which is the current step's color: `.cx-on .wire { stroke: var(--cx-on); stroke-width: 3 }`. A `section` diagram uses its own section's color.
+- **Fading** is `opacity: var(--cx-dim-opacity)` (0.28) on the class `cx-dim`, with a short transition (none for readers who asked for reduced motion). Override `.cx-dim` to fade differently.
+- **High contrast:** nothing fades; lit parts get an outline (HTML) or a halo (SVG) in the theme's contrast color.
+- **Hover:** the diagram follows the steps, not the pointer. For a hover preview, write it with `:has()`: `.cx-content:has([data-explain-ref~="m-fifo"]:hover) [data-explain-on~="datapath"] { … }`.
+
+The stream DMA overview ([`examples/stream-dma`](../examples/stream-dma)) works this way: one diagram at the top that follows the steps, and a copy in a few sections with `data-explain-diagram="section dim-rest"`.
+
+### Code links without an anchor
+
+A box in a diagram often deserves a link to its code without a manifest entry or a step of its own. `data-explain-code` opens a file, some lines or a symbol:
+
+```html
+<figure data-explain-diagram data-explain-code-file="rtl/gemm_row_dispatch.sv">
+  <svg …>
+    <g data-explain-code="#i_order_q">…</g>                    <!-- the file from data-explain-code-file -->
+    <g data-explain-code="#driver(i_in_buf)">…</g>
+    <g data-explain-code="rtl/dma_fifo.sv#L34-L39">…</g>         <!-- its own file -->
+  </svg>
+</figure>
+<a data-explain-code="rtl/dma_csr.sv">dma_csr.sv</a>
+```
+
+- **The path**, before `#`, is from the folder that holds `.sidestory/`, as a manifest `file` is, with `/` separators. It is **not** relative to the page. An empty path takes the nearest `data-explain-code-file` around the element, so a diagram of one module names its file once.
+- **After `#`** (optional; without it the file opens at the top):
+  - `L10` or `L10-L20`: those lines;
+  - a symbol: a name declared in the file (`#i_order_q`, `#BW`, `#u_ctrl`), what drives a signal (`#driver(state_q)`, the `always` block, `assign` or declaration that assigns it), one arm of that block's `case` (`#driver(state_d).case(IDLE)`, so each bubble of an FSM diagram opens its own arm), or one port connection of an instance (`#u_ctrl(.rd_start)`, for a wire in a top-level diagram). Prefix the module (`#dma_ctrl.driver(state_q)`) when a name isn't unique in the file. In other languages, the names VS Code's outline shows: `#RetryClient.send`.
+- **No drift detection.** A symbol link either finds its name or doesn't, and a line link points wherever those lines are now; neither says "Code changed". Use a manifest anchor and `data-explain-ref` for code the text makes claims about, and `data-explain-code` for "where is this thing".
+- It looks and behaves like `data-explain-ref`: a click or <kbd>Enter</kbd> opens the code, with the same built-in look. With both on one element, `data-explain-ref` wins. A link that doesn't parse (a path outside the repository, `#L0`) is ignored, and **View › Output › Sidestory** says why.
+- Links open only when the reader clicks one or presses <kbd>Enter</kbd> on it, and only files inside the repository.
+
 ### How sections follow the code
 
 | State | Meaning | Shown as |
@@ -134,7 +216,44 @@ This works on unsaved edits too, as you type.
 ### Styling
 
 Use VS Code's theme variables so your sidestory looks right in every theme:
-`var(--vscode-editor-foreground)`, `var(--vscode-descriptionForeground)`, `var(--vscode-panel-border)`, `var(--vscode-editor-font-family)`, `var(--vscode-textLink-foreground)`, `var(--vscode-charts-blue)` and so on.
+`var(--vscode-editor-foreground)`, `var(--vscode-descriptionForeground)`, `var(--vscode-panel-border)`, `var(--vscode-editor-font-family)`, `var(--vscode-textLink-foreground)` and so on. For diagrams, use the diagram tokens below rather than `--vscode-charts-*`.
+
+#### Diagram tokens
+
+Color diagrams by role, not by hue. Each token follows the reader's theme, and has its own value in high-contrast themes and Windows contrast modes, so a diagram drawn with them needs no theme-specific CSS. Widgets get the same tokens ([WIDGETS.md §5](WIDGETS.md#5-theming)).
+
+| Token | For | Default themes | High contrast |
+|---|---|---|---|
+| `--cx-box-fill` | block body | widget background | editor background |
+| `--cx-box-fill-strong` | an emphasized block | box fill tinted by the stroke | editor background (emphasize with the stroke) |
+| `--cx-box-stroke` | block outline | widget border | contrast border |
+| `--cx-box-text` | text in blocks | editor foreground | the same |
+| `--cx-label` | secondary labels (widths, port names) | description text | editor foreground |
+| `--cx-wire-data` | data path | `charts.blue` | the same |
+| `--cx-wire-addr` | addresses and configuration | `charts.purple` | the same |
+| `--cx-wire-ctrl` | control strobes and handshakes | `charts.orange` | the same |
+| `--cx-wire-status` | status back to control (done, busy) | `charts.green` | the same |
+| `--cx-wire-irq` | interrupts and errors | `charts.red` | the same |
+| `--cx-wire-clock` | clocks | `charts.foreground` | editor foreground |
+| `--cx-wire-reset` | resets | `charts.yellow` | the same |
+| `--cx-wire-muted` | wires no step is about | description text, 70% | description text |
+| `--cx-domain-1` … `--cx-domain-4` | clock-domain region fills | blue, green, purple, orange at 10% | transparent (label the regions' borders) |
+| `--cx-arrow` | free-standing arrows and annotations | editor foreground | the same |
+| `--cx-grid` | grids, ticks, lane separators | `charts.lines` | contrast border |
+| `--cx-dash-ctrl`, `--cx-dash-status`, `--cx-dash-irq`, `--cx-dash-reset` | `stroke-dasharray`, so roles differ by more than color | `5 4`, `2 3`, `1 3`, `6 2 1 2` | the same |
+| `--cx-on` | parts the current step lights ([above](#diagrams-that-follow-the-steps)) | the step's color | contrast active border |
+| `--cx-dim-opacity` | parts that fade | `0.28` | `1` (nothing fades) |
+| `--cx-link-hover`, `--cx-link-ring` | linked elements' hover and focus ([above](#links-on-any-element-diagram-boxes-included)) | link color, focus border | contrast active border |
+| `--cx-here` | elements linked to the code the editor cursor is in | find-match border, else focus border | contrast active border |
+
+```css
+.wire.data { stroke: var(--cx-wire-data); stroke-width: 4; }
+.wire.ctrl { stroke: var(--cx-wire-ctrl); stroke-dasharray: var(--cx-dash-ctrl); }
+.block rect { fill: var(--cx-box-fill); stroke: var(--cx-box-stroke); }
+.block text { fill: var(--cx-box-text); }
+```
+
+Never hex values: they vanish or glare in someone's theme. In Windows contrast modes every wire is drawn in the text color, so give each role a dash or a width as well as a color. In Light Modern, the orange and yellow chart colors read below 3:1 on a light box; make those wires a little thicker.
 
 The built-in styles are light: body text in the editor font and colors, code blocks and tables that scroll sideways when wide, images no wider than the panel, and an outline on the current section. Nothing else is clipped, so your tooltips and pop-outs can overflow their boxes.
 
@@ -174,6 +293,7 @@ Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, 
 
 Removed or ignored, for safety (see [SECURITY.md](../SECURITY.md)):
 - scripts of any kind, event handler attributes, `javascript:` links;
+- `accesskey` and `autofocus` (a keystroke or a stray <kbd>Enter</kbd> could fire a link the reader didn't aim at), and attributes starting with `data-cx-`, which belong to the panel;
 - `<iframe>`, `<object>`, `<embed>`, `<form>`, `<meta>`, `<base>`, popovers, SVG animation;
 - anything from the network: remote images, fonts, stylesheets, `@import`;
 - links to `localhost` or private addresses.

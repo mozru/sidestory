@@ -10,7 +10,7 @@ A sidestory is an HTML page in your repository (`.sidestory/<name>/`) whose sect
 
 ## Linked both ways
 
-Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory jumps to the section about it. Links in the text and blocks in a diagram show their code when clicked.
+Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory jumps to the section about it. Links in the text, and boxes or wires in a diagram, show their code when clicked; a box can link straight to a symbol (`data-explain-code="#driver(state_q)"`) without a manifest entry. Block diagrams can light up the parts each step is about and fade the rest (`data-explain-on`).
 
 ![Clicking lines in bit_reader.sv: the sidestory beside it follows to the Refill, Handshakes, Consume and State sections](media/marketplace/cursor-follow.gif)
 
