@@ -6,7 +6,7 @@ import type { ExplainerRef } from './explainers.ts';
 /** CSP source allowing exactly the widget bootstrap script. */
 export const BOOTSTRAP_HASH = `sha256-${createHash('sha256').update(WIDGET_BOOTSTRAP, 'utf8').digest('base64')}`;
 
-export const VIEW_TYPE = 'codeExplainer.explainer';
+export const VIEW_TYPE = 'sidestory.explainer';
 
 export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscode.WebviewPanelOptions & vscode.WebviewOptions {
   return {

@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext): void {
   lastTextEditor = vscode.window.activeTextEditor;
   context.subscriptions.push(log, { dispose: () => [...sessions].forEach((s) => s.dispose()) });
 
-  const updateContext = () => void vscode.commands.executeCommand('setContext', 'codeExplainer.active', [...sessions].some((s) => s.panel.visible));
+  const updateContext = () => void vscode.commands.executeCommand('setContext', 'sidestory.active', [...sessions].some((s) => s.panel.visible));
 
   /** The text editor whose selection "re-anchor" uses: the active one, else the last one still visible. */
   const selectionEditor = () =>
@@ -119,7 +119,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const what = refs.length === 1 ? `The explainer “${refs[0]!.name}” was` : `${refs.length} explainers were`;
       void vscode.window.showInformationMessage(`${what} open, but explainers aren't reopened automatically in Restricted Mode.`, open).then(async (choice) => {
         // The click is the user's consent to show them.
-        if (choice === open) for (const r of refs) await vscode.commands.executeCommand('codeExplainer.open', r.dir);
+        if (choice === open) for (const r of refs) await vscode.commands.executeCommand('sidestory.open', r.dir);
       });
     }, 500);
   };
@@ -133,7 +133,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidChangeTextEditorSelection((e) => {
       lastTextEditor = e.textEditor;
     }),
-    vscode.commands.registerCommand('codeExplainer.open', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.open', async (dir?: vscode.Uri | string) => {
       const ref = dir ? refFromDir(typeof dir === 'string' ? vscode.Uri.parse(dir) : dir) : await pickExplainer();
       if (!ref) {
         if (dir) void vscode.window.showWarningMessage('Not an explainer: expected a folder like .explain/<name> inside the workspace.');
@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await start([ref], createPanel(context.extensionUri, ref));
     }),
-    vscode.commands.registerCommand('codeExplainer.pin', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.pin', async (dir?: vscode.Uri | string) => {
       const ref = await explainerFor(dir);
       if (!ref) return;
       const open = showing(ref);
@@ -157,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Couldn't pin anchors: ${(e as Error).message}`);
       }
     }),
-    vscode.commands.registerCommand('codeExplainer.reanchor', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.reanchor', async (dir?: vscode.Uri | string) => {
       // Taken now: picking the section moves focus to the quick pick.
       const editor = selectionEditor();
       const ref = await explainerFor(dir);
@@ -172,20 +172,20 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Couldn't re-anchor: ${(e as Error).message}`);
       }
     }),
-    vscode.commands.registerCommand('codeExplainer.revokeWidgetConsent', async () => {
+    vscode.commands.registerCommand('sidestory.revokeWidgetConsent', async () => {
       await widgets.revokeConsent();
       void vscode.window.showInformationMessage('Widget consent revoked: explainers ask again before running widgets in this workspace.');
     }),
-    vscode.commands.registerCommand('codeExplainer.enableWidgets', async () => {
+    vscode.commands.registerCommand('sidestory.enableWidgets', async () => {
       if (!widgets.enabled()) {
         const on = 'Turn On';
-        const choice = await ourModal(() => vscode.window.showInformationMessage('Widgets are turned off in settings (codeExplainer.widgets.enabled). Turn them on?', { modal: true, detail: 'Each workspace still asks before running its widgets.' }, on));
+        const choice = await ourModal(() => vscode.window.showInformationMessage('Widgets are turned off in settings (sidestory.widgets.enabled). Turn them on?', { modal: true, detail: 'Each workspace still asks before running its widgets.' }, on));
         if (choice !== on) return;
-        await vscode.workspace.getConfiguration('codeExplainer').update('widgets.enabled', true, vscode.ConfigurationTarget.Global);
+        await vscode.workspace.getConfiguration('sidestory').update('widgets.enabled', true, vscode.ConfigurationTarget.Global);
       }
       await widgets.enableAll();
     }),
-    vscode.commands.registerCommand('codeExplainer.checkWidgets', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.checkWidgets', async (dir?: vscode.Uri | string) => {
       const ref = await explainerFor(dir);
       if (!ref) return;
       if (!vscode.workspace.isTrusted) {
@@ -198,14 +198,14 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(`${ref.name}: ${results.length} widget source${results.length === 1 ? '' : 's'} checked, ${errors} error(s), ${warnings} warning(s)${errors + warnings ? ', in the Problems panel' : ''}.`);
       if (errors + warnings) void vscode.commands.executeCommand('workbench.actions.view.problems');
     }),
-    vscode.commands.registerCommand('codeExplainer.copyWidgetCheckCommand', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.copyWidgetCheckCommand', async (dir?: vscode.Uri | string) => {
       const ref = await explainerFor(dir);
       const target = ref ? vscode.workspace.asRelativePath(ref.dir, false) : '.explain/<name>';
       const cmd = `node "${vscode.Uri.joinPath(context.extensionUri, 'dist', 'check.cjs').fsPath}" ${JSON.stringify(target)}`;
       await vscode.env.clipboard.writeText(cmd);
       void vscode.window.showInformationMessage(`Copied: ${cmd}`);
     }),
-    vscode.commands.registerCommand('codeExplainer.addWidgetTypes', async (dir?: vscode.Uri | string) => {
+    vscode.commands.registerCommand('sidestory.addWidgetTypes', async (dir?: vscode.Uri | string) => {
       const ref = await explainerFor(dir);
       if (!ref) return;
       const explain = vscode.Uri.joinPath(ref.dir, '..');
@@ -216,8 +216,8 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Couldn't write the widget types: ${(e as Error).message}`);
       }
     }),
-    vscode.commands.registerCommand('codeExplainer.nextStep', () => target()?.navigate(1)),
-    vscode.commands.registerCommand('codeExplainer.prevStep', () => target()?.navigate(-1)),
+    vscode.commands.registerCommand('sidestory.nextStep', () => target()?.navigate(1)),
+    vscode.commands.registerCommand('sidestory.prevStep', () => target()?.navigate(-1)),
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
       async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PanelState | undefined) {
         const trail = restoredTrail(state);

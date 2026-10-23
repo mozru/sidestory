@@ -100,13 +100,13 @@ jobs:
       - name: Package contents and size
         run: |
           npx vsce ls --no-dependencies
-          size=$(stat -c %s dist/code-explainer.vsix)
+          size=$(stat -c %s dist/sidestory.vsix)
           echo "vsix: $size bytes"
           test "$size" -lt 2000000
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: code-explainer-vsix
-          path: dist/code-explainer.vsix
+          name: sidestory-vsix
+          path: dist/sidestory.vsix
 
   e2e:
     runs-on: ubuntu-latest

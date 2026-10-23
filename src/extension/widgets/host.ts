@@ -1,5 +1,5 @@
 // Widgets, extension side (docs/WIDGETS-PLAN.md §3–§5): whether a panel may run its explainer's widgets
-// (trust, the `codeExplainer.widgets.enabled` setting, the reader's consent in a native modal), compiled code
+// (trust, the `sidestory.widgets.enabled` setting, the reader's consent in a native modal), compiled code
 // and library texts for the panel, what widgets may read (`useAnchorCode`), highlights and reveals, the
 // watchdogs, and diagnostics for authors. Everything a panel asks for is checked here again: the panel
 // renders untrusted content, so its requests are only requests.
@@ -26,10 +26,10 @@ import { anchorsRead, scanWidgets, widgetSources } from './html.ts';
 import { isSecretPath } from './secret-files.ts';
 import { Escalations, HeartbeatWatchdog, ourModal, QUIET, TICK_MS } from './watchdog.ts';
 
-const CONSENT_KEY = 'codeExplainer.widgetConsent';
-const CONFIRMED_KEY = 'codeExplainer.widgetQuotesConfirmed';
-const DISABLED_KEY = 'codeExplainer.widgetsDisabled';
-const STATES_KEY = 'codeExplainer.widgetStates';
+const CONSENT_KEY = 'sidestory.widgetConsent';
+const CONFIRMED_KEY = 'sidestory.widgetQuotesConfirmed';
+const DISABLED_KEY = 'sidestory.widgetsDisabled';
+const STATES_KEY = 'sidestory.widgetStates';
 /** Explainers whose widget state is kept; the least recently saved are dropped past this. */
 const MAX_STATE_EXPLAINERS = 16;
 const MAX_CONFIRMED = 2000;
@@ -114,7 +114,7 @@ export class WidgetHost implements vscode.Disposable {
   private warm = false;
   /** Explainers whose widgets the watchdog gave up on (until Enable Widgets), by folder URI. */
   private readonly stoppedExplainers = new Set<string>();
-  private readonly diagnostics = vscode.languages.createDiagnosticCollection('code-explainer-widgets');
+  private readonly diagnostics = vscode.languages.createDiagnosticCollection('sidestory-widgets');
   private readonly diagnosed = new Map<string, vscode.Uri[]>();
   private readonly checkTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -136,7 +136,7 @@ export class WidgetHost implements vscode.Disposable {
       watcher.onDidCreate(changed),
       watcher.onDidDelete(changed),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('codeExplainer.widgets.enabled')) this.refreshAll();
+        if (e.affectsConfiguration('sidestory.widgets.enabled')) this.refreshAll();
       }),
       // Widgets mount when trust is granted, without reopening the panel.
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.refreshAll()),
@@ -145,7 +145,7 @@ export class WidgetHost implements vscode.Disposable {
   }
 
   enabled(): boolean {
-    return vscode.workspace.getConfiguration('codeExplainer').get<boolean>('widgets.enabled', true);
+    return vscode.workspace.getConfiguration('sidestory').get<boolean>('widgets.enabled', true);
   }
 
   attach(port: WidgetSessionPort): PanelWidgets {
@@ -437,7 +437,7 @@ export class WidgetHost implements vscode.Disposable {
     };
     for (const p of scanWidgets(html).problems) {
       const d = new vscode.Diagnostic(new vscode.Range(p.line - 1, 0, p.line - 1, 1000), p.message, p.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
-      d.source = 'Code Explainer';
+      d.source = 'Sidestory';
       add(htmlUri(ref), d);
     }
     for (const r of results) {
@@ -446,7 +446,7 @@ export class WidgetHost implements vscode.Disposable {
           const line = Math.max(0, (e.line ?? 1) - 1);
           const col = Math.max(0, (e.column ?? 1) - 1);
           const d = new vscode.Diagnostic(new vscode.Range(line, col, line, col + 1000), e.message, severity);
-          d.source = 'Code Explainer';
+          d.source = 'Sidestory';
           d.code = e.code;
           add(vscode.Uri.joinPath(ref.dir, e.file), d);
         }
@@ -570,7 +570,7 @@ export class WidgetHost implements vscode.Disposable {
   private notifyDisabled(port: WidgetSessionPort, what: string): void {
     const enable = 'Enable Widgets';
     void vscode.window.showWarningMessage(`${what} in “${modalText(port.title() || port.ref().name)}” stopped responding, so ${what === 'A widget' ? 'it is' : 'they are'} turned off until the code changes. "Try again" in ${what === 'A widget' ? 'its box' : 'their boxes'} turns ${what === 'A widget' ? 'it' : 'them'} on again.`, enable).then((c) => {
-      if (c === enable) void vscode.commands.executeCommand('codeExplainer.enableWidgets');
+      if (c === enable) void vscode.commands.executeCommand('sidestory.enableWidgets');
     });
   }
 
@@ -581,9 +581,9 @@ export class WidgetHost implements vscode.Disposable {
     if (step === 'stop') {
       // None of this explainer's widgets run any more (each box says so) until Enable Widgets.
       this.stoppedExplainers.add(ref.dir.toString());
-      log.error(`${ref.name}: widgets keep freezing the panel, so none of them run now. Run "Code Explainer: Enable Widgets" to try again.`);
+      log.error(`${ref.name}: widgets keep freezing the panel, so none of them run now. Run "Sidestory: Enable Widgets" to try again.`);
       void vscode.window.showErrorMessage(`Widgets in “${modalText(p.port.title() || ref.name)}” keep freezing the panel, so they were stopped.`, 'Enable Widgets').then((c) => {
-        if (c) void vscode.commands.executeCommand('codeExplainer.enableWidgets');
+        if (c) void vscode.commands.executeCommand('sidestory.enableWidgets');
       });
       return false;
     }
@@ -1051,7 +1051,7 @@ export class PanelWidgets {
 
 /** For authors (Output only, never the reader's box): what to do about each reason. */
 const REASON_FIX: Record<string, string> = {
-  'not-pinned': 'Pin this anchor (Code Explainer: Pin Anchors) so it has a v2 quote.',
+  'not-pinned': 'Pin this anchor (Sidestory: Pin Anchors) so it has a v2 quote.',
   unconfirmed: 'Confirm it in VS Code (the panel offers it), or commit the manifest.',
   ignored: 'The file is ignored by git.',
   'secret-file': 'Widgets never read files that look like they hold secrets.',

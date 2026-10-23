@@ -1,9 +1,9 @@
-# Code Explainer: Design Handoff
+# Sidestory: Design Handoff
 
 > **Status: design draft.** This describes the full vision, including features that are not built yet (threads, the Claude Code integration, the PR viewer, symbol and history-based anchors). For what the extension does today, see the README. Decisions taken during implementation are in §12.
 
-Working name: **Code Explainer** (rename freely).
-Written: 2026-10-21. Source: a design conversation in the Claude app, handed off to Claude Code.
+Name: **Sidestory**.
+Written: 2026-10-21.
 
 > **For Claude Code:** this is the design brief. Read it fully before scaffolding.
 > Facts about Claude Code and VS Code APIs were checked on 2026-10-21; re-verify anything marked *(verify)* against current docs before relying on it.
@@ -209,9 +209,9 @@ Extension → Webview:
 - **Body classes** `vscode-light`, `vscode-dark`, and `vscode-high-contrast` are available for anything the variables don't cover.
 - **Code highlights are editor decorations** using `ThemeColor`, e.g. `editor.rangeHighlightBackground`, plus an overview-ruler (scrollbar) marker. Never hex values.
 - **Our own colors** are declared in `contributes.colors` with light, dark, and high-contrast defaults, so themes and users can override them. For example:
-  - `codeExplainer.focusBackground`
-  - `codeExplainer.focusBorder`
-  - `codeExplainer.staleForeground`
+  - `sidestory.focusBackground`
+  - `sidestory.focusBorder`
+  - `sidestory.staleForeground`
 - **Per-section accent colors** come from the `charts.*` family, so a "colorful steps" look still follows the theme.
 - **Icons** are codicons (`@vscode/codicons`). Don't build on the Webview UI Toolkit, which Microsoft deprecated. Use plain CSS on theme variables, or `vscode-elements` if components are needed *(verify current status)*.
 
@@ -370,7 +370,7 @@ Writes go to files. The VS Code extension watches `.explain/` and updates the vi
 
 ### 11.1 Mockup
 
-An interactive mockup exists in the user's Claude artifacts ("Code Explainer Mockup"):
+An interactive mockup exists in the user's Claude artifacts ("Sidestory Mockup"):
 - **Left:** a dark editor with the module below. The active step's lines are tinted with a left bar, related identifiers are chip-highlighted across the file, other lines are dimmed, and clicking a line jumps to its step.
 - **Right:** a light walkthrough with a title, a five-step Prev/Next stepper, and a "Synced" indicator. Each step uses a *different* style of explanation: (1) block diagram, (2) bit-window bar, (3) rule cards, (4) before/after shift bars, (5) a cycle trace table.
 - **Bottom:** a status bar tinted with the active step's color.

@@ -21,7 +21,7 @@ A Windows 11 ARM64 VM under QEMU with Apple's hypervisor, kept in `~/VMs/windows
 
 ### Disk
 
-- e2e: the image is ~1 GB; setup warns below 5 GB free and removes this project's stale images after each rebuild (`docker image prune --filter label=org.code-explainer.test=e2e`).
+- e2e: the image is ~1 GB; setup warns below 5 GB free and removes this project's stale images after each rebuild (`docker image prune --filter label=org.sidestory.test=e2e`).
 - Desktop VS Code downloads are cached in `.vscode-test/` (~200 MB per version); delete the folder to reclaim them.
 - Windows VM: the disk grows to ~30 GB; the ISO and guest tools (5 GB) can be deleted once installed.
 
@@ -36,10 +36,10 @@ A Windows 11 ARM64 VM under QEMU with Apple's hypervisor, kept in `~/VMs/windows
 
 ## Manual: Remote-SSH (about 10 minutes)
 
-1. `npm run package`, then copy `dist/code-explainer.vsix` somewhere reachable.
+1. `npm run package`, then copy `dist/sidestory.vsix` somewhere reachable.
 2. Connect to a Linux host with **Remote-SSH**, open a folder, and run **Extensions: Install from VSIX…**. Check the extension installs **in SSH: <host>** (not locally).
 3. Copy `fixtures/sample-workspace` to the host and open it.
-4. **Code Explainer: Open Explainer** → `bit-reader`. Check:
+4. **Sidestory: Open Explainer** → `bit-reader`. Check:
    - [ ] The panel opens beside the editor, in your theme's colors.
    - [ ] Clicking step 5 opens `rtl/bit_reader.sv` and highlights lines 35–38.
    - [ ] Putting the cursor on line 32 makes step 4 current.
@@ -50,7 +50,7 @@ A Windows 11 ARM64 VM under QEMU with Apple's hypervisor, kept in `~/VMs/windows
 5. Navigation and Pin (the dialogs have no automated tests yet). Open `overview`:
    - [ ] Step 2, then **Retry with … in brief** opens a summary in place; **Dive into …** shows that explainer with a trail; **Back** (or <kbd>Esc</kbd>) returns to step 2.
    - [ ] Reload the window while dived: the panel comes back with its trail.
-   - [ ] Rename `backoffDelay` in `src/retry.ts` and save, then **Code Explainer: Pin Anchors**: the result names each anchor it left and why, then offers a checklist; ticking one pins it, and `manifest.json` keeps its formatting.
+   - [ ] Rename `backoffDelay` in `src/retry.ts` and save, then **Sidestory: Pin Anchors**: the result names each anchor it left and why, then offers a checklist; ticking one pins it, and `manifest.json` keeps its formatting.
    - [ ] Delete the body of `backoffDelay`: its section offers **Re-anchor to the selected code**; select other lines, click it, confirm: the section links to them.
    - [ ] Open a v1 manifest (no `quote`): a one-time notice offers **Pin Anchors**.
 6. Repeat steps 4–5 in desktop VS Code locally (F5 in this repo opens an Extension Development Host).
@@ -66,16 +66,16 @@ export default function Hang() {
 ```
 
 1. Consent and trust:
-   - [ ] With `codeExplainer.widgets.enabled` off, the panel shows each widget's fallback and no consent bar.
+   - [ ] With `sidestory.widgets.enabled` off, the panel shows each widget's fallback and no consent bar.
    - [ ] Turn it on in User settings; then in the repository's `.vscode/settings.json` turn it off and on again: the workspace value is ignored.
    - [ ] The bar says how many widgets the explainer has; **Run widgets…** opens a native VS Code dialog naming the explainer and what widgets can do. **Cancel** keeps the fallbacks; agreeing mounts the widgets without reopening the panel.
    - [ ] Edit the widget file and save: it updates in place, and the slider/counter state set with `useWidgetState` survives. No dialog.
    - [ ] Commit, switch to a branch where the widget file differs, switch back with VS Code open: the panel asks again.
-   - [ ] **Code Explainer: Revoke Widget Consent**: the widgets go back to their fallbacks.
+   - [ ] **Sidestory: Revoke Widget Consent**: the widgets go back to their fallbacks.
    - [ ] In Restricted Mode (**Workspaces: Manage Workspace Trust** → don't trust): fallbacks and a "Trust workspace…" bar; trusting mounts the widgets.
 2. Linking:
    - [ ] Step through the explainer: the widget follows (`useStepValue`), and highlights its lines while its step is current.
-   - [ ] A click on a `<Ref>` or a button calling `reveal` shows the code in the editor; the same call from a timer does nothing and is logged in **Output › Code Explainer**.
+   - [ ] A click on a `<Ref>` or a button calling `reveal` shows the code in the editor; the same call from a timer does nothing and is logged in **Output › Sidestory**.
    - [ ] `useAnchorCode` on an unpinned anchor gives the widget's empty state; the Problems panel says `not-pinned`. **Pin Anchors** lists the files and line ranges widgets would read and asks before pinning them.
 3. Focus and keyboard:
    - [ ] Tab reaches the widget's placeholder; Enter moves into the widget; Esc leaves it; Tab past the last control leaves it.
@@ -92,7 +92,7 @@ export default function Hang() {
    - [ ] Within about 10 s the hung widget is disabled, the panel recovers (recreated if it had frozen) at the same step, and a notification names the widget file and offers **Enable widgets**. With the regex removed and the file saved, the widget runs again.
    - [ ] Repeat with two explainer panels open side by side: a hang in one panel's widget doesn't leave the other panel's widgets unrecoverable.
 6. Standalone checker, from a terminal in the sample workspace:
-   - [ ] `node "$(ls ~/.vscode*/extensions/*code-explainer*/dist/check.cjs | tail -n 1)" .explain/bit-reader` lists problems as `file:line: severity code: message` and exits 1 when there are errors.
+   - [ ] `node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .explain/bit-reader` lists problems as `file:line: severity code: message` and exits 1 when there are errors.
    - [ ] `--pin` pins anchors widgets don't read, lists the files and line ranges of those they do, and pins those only with `--yes-widgets-may-read`.
 
 ## Manual: things to watch for

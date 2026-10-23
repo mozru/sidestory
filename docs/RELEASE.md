@@ -4,7 +4,7 @@ Status: **prepared, not released.** Everything below up to "Publish" is done and
 
 ## Before the first release (needs the owner)
 
-1. **Publisher.** Create (or pick) a publisher at <https://marketplace.visualstudio.com/manage>, then set `"publisher"` in `package.json` (now the placeholder `code-explainer`). The extension's id becomes `<publisher>.code-explainer`.
+1. **Publisher.** Create (or pick) a publisher at <https://marketplace.visualstudio.com/manage>, then set `"publisher"` in `package.json` (now the placeholder `sidestory`). The extension's id becomes `<publisher>.sidestory`.
 2. **Repository.** Add to `package.json`:
    ```json
    "repository": { "type": "git", "url": "https://github.com/<owner>/<repo>.git" },
@@ -24,7 +24,7 @@ npm run typecheck
 npm test                                        # 224 unit tests
 npm audit --omit=dev --audit-level=moderate     # 0 vulnerabilities
 npm run build && npm run test:webview           # 59 panel tests
-npm run package                                 # dist/code-explainer.vsix, must be < 1 MB (222 KB)
+npm run package                                 # dist/sidestory.vsix, must be < 1 MB (222 KB)
 npm run test:e2e                                # 11 tests in browser VS Code; needs Docker
 ```
 
@@ -35,9 +35,9 @@ The package was inspected: 13 files (extension bundle, webview bundle, codicons,
 ## Publish (not done)
 
 1. In `CHANGELOG.md`, change `## 0.1.0 (unreleased)` to the release date.
-2. `npm run package` and install `dist/code-explainer.vsix` locally once more (**Extensions: Install from VSIX…**).
+2. `npm run package` and install `dist/sidestory.vsix` locally once more (**Extensions: Install from VSIX…**).
 3. Commit, tag `v0.1.0`, push the tag.
-4. `npx vsce publish --packagePath dist/code-explainer.vsix` with a Personal Access Token for the publisher (Azure DevOps, scope *Marketplace › Manage*). Optionally also Open VSX: `npx ovsx publish dist/code-explainer.vsix -p <token>`.
+4. `npx vsce publish --packagePath dist/sidestory.vsix` with a Personal Access Token for the publisher (Azure DevOps, scope *Marketplace › Manage*). Optionally also Open VSX: `npx ovsx publish dist/sidestory.vsix -p <token>`.
 5. Attach the `.vsix` to a GitHub release for the tag.
 
 The extension is marked `"preview": true`, so the Marketplace shows it as Preview; drop that for 1.0.

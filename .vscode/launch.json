@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Code Explainer (sample workspace)",
+      "name": "Run Sidestory (sample workspace)",
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/fixtures/sample-workspace"],

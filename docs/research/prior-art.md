@@ -1,4 +1,4 @@
-# Prior art: Code Explainer
+# Prior art: Sidestory
 
 Researched 2026-10-21. Lens: the DESIGN.md brief, plus the hard requirement that **everything updates live** (no reloads, reopening or re-running, and scroll and focus are kept). Items marked *(unverified)* come only from secondary sources.
 

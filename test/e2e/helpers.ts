@@ -45,7 +45,7 @@ export async function openWorkbench(page: Page): Promise<void> {
 export async function openExplainer(page: Page, name: string): Promise<FrameLocator> {
   // Each panel is its own webview frame; remember which one is new.
   const index = await page.locator('iframe.webview.ready').count();
-  await command(page, 'Code Explainer: Open Explainer');
+  await command(page, 'Sidestory: Open Explainer');
   await expect(page.locator('.quick-input-widget')).toContainText('retry-backoff');
   await page.keyboard.type(name);
   await page.keyboard.press('Enter');

@@ -21,7 +21,7 @@ Research date: 2026-10-21. Extends DESIGN.md §6 and §7. **Hard requirement:** 
 ### 1.1 Plugin layout
 
 ```
-code-explainer/                      (Claude Code plugin)
+sidestory/                      (Claude Code plugin)
   .claude-plugin/plugin.json         name, version, channels:[{server:"explain"}]
   .mcp.json                          explain → ${CLAUDE_PLUGIN_ROOT}/server/main.js
   monitors/monitors.json             explain-watch (fallback push)
@@ -31,7 +31,7 @@ code-explainer/                      (Claude Code plugin)
   bin/explain                        CLI: build viewer, watch, route, gh-sync
 ```
 
-The tools are named `mcp__plugin_code-explainer_explain__<tool>` [6]. A single process serves the MCP tools, the channel, and the GitHub poller.
+The tools are named `mcp__plugin_sidestory_explain__<tool>` [6]. A single process serves the MCP tools, the channel, and the GitHub poller.
 
 ### 1.2 MCP tools (refined)
 
@@ -59,7 +59,7 @@ All writes go to `.explain/` files, so the VS Code extension and the web builder
 The server declares `capabilities.experimental['claude/channel']` and `tools`. Events are `notifications/claude/channel` with `content` plus `meta` (meta keys may contain only `[A-Za-z0-9_]`; any other key is dropped silently) [1]. Claude sees, for example:
 
 ```
-<channel source="plugin:code-explainer:explain" kind="comment" thread_id="t_01J9" comment_id="c_01K2"
+<channel source="plugin:sidestory:explain" kind="comment" thread_id="t_01J9" comment_id="c_01K2"
          author="alice" trust="write" origin="github" pr="42" anchor="section_refill" explainer="bit_reader">
 Why not a FIFO here?
 </channel>
@@ -89,7 +89,7 @@ The server detects at startup whether it was registered as a channel. It does th
    - `PostToolUse` returns `additionalContext: "2 unread explainer comments (owner: 1)"`, throttled to once per 2 minutes.
    - `UserPromptSubmit` adds the same summary.
    - `Stop` returns `decision:"block"` only when an **owner** comment is unread, only once per comment ID, and never when `stop_hook_active` is true. This respects the 8-continuation cap [4].
-5. **Headless** (no live session at all): `claude -p "<event>" --resume <id> --permission-mode default --permission-prompts none --allowedTools "mcp__plugin_code-explainer_explain__threads_list,…thread_reply,…explain_read,Read,Grep,Glob"`. The run is read-only, so it can answer but not edit. The extension spawns it only when the registry shows no live process for that session.
+5. **Headless** (no live session at all): `claude -p "<event>" --resume <id> --permission-mode default --permission-prompts none --allowedTools "mcp__plugin_sidestory_explain__threads_list,…thread_reply,…explain_read,Read,Grep,Glob"`. The run is read-only, so it can answer but not edit. The extension spawns it only when the registry shows no live process for that session.
 6. **Manual** "Copy as prompt" stays only as an escape hatch.
 
 ### 1.5 Multi-session routing
@@ -131,9 +131,9 @@ The narration rules:
 1. **The author works locally.** Claude writes or updates `.explain/<name>/` (a code explainer), and for the change, `.explain/_change/<branch>/` (`kind:"change"`, pinned base/head). These are committed with the PR.
 2. **PR opened or updated** (`pull_request: opened|synchronize|reopened`). The workflow:
    - **builds** the static viewer: code at the head SHA, a base-side copy for changed files, diff hunks, explainers, and `meta.json {pr, head_sha, base_sha, built_at, explainers}`.
-   - **generates a change explainer if missing or stale.** For same-repo PRs, `claude-code-action` runs `/code-explainer:explain-change`. The output is **published only to the preview**, not committed (this avoids bot commits and `synchronize` loops). `@claude adopt explainer` commits it.
+   - **generates a change explainer if missing or stale.** For same-repo PRs, `claude-code-action` runs `/sidestory:explain-change`. The output is **published only to the preview**, not committed (this avoids bot commits and `synchronize` loops). `@claude adopt explainer` commits it.
    - **deploys** to `pr-preview/pr-<n>/` and sets a job `environment.url`, so GitHub shows a "View deployment" button.
-   - **updates one sticky comment** with a link, an explainer list, and a stale-anchor count. It also creates a **Check Run** "Code Explainer" whose `details_url` points to the viewer [14].
+   - **updates one sticky comment** with a link, an explainer list, and a stale-anchor count. It also creates a **Check Run** "Sidestory" whose `details_url` points to the viewer [14].
 3. **The reviewer opens the viewer.** The left pane shows code with a diff gutter (base/head toggle). The right pane shows the change explainer: before/after views and steps that follow the hunks. Each section links to the PR diff (`/pull/<n>/files#diff-<sha256(path)>R<line>`) and to a permalink (`/blob/<sha>/<path>#L35-L40`).
 4. **Commenting.**
    - **Signed in** (§2.5): the viewer posts a GitHub review comment directly. Code threads use `path`, `line`, `start_line`, `side`, and `commit_id` [15]. Section threads map to their anchor's code range: an inline comment if the range is inside the diff, a file-level comment (`subject_type:"file"`) if only the file is in the diff, otherwise a PR conversation comment headed with the section title.
@@ -183,7 +183,7 @@ Inside VS Code or Codespaces, the extension uses `vscode.authentication.getSessi
 
 | Surface | Used for | Notifies people? |
 |---|---|---|
-| Check Run "Code Explainer" (summary + `details_url`) | Build status, stale anchors, the narration tail | No |
+| Check Run "Sidestory" (summary + `details_url`) | Build status, stale anchors, the narration tail | No |
 | Sticky comment (edited in place) | Viewer link and explainer index | Once, on creation |
 | Review-thread replies | Answers to human comments | Yes, to thread participants |
 | New inline comments by Claude | Only if the author ran "review" explicitly; ```` ```suggestion ```` blocks; always a "Comment" review | Yes |
@@ -191,8 +191,8 @@ Inside VS Code or Codespaces, the extension uses `vscode.authentication.getSessi
 ### 2.7 Workflow sketch
 
 ```yaml
-# .github/workflows/code-explainer.yml
-name: code-explainer
+# .github/workflows/sidestory.yml
+name: sidestory
 on:
   pull_request: { types: [opened, synchronize, reopened, closed] }
   issue_comment: { types: [created] }
@@ -207,7 +207,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: { ref: "${{ github.event.pull_request.head.sha }}", fetch-depth: 0 }
-      - run: npx -y @code-explainer/cli@0.x build
+      - run: npx -y @sidestory/cli@0.x build
                --pr ${{ github.event.pull_request.number }}
                --base ${{ github.event.pull_request.base.sha }}
                --head ${{ github.event.pull_request.head.sha }} --out site
@@ -229,14 +229,14 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          plugin_marketplaces: https://github.com/<org>/code-explainer.git
-          plugins: code-explainer@code-explainer
+          plugin_marketplaces: https://github.com/<org>/sidestory.git
+          plugins: sidestory@sidestory
           prompt: >-
-            /code-explainer:explain-change --pr ${{ github.event.pull_request.number }}
+            /sidestory:explain-change --pr ${{ github.event.pull_request.number }}
             --out site/_change --skip-if-fresh
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Glob,Grep,Bash(git diff *),Bash(git log *),Write(site/_change/**),mcp__plugin_code-explainer_explain__*"
+            --allowedTools "Read,Glob,Grep,Bash(git diff *),Bash(git log *),Write(site/_change/**),mcp__plugin_sidestory_explain__*"
       - uses: actions/upload-artifact@v4
         with: { name: explainer-site, path: site, overwrite: true }
 
@@ -255,7 +255,7 @@ jobs:
       - id: preview
         uses: rossjrw/pr-preview-action@v1        # pin to SHA
         with: { source-dir: site, comment: false }
-      - run: npx -y @code-explainer/cli@0.x publish-status   # sticky comment + Check Run
+      - run: npx -y @sidestory/cli@0.x publish-status   # sticky comment + Check Run
                --pr ${{ github.event.pull_request.number }} --url "${{ steps.preview.outputs.preview-url }}"
         env: { GH_TOKEN: "${{ github.token }}" }
 
@@ -293,8 +293,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          plugin_marketplaces: https://github.com/<org>/code-explainer.git
-          plugins: code-explainer@code-explainer
+          plugin_marketplaces: https://github.com/<org>/sidestory.git
+          plugins: sidestory@sidestory
           track_progress: true
 ```
 

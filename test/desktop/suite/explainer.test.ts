@@ -5,8 +5,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 
-const EXTENSION_ID = 'code-explainer.code-explainer';
-const VIEW_TYPE = 'codeExplainer.explainer';
+const EXTENSION_ID = 'sidestory.sidestory';
+const VIEW_TYPE = 'sidestory.explainer';
 const workspace = process.env.CX_WORKSPACE!;
 const eol = process.env.CX_EOL ?? 'lf';
 const explainerDir = vscode.Uri.file(join(workspace, '.explain', 'bit-reader'));
@@ -44,7 +44,7 @@ function editorShowingLine(file: string, line: number): vscode.TextEditor | unde
 }
 
 export function explainerTests(): void {
-  describe(`Code Explainer on desktop VS Code (${process.platform}, ${eol.toUpperCase()})`, () => {
+  describe(`Sidestory on desktop VS Code (${process.platform}, ${eol.toUpperCase()})`, () => {
     before(async () => {
       const ext = vscode.extensions.getExtension(EXTENSION_ID);
       assert.ok(ext, 'extension is installed in the development host');
@@ -56,7 +56,7 @@ export function explainerTests(): void {
     });
 
     it('opens an explainer beside the editor', async () => {
-      await vscode.commands.executeCommand('codeExplainer.open', explainerDir);
+      await vscode.commands.executeCommand('sidestory.open', explainerDir);
       await until('the explainer panel', () => explainerTabs().length === 1);
     });
 
@@ -64,7 +64,7 @@ export function explainerTests(): void {
       const anchors = manifest().anchors;
       // The panel starts at the first step; walk forward and check each step's code comes into view.
       for (const id of ['state', 'handshakes', 'consume', 'refill']) {
-        await vscode.commands.executeCommand('codeExplainer.nextStep');
+        await vscode.commands.executeCommand('sidestory.nextStep');
         const a = anchors[id]!;
         await until(`${id} (${a.file}:${a.range[0]}) in view`, () => editorShowingLine(a.file, a.range[0]));
       }
@@ -79,8 +79,8 @@ export function explainerTests(): void {
       edit.insert(doc.uri, new vscode.Position(0, 0), `// one${nl}// two${nl}// three${nl}`);
       assert.ok(await vscode.workspace.applyEdit(edit));
       // Back one step and forward again: the refill section must now reveal its code 3 lines lower.
-      await vscode.commands.executeCommand('codeExplainer.prevStep');
-      await vscode.commands.executeCommand('codeExplainer.nextStep');
+      await vscode.commands.executeCommand('sidestory.prevStep');
+      await vscode.commands.executeCommand('sidestory.nextStep');
       await until('refill code, moved down 3 lines, in view', () => editorShowingLine(a.file, a.range[0] + 3));
     });
 
@@ -89,7 +89,7 @@ export function explainerTests(): void {
       const rawBefore = readFileSync(manifestPath, 'utf8');
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath.toLowerCase().endsWith('bit_reader.sv'))!;
       assert.ok(await doc.save(), 'saved the edited code');
-      await vscode.commands.executeCommand('codeExplainer.pin');
+      await vscode.commands.executeCommand('sidestory.pin');
       await until('the manifest rewritten with the new range', () => manifest().anchors.refill!.range[0] === before[0] + 3);
       const raw = readFileSync(manifestPath, 'utf8');
       assert.equal(raw.includes('\r\n'), rawBefore.includes('\r\n'), 'line endings kept');
@@ -101,8 +101,8 @@ export function explainerTests(): void {
       const a = manifest().anchors.refill!;
       writeFileSync(manifestPath, raw.replace(`"${a.file}"`, `"${a.file.toUpperCase()}"`));
       try {
-        await vscode.commands.executeCommand('codeExplainer.prevStep');
-        await vscode.commands.executeCommand('codeExplainer.nextStep');
+        await vscode.commands.executeCommand('sidestory.prevStep');
+        await vscode.commands.executeCommand('sidestory.nextStep');
         await until('refill code in view through the upper-case path', () => editorShowingLine(a.file, manifest().anchors.refill!.range[0]));
       } finally {
         writeFileSync(manifestPath, raw);
@@ -111,7 +111,7 @@ export function explainerTests(): void {
 
     (caseInsensitiveFs ? it : it.skip)('opening the same explainer with different letter case reuses its panel', async () => {
       const upper = vscode.Uri.file(explainerDir.fsPath.replace(/bit-reader$/, 'BIT-READER'));
-      await vscode.commands.executeCommand('codeExplainer.open', upper);
+      await vscode.commands.executeCommand('sidestory.open', upper);
       await new Promise((r) => setTimeout(r, 1500));
       assert.equal(explainerTabs().length, 1, 'no second panel for the same folder');
     });

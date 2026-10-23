@@ -417,7 +417,7 @@ export class WidgetCompilerCore {
     }
     const data = this.lucide();
     if (!data) {
-      errors.push({ ...at, code: 'internal', message: 'Lucide icon data is missing from this build of Code Explainer.' });
+      errors.push({ ...at, code: 'internal', message: 'Lucide icon data is missing from this build of Sidestory.' });
       return;
     }
     for (const n of site.names) {

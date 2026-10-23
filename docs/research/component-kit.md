@@ -230,11 +230,11 @@ A ~3 kB runtime (`ex-runtime`) owns the connection between the components and th
   --ex-code-font: var(--vscode-editor-font-family, ui-monospace, monospace);
   --ex-tone-blue: var(--vscode-charts-blue, #3794ff); /* … red yellow orange green purple */
   --ex-tint: color-mix(in srgb, var(--ex-tone) 14%, transparent);
-  --ex-stale: var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  --ex-stale: var(--vscode-sidestory-staleForeground, var(--vscode-editorWarning-foreground));
 }
 ```
 
-Our `contributes.colors` (for example `codeExplainer.focusBackground`) surface as `--vscode-codeExplainer-focusBackground` and slot into the tokens.
+Our `contributes.colors` (for example `sidestory.focusBackground`) surface as `--vscode-sidestory-focusBackground` and slot into the tokens.
 
 **Fills and strokes.**
 - Our SVG uses classes styled with `fill: var(--ex-tint); stroke: var(--ex-tone)`, so a theme switch costs zero JS.

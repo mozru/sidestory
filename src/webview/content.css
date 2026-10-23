@@ -74,7 +74,7 @@ html, body {
 /* ---- linked sections ---- */
 
 [data-explain-anchor] {
-  --cx-accent: var(--vscode-codeExplainer-focusBorder, var(--vscode-focusBorder));
+  --cx-accent: var(--vscode-sidestory-focusBorder, var(--vscode-focusBorder));
   position: relative;
   scroll-margin-top: 12px;
   border-radius: 6px;
@@ -118,24 +118,24 @@ html, body {
 }
 
 [data-explain-anchor][data-cx-state='stale'] {
-  outline: 1px dashed var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  outline: 1px dashed var(--vscode-sidestory-staleForeground, var(--vscode-editorWarning-foreground));
   outline-offset: -1px;
 }
 
 [data-explain-anchor][data-cx-state='stale']::before,
 [data-explain-anchor][data-cx-state='stale']::after {
-  color: var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  color: var(--vscode-sidestory-staleForeground, var(--vscode-editorWarning-foreground));
   border-color: currentColor;
 }
 
 [data-explain-anchor][data-cx-state='lost'] {
-  outline: 1px solid var(--vscode-codeExplainer-lostForeground, var(--vscode-editorError-foreground));
+  outline: 1px solid var(--vscode-sidestory-lostForeground, var(--vscode-editorError-foreground));
   outline-offset: -1px;
 }
 
 [data-explain-anchor][data-cx-state='lost']::before,
 [data-explain-anchor][data-cx-state='lost']::after {
-  color: var(--vscode-codeExplainer-lostForeground, var(--vscode-editorError-foreground));
+  color: var(--vscode-sidestory-lostForeground, var(--vscode-editorError-foreground));
   border-color: currentColor;
 }
 

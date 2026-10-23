@@ -1,9 +1,9 @@
 {
-  "name": "code-explainer",
-  "displayName": "Code Explainer",
+  "name": "sidestory",
+  "displayName": "Sidestory",
   "description": "Rich HTML explainers beside your code, linked both ways, updated live.",
   "version": "0.1.0",
-  "publisher": "code-explainer",
+  "publisher": "sidestory",
   "license": "MIT",
   "preview": true,
   "icon": "media/icon.png",
@@ -45,82 +45,82 @@
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "workspaceContains:**/.explain/*/manifest.json",
-    "onWebviewPanel:codeExplainer.explainer"
+    "onWebviewPanel:sidestory.explainer"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "codeExplainer.open",
+        "command": "sidestory.open",
         "title": "Open Explainer",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.nextStep",
+        "command": "sidestory.nextStep",
         "title": "Next Step",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.prevStep",
+        "command": "sidestory.prevStep",
         "title": "Previous Step",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.pin",
+        "command": "sidestory.pin",
         "title": "Pin Anchors to the Current Code",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.reanchor",
+        "command": "sidestory.reanchor",
         "title": "Re-anchor Section to Selection",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.revokeWidgetConsent",
+        "command": "sidestory.revokeWidgetConsent",
         "title": "Revoke Widget Consent",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.enableWidgets",
+        "command": "sidestory.enableWidgets",
         "title": "Enable Widgets",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.checkWidgets",
+        "command": "sidestory.checkWidgets",
         "title": "Check Widgets",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.copyWidgetCheckCommand",
+        "command": "sidestory.copyWidgetCheckCommand",
         "title": "Copy Widget Check Command",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       },
       {
-        "command": "codeExplainer.addWidgetTypes",
+        "command": "sidestory.addWidgetTypes",
         "title": "Add Widget Types",
-        "category": "Code Explainer"
+        "category": "Sidestory"
       }
     ],
     "keybindings": [
       {
-        "command": "codeExplainer.nextStep",
+        "command": "sidestory.nextStep",
         "key": "alt+]",
-        "when": "codeExplainer.active && !inlineSuggestionVisible && !suggestWidgetVisible"
+        "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       },
       {
-        "command": "codeExplainer.prevStep",
+        "command": "sidestory.prevStep",
         "key": "alt+[",
-        "when": "codeExplainer.active && !inlineSuggestionVisible && !suggestWidgetVisible"
+        "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       }
     ],
     "configuration": {
-      "title": "Code Explainer",
+      "title": "Sidestory",
       "properties": {
-        "codeExplainer.dimUnfocused": {
+        "sidestory.dimUnfocused": {
           "type": "boolean",
           "default": true,
           "description": "Dim code outside the active step when you move through the explainer."
         },
-        "codeExplainer.widgets.enabled": {
+        "sidestory.widgets.enabled": {
           "type": "boolean",
           "default": true,
           "scope": "application",
@@ -130,7 +130,7 @@
     },
     "colors": [
       {
-        "id": "codeExplainer.focusBackground",
+        "id": "sidestory.focusBackground",
         "description": "Background of the lines the active explainer step is about.",
         "defaults": {
           "dark": "editor.rangeHighlightBackground",
@@ -140,7 +140,7 @@
         }
       },
       {
-        "id": "codeExplainer.focusBorder",
+        "id": "sidestory.focusBorder",
         "description": "Left bar on the active step's lines when the step has no accent color.",
         "defaults": {
           "dark": "focusBorder",
@@ -150,7 +150,7 @@
         }
       },
       {
-        "id": "codeExplainer.highlightBackground",
+        "id": "sidestory.highlightBackground",
         "description": "Background of identifiers the active step highlights.",
         "defaults": {
           "dark": "editor.wordHighlightStrongBackground",
@@ -160,7 +160,7 @@
         }
       },
       {
-        "id": "codeExplainer.highlightBorder",
+        "id": "sidestory.highlightBorder",
         "description": "Border of identifiers the active step highlights.",
         "defaults": {
           "dark": "#00000000",
@@ -170,7 +170,7 @@
         }
       },
       {
-        "id": "codeExplainer.widgetHighlightBackground",
+        "id": "sidestory.widgetHighlightBackground",
         "description": "Background of the lines a widget highlights in the editor.",
         "defaults": {
           "dark": "editor.wordHighlightBackground",
@@ -180,7 +180,7 @@
         }
       },
       {
-        "id": "codeExplainer.widgetHighlightBorder",
+        "id": "sidestory.widgetHighlightBorder",
         "description": "Border of the lines a widget highlights in the editor (high contrast themes, where backgrounds are transparent).",
         "defaults": {
           "dark": "editor.wordHighlightBorder",
@@ -190,7 +190,7 @@
         }
       },
       {
-        "id": "codeExplainer.staleForeground",
+        "id": "sidestory.staleForeground",
         "description": "Explainer sections whose code changed a lot.",
         "defaults": {
           "dark": "editorWarning.foreground",
@@ -200,7 +200,7 @@
         }
       },
       {
-        "id": "codeExplainer.lostForeground",
+        "id": "sidestory.lostForeground",
         "description": "Explainer sections whose code can't be found.",
         "defaults": {
           "dark": "editorError.foreground",
@@ -213,24 +213,24 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "codeExplainer.nextStep",
-          "when": "codeExplainer.active"
+          "command": "sidestory.nextStep",
+          "when": "sidestory.active"
         },
         {
-          "command": "codeExplainer.prevStep",
-          "when": "codeExplainer.active"
+          "command": "sidestory.prevStep",
+          "when": "sidestory.active"
         }
       ],
       "editor/context": [
         {
-          "command": "codeExplainer.reanchor",
-          "when": "codeExplainer.active && editorHasSelection",
+          "command": "sidestory.reanchor",
+          "when": "sidestory.active && editorHasSelection",
           "group": "navigation@90"
         }
       ],
       "explorer/context": [
         {
-          "command": "codeExplainer.open",
+          "command": "sidestory.open",
           "when": "explorerResourceIsFolder && resourceDirname =~ /\\.explain$/",
           "group": "navigation@90"
         }
@@ -246,7 +246,7 @@
     "test:widgets": "playwright test -c test/widgets/playwright.config.ts",
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
     "pin": "node scripts/pin.ts",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links -o dist/code-explainer.vsix",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links -o dist/sidestory.vsix",
     "check": "npm run typecheck && npm test && npm run build",
     "test:desktop": "npm run build && node test/desktop/run.mjs"
   },

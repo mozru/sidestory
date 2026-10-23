@@ -17,7 +17,7 @@ describe('widget highlights', () => {
     const widget = decorationTypes.find((o) => (o.overviewRulerColor as ThemeColor | undefined)?.id === 'editorOverviewRuler.wordHighlightForeground');
     expect(widget).toBeDefined();
     const border = (widget!.borderColor as ThemeColor | undefined)?.id;
-    expect(border).toBe('codeExplainer.widgetHighlightBorder');
+    expect(border).toBe('sidestory.widgetHighlightBorder');
     expect(widget!.borderWidth).toBe('1px');
     const def = colors.find((c) => c.id === border)!.defaults;
     expect(visible(def.highContrast) && visible(def.highContrastLight)).toBe(true);

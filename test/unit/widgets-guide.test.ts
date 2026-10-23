@@ -129,7 +129,7 @@ describe('docs/WIDGETS.md examples', () => {
     for (const names of Object.values(UI_COMPONENT_EXPORTS)) for (const n of names) expect(guide, n).toContain(`\`${n}\``);
     for (const m of D3_MODULES) expect(guide, m).toContain(`\`${m}\``);
     for (const spec of Object.keys(UNAVAILABLE_IMPORTS)) expect(guide, spec).toContain(`\`${spec}\``);
-    expect(guide).toContain('ls ~/.vscode*/extensions/*code-explainer*/dist/check.cjs');
+    expect(guide).toContain('ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs');
     expect(guide).toContain('--yes-widgets-may-read');
   });
 });

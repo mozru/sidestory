@@ -26,11 +26,11 @@ function checkDiskSpace(): void {
 export default async function setup(): Promise<() => void> {
   checkDiskSpace();
   run('npm run package');
-  run('docker build -q -f test/e2e/Dockerfile -t code-explainer-e2e .');
+  run('docker build -q -f test/e2e/Dockerfile -t sidestory-e2e .');
   // Each rebuild leaves the previous image untagged; remove those (ours only, by label) so runs don't pile up.
-  run('docker image prune -f --filter label=org.code-explainer.test=e2e');
+  run('docker image prune -f --filter label=org.sidestory.test=e2e');
   run(`docker rm -f ${CONTAINER} || true`);
-  run(`docker run -d --name ${CONTAINER} -p 127.0.0.1:${PORT}:3000 code-explainer-e2e`);
+  run(`docker run -d --name ${CONTAINER} -p 127.0.0.1:${PORT}:3000 sidestory-e2e`);
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
     try {

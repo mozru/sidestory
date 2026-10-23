@@ -1,4 +1,4 @@
-# Code Explainer
+# Sidestory
 
 Rich, free-form HTML explainers that sit beside your code in VS Code and stay linked to it both ways.
 
@@ -10,7 +10,7 @@ Rich, free-form HTML explainers that sit beside your code in VS Code and stay li
 - **Safe with untrusted repositories**, so it runs in Restricted Mode. Explainer content can't run script, reach the network or read files outside the repository. See `SECURITY.md`.
 - **Interactive widgets** (opt-in): live charts, simulations and diagrams written as React components, run in sandboxed frames only after you agree.
 
-Open one with **Code Explainer: Open Explainer** from the Command Palette, or right-click a folder under `.explain/` in the Explorer. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.
+Open one with **Sidestory: Open Explainer** from the Command Palette, or right-click a folder under `.explain/` in the Explorer. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.
 
 ## Writing an explainer
 
@@ -24,7 +24,7 @@ An explainer is a folder in your repository:
     assets/          optional: images, fonts, stylesheets
 ```
 
-Open it with **Code Explainer: Open Explainer**.
+Open it with **Sidestory: Open Explainer**.
 
 ### Link sections to code
 
@@ -67,13 +67,13 @@ Mark any element that is about some code with `data-explain-anchor`, and name it
 | `summary` | Top level, optional: one line shown when a parent explainer peeks at this one. |
 | `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
 
-Then run **Code Explainer: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Until then a section is just a line range and can't tell when its code changes; the panel says so once per explainer. Pin edits only the anchors it pins and keeps the rest of `manifest.json` as you wrote it. It pins what the editors show, unsaved changes included, and says when it did.
+Then run **Sidestory: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Until then a section is just a line range and can't tell when its code changes; the panel says so once per explainer. Pin edits only the anchors it pins and keeps the rest of `manifest.json` as you wrote it. It pins what the editors show, unsaved changes included, and says when it did.
 
 Pin only pins anchors whose code it finds with confidence. It names each anchor it left alone and why (code changed, out of date, code not found, ambiguous, file missing), then lists the ones it could still pin: where the code is now, and the lines their `range` gives. Tick the ones whose code you changed on purpose to pin them there.
 
 To point a section at different code:
 
-- select the code and run **Code Explainer: Re-anchor Section to Selection** (also in the editor's context menu while an explainer is open), then pick the section; sections whose code is lost or out of date are listed first. The selection may be in another file of the same repository; or
+- select the code and run **Sidestory: Re-anchor Section to Selection** (also in the editor's context menu while an explainer is open), then pick the section; sections whose code is lost or out of date are listed first. The selection may be in another file of the same repository; or
 - edit its `range` in the manifest and run Pin: when the recorded code can't be found with confidence, Pin offers the lines `range` gives. (If the recorded code is still there unchanged, Pin follows it instead; use Re-anchor.)
 
 ### Big systems: an overview with details
@@ -164,20 +164,20 @@ export default function Refill({ width = 64 }: { width?: number }) {
 }
 ```
 
-**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, the `codeExplainer.widgets.enabled` setting is on (it is by default; it's a user setting, so a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked once per explainer, and again when widget code arrives through git (checkout, pull, merge), not after your own edits or when you switch back to a version you already agreed to. Consent is kept in VS Code's workspace storage (in browser VS Code, per browser profile). **Code Explainer: Revoke Widget Consent** takes it back. A widget that freezes the panel is turned off by a watchdog: its box offers **Try again**, and **Code Explainer: Enable Widgets** turns every widget the watchdog stopped back on (and the setting, if it's off). What widgets can and can't reach is in `SECURITY.md`.
+**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, the `sidestory.widgets.enabled` setting is on (it is by default; it's a user setting, so a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked once per explainer, and again when widget code arrives through git (checkout, pull, merge), not after your own edits or when you switch back to a version you already agreed to. Consent is kept in VS Code's workspace storage (in browser VS Code, per browser profile). **Sidestory: Revoke Widget Consent** takes it back. A widget that freezes the panel is turned off by a watchdog: its box offers **Try again**, and **Sidestory: Enable Widgets** turns every widget the watchdog stopped back on (and the setting, if it's off). What widgets can and can't reach is in `SECURITY.md`.
 
-**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Code Explainer: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Code Explainer: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
+**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Sidestory: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Sidestory: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
 
 ### Settings
 
 | Setting | Default | |
 |---|---|---|
-| `codeExplainer.dimUnfocused` | `true` | Fade the rest of the file while you step through the explainer (never in high contrast themes). |
-| `codeExplainer.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
+| `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through the explainer (never in high contrast themes). |
+| `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ### Troubleshooting
 
-**View › Output › Code Explainer** shows why a file was refused (missing, outside the repository after following links, too large) and other problems. Files that aren't open in an editor are read as UTF-8.
+**View › Output › Sidestory** shows why a file was refused (missing, outside the repository after following links, too large) and other problems. Files that aren't open in an editor are read as UTF-8.
 
 ## Development
 
@@ -186,7 +186,7 @@ npm ci
 npm run check          # typecheck, unit tests, build
 npm run test:webview   # the panel in Chromium (first: npx playwright install chromium)
 npm run test:e2e       # browser VS Code with the server in Docker
-npm run package        # dist/code-explainer.vsix
+npm run package        # dist/sidestory.vsix
 node dist/check.cjs fixtures/sample-workspace/.explain/bit-reader   # the standalone widget checker (after a build)
 node scripts/widget-types.ts           # regenerate src/widget-types/*.d.ts after updating a widget library
 ```

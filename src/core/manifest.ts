@@ -157,7 +157,7 @@ export function parseManifest(json: string): ParseResult {
   if (!top.success) return { ok: false, code: 'invalid', error: `manifest.json: ${describe(top.error)}` };
   const version = top.data.version;
   if (!(SUPPORTED_VERSIONS as readonly number[]).includes(version)) {
-    return { ok: false, code: 'unsupported-version', error: `manifest.json has version ${version}; this version of Code Explainer reads versions ${SUPPORTED_VERSIONS.join(' and ')}` };
+    return { ok: false, code: 'unsupported-version', error: `manifest.json has version ${version}; this version of Sidestory reads versions ${SUPPORTED_VERSIONS.join(' and ')}` };
   }
 
   const diagnostics: Diagnostic[] = [];

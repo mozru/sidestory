@@ -112,7 +112,7 @@ button.cx-crumb:focus-visible,
 }
 
 .cx-status[data-ok='false'] {
-  color: var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  color: var(--vscode-sidestory-staleForeground, var(--vscode-editorWarning-foreground));
 }
 
 .cx-steps {
@@ -244,7 +244,7 @@ button.cx-crumb:focus-visible,
 
 .cx-progress > span:is([data-cx-state='stale'], [data-cx-state='lost']) {
   background: transparent;
-  border-top: 1px dashed var(--vscode-codeExplainer-staleForeground, var(--vscode-editorWarning-foreground));
+  border-top: 1px dashed var(--vscode-sidestory-staleForeground, var(--vscode-editorWarning-foreground));
 }
 
 @container (max-width: 420px) {

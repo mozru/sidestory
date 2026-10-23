@@ -22,8 +22,8 @@ export interface WidgetHighlight {
 export class Decorations implements vscode.Disposable {
   private readonly focusTypes = new Map<string, vscode.TextEditorDecorationType>();
   private readonly chip = vscode.window.createTextEditorDecorationType({
-    backgroundColor: new vscode.ThemeColor('codeExplainer.highlightBackground'),
-    borderColor: new vscode.ThemeColor('codeExplainer.highlightBorder'),
+    backgroundColor: new vscode.ThemeColor('sidestory.highlightBackground'),
+    borderColor: new vscode.ThemeColor('sidestory.highlightBorder'),
     borderStyle: 'solid',
     borderWidth: '1px',
     borderRadius: '3px',
@@ -38,15 +38,15 @@ export class Decorations implements vscode.Disposable {
   // High contrast themes leave highlight backgrounds transparent: there, a border marks the lines.
   private readonly widgetType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
-    backgroundColor: new vscode.ThemeColor('codeExplainer.widgetHighlightBackground'),
-    borderColor: new vscode.ThemeColor('codeExplainer.widgetHighlightBorder'),
+    backgroundColor: new vscode.ThemeColor('sidestory.widgetHighlightBackground'),
+    borderColor: new vscode.ThemeColor('sidestory.widgetHighlightBorder'),
     borderStyle: 'solid',
     borderWidth: '1px',
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.wordHighlightForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Right,
   });
   private readonly widgetIds = vscode.window.createTextEditorDecorationType({
-    backgroundColor: new vscode.ThemeColor('codeExplainer.highlightBackground'),
+    backgroundColor: new vscode.ThemeColor('sidestory.highlightBackground'),
     borderColor: new vscode.ThemeColor('focusBorder'),
     borderStyle: 'solid',
     borderWidth: '1px',
@@ -120,12 +120,12 @@ export class Decorations implements vscode.Disposable {
     editor.setDecorations(this.dim, outside);
   }
 
-  private focusType(color = 'codeExplainer.focusBorder'): vscode.TextEditorDecorationType {
+  private focusType(color = 'sidestory.focusBorder'): vscode.TextEditorDecorationType {
     let t = this.focusTypes.get(color);
     if (!t) {
       t = vscode.window.createTextEditorDecorationType({
         isWholeLine: true,
-        backgroundColor: new vscode.ThemeColor('codeExplainer.focusBackground'),
+        backgroundColor: new vscode.ThemeColor('sidestory.focusBackground'),
         borderColor: new vscode.ThemeColor(color),
         borderStyle: 'solid',
         borderWidth: '0 0 0 2px',

@@ -95,7 +95,7 @@ test.describe('widgets', () => {
     await command(page, 'View: Close All Editors');
     const again = await openExplainer(page, 'retry-backoff');
     await expect(widget(again).getByTestId('backoff')).toBeVisible({ timeout: 20_000 });
-    await command(page, 'Code Explainer: Revoke Widget Consent');
+    await command(page, 'Sidestory: Revoke Widget Consent');
     await expect(again.locator('.cx-consent')).toContainText('Run widgets…');
     await expect(again.locator('iframe.cx-widget-frame')).toHaveCount(0);
   });

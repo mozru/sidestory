@@ -1,5 +1,5 @@
 // React 19 for widgets, trimmed (docs/WIDGETS-PLAN.md §2 "Add Widget Types"): the hooks, components and
-// types widgets use, with real signatures; DOM element props are loose (any). Written for Code Explainer;
+// types widgets use, with real signatures; DOM element props are loose (any). Written for Sidestory;
 // not @types/react. Names are only those React 19 exports.
 
 declare namespace __CxReact {

@@ -1,7 +1,7 @@
 {
   "v": 3,
   "createdOnFiles": {"v": 1, "at": "2026-10-21T20:30:00Z"},
-  "title": "Code Explainer Mockup v2",
+  "title": "Sidestory Mockup v2",
   "launch": {"view": "canvas"},
   "pages": [],
   "boards": {
@@ -15,7 +15,7 @@
   },
   "order": ["Main.dc.html", "Working.dc.html", "Thread.dc.html", "Stale.dc.html", "Narrow.dc.html", "Review.dc.html", "PRViewer.dc.html"],
   "notes": {
-    "t_main": {"x": 0, "y": -260, "text": "Code Explainer: the linked editor", "kind": "title1", "maxW": 1440},
+    "t_main": {"x": 0, "y": -260, "text": "Sidestory: the linked editor", "kind": "title1", "maxW": 1440},
     "t_states": {"x": 0, "y": 983, "text": "Live states: nothing ever needs a reload", "kind": "title1", "maxW": 2380},
     "t_pr": {"x": 0, "y": 2226, "text": "Code review: native VS Code diff now, web viewer later", "kind": "title1", "maxW": 2960}
   },

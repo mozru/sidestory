@@ -35,7 +35,7 @@ const MAX_ASSET_REQUESTS = 500;
 
 const LOST: Resolution = { state: 'lost', range: null, location: 0, similarity: 0, ambiguous: false, method: 'none' };
 /** Workspace state: explainers already told that their anchors aren't pinned. */
-const UNPINNED_NOTICE_KEY = 'codeExplainer.unpinnedNoticeShown';
+const UNPINNED_NOTICE_KEY = 'sidestory.unpinnedNoticeShown';
 
 /** What a session needs from the extension. */
 export interface SessionHost {
@@ -365,7 +365,7 @@ export class ExplainerSession implements vscode.Disposable {
       // The title still comes from the manifest, so the tab and trail name the right explainer.
       const parsed = manifestText === undefined ? undefined : parseManifest(manifestText);
       if (parsed?.ok) this.setTitle(parsed.manifest.title);
-      this.showError(`Can't read ${which}: it is missing, outside the repository, or too large. Details in Output › Code Explainer.`);
+      this.showError(`Can't read ${which}: it is missing, outside the repository, or too large. Details in Output › Sidestory.`);
       return;
     }
     const manifestChanged = manifestText !== this.manifestText;
@@ -443,7 +443,7 @@ export class ExplainerSession implements vscode.Disposable {
     void vscode.window
       .showInformationMessage(`Sections of “${this.title || ref.name}” can't tell when their code changes until its anchors are pinned.`, pin)
       .then((choice) => {
-        if (choice === pin) void vscode.commands.executeCommand('codeExplainer.pin', ref.dir);
+        if (choice === pin) void vscode.commands.executeCommand('sidestory.pin', ref.dir);
       });
   }
 
@@ -759,7 +759,7 @@ export class ExplainerSession implements vscode.Disposable {
     const kind = vscode.window.activeColorTheme.kind;
     const highContrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
     // No fading in high contrast themes, where it would cut contrast below what the theme promises.
-    const dim = !moveCursor && !highContrast && vscode.workspace.getConfiguration('codeExplainer').get<boolean>('dimUnfocused', true);
+    const dim = !moveCursor && !highContrast && vscode.workspace.getConfiguration('sidestory').get<boolean>('dimUnfocused', true);
     const uri = this.fileUri(a.file);
     const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
     try {

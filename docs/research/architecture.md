@@ -1,4 +1,4 @@
-# Code Explainer: System Architecture
+# Sidestory: System Architecture
 
 Status: proposal, 2026-10-21. Scope: the live data flow from end to end. The hard requirement is that **everything updates live**: the user never reloads a panel or reruns a command.
 
@@ -129,8 +129,8 @@ Rules:
 ### 2.4 Persistence
 
 - `setState` is small: `{name, rev, scroll:{sectionId, ratio}, openThreads, drafts}`. No content is stored in it.
-- `WebviewPanelSerializer` is registered for viewType `codeExplainer.view` with activation event `onWebviewPanel:codeExplainer.view`. `deserializeWebviewPanel(panel, state)` re-binds the panel to the store and sends a `snapshot`. The page restores scroll from `state.scroll`.
-- `retainContextWhenHidden`: **off by default**. Snapshots are cheap and scroll is restored by section, so it's rarely needed. An opt-in setting `codeExplainer.keepAlive` exists for heavy explainers such as big waveforms. Even with it on, the extension still resyncs on show (F3).
+- `WebviewPanelSerializer` is registered for viewType `sidestory.view` with activation event `onWebviewPanel:sidestory.view`. `deserializeWebviewPanel(panel, state)` re-binds the panel to the store and sends a `snapshot`. The page restores scroll from `state.scroll`.
+- `retainContextWhenHidden`: **off by default**. Snapshots are cheap and scroll is restored by section, so it's rarely needed. An opt-in setting `sidestory.keepAlive` exists for heavy explainers such as big waveforms. Even with it on, the extension still resyncs on show (F3).
 
 ### 2.5 Writes and concurrency (core writer)
 

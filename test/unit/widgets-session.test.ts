@@ -304,7 +304,7 @@ describe('review regressions (extension side)', () => {
     // Not an explainer this panel showed: ignored.
     p.send({ type: 'widgetStates', dir: Uri.file(`${root}/.explain/other`).toString(), states: [['k', '{"x":1}']] });
     await new Promise((r) => setTimeout(r, 100));
-    expect(Object.keys(state.get('codeExplainer.widgetStates') as object)).toEqual([dir]);
+    expect(Object.keys(state.get('sidestory.widgetStates') as object)).toEqual([dir]);
     // The panel is closed and opened again (or the window reloads): same workspace state.
     const q = open({ host });
     await q.session.load();

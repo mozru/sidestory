@@ -1,4 +1,4 @@
-# Code Explainer: UX / UI spec
+# Sidestory: UX / UI spec
 
 Companion to `docs/DESIGN.md`. Written 2026-10-21. Opinionated; argue with it in a PR.
 
@@ -106,18 +106,18 @@ Sticky bottom, `role="log"`, collapsible.
 
 ## 2. Editor-side visuals
 
-All colors are `ThemeColor`s; our own are contributed under `codeExplainer.*` with light/dark/hcLight/hcDark defaults (they also appear in the webview as `--vscode-codeExplainer-*`).
+All colors are `ThemeColor`s; our own are contributed under `sidestory.*` with light/dark/hcLight/hcDark defaults (they also appear in the webview as `--vscode-sidestory-*`).
 
 | Element | Spec |
 |---|---|
-| **Focus range** | `isWholeLine`, `backgroundColor: codeExplainer.focusBackground` (defaults to `editor.rangeHighlightBackground`), left border `0 0 0 2px solid codeExplainer.focusBorder` (per-step variant tinted from the step's `charts.*` color), overview-ruler mark in the same color, `rangeBehavior: ClosedClosed`. |
+| **Focus range** | `isWholeLine`, `backgroundColor: sidestory.focusBackground` (defaults to `editor.rangeHighlightBackground`), left border `0 0 0 2px solid sidestory.focusBorder` (per-step variant tinted from the step's `charts.*` color), overview-ruler mark in the same color, `rangeBehavior: ClosedClosed`. |
 | **Identifier chips** | `highlight` identifiers in the file: `backgroundColor` of `editor.wordHighlightBackground`, `borderRadius: 3px`, 1 px `editor.wordHighlightBorder`. Only in the focused file; capped at 200 ranges. Exact token match via a word-boundary regex (language-agnostic), upgraded to `executeDocumentHighlights` when available. |
-| **Dimming** | `opacity: 0.55` on all non-focus lines, **only in reading mode** (the focus came from the explainer). Cleared instantly on the first keystroke, on a mouse click outside the range, or on `Esc`. Never dim while the cursor drives. Setting `codeExplainer.dim: reading|never|always`. |
+| **Dimming** | `opacity: 0.55` on all non-focus lines, **only in reading mode** (the focus came from the explainer). Cleared instantly on the first keystroke, on a mouse click outside the range, or on `Esc`. Never dim while the cursor drives. Setting `sidestory.dim: reading|never|always`. |
 | **Gutter** | Reserved for native things: the Comments API "+" and thread glyphs, git. We add only a stale glyph (`$(warning)`-shaped SVG, light/dark variants) on the first line of a stale anchor. No step-number gutter icons: they fight breakpoints and folding. |
 | **CodeLens** | On the first line of each anchored range: `$(book) Step 3 · Handshakes` · `$(comment-discussion) 2` · `$(sparkle) Ask Claude`. Stale: `$(warning) Explainer out of date · Refresh with Claude`. Lenses refresh via `onDidChangeCodeLenses`, debounced 500 ms (lenses popping in and out shift the text, so update in place, never remove/re-add while the user types; recompute on save or 2 s idle). Setting to disable. |
 | **Hover** | On anchored lines: step title, a 2-line plain-text summary (first `<p>` of the section), state, and command links `Open in explainer` · `Ask Claude`. Trusted `MarkdownString` with `supportThemeIcons`. |
 | **Status bar** | Left: `$(book) 3/5 Handshakes` (click = reveal pane; tooltip lists steps). Right: `$(loading~spin) Claude: Refactoring refill…` while the story is active (click = expand the story strip), plus the follow toggle `$(eye)`. The background is never tinted per step (the mockup did; real themes and the native status bar don't allow it cleanly; use the icon color only). |
-| **Claude cursor** | With follow on and a `status.focus`: a ghost decoration on those lines (`codeExplainer.claudeFocusBackground`, a dotted left border) plus an `after` text label ` ◂ Claude`. This is shown even with follow off (it is passive, no scroll). |
+| **Claude cursor** | With follow on and a `status.focus`: a ghost decoration on those lines (`sidestory.claudeFocusBackground`, a dotted left border) plus an `after` text label ` ◂ Claude`. This is shown even with follow off (it is passive, no scroll). |
 
 ---
 
@@ -170,7 +170,7 @@ In the pane, single-key shortcuts apply when focus isn't in an input. They are d
 | `g g` / `G` | first / last |
 | `Esc` | close composer/overlay; clear dimming; return focus to the editor (two-stage) |
 
-Global commands (with `when: codeExplainer.active`): `Code Explainer: Next/Previous Step` (suggested `Ctrl+Alt+]` / `[`, not bound to conflict-prone keys by default), `Focus Explainer`, `Toggle Follow Claude`, `Ask Claude About Selection`.
+Global commands (with `when: sidestory.active`): `Sidestory: Next/Previous Step` (suggested `Ctrl+Alt+]` / `[`, not bound to conflict-prone keys by default), `Focus Explainer`, `Toggle Follow Claude`, `Ask Claude About Selection`.
 
 ### 3.6 Asking Claude
 
