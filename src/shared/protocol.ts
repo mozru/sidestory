@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
+import { isCodeLink, MAX_CODE_LINKS, parseCodeTarget } from './code-link.ts';
 import { HIGHLIGHT_LANGS, type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
 import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
 import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
@@ -113,7 +114,13 @@ export type ToWebview =
    */
   | { type: 'highlighted'; theme: string; palette: HighlightStyle[]; blocks: { id: number; runs: number[] | null }[] }
   /** The colors code blocks get changed (another theme, or token color customizations). */
-  | { type: 'highlightTheme'; theme: string };
+  | { type: 'highlightTheme'; theme: string }
+  /**
+   * The editor cursor is in the tightest code target the page links to (docs/AUTHORING-PLAN.md §8.2): an anchor a
+   * `data-explain-ref` names, or a `data-explain-code` link in its canonical form (`path` or `path#target`, as
+   * `codeTargets` sent it). Neither: the cursor is in none of them. The panel rings those elements (`cx-here`).
+   */
+  | { type: 'here'; ref?: string; link?: string };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -168,7 +175,19 @@ export type FromWebview =
   /** A widget took focus while the panel didn't have it (from the editor): give focus back to the editor. */
   | { type: 'focusTheft' }
   /** Code blocks to color (text from the sanitized content; languages from the fixed table). */
-  | { type: 'highlight'; blocks: { id: number; lang: HighlightLang; code: string }[] };
+  | { type: 'highlight'; blocks: { id: number; lang: HighlightLang; code: string }[] }
+  /**
+   * A `data-explain-code` link was clicked, or activated with Enter or Space (docs/AUTHORING-PLAN.md §8.1). Posted only
+   * from the panel's own handlers for trusted input. `path` is relative to the folder that holds `.sidestory/`;
+   * `target` is a line range (`L10-L20`) or a symbol path. The extension checks real paths and finds the target.
+   */
+  | { type: 'openCode'; path: string; target?: string }
+  /**
+   * After each render that changed them: what the page links to, so the cursor can light it up (§8.2). `sections`:
+   * every `data-explain-anchor` id, nested ones included; `refs`: the anchors `data-explain-ref` names; `links`: the
+   * distinct `data-explain-code` links, canonical (`path` or `path#target`, inheritance applied).
+   */
+  | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -187,6 +206,8 @@ const widgetSrcSchema = z.string().max(512).refine(isWidgetSrc);
 const lineRangeSchema = z.tuple([z.number().int().min(1).max(100_000), z.number().int().min(1).max(100_000)]);
 const identifierSchema = z.string().regex(/^[A-Za-z_$][\w$]{0,99}$/);
 const widgetKeySchema = z.string().max(300);
+const distinct = (a: string[]) => new Set(a).size === a.length;
+const codeTargetIds = z.array(anchorIdSchema).max(MAX_CODE_LINKS).refine(distinct);
 const breadcrumbs = {
   mounted: z.array(widgetSrcSchema).max(MAX_WIDGETS),
   mounting: widgetSrcSchema.nullable(),
@@ -228,6 +249,13 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
       .min(1)
       .max(MAX_REQUEST_BLOCKS)
       .refine((b) => b.reduce((n, x) => n + x.code.length, 0) <= MAX_REQUEST_CHARS),
+  }),
+  z.object({ type: z.literal('openCode'), path: z.string().max(1024).refine(isSafeRelativePath), target: z.string().max(256).refine((t) => parseCodeTarget(t) !== null).optional() }),
+  z.object({
+    type: z.literal('codeTargets'),
+    sections: codeTargetIds,
+    refs: codeTargetIds,
+    links: z.array(z.string().max(1300).refine(isCodeLink)).max(MAX_CODE_LINKS).refine(distinct),
   }),
 ]);
 

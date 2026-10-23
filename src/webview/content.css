@@ -81,17 +81,102 @@ html, body {
   transition: box-shadow 160ms ease, background-color 160ms ease;
 }
 
-[data-explain-ref] {
+/*
+ * Linked elements (data-explain-ref, data-explain-code; the panel marks both data-cx-ref) look the same in every
+ * sidestory, in three kinds (docs/AUTHORING-PLAN.md §3.2). All inside :where(), so an author's rule wins;
+ * data-explain-plain keeps only the pointer.
+ * - Text links (inline elements outside SVG): link color and a dotted underline.
+ * - Boxes (any other HTML element): no color change; an outline on hover and focus.
+ * - SVG elements: never `color` or `text-decoration`, so currentColor strokes and <text> stay as drawn; a glow on
+ *   hover, an outline on focus.
+ */
+:where([data-cx-ref]) {
   cursor: pointer;
+}
+
+:where(:is(a, span, code, abbr, b, strong, em, i, kbd, var, samp)[data-cx-ref]:not(svg *, [data-explain-plain])) {
   color: var(--vscode-textLink-foreground);
   text-decoration: underline dotted;
   text-underline-offset: 3px;
 }
 
-[data-explain-ref]:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+:where(:is(a, span, code, abbr, b, strong, em, i, kbd, var, samp)[data-cx-ref]:not(svg *, [data-explain-plain]):hover) {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+:where(:is(a, span, code, abbr, b, strong, em, i, kbd, var, samp)[data-cx-ref]:not(svg *, [data-explain-plain]):focus-visible) {
+  outline: 1px solid var(--cx-link-ring);
   outline-offset: 1px;
   border-radius: 2px;
+}
+
+:where([data-cx-ref]:not(svg *, :is(a, span, code, abbr, b, strong, em, i, kbd, var, samp), [data-explain-plain]):hover) {
+  outline: 1px solid var(--cx-link-hover);
+  outline-offset: 2px;
+}
+
+:where([data-cx-ref]:not(svg *, :is(a, span, code, abbr, b, strong, em, i, kbd, var, samp), [data-explain-plain]):focus-visible) {
+  outline: 2px solid var(--cx-link-ring);
+  outline-offset: 2px;
+}
+
+:where(svg [data-cx-ref]:not([data-explain-plain]):hover) {
+  filter: drop-shadow(0 0 1px var(--cx-link-hover)) drop-shadow(0 0 2px var(--cx-link-hover));
+}
+
+:where(svg [data-cx-ref]:not([data-explain-plain]):focus-visible) {
+  outline: 2px solid var(--cx-link-ring);
+  outline-offset: 2px;
+}
+
+/*
+ * Diagram parts that light up per step (data-explain-on, §2). The panel sets cx-on on lit elements, cx-dim on
+ * exactly the ones that fade, and cx-dimming on a diagram while anything in it is lit. Lit elements aren't
+ * recolored: authors style `.cx-on` with var(--cx-on).
+ */
+:where([data-explain-diagram] *, svg *, [data-explain-on]) {
+  transition: opacity 160ms ease;
+}
+
+:where(.cx-dim) {
+  opacity: var(--cx-dim-opacity);
+}
+
+/* A section-mode diagram lights its own section, in that section's color. */
+:where([data-explain-diagram~='section']) {
+  --cx-step-accent: var(--cx-accent, var(--vscode-focusBorder));
+}
+
+/* Elements whose code holds the editor cursor (cx-here, §8.2): a ring, never a fade. */
+:where(.cx-here) {
+  outline: 2px solid var(--cx-here);
+  outline-offset: 2px;
+  animation: cx-here-in 200ms ease-out;
+}
+
+@keyframes cx-here-in {
+  from { outline-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where([data-explain-diagram] *, svg *, [data-explain-on]) { transition: none; }
+  :where(.cx-here) { animation: none; }
+}
+
+body.vscode-reduce-motion :where([data-explain-diagram] *, svg *, [data-explain-on]) { transition: none; }
+body.vscode-reduce-motion :where(.cx-here) { animation: none; }
+
+/* High contrast: nothing fades (the tokens set --cx-dim-opacity to 1); lit elements get a dashed outline. */
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(.cx-on) {
+  outline: 2px dashed var(--vscode-contrastActiveBorder);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  :where(.cx-on) {
+    outline: 2px dashed Highlight;
+    outline-offset: 2px;
+  }
 }
 
 [data-explain-anchor].cx-active {

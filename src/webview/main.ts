@@ -1,10 +1,14 @@
 // The explainer page. It renders author HTML in a sandboxed iframe, keeps the reader's place through
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
+import { anchorIdSchema } from '../core/manifest.ts';
+import { type CodeLink, formatCodeLink, MAX_CODE_LINKS, parseCodeLink } from '../shared/code-link.ts';
+import diagramTokensCss from '../shared/diagram-tokens.css';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '../shared/protocol.ts';
 import type { WidgetAnchor } from '../shared/widget-protocol.ts';
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
+import { DIAGRAM_CLASSES, Diagrams, litIds, MAX_TAGGED } from './diagram.ts';
 import { CodeHighlighter } from './highlight.ts';
 import { sanitize } from './sanitize.ts';
 import { staticHtml } from './trusted.ts';
@@ -115,6 +119,22 @@ const warned = new Set<string>();
 /** Places kept per explainer; the oldest are dropped past this. */
 const MAX_PLACES = 32;
 const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/**
+ * Form controls a `<label for>` forwards trusted clicks to: links on them, or clicked through them, are ignored, so a
+ * label can never fire a link (docs/AUTHORING-PLAN.md §8.1).
+ */
+const LABELABLE = 'button, input, select, textarea, meter, output, progress';
+/** Diagram lighting for the live content (data-explain-on); the incoming tree gets a fresh instance per render. */
+const diagrams = new Diagrams();
+/** The code target the editor cursor is in (`here`), which rings the elements that link to it (cx-here). */
+let here: { ref?: string; link?: string } = {};
+/** The linked elements of the live content, with the key `here` matches (`r:<anchor>` or `c:<link>`). */
+let linkEls: { el: HTMLElement; key: string }[] = [];
+/** What `codeTargets` last said, so it's sent only when it changes. */
+let sentTargets = '';
+/** The render the diagram index is for. */
+let indexedAt = -1;
+let indexed: Node | null = null;
 
 // ---- skeleton ----
 
@@ -210,7 +230,8 @@ async function buildFrame(): Promise<void> {
     location: el.contentWindow!.location,
   };
   const style = frame.createElement('style');
-  style.textContent = contentCssText;
+  // The tokens first: content.css and the author's CSS use them.
+  style.textContent = `${diagramTokensCss}\n${contentCssText}`;
   d.head.append(style);
   content = frame.createElement('div');
   content.className = 'cx-content';
@@ -416,6 +437,8 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
         describing.clear();
         peeked.clear();
         warned.clear();
+        here = {};
+        sentTargets = '';
         widgets?.switchExplainer();
         lastRender = undefined;
         hidePill();
@@ -470,6 +493,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       break;
     case 'syncTo':
       followEditor(m.anchorId);
+      break;
+    case 'here':
+      here = { ref: typeof m.ref === 'string' ? m.ref : undefined, link: typeof m.link === 'string' ? m.link : undefined };
+      markHere();
       break;
     case 'navigate':
       if (initialized) step(m.delta);
@@ -538,7 +565,14 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   // Give the incoming tree the attributes this script adds, so the morph leaves them alone
   // (removing tabindex from a focused link would blur it).
   decorateTree(next);
-  for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (el.dataset.explainAnchor === active) el.classList.add('cx-active');
+  const nextActive = pendingInit?.active ?? active;
+  for (const el of next.querySelectorAll<HTMLElement>('[data-explain-anchor]')) if (el.dataset.explainAnchor === nextActive) el.classList.add('cx-active');
+  // Diagram lighting and cursor rings too: set after the morph, fitFrame's style flush would restart their fades.
+  const incoming = new Diagrams();
+  incoming.index(next);
+  incoming.apply(litIds(next, nextActive));
+  const keys = hereKeys();
+  for (const { el, key } of linkedElements(next)) el.classList.toggle('cx-here', keys.has(key));
 
   const before = isUpdate ? snapshot() : new Map<string, string>();
   const keep = isUpdate ? readingPosition() : undefined;
@@ -632,7 +666,7 @@ function cleanHtml(el: HTMLElement): string {
     d.removeAttribute('data-cx-open');
   }
   for (const x of [c, ...c.querySelectorAll<HTMLElement>('*')]) {
-    x.classList.remove('cx-active', 'cx-updated');
+    x.classList.remove('cx-active', 'cx-updated', 'cx-here', ...DIAGRAM_CLASSES);
     if (x.classList.length === 0) x.removeAttribute('class');
     for (const a of ['data-cx-state', 'data-cx-label', 'data-cx-off']) x.removeAttribute(a);
     if (x.hasAttribute('data-cx-ref')) for (const a of ['data-cx-ref', 'tabindex', 'role']) x.removeAttribute(a);
@@ -690,8 +724,14 @@ function decorateTree(root: HTMLElement): void {
       }
     } else fix?.remove();
   }
-  // Inline references behave like links for the keyboard and screen readers.
-  for (const ref of root.querySelectorAll<HTMLElement>('[data-explain-ref]')) {
+  // Inline references and code links behave like links for the keyboard and screen readers (data-cx-ref marks them,
+  // and gives them the built-in look). Not form controls (see LABELABLE), nor code links that don't parse.
+  for (const ref of root.querySelectorAll<HTMLElement>('[data-explain-ref], [data-explain-code]')) {
+    if (ref.matches(LABELABLE)) continue;
+    if (!ref.hasAttribute('data-explain-ref') && !codeLinkOf(ref)) {
+      warnOnce(`data-explain-code="${(ref.getAttribute('data-explain-code') ?? '').slice(0, 100)}" isn't a valid code link (a path from the repository root, optionally #L10, #L10-L20 or #symbol; an empty path needs data-explain-code-file on an ancestor). It was ignored.`);
+      continue;
+    }
     ref.dataset.cxRef = '1';
     if (!ref.hasAttribute('tabindex')) ref.tabIndex = 0;
     if (!ref.hasAttribute('role') && !(ref.localName === 'a' && ref.hasAttribute('href'))) ref.setAttribute('role', 'link');
@@ -712,7 +752,7 @@ function decorateDetails(root: HTMLElement): void {
     const name = host.dataset.explainDetail!;
     let box = [...host.children].find(ownBox) as HTMLElement | undefined;
     // Not inside links or controls (a click there means something else), and only real names.
-    if (!DETAIL_NAME.test(name) || host.closest('a, button, label, summary, [data-explain-ref]')) {
+    if (!DETAIL_NAME.test(name) || host.closest('a, button, label, summary, [data-explain-ref], [data-explain-code]')) {
       box?.remove();
       continue;
     }
@@ -814,6 +854,16 @@ function decorate(): void {
   if (active && !steps.some((s) => s.id === active) && !anchors.has(active)) active = undefined;
   offscreen.disconnect(); // sections the morph replaced aren't watched forever
   for (const s of steps) offscreen.observe(s.el);
+  // Only after a render: `anchors` arrives on every keystroke in linked code, and changes no diagram.
+  if (indexed !== content.firstChild || indexedAt !== renderSeq) {
+    indexed = content.firstChild;
+    indexedAt = renderSeq;
+    diagrams.index(content);
+  }
+  if (diagrams.capped) warnOnce(`more than ${MAX_TAGGED.toLocaleString('en')} elements have data-explain-on; diagrams don't light up in this sidestory.`);
+  linkEls = linkedElements(content);
+  markHere();
+  sendCodeTargets();
   renderNavigator();
   renderStatus();
   markActive();
@@ -908,9 +958,16 @@ function renderStatus(): void {
 }
 
 function markActive(): void {
-  const index = steps.findIndex((s) => s.id === activeStepId());
+  const stepId = activeStepId();
+  const index = steps.findIndex((s) => s.id === stepId);
   for (const el of content.querySelectorAll<HTMLElement>('.cx-active')) el.classList.remove('cx-active');
   if (active) sectionEl(active)?.classList.add('cx-active');
+  diagrams.apply({ active, step: stepId });
+  // Lit diagram parts take the color of what's active (--cx-on defaults to it). On the content root, which the morph
+  // never touches, so no section's HTML changes.
+  const accent = (active && anchors.get(active)?.colorVar) || (stepId && anchors.get(stepId)?.colorVar);
+  if (accent) content.style.setProperty('--cx-step-accent', `var(${accent})`);
+  else content.style.removeProperty('--cx-step-accent');
   [...stepsEl.children].forEach((b, i) => {
     if (i === index) b.setAttribute('aria-current', 'step');
     else b.removeAttribute('aria-current');
@@ -1120,6 +1177,82 @@ function openRef(ref: HTMLElement): void {
   if (anchors.has(id)) vscode.postMessage({ type: 'openRef', anchorId: id });
 }
 
+/**
+ * The linked element (data-explain-ref or data-explain-code) an event in the content is for, if any. Not when the
+ * event is on a form control: a `<label for>` forwards a trusted click to its control, and must never fire a link.
+ */
+function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
+  const t = target as Element | null;
+  if (!t?.closest || t.closest(LABELABLE)) return undefined;
+  return t.closest<HTMLElement>('[data-cx-ref]') ?? undefined;
+}
+
+/**
+ * Opens what a linked element points at. Only ever called synchronously from the panel's own click and key handlers,
+ * for trusted input: the content runs no script and widgets can't reach this, so the reader asked (§8.1).
+ * A `data-explain-ref` wins over a `data-explain-code` on the same element.
+ */
+function openLinked(el: HTMLElement): void {
+  if (el.hasAttribute('data-explain-ref')) return openRef(el);
+  const link = codeLinkOf(el);
+  if (link) vscode.postMessage(link.target === undefined ? { type: 'openCode', path: link.path } : { type: 'openCode', path: link.path, target: link.target });
+}
+
+/** An element's `data-explain-code`, with the path from the nearest `data-explain-code-file` when it has none. */
+function codeLinkOf(el: Element): CodeLink | null {
+  const value = el.getAttribute('data-explain-code');
+  if (value === null) return null;
+  return parseCodeLink(value, el.closest('[data-explain-code-file]')?.getAttribute('data-explain-code-file') ?? undefined);
+}
+
+/** The linked elements of a tree, with what they point at: `r:<anchor>` for a ref (which wins), `c:<link>` for code. */
+function linkedElements(root: HTMLElement): { el: HTMLElement; key: string }[] {
+  const out: { el: HTMLElement; key: string }[] = [];
+  for (const el of root.querySelectorAll<HTMLElement>('[data-cx-ref]')) {
+    const ref = el.getAttribute('data-explain-ref');
+    const link = ref === null ? codeLinkOf(el) : null;
+    if (ref !== null) out.push({ el, key: `r:${ref}` });
+    else if (link) out.push({ el, key: `c:${formatCodeLink(link)}` });
+  }
+  return out;
+}
+
+function hereKeys(): Set<string> {
+  const keys = new Set<string>();
+  if (here.ref) keys.add(`r:${here.ref}`);
+  if (here.link) keys.add(`c:${here.link}`);
+  return keys;
+}
+
+/** Rings the elements linked to the code the editor cursor is in (`here`); a class, so the morph keeps it (§8.2). */
+function markHere(): void {
+  const keys = hereKeys();
+  for (const { el, key } of linkEls) {
+    const on = keys.has(key);
+    if (el.classList.contains('cx-here') !== on) el.classList.toggle('cx-here', on);
+  }
+}
+
+/** Tells the extension what the page links to, so cursor lighting knows what to look for (§8.2); only on change. */
+function sendCodeTargets(): void {
+  const valid = (id: string) => anchorIdSchema.safeParse(id).success;
+  const distinct = (xs: string[]) => [...new Set(xs)].slice(0, MAX_CODE_LINKS);
+  const sections = distinct([...content.querySelectorAll('[data-explain-anchor]')].map((el) => el.getAttribute('data-explain-anchor') ?? '').filter(valid));
+  const refs = distinct(linkEls.filter((l) => l.key.startsWith('r:')).map((l) => l.key.slice(2)).filter(valid));
+  const links = distinct(linkEls.filter((l) => l.key.startsWith('c:')).map((l) => l.key.slice(2)));
+  const text = JSON.stringify([sections, refs, links]);
+  if (text === sentTargets) return;
+  sentTargets = text;
+  vscode.postMessage({ type: 'codeTargets', sections, refs, links });
+}
+
+/** A problem with the page, for its author: once per sidestory, in Output. */
+function warnOnce(message: string): void {
+  if (warned.has(message) || warned.size > 50) return;
+  warned.add(message);
+  vscode.postMessage({ type: 'widgetLog', src: '', level: 'warn', message: `sidestory.html: ${message}` });
+}
+
 function onContentClick(e: MouseEvent): void {
   const target = e.target as HTMLElement;
   const reanchor = target.closest<HTMLElement>('.cx-reanchor');
@@ -1145,10 +1278,10 @@ function onContentClick(e: MouseEvent): void {
     }
     return;
   }
-  const ref = target.closest<HTMLElement>('[data-explain-ref]');
-  if (ref) {
+  const linked = linkedTarget(target);
+  if (linked) {
     e.preventDefault();
-    openRef(ref);
+    if (e.isTrusted) openLinked(linked);
     return;
   }
   const link = target.closest('a, area');
@@ -1201,10 +1334,10 @@ function onContentClick(e: MouseEvent): void {
 }
 
 function onContentKey(e: KeyboardEvent): void {
-  const ref = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-ref]');
-  if (ref && (e.key === 'Enter' || e.key === ' ')) {
+  const linked = linkedTarget(e.target);
+  if (linked && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault();
-    openRef(ref);
+    if (e.isTrusted) openLinked(linked);
     return;
   }
   // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.
