@@ -372,6 +372,23 @@ test.describe('placement', () => {
     await expect(out(widgetFrame(page))).toContainText('w:0');
   });
 
+  test('a colour or shadow transition on an ancestor (the panel’s own step highlight) is not a geometry animation', async ({ page }) => {
+    // Every keyframe has an `offset` key; it once matched the geometry check, so each step change hid the widget.
+    const html = explainerHtml(`<style>@keyframes fade { from { opacity: .6 } to { opacity: 1 } }</style><div class="glow" style="transition: box-shadow 400ms, background-color 400ms; animation: fade 2s infinite alternate">${probeTag()}</div>`);
+    await openWith(page, html, builds);
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await content(page).locator('.glow').evaluate((el) => {
+      (el as HTMLElement).style.boxShadow = '0 0 0 3px red';
+      (el as HTMLElement).style.backgroundColor = 'rgba(255,0,0,.2)';
+    });
+    await page.waitForTimeout(150); // mid-transition: getAnimations() lists it
+    await page.locator('.cx-scroll').evaluate((s) => (s.scrollTop += 1)); // a re-measure while it runs
+    await page.waitForTimeout(600);
+    await expect(placeholder(page).locator('.cx-widget-error')).toBeHidden();
+    await expect(frames(page)).toHaveCount(1);
+    expect((await posted(page)).some((m) => m.type === 'widgetLog' && /geometry/.test(m.message))).toBe(false);
+  });
+
   test('a clipping ancestor clips the frame to its padding box', async ({ page }) => {
     await openWith(page, explainerHtml(`<div style="overflow: hidden; height: 80px">${probeTag()}</div>`), builds);
     await expect(out(widgetFrame(page))).toContainText('w:0');

@@ -140,7 +140,9 @@ const BAR_PX = 22;
 /** Calls per second: highlight is coalesced (the latest is delivered); navigation over the limit fails. */
 const RATE = { highlight: 10, nav: 2, requestCode: 20 };
 /** CSS properties whose animation or transition moves an element: the frame would lag behind. */
-const GEOMETRY = /^(all|transform|translate|rotate|scale|top|left|right|bottom|inset|width|height|min-|max-|margin|padding|flex|grid|font-size|line-height|zoom|offset)/;
+const GEOMETRY = /^(all|transform|translate|rotate|scale|top|left|right|bottom|inset|width|height|min-|max-|margin|padding|flex|grid|font-size|line-height|zoom|offset-)/;
+/** Keys every keyframe has, which aren't animated properties. */
+const KEYFRAME_META = new Set(['offset', 'computedOffset', 'easing', 'composite']);
 
 const now = () => performance.now();
 
@@ -1644,7 +1646,7 @@ export function placement(el: HTMLElement, win: Window): Placement {
       // The panel's own animations, and transitions that run only while hovered (a "lift"), are allowed.
       if ('transitionProperty' in anim ? hovered : ((anim as CSSAnimation).animationName ?? '').startsWith('cx-')) continue;
       const effect = anim.effect as KeyframeEffect | null;
-      const props = effect?.getKeyframes().flatMap((k) => Object.keys(k)) ?? [];
+      const props = effect?.getKeyframes().flatMap((k) => Object.keys(k).filter((p) => !KEYFRAME_META.has(p))) ?? [];
       if (props.some((p) => GEOMETRY.test(p.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)))) return bad('a geometry animation');
     }
     const durations = cs.transitionDuration.split(',').map((d) => parseFloat(d));
