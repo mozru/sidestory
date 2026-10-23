@@ -11,11 +11,12 @@ import { parseInert } from './trusted.ts';
 const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
 /**
- * Attributes that are dropped outright: popovers render in the top layer, above any containment; `accesskey` lets
+ * Attributes that are dropped outright: popovers render in the top layer, above any containment; invoker commands
+ * (`command`, `commandfor`, `interestfor`) open dialogs and popovers without script, moving focus; `accesskey` lets
  * a keystroke anywhere click an element, and `autofocus` puts focus on one so the next Enter activates it, so either
  * could fire a code link the reader didn't aim at (docs/AUTHORING-PLAN.md §8.1, §9.4).
  */
-const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping', 'accesskey', 'autofocus']);
+const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'command', 'commandfor', 'interestfor', 'ping', 'accesskey', 'autofocus']);
 /**
  * The panel's own attributes start with this (`data-cx-ref`, `data-cx-hl`, `data-cx-box`, …): every author attribute
  * with the prefix is dropped, so new panel state can't be forged and the list can't fall behind (§9.4). The one

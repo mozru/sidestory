@@ -66,6 +66,10 @@ const LINKS = `<section data-explain-anchor="interface"><h2>Interface</h2>
   <span id="bad" data-explain-code="../secret.sv">bad</span>
   <span id="both" data-explain-ref="state" data-explain-code="rtl/bit_reader.sv">both</span>
   <p id="san" accesskey="k" autofocus data-cx-hl="1" data-cx-state="lost" data-cx-whatever="1">sanitized</p>
+  <button id="cmd" type="button" commandfor="dlg" command="show-modal" interestfor="dlg">open</button><dialog id="dlg"><span data-explain-code="rtl/bit_reader.sv">in a dialog</span></dialog>
+  <p><a id="jump" href="#frag-target">jump</a></p>
+  <span id="frag-target" data-explain-code="rtl/bit_reader.sv#L7">a fragment target</span>
+  <span id="wlink" data-explain-code="rtl/bit_reader.sv#L9"><explain-widget src="widgets/w.tsx" title="w"><p id="wfb">a widget's fallback</p></explain-widget></span>
   <div data-explain-anchor="state"><p>nested</p></div>
 </section>
 <section data-explain-anchor="refill"><h2>Refill</h2><p>Refill.</p></section>`;
@@ -190,7 +194,7 @@ test.describe('data-explain-on', () => {
       await expect(el(page, 'g-consume')).toHaveClass(/cx-dim/);
       await expect(el(page, 'g-consume')).toHaveCSS('opacity', '1');
       // A halo around lit SVG parts, a dashed outline on lit HTML elements.
-      await expect(el(page, 'g-state')).toHaveCSS('filter', /drop-shadow/);
+      await expect(el(page, 'r-state')).toHaveCSS('filter', /drop-shadow/);
       await expect(el(page, 'row')).toHaveCSS('outline-style', 'dashed');
       await expect(el(page, 'row')).toHaveCSS('outline-color', rgb(THEMES[theme].vars.contrastActiveBorder!));
       await expect(el(page, 'r-state')).toHaveCSS('stroke', rgb(THEMES[theme].vars.contrastActiveBorder!));
@@ -267,7 +271,11 @@ test.describe('linked elements', () => {
     await clearPosted(page);
     await el(page, 'svg-code').click();
     await el(page, 'text-code').click();
+    // Enter on a link the reader tabbed to.
     await el(page, 'svg-ref').focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(el(page, 'svg-ref')).toBeFocused();
     await page.keyboard.press('Enter');
     await el(page, 'both').click();
     const opened = (await posted(page)).filter((m) => m.type === 'openCode' || m.type === 'openRef');
@@ -293,15 +301,31 @@ test.describe('linked elements', () => {
     await el(page, 'lbl').click(); // forwards a trusted click to the checkbox inside a linked div
     await expect(el(page, 'chk')).toBeChecked();
     await el(page, 'bad').click();
+    await el(page, 'wfb').click(); // a widget inside a link is the widget's
+    // Focus the reader didn't put there: an in-page link's target (Space and Enter then do nothing), a scripted focus.
+    await el(page, 'jump').click();
+    await el(page, 'frag-target').evaluate((x) => x.focus());
+    await page.keyboard.press('Space');
+    await page.keyboard.press('Enter');
+    // Space never opens a link (it scrolls); a held Enter opens once.
+    await el(page, 'text-code').focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(el(page, 'text-code')).toBeFocused();
+    await page.keyboard.press('Space');
     await page.waitForTimeout(200);
     expect((await posted(page)).filter((m) => m.type === 'openCode' || m.type === 'openRef')).toEqual([]);
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter'); // auto-repeat
+    await page.keyboard.up('Enter');
+    expect((await posted(page)).filter((m) => m.type === 'openCode')).toEqual([{ type: 'openCode', path: 'rtl/bit_reader.sv', target: 'L3-L5' }]);
     for (const id of ['btn', 'bad']) await expect(el(page, id)).not.toHaveAttribute('data-cx-ref', /.*/);
   });
 
-  test('the sanitizer drops accesskey, autofocus and every author data-cx-* attribute', async ({ page }) => {
+  test('the sanitizer drops accesskey, autofocus, invoker commands and every author data-cx-* attribute', async ({ page }) => {
     await open(page, LINKS);
-    const attrs = await el(page, 'san').evaluate((p) => p.getAttributeNames());
-    expect(attrs).toEqual(['id']);
+    expect(await el(page, 'san').evaluate((p) => p.getAttributeNames())).toEqual(['id']);
+    expect(await el(page, 'cmd').evaluate((p) => p.getAttributeNames())).toEqual(['id', 'type']);
   });
 
   test('an invalid code link is reported to Output once', async ({ page }) => {
@@ -313,7 +337,7 @@ test.describe('linked elements', () => {
   test('the page tells the extension what it links to, once per change', async ({ page }) => {
     await open(page, LINKS);
     const targets = (await posted(page)).filter((m) => m.type === 'codeTargets');
-    expect(targets).toEqual([{ type: 'codeTargets', sections: ['interface', 'state', 'refill'], refs: ['refill', 'state', 'consume'], links: ['rtl/bit_reader.sv#driver(count_q)', 'rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L1'] }]);
+    expect(targets).toEqual([{ type: 'codeTargets', sections: ['interface', 'state', 'refill'], refs: ['refill', 'state', 'consume'], links: ['rtl/bit_reader.sv#driver(count_q)', 'rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L1', 'rtl/bit_reader.sv', 'rtl/bit_reader.sv#L7', 'rtl/bit_reader.sv#L9'] }]);
     await clearPosted(page);
     await send(page, { type: 'content', title: MANIFEST.title, html: LINKS.replace('<p>Refill.</p>', '<p>Refill!</p>') });
     await expect(frame(page).getByText('Refill!')).toBeVisible();

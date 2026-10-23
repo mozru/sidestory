@@ -24,11 +24,11 @@ html, body {
   margin: 1.2em 0 0.5em;
 }
 
-.cx-content :where(a) {
+.cx-content :where(a:not(svg *)) {
   color: var(--vscode-textLink-foreground);
 }
 
-.cx-content :where(a:hover) {
+.cx-content :where(a:not(svg *):hover) {
   color: var(--vscode-textLink-activeForeground);
 }
 
@@ -168,14 +168,14 @@ body.vscode-reduce-motion :where(.cx-here) { animation: none; }
 
 /*
  * High contrast: nothing fades (the tokens set --cx-dim-opacity to 1). Lit HTML elements get a dashed outline; lit SVG
- * parts a halo that follows their shape (an outline would box every wire in its bounding rectangle).
+ * shapes a halo that follows them (an outline would box every wire in its bounding rectangle; text stays crisp).
  */
 body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(.cx-on:not(svg *)) {
   outline: 2px dashed var(--vscode-contrastActiveBorder);
   outline-offset: 2px;
 }
 
-body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on) {
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on:is(path, rect, polygon, polyline, line, circle, ellipse), svg .cx-on :is(path, rect, polygon, polyline, line, circle, ellipse)) {
   filter: drop-shadow(0 0 1px var(--vscode-contrastActiveBorder)) drop-shadow(0 0 1px var(--vscode-contrastActiveBorder));
 }
 
@@ -185,7 +185,7 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on) {
     outline-offset: 2px;
   }
 
-  :where(svg .cx-on) {
+  :where(svg .cx-on:is(path, rect, polygon, polyline, line, circle, ellipse), svg .cx-on :is(path, rect, polygon, polyline, line, circle, ellipse)) {
     filter: drop-shadow(0 0 1px Highlight) drop-shadow(0 0 1px Highlight);
   }
 }

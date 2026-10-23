@@ -20,6 +20,8 @@ export interface CodeLink {
 }
 
 const LINES = /^L(\d{1,8})(?:-L(\d{1,8}))?$/;
+/** Format characters (bidi controls, zero-width), line and paragraph separators, and whitespace other than a space. */
+const UNSEEN = /[\p{Cf}\p{Zl}\p{Zp}]|(?! )\s/u;
 /**
  * Symbol paths (§4.2): names joined with `.` or `::`, with `driver(x)`, `.case(LABEL)`, `u_ctrl(.port)` and slice
  * keys such as `driver(x[7:4])`. This is only a cheap shape check (printable, starts like a name, brackets
@@ -36,6 +38,8 @@ export function parseCodeTarget(t: string): CodeTarget | null {
     if (start < 1 || end < start || end > MAX_CODE_LINE) return null;
     return { kind: 'lines', start, end };
   }
+  // A mistyped line range (`L10-20`, `L5:9`) is an error here, not a symbol that's never found.
+  if (/^L\d+([-:]|$)/.test(t)) return null;
   if (t.length === 0 || t.length > MAX_CODE_SYMBOL || !SYMBOL_CHARS.test(t) || t.includes('#')) return null;
   // Whitespace only inside brackets (`.case({a, b})`), never around the path itself.
   if (t !== t.trim()) return null;
@@ -60,7 +64,9 @@ export function parseCodeLink(value: string, inheritedFile?: string): CodeLink |
   const rawPath = hash < 0 ? v : v.slice(0, hash);
   const target = hash < 0 ? undefined : v.slice(hash + 1);
   const path = rawPath === '' ? inheritedFile?.trim() ?? '' : rawPath;
-  if (!isSafeRelativePath(path)) return null;
+  // No `#` (it would end the path when the link is read back), and no invisible or direction-changing characters, so
+  // the name a confirmation shows is the name opened.
+  if (!isSafeRelativePath(path) || path.includes('#') || UNSEEN.test(path)) return null;
   if (target === undefined || target === '') return { path };
   return parseCodeTarget(target) ? { path, target } : null;
 }

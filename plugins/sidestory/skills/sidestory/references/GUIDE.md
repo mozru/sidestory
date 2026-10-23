@@ -91,8 +91,9 @@ Linked elements look the same in every sidestory, and your own CSS always wins o
 
 - Set `--cx-link-hover` or `--cx-link-ring` to `transparent` to turn that effect off, or to another color.
 - `data-explain-plain` on a linked element removes the built-in look (only the pointer cursor stays), for a link you style yourself.
+- A reader opens a link by clicking it, or by tabbing to it and pressing <kbd>Enter</kbd> (not <kbd>Space</kbd>, which scrolls).
 - **Give a diagram with links `role="group"` and an `aria-label`**, not `role="img"`: screen readers don't see the children of an image, so its links would be out of their reach. Give each linked `<g>` a name with a `<title>` (which is also a tooltip) or an `aria-label`.
-- Links inside form controls (`button`, `input`, `select`, `textarea`) are ignored: a click there is for the control.
+- Links on form controls (`button`, `input`, `select`, `textarea`, `meter`, `output`, `progress`) or on a widget are ignored, and so are clicks on a control or widget inside a link: those clicks are for the control. Output says so.
 
 ### The manifest
 
@@ -165,20 +166,25 @@ A block diagram can light up the boxes and wires each step is about, and fade th
 </figure>
 ```
 
-- **`data-explain-on="<id> …"`** (space-separated) works on any SVG or HTML element. It's **lit** while one of its ids is the current step, or the nested anchor the reader is on inside that step (a card or figure with its own `data-explain-anchor`, which the reader clicked or the editor cursor reached). An empty `data-explain-on=""` marks a part that is never lit.
+- **`data-explain-on="<id> …"`** (space-separated) works on any SVG or HTML element. It's **lit** while one of its ids is the current step, or the nested anchor the reader is on inside that step (a card or figure with its own `data-explain-anchor`, which the reader clicked or the editor cursor reached). A nested anchor adds to what its step lights; it can't narrow it, so to light single boxes from cards, give the step itself nothing to light (as the stream DMA overview's first step does). An empty `data-explain-on=""` marks a part that is never lit.
+- **Ids must match anchor ids exactly**, case included. One that matches nothing never lights, without an error, so check them against the manifest.
 - **What fades:** while anything in a diagram is lit, the tagged parts that aren't lit fade. A part inside a lit group stays lit. With nothing lit (a step the diagram isn't about), the diagram looks exactly as you drew it.
 - **The diagram** is the nearest element with `data-explain-diagram`, or else the outermost `<svg>`. A tagged element outside both (a table row in the text) lights up, and nothing fades around it.
 - **`data-explain-diagram` takes these words:**
   - `step` (the default): follows the current step.
-  - `section`: always shows the state of the section it's in, whatever step is current. Use it when a section has its own copy of the diagram (for a long page, where the first copy is off screen by step 5).
-  - `dim-rest`: untagged parts fade too, so you tag only what each step is about, not every background wire.
-- **`data-explain-keep`** on an element (a legend, a title) keeps it and everything inside it from fading. Arrowhead markers, gradients, patterns and the rest of `<defs>` never fade, so a lit wire keeps its arrowhead.
-- **Lit parts aren't recolored.** Style them yourself with the `.cx-on` class and the `--cx-on` color, which is the current step's color: `.cx-on .wire { stroke: var(--cx-on); stroke-width: 3 }`. A `section` diagram uses its own section's color.
-- **Fading** is `opacity: var(--cx-dim-opacity)` (0.28) on the class `cx-dim`, with a short transition (none for readers who asked for reduced motion). Override `.cx-dim` to fade differently.
-- **High contrast:** nothing fades; lit parts get an outline (HTML) or a halo (SVG) in the theme's contrast color.
+  - `section`: always shows the state of the section it's in (that section and the step holding it, never a nested anchor the reader is on), whatever step is current. Use it when a section has its own copy of the diagram (for a long page, where the first copy is off screen by step 5).
+  - `dim-rest`: untagged parts fade too, so you tag only what each step is about, not every background wire. It fades everything untagged in the diagram element, HTML included: on a `<figure>`, that's the `<figcaption>` too, unless you mark it `data-explain-keep` or put `data-explain-diagram` on the `<svg>`.
+- **`data-explain-keep`** on an element (a legend, a title) keeps it and everything inside it from fading (unless it sits inside a tagged part that fades: opacity applies to everything inside). Arrowhead markers, gradients, patterns and the rest of `<defs>` never fade, so a lit wire keeps its arrowhead.
+- **Lit parts aren't recolored.** Style them yourself with the `.cx-on` class and the `--cx-on` color: `.cx-on .wire { stroke: var(--cx-on); stroke-width: 3 }`. Without such a rule, lit parts look as drawn, and only the fading tells them apart. `--cx-on` is the color of the section the reader is on (a nested anchor's own color, else its step's); a `section` diagram uses its own section's. To pick your own, set `--cx-on` on the diagram element.
+- **How to tag a diagram:**
+  - put each wire's path, arrowhead and label in one `<g>` and tag the group, so the label fades and lights with its wire;
+  - light both ends of every lit wire, and the block that drives each signal the step's text names;
+  - add a box's own anchor id to its list (`data-explain-on="datapath m-fifo"`), so it lights while the reader is on its card or nested section.
+- **Fading** is `opacity: var(--cx-dim-opacity)` (0.28 in dark themes, 0.4 in light ones) on the class `cx-dim`, with a short transition (none for readers who asked for reduced motion). Override `.cx-dim` to fade differently.
+- **High contrast:** nothing fades; lit HTML elements get a dashed outline, and lit SVG shapes a halo, in the theme's contrast color. Your `.cx-on` rule matters most here.
 - **Hover:** the diagram follows the steps, not the pointer. For a hover preview, write it with `:has()`: `.cx-content:has([data-explain-ref~="m-fifo"]:hover) [data-explain-on~="datapath"] { … }`.
 
-The stream DMA overview ([`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma)) works this way: one diagram at the top that follows the steps, and a copy in a few sections with `data-explain-diagram="section dim-rest"`.
+The stream DMA overview ([`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma)) works this way: one diagram at the top that follows the steps, and a copy with `data-explain-diagram="section dim-rest"` in the fallbacks of the simulation widgets, for readers who don't run widgets.
 
 ### Code links without an anchor
 
@@ -187,8 +193,8 @@ A box in a diagram often deserves a link to its code without a manifest entry or
 ```html
 <figure data-explain-diagram data-explain-code-file="rtl/gemm_row_dispatch.sv">
   <svg …>
-    <g data-explain-code="#i_order_q">…</g>                    <!-- the file from data-explain-code-file -->
-    <g data-explain-code="#driver(i_in_buf)">…</g>
+    <g data-explain-code="#u_order_fifo">…</g>                 <!-- the file from data-explain-code-file -->
+    <g data-explain-code="#driver(order_q)">…</g>
     <g data-explain-code="rtl/dma_fifo.sv#L34-L39">…</g>         <!-- its own file -->
   </svg>
 </figure>
@@ -198,9 +204,17 @@ A box in a diagram often deserves a link to its code without a manifest entry or
 - **The path**, before `#`, is from the folder that holds `.sidestory/`, as a manifest `file` is, with `/` separators. It is **not** relative to the page. An empty path takes the nearest `data-explain-code-file` around the element, so a diagram of one module names its file once.
 - **After `#`** (optional; without it the file opens at the top):
   - `L10` or `L10-L20`: those lines;
-  - a symbol: a name declared in the file (`#i_order_q`, `#BW`, `#u_ctrl`), what drives a signal (`#driver(state_q)`, the `always` block, `assign` or declaration that assigns it), one arm of that block's `case` (`#driver(state_d).case(IDLE)`, so each bubble of an FSM diagram opens its own arm), or one port connection of an instance (`#u_ctrl(.rd_start)`, for a wire in a top-level diagram). Prefix the module (`#dma_ctrl.driver(state_q)`) when a name isn't unique in the file. In other languages, the names VS Code's outline shows: `#RetryClient.send`.
+  - a symbol in SystemVerilog or Verilog:
+    - a name declared in the file: a signal, port, parameter, typedef or instance (`#order_q`, `#BW`, `#u_ctrl`);
+    - what drives a signal: `#driver(state_q)`, the `always` block, `assign` or declaration that assigns it (`#driver(x[7:4])` when blocks drive different slices). `driver()` stays inside one module: a net in a top-level module that only an instance output drives has no driver there, so link the connection or the child's driver (`rtl/dma_ctrl.sv#driver(rd_start)`);
+    - one arm of that block's outermost `case`: `#driver(state_d).case(IDLE)`, so each bubble of an FSM diagram opens its own arm. A label found in two `case` statements, or only in a nested one, is ambiguous: link the lines instead;
+    - one port connection of an instance: `#u_rd_port(.start)`, where the name in `(.x)` is the instance's port, as in `.start(rd_start)`. That's the link for a wire in a top-level diagram;
+    - inside a labelled block or generate block: `#g_lane.driver(lane_q)`.
+
+    Prefix the module (`#dma_ctrl.driver(state_q)`) when a name isn't unique in the file. Only the first arm of each `` `ifdef `` is read, so a name declared only in a later arm isn't found.
+  - a symbol in other languages: the names VS Code's outline shows (`#RetryClient.send`), found when the reader clicks.
 - **No drift detection.** A symbol link either finds its name or doesn't, and a line link points wherever those lines are now; neither says "Code changed". Use a manifest anchor and `data-explain-ref` for code the text makes claims about, and `data-explain-code` for "where is this thing".
-- It looks and behaves like `data-explain-ref`: a click or <kbd>Enter</kbd> opens the code, with the same built-in look. With both on one element, `data-explain-ref` wins. A link that doesn't parse (a path outside the repository, `#L0`) is ignored, and **View › Output › Sidestory** says why.
+- It looks and behaves like `data-explain-ref`: a click, or <kbd>Enter</kbd> after tabbing to it, opens the code, with the same built-in look. With both on one element, `data-explain-ref` wins. A link that doesn't parse (a path outside the repository, `#L0`) is ignored, and **View › Output › Sidestory** says why.
 - Links open only when the reader clicks one or presses <kbd>Enter</kbd> on it, and only files inside the repository.
 
 ### How sections follow the code
@@ -242,8 +256,8 @@ Color diagrams by role, not by hue. Each token follows the reader's theme, and h
 | `--cx-arrow` | free-standing arrows and annotations | editor foreground | the same |
 | `--cx-grid` | grids, ticks, lane separators | `charts.lines` | contrast border |
 | `--cx-dash-ctrl`, `--cx-dash-status`, `--cx-dash-irq`, `--cx-dash-reset` | `stroke-dasharray`, so roles differ by more than color | `5 4`, `2 3`, `1 3`, `6 2 1 2` | the same |
-| `--cx-on` | parts the current step lights ([above](#diagrams-that-follow-the-steps)) | the step's color | contrast active border |
-| `--cx-dim-opacity` | parts that fade | `0.28` | `1` (nothing fades) |
+| `--cx-on` | parts the current step lights ([above](#diagrams-that-follow-the-steps)) | the active section's color | contrast active border |
+| `--cx-dim-opacity` | parts that fade | `0.28` (dark), `0.4` (light) | `1` (nothing fades) |
 | `--cx-link-hover`, `--cx-link-ring` | linked elements' hover and focus ([above](#links-on-any-element-diagram-boxes-included)) | link color, focus border | contrast active border |
 | `--cx-here` | elements linked to the code the editor cursor is in | find-match border, else focus border | contrast active border |
 
@@ -294,7 +308,7 @@ Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, 
 
 Removed or ignored, for safety (see [SECURITY.md](https://github.com/mozru/sidestory/blob/main/SECURITY.md)):
 - scripts of any kind, event handler attributes, `javascript:` links;
-- `accesskey` and `autofocus` (a keystroke or a stray <kbd>Enter</kbd> could fire a link the reader didn't aim at), and attributes starting with `data-cx-`, which belong to the panel;
+- `accesskey`, `autofocus` and invoker commands (`command`, `commandfor`, `interestfor`), which could move focus or fire a link the reader didn't aim at, and attributes starting with `data-cx-`, which belong to the panel;
 - `<iframe>`, `<object>`, `<embed>`, `<form>`, `<meta>`, `<base>`, popovers, SVG animation;
 - anything from the network: remote images, fonts, stylesheets, `@import`;
 - links to `localhost` or private addresses.

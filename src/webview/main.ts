@@ -104,6 +104,13 @@ let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
 // Declared up here: the frame's listeners (attached in buildFrame, before the code below runs) use them.
 let lastKeyAt = 0;
+/** When the reader last pressed Tab (trusted), in the panel or the content. */
+let lastTabAt = 0;
+/**
+ * The linked element the reader put focus on themselves (a Tab, or a pointer press on it). Enter opens a link only
+ * then: focus that arrives otherwise (an in-page link's target, a dialog, a widget giving focus back) isn't aimed.
+ */
+let aimedLink: Element | null = null;
 let lastFocused: HTMLElement | undefined;
 let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
@@ -132,9 +139,8 @@ let here: { ref?: string; link?: string } = {};
 let linkEls: { el: HTMLElement; key: string }[] = [];
 /** What `codeTargets` last said, so it's sent only when it changes. */
 let sentTargets = '';
-/** The render the diagram index is for. */
-let indexedAt = -1;
-let indexed: Node | null = null;
+/** The content changed (a morph, a new frame) since the diagrams were indexed. */
+let needsIndex = true;
 
 // ---- skeleton ----
 
@@ -234,6 +240,7 @@ async function buildFrame(): Promise<void> {
   style.textContent = `${diagramTokensCss}\n${contentCssText}`;
   d.head.append(style);
   content = frame.createElement('div');
+  needsIndex = true;
   content.className = 'cx-content';
   frame.body.append(content);
   bindFrameEvents(d);
@@ -594,6 +601,9 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   fitFrame();
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
+  needsIndex = true;
+  // The step the new page opens at, before decorating: lighting it once, as the incoming tree was lit.
+  if (pendingInit) active = pendingInit.active ?? active;
   decorate();
   if (pendingInit) {
     const init = pendingInit;
@@ -727,7 +737,10 @@ function decorateTree(root: HTMLElement): void {
   // Inline references and code links behave like links for the keyboard and screen readers (data-cx-ref marks them,
   // and gives them the built-in look). Not form controls (see LABELABLE), nor code links that don't parse.
   for (const ref of root.querySelectorAll<HTMLElement>('[data-explain-ref], [data-explain-code]')) {
-    if (ref.matches(LABELABLE)) continue;
+    if (ref.matches(LABELABLE)) {
+      warnOnce(`a link (data-explain-ref, data-explain-code) on a <${ref.localName}> is ignored: a click on a form control is for the control. Put it on another element.`);
+      continue;
+    }
     if (!ref.hasAttribute('data-explain-ref') && !codeLinkOf(ref)) {
       warnOnce(`data-explain-code="${(ref.getAttribute('data-explain-code') ?? '').slice(0, 100)}" isn't a valid code link (a path from the repository root, optionally #L10, #L10-L20 or #symbol; an empty path needs data-explain-code-file on an ancestor). It was ignored.`);
       continue;
@@ -855,9 +868,8 @@ function decorate(): void {
   offscreen.disconnect(); // sections the morph replaced aren't watched forever
   for (const s of steps) offscreen.observe(s.el);
   // Only after a render: `anchors` arrives on every keystroke in linked code, and changes no diagram.
-  if (indexed !== content.firstChild || indexedAt !== renderSeq) {
-    indexed = content.firstChild;
-    indexedAt = renderSeq;
+  if (needsIndex) {
+    needsIndex = false;
     diagrams.index(content);
   }
   if (diagrams.capped) warnOnce(`more than ${MAX_TAGGED.toLocaleString('en')} elements have data-explain-on; diagrams don't light up in this sidestory.`);
@@ -967,7 +979,7 @@ function markActive(): void {
   // never touches, so no section's HTML changes.
   const accent = (active && anchors.get(active)?.colorVar) || (stepId && anchors.get(stepId)?.colorVar);
   if (accent) content.style.setProperty('--cx-step-accent', `var(${accent})`);
-  else content.style.removeProperty('--cx-step-accent');
+  else content.style.setProperty('--cx-step-accent', 'var(--vscode-sidestory-focusBorder, var(--vscode-focusBorder))');
   [...stepsEl.children].forEach((b, i) => {
     if (i === index) b.setAttribute('aria-current', 'step');
     else b.removeAttribute('aria-current');
@@ -1130,16 +1142,22 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('keydown', onContentKey);
   d.addEventListener('keydown', noteKey, true);
   d.addEventListener('focusin', onContentFocus);
+  d.addEventListener('pointerdown', (e) => {
+    if (e.isTrusted) aimedLink = linkedTarget(e.target) ?? null;
+  }, true);
 }
 
-function noteKey(): void {
+function noteKey(e: KeyboardEvent): void {
   lastKeyAt = Date.now();
+  if (e.isTrusted && e.key === 'Tab') lastTabAt = lastKeyAt;
 }
 document.addEventListener('keydown', noteKey, true);
 
 /** Tabbing into a section makes it the current step, as scrolling to it would. */
 function onContentFocus(e: FocusEvent): void {
   lastFocused = e.target as HTMLElement;
+  const link = linkedTarget(e.target) ?? null;
+  if (link !== aimedLink) aimedLink = link && !focusingSelf && Date.now() - lastTabAt < 500 ? link : null;
   if (focusingSelf || Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
   const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
@@ -1183,7 +1201,8 @@ function openRef(ref: HTMLElement): void {
  */
 function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
   const t = target as Element | null;
-  if (!t?.closest || t.closest(LABELABLE)) return undefined;
+  // Not on form controls, nor on a widget (its placeholder, its bar and buttons), nor in the panel's own boxes.
+  if (!t?.closest || t.closest(`${LABELABLE}, explain-widget, [data-cx-box]`)) return undefined;
   return t.closest<HTMLElement>('[data-cx-ref]') ?? undefined;
 }
 
@@ -1280,8 +1299,9 @@ function onContentClick(e: MouseEvent): void {
   }
   const linked = linkedTarget(target);
   if (linked) {
+    const handled = e.defaultPrevented;
     e.preventDefault();
-    if (e.isTrusted) openLinked(linked);
+    if (e.isTrusted && !handled) openLinked(linked);
     return;
   }
   const link = target.closest('a, area');
@@ -1334,10 +1354,12 @@ function onContentClick(e: MouseEvent): void {
 }
 
 function onContentKey(e: KeyboardEvent): void {
+  // Enter, as for a native link (Space is the reader's scroll key), once per press, on a link the reader focused.
   const linked = linkedTarget(e.target);
-  if (linked && (e.key === 'Enter' || e.key === ' ')) {
+  if (linked && e.key === 'Enter') {
+    const handled = e.defaultPrevented;
     e.preventDefault();
-    if (e.isTrusted) openLinked(linked);
+    if (e.isTrusted && !handled && !e.repeat && linked === aimedLink) openLinked(linked);
     return;
   }
   // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.

@@ -13,6 +13,7 @@ describe('parseCodeLink', () => {
     ['rtl/dma_top.sv#u_ctrl(.rd_start)', { path: 'rtl/dma_top.sv', target: 'u_ctrl(.rd_start)' }],
     ['rtl/x.sv#driver(x[7:4])', { path: 'rtl/x.sv', target: 'driver(x[7:4])' }],
     ['rtl/x.sv#driver(st).case({a, b})', { path: 'rtl/x.sv', target: 'driver(st).case({a, b})' }],
+    ['rtl/c.sv#L1_cache', { path: 'rtl/c.sv', target: 'L1_cache' }],
     ['pkg/a.sv#dma_pkg::req_t', { path: 'pkg/a.sv', target: 'dma_pkg::req_t' }],
     ['  rtl/x.sv#L1  ', { path: 'rtl/x.sv', target: 'L1' }],
     ['rtl/x.sv#', { path: 'rtl/x.sv' }],
@@ -26,6 +27,9 @@ describe('parseCodeLink', () => {
     expect(parseCodeLink('rtl/own.sv#L2', 'rtl/gemm.sv')).toEqual({ path: 'rtl/own.sv', target: 'L2' });
     expect(parseCodeLink('#i_order_q')).toBeNull();
     expect(parseCodeLink('#x', '../outside.sv')).toBeNull();
+    // A `#` in the path would be read back as the start of the target.
+    expect(parseCodeLink('#L3', 'rtl/a#b.sv')).toBeNull();
+    expect(parseCodeLink('', 'a.sv#L5')).toBeNull();
   });
 
   it.each([
@@ -47,6 +51,12 @@ describe('parseCodeLink', () => {
     'rtl/x.sv#a\u0000',
     `rtl/x.sv#${'a'.repeat(201)}`,
     'rtl/x.sv#ä',
+    'rtl/x.sv#L10-20',
+    'rtl/x.sv#L5:9',
+    'rtl/x.sv#L123456789',
+    'rtl/a\u202egnp.sv',
+    'rtl/a\u200bb.sv',
+    'rtl/a\u00a0b.sv',
   ])('refuses %s', (value) => {
     expect(parseCodeLink(value)).toBeNull();
   });

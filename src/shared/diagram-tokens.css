@@ -5,7 +5,8 @@
  * which also gives them Tailwind names in theme.css). Authors write `stroke: var(--cx-wire-data)`, never a hex value.
  *
  * Every rule is inside :where(), so an author's own rule always wins. Tokens derived from other tokens are
- * computed where they're declared, so each override below repeats them.
+ * computed where they're declared, so each override below repeats them. --cx-on is declared again on the content
+ * and on every diagram (it follows the step's color), so set your own on the diagram, not on :root.
  */
 
 :where(:root) {
@@ -45,6 +46,11 @@
   --cx-link-ring: var(--vscode-focusBorder, Highlight);
   /* Elements whose code holds the editor cursor. */
   --cx-here: var(--vscode-editor-findMatchHighlightBorder, var(--vscode-focusBorder, Highlight));
+}
+
+/* Light themes: faded parts stay legible on a light fill. */
+:where(body.vscode-light) {
+  --cx-dim-opacity: 0.4;
 }
 
 /*
