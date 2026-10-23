@@ -116,7 +116,9 @@ Linked elements look the same in every sidestory, and your own CSS always wins o
 | `file` | Path from the folder that contains `.sidestory/`, with `/` separators. |
 | `range` | First and last line (1-based). A hint: the anchor follows the code as it moves. |
 | `highlight` | Identifiers to mark everywhere in the file while the section is active. |
-| `summary` | Top level, optional: one line shown when a parent sidestory peeks at this one. |
+| `summary` | Top level, optional: one line shown when a parent sidestory peeks at this one, and in the sidebar and pickers. |
+| `group` | Top level, optional: a group name (1–60 characters) to file the sidestory under in the Sidestories view. A grouped sidestory is always listed at the top level, even when another one links to it as a detail. |
+| `top` | Top level, optional: `true` keeps a sidestory at the top level of the view without a group, even when another one links to it. |
 | `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
 
 Then run **Sidestory: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Until then a section is just a line range and can't tell when its code changes; the panel says so once per sidestory. Pin edits only the anchors it pins and keeps the rest of `manifest.json` as you wrote it. It pins what the editors show, unsaved changes included, and says when it did.
@@ -147,6 +149,18 @@ Readers then choose, per piece:
 - **Dive**: "Dive into *Title*" shows the detail sidestory in the same panel. A trail at the top shows the way back; **Back**, a trail entry or <kbd>Esc</kbd> returns to the step you left.
 
 Details can have details of their own (up to 16 levels). Give each sidestory a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the sidestory you're reading doesn't, the panel offers to dive into it.
+
+### Finding your way in big repositories
+
+The **Sidestories** view (the Sidestory icon in the activity bar, shown once a workspace has sidestories, or with **Sidestory: Show Sidestories**) lists every sidestory:
+
+- **Packages.** Each `.sidestory/` folder is a package: `services/auth/.sidestory/` and `services/billing/.sidestory/` are listed apart, and each one's anchor paths are relative to the folder that holds it. Detail links stay inside one `.sidestory/` folder. A `.sidestory/` inside another sidestory is ignored.
+- **Start here.** In each package, a sidestory named `overview`, else the only one named `*-overview`, else the only top-level sidestory with details, is pinned first.
+- **Tops and details.** A sidestory nothing links to is listed at the top level, with the details it links to nested under it in the order the page links them. A detail linked from several places appears under each. Use `group` to file top-level sidestories in folders, or `top: true` to keep a linked sidestory at the top level.
+- **Filter** (the funnel in the view's title bar) matches titles, names, summaries and groups, and shows each match once, under its overview.
+- **Explained here.** A CodeLens above code that a sidestory explains names it and its step ("Overview › Detail · step 3: Title"); click it to open the sidestory there. The status bar names the sidestory for the cursor's line. **Go to Step…** finds a step by its title in the current package or all of them.
+
+Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel showing the same overview, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](../examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](../examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.
 
@@ -358,6 +372,10 @@ export default function Refill({ width = 64 }: { width?: number }) {
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
+| `sidestory.codeLens.enabled` | `true` | A CodeLens above explained code (at most 30 per file; hidden while that sidestory is open in a panel). Language-overridable. |
+| `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
+| `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
+| `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ## Troubleshooting

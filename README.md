@@ -24,7 +24,7 @@ Sidestories are free-form HTML and CSS, so they can hold anything a page can: in
 
 ## Big systems: an overview, then the details
 
-Write one sidestory per piece and an overview that ties them together. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
+Write one sidestory per piece and an overview that ties them together. The **Sidestories** view in the activity bar lists them by package and group, with each overview's details under it; a **CodeLens** above explained code names the sidestory and step, and **Go to Step** finds any step by name. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
 
 ![From the DMA overview, peek at dma_ctrl, dive into its sidestory and its state graph widget, then return through the trail](media/marketplace/dive.gif)
 
@@ -123,7 +123,11 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 
 | Command | What it does |
 |---|---|
-| **Sidestory: Open Sidestory** | Pick a sidestory in `.sidestory/` and open it beside the code (also on a folder's context menu in the Explorer). |
+| **Sidestory: Open Sidestory…** | Pick a sidestory and open it beside the code, recently opened first; a detail opens with its overview on the trail (also on a folder's context menu in the Explorer). |
+| **Sidestory: Go to Step…** | Find a step by its title or blurb, in this package or across all of them, and open the sidestory there. |
+| **Sidestory: Show Sidestories for This Code** | The sidestories that explain the code under the cursor (also in the editor's context menu). |
+| **Sidestory: Show Sidestories** | Show the Sidestories view, even in a repository with none yet. |
+| **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your coding agent to write a sidestory. |
 | **Sidestory: Next Step** / **Previous Step** | Move through the sidestory (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
 | **Sidestory: Pin Anchors to the Current Code** | Record each anchor's code so sections follow it through edits and say when it changed. |
 | **Sidestory: Re-anchor Section to Selection** | Point a section at the selected code (also in the editor's context menu). |
@@ -138,6 +142,10 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
+| `sidestory.codeLens.enabled` | `true` | A CodeLens above code a sidestory explains, naming it and its step (at most 30 per file; hidden while that sidestory is open). Can be set per language. |
+| `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
+| `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
+| `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 
 ## Requirements

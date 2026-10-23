@@ -1,6 +1,6 @@
 # Navigation in large repositories: plan
 
-> **Status: plan, not implemented** (revision 2, 2026-10-23, after review). **§2 and §3, the rename, are done** (with Q1: the page is `sidestory.html`); the rest is not built yet.
+> **Status: implemented** (2026-10-23). §2–§3 (the rename) landed first; §4–§12 are built as planned, with every §13 recommendation accepted (`"top": true` included). Deviations are noted in `docs/DESIGN.md` §12 (2026-10-23, navigation).
 >
 > **Covers:**
 > - renaming the folder (`.explain/` → `.sidestory/`) and the word users see ("explainer" → "sidestory");
