@@ -30,6 +30,8 @@
       if (m.type === 'widgetCompile' && window.__builds && m.src in window.__builds) {
         setTimeout(() => window.__send({ type: 'widget', src: m.src, build: window.__builds[m.src] }));
       }
+      // And for code blocks: the test answers with real tokenizer output (test/webview/highlight.pw.ts).
+      if (m.type === 'highlight' && window.__highlight) window.__highlight(m).then((r) => r && window.__send(r));
       if (m.type === 'widgetCode' && window.__codes) {
         setTimeout(() => window.__send({ type: 'widgetCode', src: m.src, code: window.__codes[m.anchor] ?? { anchor: m.anchor, status: 'unavailable', reason: 'not-pinned' } }));
       }

@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 
-const EXTENSION_ID = 'sidestory.sidestory';
+const EXTENSION_ID = 'paperkite.sidestory';
 const VIEW_TYPE = 'sidestory.explainer';
 const workspace = process.env.CX_WORKSPACE!;
 const eol = process.env.CX_EOL ?? 'lf';
@@ -22,7 +22,7 @@ const manifest = (): Manifest => JSON.parse(readFileSync(manifestPath, 'utf8'));
 const showing = () =>
   vscode.window.visibleTextEditors.map((e) => `${vscode.workspace.asRelativePath(e.document.uri)} lines ${e.visibleRanges.map((r) => `${r.start.line + 1}-${r.end.line + 1}`).join(',')}`).join('; ') || 'no text editors';
 
-async function until<T>(what: string, check: () => T | undefined | false, timeout = 30_000): Promise<T> {
+async function until<T>(what: string, check: () => T | undefined | false, timeout = 20_000): Promise<T> {
   const end = Date.now() + timeout;
   for (;;) {
     const v = check();

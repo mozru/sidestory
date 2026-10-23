@@ -10,8 +10,11 @@ import { parseInert } from './trusted.ts';
 // SVG animation elements can rewrite a sanitized attribute (such as href) after the fact.
 const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
-/** Attributes that are dropped outright: popovers render in the top layer, above any containment. */
-const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping']);
+/**
+ * Attributes that are dropped outright: popovers render in the top layer, above any containment; `data-cx-hl`
+ * marks code blocks the panel colored (src/webview/highlight.ts), never the author's.
+ */
+const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', 'ping', 'data-cx-hl']);
 /** Elements whose `name` becomes a property of the document (DOM clobbering). */
 const NAMED = new Set(['img', 'embed', 'object', 'form', 'iframe', 'frame', 'frameset']);
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */

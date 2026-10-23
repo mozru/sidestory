@@ -1,6 +1,7 @@
 // End to end: the extension in a Linux container, VS Code and the panel in the browser.
+import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
-import { WORKSPACE } from './setup.ts';
+import { CONTAINER, WORKSPACE } from './setup.ts';
 import { activeTab, chooseStep, codeEditor, command, content, editorLines, inContainer, openExplainer, resetWorkbench } from './helpers.ts';
 
 test.beforeEach(async ({ page }) => resetWorkbench(page));
@@ -155,4 +156,30 @@ test('diving into a detail and coming back keeps the reader’s place', async ({
   // The cursor in code a detail covers offers to dive into it.
   await codeEditor(page, 'bit_reader.sv').locator('.view-line', { hasText: 'refill below valid bits' }).click();
   await expect(panel.locator('.cx-pill-show')).toContainText('Dive');
+});
+
+test('a file reopening with its old cursor (view state restored) does not pull the explainer back: only the reader’s own cursor moves do', async ({ page }) => {
+  // The stream DMA example: step 1's dma_ctrl card references dma_ctrl.sv, step 2 is in dma_top.sv, step 3 is
+  // back in dma_ctrl.sv. Reopening it for step 3 restores the cursor the reference left in step 1's code.
+  const tar = execFileSync('tar', ['--no-xattrs', '-C', 'examples/stream-dma', '-cf', '-', 'rtl', '.explain']);
+  execFileSync('docker', ['exec', '-i', CONTAINER, 'tar', '-C', WORKSPACE, '-xf', '-'], { input: tar });
+  const panel = await openExplainer(page, 'dma-overview');
+  await expect(panel.locator('.cx-position')).toHaveText('Step 1 of 7');
+  await content(panel).locator('[data-explain-ref="m-ctrl"]').first().click();
+  await expect(activeTab(page, 'dma_ctrl.sv')).toBeVisible();
+  await expect(page.locator('.statusbar')).toContainText('Ln 10');
+  const next = panel.getByRole('button', { name: 'Next step' });
+  await page.waitForTimeout(700); // a reader's pace
+  await next.click();
+  await expect(activeTab(page, 'dma_top.sv')).toBeVisible();
+  await expect(panel.locator('.cx-position')).toHaveText('Step 2 of 7');
+  await page.waitForTimeout(700);
+  await next.click();
+  await expect(activeTab(page, 'dma_ctrl.sv')).toBeVisible();
+  await expect(panel.locator('.cx-position')).toHaveText('Step 3 of 7');
+  // A cursor-follow would land a moment later (debounced): still on step 3.
+  await page.waitForTimeout(1_000);
+  await expect(panel.locator('.cx-position')).toHaveText('Step 3 of 7');
+  await next.click();
+  await expect(panel.locator('.cx-position')).toHaveText('Step 4 of 7');
 });

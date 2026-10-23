@@ -5,6 +5,7 @@ import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '
 import type { WidgetAnchor } from '../shared/widget-protocol.ts';
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
+import { CodeHighlighter } from './highlight.ts';
 import { sanitize } from './sanitize.ts';
 import { staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
@@ -103,8 +104,12 @@ let lastFocused: HTMLElement | undefined;
 let focusingSelf = false;
 /** Set by `init`; applied by whichever render completes first after it. */
 let pendingInit: { active?: string; after?: () => void } | undefined;
+/** Next/Previous Step pressed before the explainer rendered (right after opening it): taken once it has. */
+const pendingSteps: (1 | -1)[] = [];
 /** Widget frames over their placeholders (created once the content frame exists). */
 let widgets: WidgetFrames | undefined;
+/** Code block colors (docs/HIGHLIGHT-PLAN.md): tokens come from the extension host. */
+const highlighter = new CodeHighlighter({ post: (m) => vscode.postMessage(m), root: () => content });
 /** Sanitizer warnings already sent to Output for the explainer shown. */
 const warned = new Set<string>();
 /** Places kept per explainer; the oldest are dropped past this. */
@@ -211,6 +216,7 @@ async function buildFrame(): Promise<void> {
   content.className = 'cx-content';
   frame.body.append(content);
   bindFrameEvents(d);
+  highlighter.bind(d);
   widgets?.bindContent(d);
   syncTheme();
   new ResizeObserver(fitFrame).observe(frame.body);
@@ -272,6 +278,26 @@ function onPanelResize(): void {
   panelWidth = scroller.clientWidth;
   resizedAt = Date.now();
   holdPlace();
+  notePlaceWhenSettled();
+}
+
+/** Not mid-resize, nor on the way to a section: the scroll position is the reader's place. */
+const placeSettled = () => Date.now() - resizedAt > 1000 && !(scrollTarget && Date.now() < scrollTarget.until);
+
+let placeTimer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * Records the reader's place once the page settles. Scrolling while it settles isn't recorded, and nothing may
+ * scroll after: a step chosen as the panel resizes would otherwise leave the place from before the step held,
+ * and the next resize would put that back (the page jumps away from the step).
+ */
+function notePlaceWhenSettled(): void {
+  clearTimeout(placeTimer);
+  const wait = Math.max(resizedAt + 1000, scrollTarget?.until ?? 0) - Date.now() + 50;
+  placeTimer = setTimeout(() => {
+    if (!initialized) return;
+    if (placeSettled()) heldPlace = readingPosition();
+    else notePlaceWhenSettled();
+  }, Math.max(0, wait));
 }
 
 function holdPlace(): void {
@@ -446,7 +472,8 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       followEditor(m.anchorId);
       break;
     case 'navigate':
-      step(m.delta);
+      if (initialized) step(m.delta);
+      else if (pendingSteps.length < 20) pendingSteps.push(m.delta);
       break;
     case 'asset': {
       const resolve = pendingAssets.get(m.id);
@@ -471,6 +498,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       break;
     case 'widgetStates':
       widgets?.restoreStates(m.states);
+      break;
+    case 'highlighted':
+    case 'highlightTheme':
+      highlighter.onMessage(m);
       break;
     case 'focusQuery':
       widgets?.focusAnswer(m.id);
@@ -517,13 +548,15 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     restoreFocus: true,
     // data-cx-off is the visibility observer's: it only says so again when visibility changes.
     callbacks: {
-      beforeNodeMorphed: keepReaderState,
+      // Colored code blocks whose text didn't change are left alone (spans and all).
+      beforeNodeMorphed: (old, nextNode) => highlighter.morph(old, nextNode) && keepReaderState(old, nextNode),
       beforeAttributeUpdated: (name, el, type) =>
         name !== 'data-cx-off' &&
         // An input with no value in the source: what the reader typed or slid to stands (idiomorph would clear it).
         !(name === 'value' && type === 'remove' && el.localName === 'input' && !el.hasAttribute('value')),
     },
   });
+  highlighter.afterRender();
   fitFrame();
   if (keep) restorePosition(keep);
   if (isUpdate) markUpdated(before);
@@ -539,6 +572,7 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     markActive();
     initialized = true;
     init.after?.();
+    for (const d of pendingSteps.splice(0)) step(d);
   }
   return true;
 }
@@ -586,6 +620,7 @@ function snapshot(): Map<string, string> {
 /** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
   const c = el.cloneNode(true) as HTMLElement;
+  highlighter.plainCopy(c);
   for (const d of c.querySelectorAll('.cx-detail, .cx-fix, .cx-widget-bar, .cx-widget-desc, .cx-widget-error')) d.remove();
   for (const w of c.querySelectorAll<HTMLElement>('explain-widget')) {
     for (const a of ['data-cx-w', 'data-cx-wstate', 'data-cx-showfb', 'tabindex', 'role', 'aria-label', 'aria-describedby']) w.removeAttribute(a);
@@ -923,6 +958,7 @@ function scrollToSection(id: string): void {
   programmaticUntil = Date.now() + 1000;
   scrollTarget = { id, until: Date.now() + 1500 };
   scrollToTop(topOf(el));
+  notePlaceWhenSettled();
 }
 
 /** Scrolls the panel so that a point (in panel coordinates) sits just below the top. */
@@ -1008,8 +1044,9 @@ scroller.addEventListener('scroll', () => {
     scrollFrame = 0;
     widgets?.onScroll();
     saveState();
-    // Where the reader is, however they got there, so a resize can put it back (not mid-resize).
-    if (Date.now() - resizedAt > 1000) heldPlace = readingPosition();
+    // Where the reader is, however they got there, so a resize can put it back (not mid-resize, nor on the way
+    // to a section: notePlaceWhenSettled records those once they end).
+    if (placeSettled()) heldPlace = readingPosition();
     if (Date.now() < programmaticUntil) return;
     // Only the reader's own scrolling picks the step: not layout (the editor opening beside the panel,
     // images loading), which would undo a step the reader chose but the page can't scroll to.

@@ -86,6 +86,12 @@ describe('consent', () => {
     const rec = acknowledge(EMPTY_CONSENT, [file('.explain/a/w.tsx', 'h1')], true);
     expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2')])).toMatchObject({ ask: true, first: true });
     expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2', repo(null))])).toMatchObject({ ask: true, first: true });
+    // Nothing of it is recorded as the user's own while it asks: looking again still asks.
+    for (const git of [undefined, repo(null)]) {
+      const d = decideConsent(rec, [file('.explain/b/w.tsx', 'h2', git)]);
+      expect(d.observed).toEqual([]);
+      expect(decideConsent(acknowledge(rec, d.observed, false), [file('.explain/b/w.tsx', 'h2', git)])).toMatchObject({ ask: true, first: true });
+    }
     // Agreed to: from then on, edits are the user's own.
     const after = acknowledge(rec, [file('.explain/b/w.tsx', 'h2')], true);
     expect(decideConsent(after, [file('.explain/b/w.tsx', 'h3'), file('.explain/b/x.ts', 'h4')])).toMatchObject({ ask: false, first: false });

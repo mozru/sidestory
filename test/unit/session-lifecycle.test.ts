@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ToWebview } from '../../src/shared/protocol.ts';
-import { counts, EventEmitter, events, Uri, workspace } from './vscode-stub.ts';
+import { counts, EventEmitter, events, Uri, window, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -121,9 +121,50 @@ describe('the cursor and the code', () => {
     send({ type: 'ready' });
     await vi.waitFor(() => expect(lastInit()?.anchors.every((a) => a.state !== 'pending')).toBe(true));
     send({ type: 'focusAnchor', anchorId: 'refill', source: 'step' });
+    await new Promise((r) => setTimeout(r, 400)); // the step's own reveal is done
     sets.length = 0;
     const doc = { uri: Uri.file(`${root}/rtl/bit_reader.sv`) };
     events.selectionChanged.fire({ textEditor: { document: doc }, selections: [{ active: { line: 35 } }], kind: 3 });
     expect(sets.at(-1)).toMatchObject({ dim: false });
+  });
+
+  it('only the reader’s own cursor moves pick the step: not a file reopening at its old cursor, nor the panel’s own reveal', async () => {
+    const { session, lastInit, posted, send } = open('bit-reader');
+    await session.load();
+    send({ type: 'ready' });
+    await vi.waitFor(() => expect(lastInit()?.anchors.every((a) => a.state !== 'pending')).toBe(true));
+    const doc = { uri: Uri.file(`${root}/rtl/bit_reader.sv`) };
+    const at = (line: number, kind: number | undefined) => ({ textEditor: { document: doc }, selections: [{ active: { line } }], kind });
+    const synced = () => posted.filter((m) => m.type === 'syncTo');
+
+    // View state restored as a file opens again (no kind): its old cursor, in the refill step's code.
+    events.selectionChanged.fire(at(35, undefined));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(synced()).toEqual([]);
+
+    // While the panel's own reveal is opening the file (slowly), selection changes it causes don't count either:
+    // however long it takes to open.
+    const w = window as Record<string, unknown>;
+    let opened!: () => void;
+    w.showTextDocument = async () => {
+      events.selectionChanged.fire(at(35, 3));
+      await new Promise<void>((r) => (opened = r));
+      events.selectionChanged.fire(at(35, 3));
+      return { revealRange() {} };
+    };
+    try {
+      send({ type: 'focusAnchor', anchorId: 'interface', source: 'step' });
+      await new Promise((r) => setTimeout(r, 700));
+      events.selectionChanged.fire(at(35, 3));
+      opened();
+      await new Promise((r) => setTimeout(r, 400)); // the reveal is done
+      expect(synced()).toEqual([]);
+    } finally {
+      delete w.showTextDocument;
+    }
+
+    // The reader clicking there does.
+    events.selectionChanged.fire(at(35, 2));
+    await vi.waitFor(() => expect(synced()).toEqual([{ type: 'syncTo', anchorId: 'refill' }]));
   });
 });

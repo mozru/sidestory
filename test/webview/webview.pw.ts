@@ -326,6 +326,16 @@ test('J and K step through sections; the editor command does too', async ({ page
   await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
 });
 
+test('Next Step right after opening is taken once the explainer has rendered', async ({ page }) => {
+  await page.goto('/test/webview/harness.html');
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
+  const init: ToWebview = { type: 'init', title: MANIFEST.title, html: HTML, anchors: anchors(), dir: DIR, base: await base(page), trail: ROOT_TRAIL };
+  // Both at once: the step arrives while the first render is still loading.
+  await page.evaluate((msgs) => msgs.forEach((m) => (window as unknown as { __send(m: unknown): void }).__send(m)), [init, { type: 'navigate', delta: 1 }]);
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 5');
+  await expect(section(page, 'state')).toHaveClass(/cx-active/);
+});
+
 test('narrow panes get a step picker instead of tabs', async ({ page }) => {
   await page.setViewportSize({ width: 340, height: 900 });
   await open(page);
@@ -722,6 +732,29 @@ test('a resize after stepping keeps the step in view, not an older scrolled-to p
   await page.waitForTimeout(500);
   const top = await panelTop(page, 't4');
   expect(Math.abs(top - (await page.locator('.cx-scroll').boundingBox())!.y)).toBeLessThan(150);
+});
+
+test('a step chosen while the panel is still settling from a resize stays in view through the next resize', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' }); // the jump to the step is one scroll, all of it while settling
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await open(page, { html: TALL });
+  await page.waitForTimeout(1200);
+  // The reader's place: a little way into the first step.
+  await page.mouse.move(300, 400);
+  await page.mouse.wheel(0, 200);
+  await page.waitForTimeout(1800);
+  // The panel resizes (code opening beside it), and a step is chosen while the page settles.
+  await page.setViewportSize({ width: 700, height: 700 });
+  await page.waitForTimeout(100);
+  await page.locator('.cx-step', { hasText: 'Tall 4' }).click();
+  await page.waitForTimeout(2500);
+  const scrollerTop = (await page.locator('.cx-scroll').boundingBox())!.y;
+  expect(Math.abs((await panelTop(page, 't4')) - scrollerTop)).toBeLessThan(150);
+  // Later the panel widens (the side bar hidden): the step stays in view, not the place scrolled from.
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.waitForTimeout(500);
+  expect(Math.abs((await panelTop(page, 't4')) - scrollerTop)).toBeLessThan(150);
+  await expect(page.locator('.cx-position')).toHaveText('Step 5 of 6');
 });
 
 test('going back restores the parent place even when its assets are slow', async ({ page }) => {

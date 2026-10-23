@@ -11,6 +11,8 @@ import { trackRange } from '../core/tracking.ts';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
 import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { GroupView } from './columns.ts';
+import type { Requester } from './highlight/host.ts';
+import type { HighlightService } from './highlight/service.ts';
 import { codeColumnFor } from './columns.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
@@ -45,6 +47,8 @@ export interface SessionHost {
   reanchor(ref: ExplainerRef, anchorId: string): void;
   /** Widgets (docs/WIDGETS-PLAN.md); without it, widget placeholders show their fallback. */
   widgets?: WidgetHost;
+  /** Code block highlighting (docs/HIGHLIGHT-PLAN.md); without it, code blocks stay plain. */
+  highlight?: HighlightService;
 }
 
 export interface SessionOptions {
@@ -108,8 +112,8 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private fileWatchers: vscode.Disposable[] = [];
   private disposed = false;
-  /** Our own cursor move (an inline reference) shouldn't count as the reader moving to that section. */
-  private ignoreSelectionUntil = 0;
+  private highlightRequester: { dir: string; who: Requester } | undefined;
+  private highlightTimes: number[] = [];
   private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposeEmitter.event;
 
@@ -574,9 +578,16 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private onSelection(e: vscode.TextEditorSelectionChangeEvent): void {
+    // Only the reader's own cursor moves count: a click, typing, or a command they ran (Go to Line, Go to
+    // Definition). Selections with no kind aren't theirs: a file reopening puts its cursor back where it was
+    // (view state restored), which would pull the explainer back to whatever section that old cursor is in.
+    const k = vscode.TextEditorSelectionChangeKind;
+    if (e.kind !== k.Keyboard && e.kind !== k.Mouse && e.kind !== k.Command) return;
+    // Nor do the panel's own reveals (an inline reference puts the cursor in its code): the selection changes a
+    // reveal causes reach the extension before showTextDocument resolves, so while one runs, none are the reader's.
+    if (this.reveal.running) return;
     const uri = e.textEditor.document.uri.toString();
     const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
-    if (Date.now() < this.ignoreSelectionUntil) return;
     // Code a detail explainer covers: when none of this explainer's sections do, offer to dive.
     const detail = [...this.detailFiles].find(([, d]) => d.files.has(uri));
     if (ids.size === 0 && !detail) {
@@ -584,12 +595,8 @@ export class ExplainerSession implements vscode.Disposable {
       return;
     }
     const line = e.selections[0]!.active.line + 1;
-    // The reader clicked, typed or ran a command in the code (Go to Line, Go to Definition): stop fading the
-    // rest of the file. Only selections set through the API (undefined kind) don't count; this extension's own
-    // cursor moves are ignored above.
-    const k = vscode.TextEditorSelectionChangeKind;
-    const byUser = e.kind === k.Keyboard || e.kind === k.Mouse || e.kind === k.Command;
-    if (byUser && ids.size && this.decorations.isDimmed()) this.decorateActive(false);
+    // The reader moved in the code: stop fading the rest of the file.
+    if (ids.size && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
       const id = ids.size ? anchorAtLine(new Map([...this.resolutions].filter(([k]) => ids.has(k))), line) : undefined;
       if (!id) {
@@ -657,12 +664,38 @@ export class ExplainerSession implements vscode.Disposable {
         }
         this.requestReveal(m.anchorId, true);
         break;
+      case 'highlight':
+        void this.highlight(m.blocks);
+        break;
       case 'reanchor':
         // Only starts the flow: the user confirms in a dialog before anything is written.
         if (!this.manifest?.anchors.has(m.anchorId)) return;
         this.host.reanchor(this.ref, m.anchorId);
         break;
     }
+  }
+
+  /** Colors code blocks for the panel; per explainer shown, so one explainer's slow blocks don't stop another's. */
+  private async highlight(blocks: Extract<FromWebview, { type: 'highlight' }>['blocks']): Promise<void> {
+    const service = this.host.highlight;
+    if (!service) return;
+    // A panel sends one per render at most; more than this is a loop, never the reader typing.
+    const now = Date.now();
+    this.highlightTimes = [...this.highlightTimes.filter((t) => now - t < 1000), now];
+    if (this.highlightTimes.length > 30) return;
+    const dir = this.ref.dir.toString();
+    if (this.highlightRequester?.dir !== dir) {
+      if (this.highlightRequester) this.highlightRequester.who.disposed = true;
+      this.highlightRequester = { dir, who: service.highlighter.newRequester() };
+    }
+    await service.whenReady();
+    const r = await service.highlighter.request(this.highlightRequester.who, blocks);
+    if (r && !this.disposed) this.post({ type: 'highlighted', ...r });
+  }
+
+  /** The colors of code blocks changed: the panel asks again for its blocks. */
+  highlightThemeChanged(theme: string): void {
+    this.post({ type: 'highlightTheme', theme });
   }
 
   private showError(message: string | null): void {
@@ -736,6 +769,9 @@ export class ExplainerSession implements vscode.Disposable {
 
   /** Reveals one anchor at a time; while one is opening, only the latest request waits. */
   private requestReveal(id: string, moveCursor: boolean): void {
+    // The panel's choice overtakes a cursor move still waiting to be followed.
+    clearTimeout(this.timers.get('cursor'));
+    this.timers.delete('cursor');
     if (this.reveal.running) {
       this.reveal.next = { id, moveCursor };
       return;
@@ -763,7 +799,6 @@ export class ExplainerSession implements vscode.Disposable {
     const uri = this.fileUri(a.file);
     const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
     try {
-      if (moveCursor) this.ignoreSelectionUntil = Date.now() + 500;
       const editor = await vscode.window.showTextDocument(uri, {
         viewColumn: this.codeColumn(uri),
         preserveFocus: !moveCursor,
@@ -819,6 +854,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.timers.clear();
     for (const d of [...this.subscriptions, ...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
     this.widgets?.dispose();
+    if (this.highlightRequester) this.highlightRequester.who.disposed = true;
     this.decorations.set(undefined);
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();

@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
+import { HIGHLIGHT_LANGS, type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
 import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
 import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
 
@@ -105,7 +106,14 @@ export type ToWebview =
   /** What readers set in this explainer's widgets (`useWidgetState`), kept by the extension: [widget key, JSON]. */
   | { type: 'widgetStates'; states: [string, string][] }
   /** The panel just became active: did focus arrive legitimately? Answered with `focusAnswer`. */
-  | { type: 'focusQuery'; id: number };
+  | { type: 'focusQuery'; id: number }
+  /**
+   * Reply to `highlight` (docs/HIGHLIGHT-PLAN.md): per block, run lengths and palette indexes covering its text
+   * (`[len, style, …]`), or null when it stays plain. The palette is the theme's so far (index 0: no style).
+   */
+  | { type: 'highlighted'; theme: string; palette: HighlightStyle[]; blocks: { id: number; runs: number[] | null }[] }
+  /** The colors code blocks get changed (another theme, or token color customizations). */
+  | { type: 'highlightTheme'; theme: string };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -158,7 +166,9 @@ export type FromWebview =
   /** Answers `focusQuery`. */
   | { type: 'focusAnswer'; id: number; legit: boolean }
   /** A widget took focus while the panel didn't have it (from the editor): give focus back to the editor. */
-  | { type: 'focusTheft' };
+  | { type: 'focusTheft' }
+  /** Code blocks to color (text from the sanitized content; languages from the fixed table). */
+  | { type: 'highlight'; blocks: { id: number; lang: HighlightLang; code: string }[] };
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -211,6 +221,14 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('widgetsUnresponsive'), ...breadcrumbs }),
   z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
   z.object({ type: z.literal('focusTheft') }),
+  z.object({
+    type: z.literal('highlight'),
+    blocks: z
+      .array(z.object({ id: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), lang: z.enum(HIGHLIGHT_LANGS), code: z.string().max(MAX_BLOCK_CHARS) }))
+      .min(1)
+      .max(MAX_REQUEST_BLOCKS)
+      .refine((b) => b.reduce((n, x) => n + x.code.length, 0) <= MAX_REQUEST_CHARS),
+  }),
 ]);
 
 

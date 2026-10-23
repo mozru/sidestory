@@ -13,6 +13,7 @@ import { disposeWidgetCompiler } from './widgets/compile.ts';
 import { WidgetHost } from './widgets/host.ts';
 import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
+import { HighlightService } from './highlight/service.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -51,10 +52,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const widgets = new WidgetHost(context);
   context.subscriptions.push(widgets);
 
+  // Code block colors (docs/HIGHLIGHT-PLAN.md): one worker and theme for every panel.
+  const highlight = new HighlightService(context.extensionUri);
+  context.subscriptions.push(highlight, highlight.onDidChangeTheme((key) => [...sessions].forEach((s) => s.highlightThemeChanged(key))));
+
   const host: SessionHost = {
     memento: context.workspaceState,
     reanchor: (ref, anchorId) => void reanchor(ref, anchorId, true),
     widgets,
+    highlight,
   };
 
   const start = async (trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, opts: SessionOptions = {}) => {

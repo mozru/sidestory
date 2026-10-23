@@ -110,7 +110,9 @@ export function decideConsent(record: ConsentRecord, files: readonly WidgetFile[
       else observed.push(f);
     }
   }
-  return { ask: first || changed.length + added.length > 0, first, changed, added, observed };
+  // The first time, nothing is the user's own yet: recording these files would let the next look run them
+  // without the reader having agreed.
+  return { ask: first || changed.length + added.length > 0, first, changed, added, observed: first ? [] : observed };
 }
 
 /** The record after the reader agreed (to these files) or edits were observed. */
