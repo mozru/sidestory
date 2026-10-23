@@ -8,6 +8,7 @@ import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '
 import type { WidgetAnchor } from '../shared/widget-protocol.ts';
 import contentCssText from './content.css';
 import { Assets } from './assets.ts';
+import { stepTitle } from '../core/step-title.ts';
 import { DIAGRAM_CLASSES, Diagrams, litIds, MAX_TAGGED } from './diagram.ts';
 import { CodeHighlighter } from './highlight.ts';
 import { sanitize } from './sanitize.ts';
@@ -890,8 +891,9 @@ function decorate(): void {
   widgets?.onAnchors();
 }
 
+/** The shared rule (src/core/step-title.ts): an empty title falls through, as in the workspace index. */
 function stepLabel(el: HTMLElement, id: string): string {
-  return el.dataset.explainTitle ?? el.querySelector('h1, h2, h3, h4')?.textContent?.trim() ?? id;
+  return stepTitle(el.dataset.explainTitle, el.querySelector('h1, h2, h3, h4')?.textContent, id);
 }
 
 function spokenState(id: string): string {

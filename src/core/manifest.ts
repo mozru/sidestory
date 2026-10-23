@@ -45,6 +45,13 @@ export interface Manifest {
   /** A short description, shown when a parent explainer offers this one as a detail ("peek"). */
   summary?: string;
   commit?: string;
+  /**
+   * Files the sidestory under this group in the sidebar, and makes it a top even when another sidestory links
+   * to it as a detail (docs/NAVIGATION-PLAN.md §4.2, §5.2). Trimmed, 1–60 characters.
+   */
+  group?: string;
+  /** Keeps a cross-linked sidestory at the top level without inventing a group (docs/NAVIGATION-PLAN.md §13, Q3). */
+  top?: boolean;
   anchors: Map<string, Anchor>;
   /** The parsed JSON as written, so tools can rewrite it without losing fields we don't model. */
   raw: Record<string, unknown>;
@@ -69,6 +76,7 @@ export const LIMITS = {
   contextChars: 1000,
   highlights: 50,
   titleChars: 300,
+  groupChars: 60,
 } as const;
 
 const SUPPORTED_VERSIONS = [1, 2] as const;
@@ -161,6 +169,15 @@ export function parseManifest(json: string): ParseResult {
   }
 
   const diagnostics: Diagnostic[] = [];
+  // Read leniently, outside the zod top level: a bad value is ignored with a diagnostic, and the manifest still loads.
+  const rawTop = raw as Record<string, unknown>;
+  const group = parseGroup(rawTop.group);
+  if (group.error) diagnostics.push({ message: `group: ${group.error}; ignored` });
+  let isTop: boolean | undefined;
+  if (rawTop.top !== undefined) {
+    if (typeof rawTop.top === 'boolean') isTop = rawTop.top;
+    else diagnostics.push({ message: 'top: must be true or false; ignored' });
+  }
   const anchors = new Map<string, Anchor>();
   // Read the raw object (not a zod record) so odd keys like "__proto__" are reported, not silently dropped.
   const entries = Object.entries((raw as { anchors: Record<string, unknown> }).anchors);
@@ -178,8 +195,28 @@ export function parseManifest(json: string): ParseResult {
   return {
     ok: true,
     diagnostics,
-    manifest: { version: version as 1 | 2, title: top.data.title, summary: top.data.summary, commit: top.data.commit, anchors, raw: raw as Record<string, unknown> },
+    manifest: {
+      version: version as 1 | 2,
+      title: top.data.title,
+      summary: top.data.summary,
+      commit: top.data.commit,
+      ...(group.value !== undefined ? { group: group.value } : {}),
+      ...(isTop !== undefined ? { top: isTop } : {}),
+      anchors,
+      raw: raw as Record<string, unknown>,
+    },
   };
+}
+
+/** A manifest's `group`: a string, trimmed, 1–60 characters, no control characters. */
+export function parseGroup(v: unknown): { value?: string; error?: string } {
+  if (v === undefined) return {};
+  if (typeof v !== 'string') return { error: 'must be a string' };
+  const value = v.trim();
+  if (!value) return { error: 'is empty' };
+  if (value.length > LIMITS.groupChars) return { error: `is longer than ${LIMITS.groupChars} characters` };
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return { error: 'contains control characters' };
+  return { value };
 }
 
 function describe(error: z.ZodError): string {

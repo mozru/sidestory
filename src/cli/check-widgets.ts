@@ -18,7 +18,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
 import { simple } from 'acorn-walk';
-import { parseManifest, type Anchor, type LineRange, type Manifest } from '../core/manifest.ts';
+import { outlineHtml } from '../core/html-scan.ts';
+import { explainerNameSchema, parseGroup, parseManifest, type Anchor, type LineRange, type Manifest } from '../core/manifest.ts';
 import { pinQuote, trimBlankLines } from '../core/pin.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { PreparedText } from '../core/text.ts';
@@ -29,7 +30,7 @@ import { anchorsRead } from '../extension/widgets/html.ts';
 import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-files.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
-import { scanHtml, type WidgetElement } from './html.ts';
+import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -62,6 +63,14 @@ export interface PinReport {
 
 export interface CheckReport {
   sidestory: string;
+  /** The manifest's title, as the sidebar and pickers show it. */
+  title?: string;
+  /** The manifest's group, when valid. */
+  group?: string;
+  /** The steps as the workspace index outlines them (docs/NAVIGATION-PLAN.md §6.2). */
+  steps?: { id: string; title: string }[];
+  /** data-explain-detail names in document order, deduplicated. */
+  details?: string[];
   widgets: WidgetReport[];
   findings: Finding[];
   pin?: PinReport;
@@ -499,6 +508,14 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   if (manifestText === undefined) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'not-found', message: "manifest.json can't be read." });
   manifest = parseIt();
 
+  if (manifest) {
+    report.title = manifest.title;
+    const g = parseGroup(manifest.raw.group);
+    if (g.error) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'group', message: `group ${g.error}: it must be a string of 1–60 characters with no control characters (it files the sidestory under that group in the sidebar).` });
+    if (g.value !== undefined) report.group = g.value;
+  }
+  await checkOutline(ctx, report, html);
+
   const scanned = scanHtml(html);
   const widgets = scanned.widgets;
   if (widgets.length > CHECK_LIMITS.widgetsPerExplainer) {
@@ -540,6 +557,36 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
 
   await checkAnchors(ctx, manifest, scan, new Set(scanned.steps));
   return finish(report);
+}
+
+/** The outline the workspace index builds, and the detail links in it (docs/NAVIGATION-PLAN.md §5.3). */
+async function checkOutline(ctx: Context, report: CheckReport, html: string) {
+  const outline = outlineHtml(html);
+  report.steps = outline.steps.map((s) => ({ id: s.id, title: s.title }));
+  report.details = [...new Set(outline.details.map((d) => d.name))];
+  if (outline.truncated) add(ctx, { severity: 'warning', file: ctx.htmlFile, code: 'outline-truncated', message: 'The page is too complex to outline in time: the sidebar and Go to Step list only the steps found before the scan stopped.' });
+  let lines: ((offset: number) => number) | undefined;
+  const self = basename(ctx.dir);
+  const exists = new Map<string, Promise<boolean>>();
+  for (const d of outline.details) {
+    const line = (lines ??= lineIndex(html))(d.offset);
+    if (d.name === self) {
+      add(ctx, { severity: 'warning', file: ctx.htmlFile, line, code: 'detail-self', message: `data-explain-detail="${d.name}" names this sidestory itself; it links nowhere. Name a sibling under .sidestory/.` });
+      continue;
+    }
+    if (!explainerNameSchema.safeParse(d.name).success) {
+      add(ctx, { severity: 'warning', file: ctx.htmlFile, line, code: 'unknown-detail', message: `data-explain-detail="${d.name.slice(0, 80)}" isn't a sidestory name (letters, digits, ".", "-" and "_", at most 64).` });
+      continue;
+    }
+    let found = exists.get(d.name);
+    if (!found) {
+      found = stat(join(dirname(ctx.dir), d.name, 'manifest.json')).then((st) => st.isFile(), () => false);
+      exists.set(d.name, found);
+    }
+    if (!(await found)) {
+      add(ctx, { severity: 'warning', file: ctx.htmlFile, line, code: 'unknown-detail', message: `data-explain-detail="${d.name}" names no sidestory next to this one (expected .sidestory/${d.name}/manifest.json).` });
+    }
+  }
 }
 
 function finish(report: CheckReport): CheckReport {

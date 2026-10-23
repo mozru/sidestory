@@ -260,3 +260,29 @@ describe('trackRange: round 2 regressions', () => {
     expect(trackRange({ start: 10, end: 13 }, { start: at(13, 6), end: at(13, 8), text: '\n  ', endTail: 0 }).range).toEqual({ start: 10, end: 13 });
   });
 });
+
+describe('group and top', () => {
+  const base = { version: 2, title: 'T', anchors: {} };
+  it('reads a valid group, trimmed, and top', () => {
+    const r = parseManifest(JSON.stringify({ ...base, group: '  Storage ', top: true }));
+    expect(r.ok && r.manifest.group).toBe('Storage');
+    expect(r.ok && r.manifest.top).toBe(true);
+    expect(r.ok && r.diagnostics).toEqual([]);
+  });
+  it.each([
+    [42, 'must be a string'],
+    ['   ', 'is empty'],
+    ['x'.repeat(61), 'longer than 60'],
+    ['a\u0007b', 'control'],
+  ])('ignores a bad group (%j) with a diagnostic, and still loads', (group, msg) => {
+    const r = parseManifest(JSON.stringify({ ...base, group }));
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.manifest.group).toBeUndefined();
+    expect(r.ok && r.diagnostics.map((d) => d.message).join()).toMatch(new RegExp(`^group: .*${msg}.*; ignored$`));
+  });
+  it('ignores a non-boolean top with a diagnostic', () => {
+    const r = parseManifest(JSON.stringify({ ...base, top: 'yes' }));
+    expect(r.ok && r.manifest.top).toBeUndefined();
+    expect(r.ok && r.diagnostics[0]?.message).toBe('top: must be true or false; ignored');
+  });
+});

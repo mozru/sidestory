@@ -320,6 +320,56 @@ describe('checkExplainer', () => {
   });
 });
 
+describe('outline, groups and detail links (docs/NAVIGATION-PLAN.md §5.3)', () => {
+  it('reports the outline in --json: title, group, steps and details', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', group: '  Storage ', anchors: ANCHORS }),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<p>Refills the buffer. More text.</p><a data-explain-detail="sib">x</a>') + '<section data-explain-anchor="other" data-explain-title="Other one"><p>y</p></section>'),
+      '.sidestory/sib/manifest.json': manifest({}),
+    });
+    const r = await check(dir);
+    expect(codes(r)).toEqual([]);
+    const out: string[] = [];
+    expect(await main([dir, '--json'], { out: (s) => out.push(s), err: () => {} }, compilerOpts)).toBe(0);
+    const json = JSON.parse(out.join(''));
+    expect(json).toMatchObject({ title: 'Demo', group: 'Storage', steps: [{ id: 'refill', title: 'refill' }, { id: 'other', title: 'Other one' }], details: ['sib'] });
+    expect(json.sidestory).toBe(dir);
+  });
+
+  it('reports an invalid group as an error, and the manifest still loads', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', group: 42, anchors: ANCHORS }),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<p>x</p>')),
+    });
+    const r = await check(dir);
+    expect(codes(r, 'error')).toEqual(['group']);
+    expect(r.title).toBe('Demo');
+    expect(r.group).toBeUndefined();
+    const long = repoWith({
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', group: 'x'.repeat(61), anchors: {} }),
+      '.sidestory/demo/sidestory.html': page('<p>x</p>'),
+    });
+    expect(codes(await check(long), 'error')).toEqual(['group']);
+  });
+
+  it('warns about detail links to missing or invalid siblings, and to itself, with their lines', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<a data-explain-detail="nope">a</a>\n<a data-explain-detail="../x">b</a>\n<a data-explain-detail="demo">c</a>\n<!-- <a data-explain-detail="hidden"> -->\n<a data-explain-detail="there">d</a>')),
+      '.sidestory/there/manifest.json': manifest({}),
+      // A folder without a manifest isn't a sidestory.
+      '.sidestory/nope/readme.txt': 'x',
+    });
+    const r = await check(dir);
+    const found = r.findings.filter((f) => f.code === 'unknown-detail' || f.code === 'detail-self').map((f) => `${f.line}:${f.code}`);
+    expect(found).toEqual(['5:unknown-detail', '6:unknown-detail', '7:detail-self']);
+    expect(r.details).toEqual(['nope', '../x', 'demo', 'there']);
+  });
+});
+
 describe('--pin', () => {
   const files = (widget: string, anchors: Record<string, unknown> = { ...ANCHORS, env: { file: 'src/.env', range: [1, 1] } }) => ({
     'src/a.ts': CODE,

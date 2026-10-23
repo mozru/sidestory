@@ -5,10 +5,11 @@
 // Widget placeholders (<explain-widget>) are kept with their own attributes; their JSON props child is
 // lifted into an attribute before scripts are dropped (docs/WIDGETS-PLAN.md §2).
 import { isWidgetSrc } from '../shared/protocol.ts';
+import { DROPPED_ELEMENTS } from '../shared/sanitize-lists.ts';
 import { parseInert } from './trusted.ts';
 
-// SVG animation elements can rewrite a sanitized attribute (such as href) after the fact.
-const DROP = 'script, iframe, frame, frameset, object, embed, applet, meta, base, noscript, template, portal, form, animate, set, animateMotion, animateTransform, discard';
+/** Removed with their contents; the list is shared with the outline scanner (src/core/html-scan.ts). */
+const DROP = DROPPED_ELEMENTS.join(', ');
 const URL_ATTRS = ['src', 'href', 'poster', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'data'];
 /**
  * Attributes that are dropped outright: popovers render in the top layer, above any containment; invoker commands
