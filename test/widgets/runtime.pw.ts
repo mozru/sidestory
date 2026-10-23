@@ -730,3 +730,24 @@ for (const name of ['dark', 'light', 'hc', 'hc-light'] as const) {
     for (const [what, ratio] of Object.entries(ratios)) expect(ratio, `${what} in ${name}`).toBeGreaterThanOrEqual(4.5);
   });
 }
+
+test('the diagram tokens (src/shared/diagram-tokens.css) are Tailwind colors too, and follow high contrast', async ({ harness }) => {
+  const id = await harness.mount({
+    libs: REACT,
+    init: one(`exports.default = function W() {
+  return _jsxruntime.jsxs("svg", { width: 40, height: 20, children: [
+    _jsxruntime.jsx("path", { "data-testid": "wire", className: "stroke-wire-data", d: "M0 10 L40 10" }),
+    _jsxruntime.jsx("rect", { "data-testid": "box", className: "fill-box stroke-box-stroke", width: 10, height: 10, style: { strokeDasharray: "var(--cx-dash-ctrl)" } }),
+  ] });
+};`),
+  });
+  const f = harness.frame(id);
+  const rgb = (hex: string) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+  await expect(f.getByTestId('wire')).toHaveCSS('stroke', rgb(theme('dark').vars['--vscode-charts-blue']!));
+  await expect(f.getByTestId('box')).toHaveCSS('stroke-dasharray', '5px, 4px');
+  // High contrast: boxes are the editor background with the theme's contrast border.
+  await harness.send(id, { type: 'theme', ...theme('hc') });
+  const hc = theme('hc').vars;
+  await expect(f.getByTestId('box')).toHaveCSS('fill', rgb(hc['--vscode-editor-background']!));
+  await expect(f.getByTestId('box')).toHaveCSS('stroke', rgb(hc['--vscode-contrastBorder']!));
+});

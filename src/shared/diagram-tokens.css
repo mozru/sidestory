@@ -1,0 +1,109 @@
+/*
+ * Diagram tokens (docs/AUTHORING-PLAN.md §6): what a box, a wire or a lit element should look like, mapped from the
+ * reader's VS Code theme, with high-contrast and forced-colors overrides. One file for every consumer: the content
+ * frame (content.css, which main.ts loads after this) and widget frames (src/widget-runtime/libs/tailwind-theme.js,
+ * which also gives them Tailwind names in theme.css). Authors write `stroke: var(--cx-wire-data)`, never a hex value.
+ *
+ * Every rule is inside :where(), so an author's own rule always wins. Tokens derived from other tokens are
+ * computed where they're declared, so each override below repeats them.
+ */
+
+:where(:root) {
+  --cx-box-fill: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
+  --cx-box-stroke: var(--vscode-editorWidget-border, var(--vscode-panel-border, GrayText));
+  --cx-box-fill-strong: color-mix(in srgb, var(--cx-box-stroke) 18%, var(--cx-box-fill));
+  --cx-box-text: var(--vscode-editor-foreground, CanvasText);
+  --cx-label: var(--vscode-descriptionForeground, GrayText);
+
+  --cx-wire-data: var(--vscode-charts-blue, #3794ff);
+  --cx-wire-addr: var(--vscode-charts-purple, #b180d7);
+  --cx-wire-ctrl: var(--vscode-charts-orange, #d18616);
+  --cx-wire-status: var(--vscode-charts-green, #89d185);
+  --cx-wire-irq: var(--vscode-charts-red, #f14c4c);
+  --cx-wire-clock: var(--vscode-charts-foreground, var(--vscode-editor-foreground, CanvasText));
+  --cx-wire-reset: var(--vscode-charts-yellow, #cca700);
+  --cx-wire-muted: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 70%, transparent);
+
+  --cx-domain-1: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 10%, transparent);
+  --cx-domain-2: color-mix(in srgb, var(--vscode-charts-green, #89d185) 10%, transparent);
+  --cx-domain-3: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 10%, transparent);
+  --cx-domain-4: color-mix(in srgb, var(--vscode-charts-orange, #d18616) 10%, transparent);
+
+  --cx-arrow: var(--vscode-editor-foreground, CanvasText);
+  --cx-grid: var(--vscode-charts-lines, var(--vscode-panel-border, GrayText));
+
+  /* stroke-dasharray values, so wire roles differ by more than color. */
+  --cx-dash-ctrl: 5 4;
+  --cx-dash-status: 2 3;
+  --cx-dash-irq: 1 3;
+  --cx-dash-reset: 6 2 1 2;
+
+  /* Elements that are not lit while a step lights others (data-explain-on). */
+  --cx-dim-opacity: 0.28;
+  /* Linked elements (data-explain-ref, data-explain-code): `transparent` turns that effect off. */
+  --cx-link-hover: var(--vscode-textLink-foreground, LinkText);
+  --cx-link-ring: var(--vscode-focusBorder, Highlight);
+  /* Elements whose code holds the editor cursor. */
+  --cx-here: var(--vscode-editor-findMatchHighlightBorder, var(--vscode-focusBorder, Highlight));
+}
+
+/*
+ * Lit elements take the step's color: the panel sets --cx-step-accent on the content, and on a diagram in
+ * `section` mode its own section's. Declared on each of them so the color follows.
+ */
+:where(:root, .cx-content, [data-explain-diagram]) {
+  --cx-on: var(--cx-step-accent, var(--vscode-focusBorder, Highlight));
+}
+
+/* High contrast: no tints and no fading; edges in the theme's contrast colors. */
+:where(:root.hc, body.vscode-high-contrast, body.vscode-high-contrast-light) {
+  --cx-box-fill: var(--vscode-editor-background, Canvas);
+  --cx-box-fill-strong: var(--vscode-editor-background, Canvas);
+  --cx-box-stroke: var(--vscode-contrastBorder, CanvasText);
+  --cx-label: var(--vscode-editor-foreground, CanvasText);
+  --cx-wire-clock: var(--vscode-editor-foreground, CanvasText);
+  --cx-wire-muted: var(--vscode-descriptionForeground, GrayText);
+  --cx-domain-1: transparent;
+  --cx-domain-2: transparent;
+  --cx-domain-3: transparent;
+  --cx-domain-4: transparent;
+  --cx-grid: var(--vscode-contrastBorder, CanvasText);
+  --cx-dim-opacity: 1;
+  --cx-link-hover: var(--vscode-contrastActiveBorder, Highlight);
+  --cx-link-ring: var(--vscode-contrastActiveBorder, Highlight);
+  --cx-here: var(--vscode-contrastActiveBorder, Highlight);
+}
+
+:where(:root.hc, body.vscode-high-contrast, body.vscode-high-contrast-light, :is(body.vscode-high-contrast, body.vscode-high-contrast-light) :is(.cx-content, [data-explain-diagram])) {
+  --cx-on: var(--vscode-contrastActiveBorder, Highlight);
+}
+
+/* Forced colors (Windows contrast themes): system colors only; wires are told apart by their dashes. */
+@media (forced-colors: active) {
+  :where(:root, body, .cx-content, [data-explain-diagram]) {
+    --cx-box-fill: Canvas;
+    --cx-box-fill-strong: Canvas;
+    --cx-box-stroke: CanvasText;
+    --cx-box-text: CanvasText;
+    --cx-label: CanvasText;
+    --cx-wire-data: CanvasText;
+    --cx-wire-addr: CanvasText;
+    --cx-wire-ctrl: CanvasText;
+    --cx-wire-status: CanvasText;
+    --cx-wire-irq: CanvasText;
+    --cx-wire-clock: CanvasText;
+    --cx-wire-reset: CanvasText;
+    --cx-wire-muted: GrayText;
+    --cx-domain-1: transparent;
+    --cx-domain-2: transparent;
+    --cx-domain-3: transparent;
+    --cx-domain-4: transparent;
+    --cx-arrow: CanvasText;
+    --cx-grid: CanvasText;
+    --cx-dim-opacity: 1;
+    --cx-on: Highlight;
+    --cx-link-hover: Highlight;
+    --cx-link-ring: Highlight;
+    --cx-here: Highlight;
+  }
+}

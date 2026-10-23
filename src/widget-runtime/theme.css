@@ -32,6 +32,26 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  /* Diagram tokens (src/shared/diagram-tokens.css, appended by tailwind-theme.js): stroke-wire-data, fill-box, text-label… */
+  --color-wire-data: var(--cx-wire-data);
+  --color-wire-addr: var(--cx-wire-addr);
+  --color-wire-ctrl: var(--cx-wire-ctrl);
+  --color-wire-status: var(--cx-wire-status);
+  --color-wire-irq: var(--cx-wire-irq);
+  --color-wire-clock: var(--cx-wire-clock);
+  --color-wire-reset: var(--cx-wire-reset);
+  --color-wire-muted: var(--cx-wire-muted);
+  --color-box: var(--cx-box-fill);
+  --color-box-strong: var(--cx-box-fill-strong);
+  --color-box-stroke: var(--cx-box-stroke);
+  --color-box-text: var(--cx-box-text);
+  --color-label: var(--cx-label);
+  --color-grid: var(--cx-grid);
+  --color-arrow: var(--cx-arrow);
+  --color-domain-1: var(--cx-domain-1);
+  --color-domain-2: var(--cx-domain-2);
+  --color-domain-3: var(--cx-domain-3);
+  --color-domain-4: var(--cx-domain-4);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
