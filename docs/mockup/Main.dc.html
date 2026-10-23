@@ -101,7 +101,7 @@ a{color:#3794ff}a:hover{color:#6cb0ff}
 <div style="flex: 1; min-width: 0">
 <div style="font-size: 18px; font-weight: 600; color: {{p.fgStrong}}">A backward bit reader in five moves</div>
 <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 12px; color: {{p.muted}}">
-<span>rtl/bit_reader.sv</span><span>·</span><span>written with Claude, edited by moshe</span><span>·</span>
+<span>rtl/bit_reader.sv</span><span>·</span><span>written with Claude, edited by alex</span><span>·</span>
 <span style="display: flex; align-items: center; gap: 4px; color: {{p.ok}}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Linked</span>
 </div>
 </div>
@@ -212,7 +212,7 @@ a{color:#3794ff}a:hover{color:#6cb0ff}
 <div style="margin-top: 14px; border-top: 1px solid {{p.border}}; padding-top: 12px">
 <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: {{p.muted}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>2 comments on this step</div>
 <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px; font-size: 12px">
-<div><span style="font-weight: 600; color: {{p.fgStrong}}">moshe</span> <span style="color: {{p.muted}}">12m</span><div>Why not a FIFO here?</div></div>
+<div><span style="font-weight: 600; color: {{p.fgStrong}}">alex</span> <span style="color: {{p.muted}}">12m</span><div>Why not a FIFO here?</div></div>
 <div style="padding-left: 10px; border-left: 2px solid {{p.claude}}"><span style="font-weight: 600; color: {{p.fgStrong}}">Claude</span> <span style="color: {{p.muted}}">10m · edited this step</span><div>A byte FIFO would still need this shifter to serve 1–63-bit reads. The window already is a FIFO, at bit granularity, so I added the trace table above to show it.</div></div>
 </div>
 </div>

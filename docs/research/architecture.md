@@ -342,7 +342,7 @@ Since there is no delivery ack (F10), "delivered" means *claimed* by a session (
 
 **threads/<id>.jsonl** (every line):
 ```json
-{"v":1,"id":"01J…","t":"open","thread":"t_01J…","at":"…","by":{"id":"moshe","kind":"human"},
+{"v":1,"id":"01J…","t":"open","thread":"t_01J…","at":"…","by":{"id":"alex","kind":"human"},
  "anchor":{"kind":"section","explainer":"bit-reader","ref":"refill"},
  "snapshot":{"file":"…","lines":[35,40],"commit":"…"},"source":{"via":"vscode"}}
 ```

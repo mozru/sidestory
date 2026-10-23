@@ -5,6 +5,14 @@
   "version": "0.1.0",
   "publisher": "sidestory",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mozru/sidestory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mozru/sidestory/issues"
+  },
+  "homepage": "https://github.com/mozru/sidestory#readme",
   "preview": true,
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -246,7 +254,7 @@
     "test:widgets": "playwright test -c test/widgets/playwright.config.ts",
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
     "pin": "node scripts/pin.ts",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links -o dist/sidestory.vsix",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --no-rewrite-relative-links -o dist/sidestory.vsix",
     "check": "npm run typecheck && npm test && npm run build",
     "test:desktop": "npm run build && node test/desktop/run.mjs"
   },

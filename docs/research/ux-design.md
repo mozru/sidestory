@@ -333,10 +333,10 @@ Don't animate layout properties (height/top); use transform/opacity and FLIP.
 │▌3 · Handshakes                               💬 2  ⋯      │
 │▌ in_ready rises when at least 8 bits of room remain...    │
 │ ┌ Thread · Step 3 ─────────────────────────── Resolve ⋯ ┐ │
-│ │ moshe · 3m   Why not a FIFO here?                      │ │
+│ │ alex · 3m   Why not a FIFO here?                      │ │
 │ │ Claude · 1m  A FIFO would add a cycle of latency...    │ │
 │ │              ✎ Edited Step 3 → View changes            │ │
-│ │ moshe · now  Fair. What about W=32?                    │ │
+│ │ alex · now  Fair. What about W=32?                    │ │
 │ │              ✓ Delivered to Claude                     │ │
 │ │ Claude       ⟳ replying…                               │ │
 │ │ ┌───────────────────────────────────────────────────┐  │ │

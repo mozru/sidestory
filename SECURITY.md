@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report security problems privately to the maintainer ([email removed]) rather than in a public issue. Include a minimal explainer or repository that reproduces the problem. You'll get an acknowledgement within a few days.
+Please report security problems privately through GitHub's private vulnerability reporting (https://github.com/mozru/sidestory/security/advisories/new) rather than in a public issue. Include a minimal explainer or repository that reproduces the problem. You'll get an acknowledgement within a few days.
 
 ## Threat model
 

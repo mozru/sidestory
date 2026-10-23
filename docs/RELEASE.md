@@ -11,7 +11,7 @@ Status: **prepared, not released.** Everything below up to "Publish" is done and
    "bugs": { "url": "https://github.com/<owner>/<repo>/issues" },
    "homepage": "https://github.com/<owner>/<repo>#readme"
    ```
-   and remove `--allow-missing-repository` from the `package` script. vsce then also turns the README's relative links into links to the repository.
+   (done: github.com/mozru/sidestory; the `package` script no longer needs `--allow-missing-repository`).
 3. **SECURITY.md** asks for vulnerability reports by email (it is in the published package). Keep that, or switch to the repository's private vulnerability reporting (GitHub → Settings → Security) once it exists.
 
 ## Checks (all passing at 81db349)

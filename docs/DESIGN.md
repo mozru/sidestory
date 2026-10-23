@@ -137,10 +137,10 @@ Any element can declare that it is about some code:
 One JSON object per line, append-only:
 
 ```json
-{"type":"open","id":"t_01J…","anchor":{"kind":"section","ref":"refill"},"by":"moshe","at":"2026-10-21T19:00:00Z"}
-{"type":"comment","id":"c_…","by":"moshe","at":"…","body":"Why not a FIFO here?"}
+{"type":"open","id":"t_01J…","anchor":{"kind":"section","ref":"refill"},"by":"alex","at":"2026-10-21T19:00:00Z"}
+{"type":"comment","id":"c_…","by":"alex","at":"…","body":"Why not a FIFO here?"}
 {"type":"comment","id":"c_…","by":"claude","at":"…","body":"…","edits":["section:refill"]}
-{"type":"resolve","by":"moshe","at":"…"}
+{"type":"resolve","by":"alex","at":"…"}
 ```
 
 **What a thread can be anchored to:**
