@@ -62,35 +62,120 @@ export function expandBraces(pattern: string): string[] {
   return out;
 }
 
-/** A matcher for workspace-relative POSIX paths: `**`, `*`, `?`, `[…]` and `{a,b}`. */
+
+/** Longest path a matcher looks at; longer ones never match (a hostile name can't buy unbounded work). */
+const MAX_PATH = 4096;
+const MAX_PATTERN = 1000;
+
+type Tok = { k: 'lit'; c: string } | { k: 'any' } | { k: 'star' } | { k: 'class'; neg: boolean; items: [string, string][] };
+type Seg = { globstar: true } | { globstar: false; toks: Tok[] };
+
+/**
+ * A matcher for workspace-relative POSIX paths: `**`, `*`, `?`, `[…]` and `{a,b}`. No regular expressions: the
+ * patterns come from settings a repository can set, so matching must not backtrack. Segments are matched with a
+ * dynamic program over (pattern segment, path segment) for `**`, and each segment with the two-pointer wildcard
+ * algorithm, so the work is O(pattern × path) whatever the input. A malformed pattern never throws.
+ */
 export function globMatcher(patterns: readonly string[]): (relPath: string) => boolean {
-  const res = patterns.flatMap(expandBraces).map(globToRegExp);
-  return (p) => res.some((r) => r.test(p));
+  const compiled = patterns
+    .filter((p) => p.length <= MAX_PATTERN)
+    .flatMap(expandBraces)
+    .map(compile);
+  return (p) => p.length <= MAX_PATH && compiled.some((c) => matchSegments(c, p.split('/')));
 }
 
-export function globToRegExp(glob: string): RegExp {
-  let re = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]!;
+function compile(glob: string): Seg[] {
+  return glob.split('/').map((seg): Seg => (seg === '**' ? { globstar: true } : { globstar: false, toks: tokens(seg) }));
+}
+
+function tokens(seg: string): Tok[] {
+  const out: Tok[] = [];
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i]!;
     if (c === '*') {
-      if (glob[i + 1] === '*') {
-        // `**/` matches any number of folders (none included); a trailing `**` matches the rest.
-        i++;
-        if (glob[i + 1] === '/') {
-          i++;
-          re += '(?:.*/)?';
-        } else re += '.*';
-      } else re += '[^/]*';
-    } else if (c === '?') re += '[^/]';
+      if (out.at(-1)?.k !== 'star') out.push({ k: 'star' }); // `**` inside a segment is just `*`
+    } else if (c === '?') out.push({ k: 'any' });
     else if (c === '[') {
-      const end = glob.indexOf(']', i + 1);
-      if (end < 0) re += '\\[';
-      else {
-        const body = glob.slice(i + 1, end).replace(/\\/g, '\\\\').replace(/^!/, '^');
-        re += `[${body}]`;
-        i = end;
+      const end = seg.indexOf(']', i + 2);
+      if (end < 0) {
+        out.push({ k: 'lit', c });
+        continue;
       }
-    } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+      let body = seg.slice(i + 1, end);
+      const neg = body[0] === '!' || body[0] === '^';
+      if (neg) body = body.slice(1);
+      const items: [string, string][] = [];
+      for (let j = 0; j < body.length; j++) {
+        if (body[j + 1] === '-' && j + 2 < body.length) {
+          items.push([body[j]!, body[j + 2]!]); // a reversed range (z-a) simply matches nothing
+          j += 2;
+        } else items.push([body[j]!, body[j]!]);
+      }
+      out.push({ k: 'class', neg, items });
+      i = end;
+    } else out.push({ k: 'lit', c });
   }
-  return new RegExp(`^${re}$`);
+  return out;
+}
+
+function one(t: Tok, c: string): boolean {
+  switch (t.k) {
+    case 'lit':
+      return t.c === c;
+    case 'any':
+      return true;
+    case 'class': {
+      const hit = t.items.some(([a, b]) => c >= a && c <= b);
+      return t.neg ? !hit : hit;
+    }
+    default:
+      return false;
+  }
+}
+
+/** The two-pointer wildcard match: each `*` remembers one restart point, so no exponential backtracking. */
+function matchSegment(toks: Tok[], s: string): boolean {
+  let t = 0;
+  let i = 0;
+  let starT = -1;
+  let starI = 0;
+  while (i < s.length) {
+    const tok = toks[t];
+    if (tok && tok.k !== 'star' && one(tok, s[i]!)) {
+      t++;
+      i++;
+    } else if (tok && tok.k === 'star') {
+      starT = t++;
+      starI = i;
+    } else if (starT >= 0) {
+      t = starT + 1;
+      i = ++starI;
+    } else return false;
+  }
+  while (toks[t]?.k === 'star') t++;
+  return t === toks.length;
+}
+
+/** `**` matches zero or more whole segments: a table over (pattern segment, path segment), filled once. */
+function matchSegments(pat: Seg[], path: string[]): boolean {
+  const m = pat.length;
+  const n = path.length;
+  // can[j]: the pattern so far matches the first j path segments.
+  let can = new Uint8Array(n + 1);
+  can[0] = 1;
+  for (let i = 0; i < m; i++) {
+    const seg = pat[i]!;
+    const next = new Uint8Array(n + 1);
+    if (seg.globstar) {
+      let reach = 0;
+      for (let j = 0; j <= n; j++) {
+        if (can[j]) reach = 1;
+        next[j] = reach;
+      }
+    } else {
+      for (let j = 0; j < n; j++) if (can[j] && matchSegment(seg.toks, path[j]!)) next[j + 1] = 1;
+    }
+    can = next;
+  }
+  return can[n] === 1;
 }

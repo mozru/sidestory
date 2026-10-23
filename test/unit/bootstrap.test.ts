@@ -93,6 +93,24 @@ describe('bootstrap', () => {
     expect(loads).toBe(1);
   });
 
+  it('a failed load of full.cjs is retried by the next caller, not remembered', async () => {
+    const boot = await fresh();
+    let fail = true;
+    boot.loader.load = () => {
+      loads++;
+      if (fail) throw new Error('broken bundle');
+      return { activateFull: () => ({ commands: {}, deserialize: async () => {}, deactivate() {} }) as never };
+    };
+    memory['sidestory.available'] = true;
+    boot.activate(context() as never);
+    await tick();
+    expect(loads).toBe(1);
+    fail = false;
+    boot.activate(context() as never);
+    await tick();
+    expect(loads).toBe(2);
+  });
+
   it('looksLikeSidestory follows refFromDir’s layout rules', async () => {
     const { looksLikeSidestory } = await fresh();
     const u = (p: string) => stub.Uri.file(p) as never;

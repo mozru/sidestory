@@ -262,6 +262,41 @@ describe('budgets and caps', () => {
     expect([...index.all()].every((e) => e.state === 'not-outlined' && !e.outlined)).toBe(true);
   });
 
+  it('outlines pages skipped by the budget in a follow-up, even when their manifests were read', async () => {
+    for (let i = 0; i < 3; i++) story(root, '', `s${i}`, { title: `S${i}` });
+    limits.scanMsPerBatch = 0;
+    limits.followUpMs = 50;
+    await start();
+    expect([...index.all()].every((e) => e.title && !e.outlined)).toBe(true); // manifests read, pages not
+    limits.scanMsPerBatch = saved.scanMsPerBatch!;
+    await waitFor(() => [...index.all()].every((e) => e.outlined && e.state === 'ready'));
+  });
+
+  it('forgets interned files nothing anchors any more', async () => {
+    write(join(root, 'f.ts'), code(10));
+    write(join(root, 'g.ts'), code(10));
+    story(root, '', 'a', { anchors: { x: { file: 'f.ts', range: [1, 2] } } });
+    await start();
+    expect(index.stats().files).toBe(1);
+    write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'g.ts', range: [1, 2] } } }));
+    fire('change', join(dirOf('', 'a'), 'manifest.json'));
+    await waitFor(() => index.isAnchored(key(join(root, 'g.ts'))));
+    expect(index.isAnchored(key(join(root, 'f.ts')))).toBe(false);
+    expect(index.stats().files).toBe(1);
+  });
+
+  it('judges caps afresh on a refresh', async () => {
+    limits.anchors = 1;
+    write(join(root, 'f.ts'), code(10));
+    story(root, '', 'a', { anchors: { x: { file: 'f.ts', range: [1, 2] }, y: { file: 'f.ts', range: [3, 4] } } });
+    await start();
+    expect(index.capped).toBe(true);
+    limits.anchors = saved.anchors!;
+    write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'f.ts', range: [1, 2] } } }));
+    await index.refresh();
+    expect(index.capped).toBe(false);
+  });
+
   it('gives each file at most 200 anchors from one sidestory, in-use sidestories first', async () => {
     write(join(root, 'f.ts'), code(600));
     const many: Record<string, { file: string; range: [number, number] }> = {};

@@ -53,7 +53,12 @@ function doc(path: string, scheme = 'file') {
       return text.split('\n').length;
     },
     getText: () => text,
-    lineAt: (n: number) => ({ text: text.split('\n')[n] ?? '' }),
+    lineAt: (n: number) => {
+      const line = text.split('\n')[n] ?? '';
+      return { text: line, range: { end: { line: n, character: line.length } } };
+    },
+    /** Only the end of the text is asked for (the size check). */
+    offsetAt: () => text.length,
     setText(t: string) {
       text = t;
       d.version++;
@@ -142,7 +147,63 @@ describe('CodeLens', () => {
     expect(lenses).toHaveLength(1);
     expect(lenses[0]!.title).toBe('$(book) B · step 1: Step y and 1 more'); // the tightest first
     expect(lenses[0]!.command).toBe('sidestory.showHere');
-    expect(lenses[0]!.args).toEqual({ uri: d.uri.toString(), line: 5 });
+    // It names exactly the steps it counted, so the pick that follows lists those.
+    const keys = lenses[0]!.args.keys as string[];
+    expect(lenses[0]!.args).toEqual({ uri: d.uri.toString(), line: 5, keys });
+    expect(here.byKeys(d.uri as never, keys).map((it) => it.entry.ref.name)).toEqual(['b', 'a']);
+  });
+
+  it('counts nested anchors of one step once', async () => {
+    story(root, '', 'a', {
+      title: 'A',
+      anchors: { outer: { file: 'f.ts', range: [5, 9] }, inner: { file: 'f.ts', range: [5, 6] } },
+      html: '<section data-explain-anchor="outer"><h2>Outer</h2><div data-explain-anchor="inner"><h3>Inner</h3></div></section>',
+    });
+    await start();
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    const lenses = await lensesOf(d);
+    expect(lenses).toHaveLength(1);
+    expect(lenses[0]!.title).toBe('$(book) A · step 1: Outer');
+    expect(lenses[0]!.command).toBe('sidestory.openAt');
+  });
+
+  it('asks VS Code again when a resolve lands after it was given nothing, even with the same lenses', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    await start();
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    expect(await lensesOf(d)).toHaveLength(1);
+    // A new version with the same code where it was (same lenses), resolved slowly.
+    const real = index.quotesFor.bind(index);
+    index.quotesFor = async (...args) => {
+      await new Promise((r) => setTimeout(r, 300));
+      return real(...args);
+    };
+    (here as unknown as { results: Map<string, { version: number }> }).results.get(uriKey(d.uri as never))!.version = -1;
+    let fired = 0;
+    here.onDidChangeCodeLenses(() => fired++);
+    expect(await here.provideCodeLenses(d as never, token as never)).toEqual([]);
+    await waitFor(() => fired > 0);
+    expect(await here.provideCodeLenses(d as never, token as never)).toHaveLength(1);
+  });
+
+  it('a resolve still running for an old version is followed by one for the new version', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    await start();
+    const real = index.quotesFor.bind(index);
+    index.quotesFor = async (...args) => {
+      await new Promise((r) => setTimeout(r, 200));
+      return real(...args);
+    };
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    void here.provideCodeLenses(d as never, token as never);
+    d.setText(`new\n${d.getText()}`); // the running resolve is now for an old version
+    await here.provideCodeLenses(d as never, token as never);
+    await waitFor(() => (here as unknown as { results: Map<string, { version: number }> }).results.get(uriKey(d.uri as never))?.version === d.version, 3000);
+    const lenses = await lensesOf(d);
+    expect(lenses.map((l) => l.line)).toEqual([5]);
   });
 
   it('shows 30 lenses, then one “+N more” on the next covered line', async () => {

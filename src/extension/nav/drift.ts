@@ -39,7 +39,8 @@ export class DriftQueue implements vscode.Disposable {
   private queue: string[] = [];
   private running = false;
   private lastTyped = 0;
-  private reads: { at: number; bytes: number }[] = [];
+  /** Bytes read per minute (at most 11 buckets), for the rolling 10-minute budget. */
+  private readonly buckets = new Map<number, number>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   private readonly emitter = new vscode.EventEmitter<string>();
@@ -70,7 +71,9 @@ export class DriftQueue implements vscode.Disposable {
     const live = this.live(e.key);
     if (live) return live;
     const c = this.cache.get(e.key);
-    if (c && !this.dirty.has(e.key) && e.manifestStamp && c.stamp.startsWith(`${e.manifestStamp}|`)) return c.drift;
+    // Not read by the index yet: nothing to compare against; the index's change event repaints it later.
+    if (!e.manifestStamp) return undefined;
+    if (c && !this.dirty.has(e.key) && c.stamp.startsWith(`${e.manifestStamp}|`)) return c.drift;
     // Unknown or dirty: recomputed now that it is shown (cheap when every stamp still matches).
     this.request(e.key);
     return undefined;
@@ -104,8 +107,14 @@ export class DriftQueue implements vscode.Disposable {
 
   private rollingUsed(): number {
     const now = Date.now();
-    this.reads = this.reads.filter((r) => now - r.at < DRIFT_LIMITS.rollingMs);
-    return this.reads.reduce((n, r) => n + r.bytes, 0);
+    const minute = Math.floor(now / 60_000);
+    const oldest = minute - Math.ceil(DRIFT_LIMITS.rollingMs / 60_000);
+    let sum = 0;
+    for (const [m, bytes] of this.buckets) {
+      if (m <= oldest) this.buckets.delete(m);
+      else sum += bytes;
+    }
+    return sum;
   }
 
   private async run(): Promise<void> {
@@ -151,13 +160,15 @@ export class DriftQueue implements vscode.Disposable {
     const files = new Map<string, vscode.Uri>();
     const text = await readInside(mUri, e.ref.root, MAX_MANIFEST_BYTES);
     if (text === undefined || e.version !== version) return undefined;
-    this.reads.push({ at: Date.now(), bytes: text.length });
+    this.note(text.length);
     const parsed = parseManifest(text);
     if (!parsed.ok) return { stamp: `${e.manifestStamp}|`, drift: { outOfDate: 0, lost: 0, unchecked: 0 } };
     for (const a of parsed.manifest.anchors.values()) files.set(a.file, vscode.Uri.joinPath(e.ref.root, a.file));
     const stats = new Map<string, { mtime: number; size: number } | undefined>();
     for (const [f, u] of files) stats.set(f, await stat(u));
-    const stamp = `${e.manifestStamp}|${[...stats].map(([f, s]) => `${f}:${s ? `${s.mtime}:${s.size}` : '-'}`).join(';')}`;
+    // Kept short: the manifest's stamp and a hash of every anchored file's path and stat (a manifest can name
+    // hundreds of long paths, and the cache holds 2,000 entries).
+    const stamp = `${e.manifestStamp}|${hashStats(stats)}`;
     const cached = this.cache.get(e.key);
     if (cached && cached.stamp === stamp) return cached;
     const drift: Drift = { outOfDate: 0, lost: 0, unchecked: 0 };
@@ -182,7 +193,7 @@ export class DriftQueue implements vscode.Disposable {
         continue;
       }
       bytes += source.length;
-      this.reads.push({ at: Date.now(), bytes: source.length });
+      this.note(source.length);
       // One PreparedText per file, dropped right after.
       const prepared = PreparedText.from(source);
       for (const a of anchors) {
@@ -199,6 +210,11 @@ export class DriftQueue implements vscode.Disposable {
     return { stamp, drift };
   }
 
+  private note(bytes: number): void {
+    const minute = Math.floor(Date.now() / 60_000);
+    this.buckets.set(minute, (this.buckets.get(minute) ?? 0) + bytes);
+  }
+
   /** The cached drift of a key (tests). */
   peek(key: string): Drift | undefined {
     return this.cache.get(key)?.drift;
@@ -211,6 +227,18 @@ export class DriftQueue implements vscode.Disposable {
     this.cache.clear();
     this.queue = [];
   }
+}
+
+function hashStats(stats: Map<string, { mtime: number; size: number } | undefined>): string {
+  let h = 0x811c9dc5;
+  const mix = (s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+  };
+  for (const [f, s] of stats) mix(`${f}\u0000${s ? `${s.mtime}:${s.size}` : '-'}\u0000`);
+  return `${stats.size}:${(h >>> 0).toString(36)}`;
 }
 
 async function stat(uri: vscode.Uri): Promise<{ mtime: number; size: number } | undefined> {

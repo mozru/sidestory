@@ -60,4 +60,24 @@ describe('globMatcher', () => {
     expect(g('ya')).toBe(true);
     expect(g('y5')).toBe(false);
   });
+
+  it('never backtracks: a ReDoS-shaped pattern against a long hostile name stays fast', () => {
+    const g = globMatcher([`**/*${'a*'.repeat(20)}b`, '**/**/**/**/**/x']);
+    const name = `src/${'a'.repeat(3000)}c/.sidestory/x/manifest.json`;
+    const t0 = performance.now();
+    for (let i = 0; i < 20; i++) expect(g(name)).toBe(false);
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
+
+  it('never throws on malformed patterns: a reversed class matches nothing, an unclosed one is literal', () => {
+    const g = globMatcher(['[z-a]', 'q[', '**/[]x']);
+    expect(g('m')).toBe(false);
+    expect(g('q[')).toBe(true);
+    expect(() => g('a/b')).not.toThrow();
+  });
+
+  it('ignores over-long paths and patterns', () => {
+    expect(globMatcher(['**'])('a/'.repeat(3000))).toBe(false);
+    expect(globMatcher(['x'.repeat(2000)])('x'.repeat(2000))).toBe(false);
+  });
 });

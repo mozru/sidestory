@@ -29,7 +29,7 @@ async function heap(): Promise<number> {
 }
 
 /** Bytes the index holds for a workspace, per item. */
-async function measure(build: (root: string) => void, items: number): Promise<number> {
+async function measure(build: (root: string) => void, items: number, stories = STORIES): Promise<number> {
   const root = tempRoot('cx-mem-');
   roots.push(root);
   build(root);
@@ -39,7 +39,7 @@ async function measure(build: (root: string) => void, items: number): Promise<nu
   const index = new SidestoryIndex(watcher);
   await index.refresh();
   const after = await heap();
-  expect(index.stats()).toMatchObject({ sidestories: STORIES });
+  expect(index.stats()).toMatchObject({ sidestories: stories });
   index.dispose();
   watcher.dispose();
   return (after - before) / Math.max(1, items);
@@ -71,5 +71,20 @@ describe.runIf(!!gc)('index memory', () => {
     }, STORIES * PER);
     console.log(`index memory: ${per.toFixed(0)} B per step`);
     expect(per).toBeLessThan(450 * 1.5);
+  }, 60_000);
+
+  it('outlines keep no page source alive (long ids, titles and detail names are copies, not slices)', async () => {
+    const PAGES = 40;
+    const filler = `<p>${'x'.repeat(200)}</p>\n`.repeat(2500); // ~500 KB per page
+    const per = await measure((root) => {
+      for (let s = 0; s < PAGES; s++) {
+        const html = `<section data-explain-anchor="a-rather-long-step-identifier-${s}" data-explain-title="A-title-that-needs-no-cleaning-${s}"><h2>H</h2><p data-explain-detail="some-detail-name-${s}">Go.</p></section>${filler}`;
+        write(join(root, '.sidestory', `s${s}`, 'manifest.json'), manifestText({ title: `Sidestory ${s}` }));
+        write(join(root, '.sidestory', `s${s}`, 'sidestory.html'), html);
+      }
+    }, PAGES, PAGES);
+    console.log(`index memory: ${per.toFixed(0)} B per outlined 500 KB page`);
+    // A retained page would be ~1 MB (UTF-16); a flattened outline is a few hundred bytes.
+    expect(per).toBeLessThan(20_000);
   }, 60_000);
 });

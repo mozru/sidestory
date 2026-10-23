@@ -1,11 +1,12 @@
 // Open Sidestory (docs/NAVIGATION-PLAN.md §10) and Go to Step (§9): quick picks built from the index, in memory.
 // Every label, description and detail is repository text: cleaned when indexed, icon syntax escaped here.
 import * as vscode from 'vscode';
-import { escapeIcons } from '../../core/display-text.ts';
+import { displayText, escapeIcons } from '../../core/display-text.ts';
 import { uriKey } from '../explainers.ts';
 import type { IndexEntry, SidestoryIndex } from './index.ts';
 
 export const PICK_LIMITS = { steps: 20_000 } as const;
+export const GUIDE_URL = 'https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md';
 export const SCOPE_KEY = 'sidestory.goToStepScope';
 
 /** Every sidestory once, in tree order: package, then Start here, groups, tops, each top followed by its details. */
@@ -55,8 +56,10 @@ interface SidestoryItem extends vscode.QuickPickItem {
 export async function pickSidestory(index: SidestoryIndex, recent: readonly string[]): Promise<IndexEntry | undefined> {
   if (index.state !== 'loading' && index.size === 0) {
     const show = 'Show Sidestories';
-    const choice = await vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with sidestory.html and manifest.json.', show);
+    const guide = 'Read the Guide';
+    const choice = await vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with a page and a manifest.json.', show, guide);
     if (choice === show) void vscode.commands.executeCommand('sidestory.showSidestories');
+    if (choice === guide) void vscode.env.openExternal(vscode.Uri.parse(GUIDE_URL));
     return undefined;
   }
   if (index.state !== 'loading' && index.size === 1) return index.all().next().value;
@@ -107,7 +110,8 @@ export async function pickSidestory(index: SidestoryIndex, recent: readonly stri
 function sidestoryItem(index: SidestoryIndex, e: IndexEntry): SidestoryItem {
   const pkg = index.packageOf(e);
   const parents = pkg?.graph.parents(e.ref.name).length ?? 0;
-  const where = `${vscode.workspace.asRelativePath(pkg?.folder ?? e.ref.dir, (vscode.workspace.workspaceFolders?.length ?? 0) > 1)}/${e.ref.name}`;
+  // Folder names are repository text too (on Linux they can hold newlines and bidi controls).
+  const where = displayText(`${vscode.workspace.asRelativePath(pkg?.folder ?? e.ref.dir, (vscode.workspace.workspaceFolders?.length ?? 0) > 1)}/${e.ref.name}`, 200);
   return {
     label: escapeIcons(index.pathLabel(e)),
     description: escapeIcons(`${where}${parents > 1 ? ` · also under ${parents - 1} other${parents - 1 === 1 ? '' : 's'}` : ''}`),
@@ -148,16 +152,18 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
   const multi = index.packages().length > 1;
   const remembered = ctx.memento.get<string>(SCOPE_KEY);
   let scope: 'package' | 'all' = remembered === 'all' || remembered === 'package' ? remembered : multi && thisPackage().size ? 'package' : 'all';
-  const toggle: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('filter'), tooltip: 'Show all packages' };
   const build = () => {
     const active = qp.activeItems[0];
     const pkgs = thisPackage();
     let effective = ctx.only ? 'one' : scope === 'package' && pkgs.size && multi ? 'package' : 'all';
     let entries = ctx.only ? [ctx.only] : treeOrder(index).filter((e) => effective !== 'package' || pkgs.has(e.pkg));
     let total = entries.reduce((n, e) => n + (e.outlined ? e.steps.length : e.ids.length), 0);
-    // Past the cap, This package is forced when a package is known.
-    if (total > PICK_LIMITS.steps && effective === 'all' && pkgs.size) {
+    // Past the cap, This package is forced when a package is known (and the toggle can't undo it).
+    let forced = false;
+    if (total > PICK_LIMITS.steps && effective === 'all' && pkgs.size && multi) {
       effective = 'package';
+      forced = true;
+      scope = 'package';
       entries = treeOrder(index).filter((e) => pkgs.has(e.pkg));
       total = entries.reduce((n, e) => n + (e.outlined ? e.steps.length : e.ids.length), 0);
     }
@@ -188,9 +194,15 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
     }
     qp.busy = busy || index.state === 'loading';
     const scopeName = effective === 'one' && ctx.only ? escapeIcons(index.name(ctx.only)) : effective === 'package' ? [...pkgs].map((k) => index.packages().find((p) => p.key === k)?.label ?? '').filter(Boolean).map(escapeIcons).join(', ') || 'This package' : 'All packages';
-    qp.title = `Go to Step: ${scopeName}`;
-    qp.placeholder = total > items.length ? `Showing ${items.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} steps; narrow with This package` : 'Type to find a step';
-    qp.buttons = ctx.only || !multi ? [] : [effective === 'package' ? { iconPath: new vscode.ThemeIcon('filter-filled'), tooltip: 'Show all packages' } : { iconPath: new vscode.ThemeIcon('filter'), tooltip: 'Show this package only' }];
+    // One package: the scope needs no name.
+    qp.title = !multi && !ctx.only ? 'Go to Step' : `Go to Step: ${scopeName}`;
+    qp.placeholder = forced
+      ? `All packages have more than ${PICK_LIMITS.steps.toLocaleString('en-US')} steps: showing this package`
+      : total > items.length
+        ? `Showing ${items.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} steps; narrow with This package`
+        : 'Type to find a step';
+    // The toggle only when it can change something: several packages, one of them current, and no forced scope.
+    qp.buttons = ctx.only || !multi || !pkgs.size || forced ? [] : [effective === 'package' ? { iconPath: new vscode.ThemeIcon('filter-filled'), tooltip: 'Show all packages' } : { iconPath: new vscode.ThemeIcon('filter'), tooltip: 'Show this package only' }];
   };
   build();
   const subs = [
@@ -201,7 +213,6 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
       build();
     }),
   ];
-  void toggle;
   try {
     return await new Promise<{ entry: IndexEntry; step: string } | undefined>((resolve) => {
       qp.onDidAccept(() => {

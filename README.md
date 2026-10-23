@@ -107,9 +107,9 @@ Then ask in plain words, for example *"Explain how the DMA controller works, wit
 
 **Codex** and other agents that support [Agent Skills](https://agentskills.io) can use the same skill: copy [`plugins/sidestory/skills/sidestory`](plugins/sidestory/skills/sidestory) into the agent's skills folder (for Codex, `~/.codex/skills/sidestory`).
 
-Any other agent: point it at the guides, for example:
+Any other agent: point it at the guides. **Sidestory: Copy a Prompt for Your Agent** copies this prompt; fill in the code and a name:
 
-> Write a sidestory for `rtl/dma_ctrl.sv` in `.sidestory/dma-ctrl/`: a section per part of the FSM, an SVG state diagram, and a widget that steps through a transfer. Follow https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and https://github.com/mozru/sidestory/blob/main/docs/WIDGETS.md, then run the checker until it reports no errors.
+> Write a sidestory for `<the code to explain>` in `.sidestory/<name>/`: a section per part, a diagram where it helps, and a widget only where interaction makes it clearer. Follow https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and https://github.com/mozru/sidestory/blob/main/docs/WIDGETS.md, then run the checker until it reports no errors.
 
 The checker ships with the extension; **Sidestory: Copy Widget Check Command** copies the exact command for your machine. It looks like:
 

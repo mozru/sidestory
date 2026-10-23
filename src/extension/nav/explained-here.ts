@@ -59,7 +59,10 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
   private readonly results = new Map<string, DocResult>();
   /** Bumped per document on every edit and resolve: work that finds it changed stops at its next slice. */
   private readonly seq = new Map<string, number>();
-  private readonly inflight = new Map<string, Promise<void>>();
+  /** The resolve running per document, with the version it started for. */
+  private readonly inflight = new Map<string, { version: number; p: Promise<void> }>();
+  /** Documents whose lenses VS Code asked for before the results were ready (it got []): told when they are. */
+  private readonly servedEarly = new Set<string>();
   /** Resolves waiting for one of the 8 slots. */
   private readonly queue: (() => void)[] = [];
   private running = 0;
@@ -164,7 +167,11 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       await Promise.race([work, new Promise((res) => setTimeout(res, HERE_LIMITS.lensWaitMs))]);
       if (token.isCancellationRequested) return [];
       r = this.results.get(key);
-      if (!r || r.version !== doc.version) return [];
+      if (!r || r.version !== doc.version) {
+        // VS Code now shows nothing; when this resolve lands, it must ask again even if nothing else changed.
+        this.servedEarly.add(key);
+        return [];
+      }
     }
     return this.lenses(doc, r);
   }
@@ -191,18 +198,20 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const lines = [...byLine.keys()].sort((a, b) => a - b);
     const out: vscode.CodeLens[] = [];
     for (const line of lines.slice(0, HERE_LIMITS.lensLines)) {
-      const list = sortTightest(byLine.get(line)!);
+      // One entry per (sidestory, step): nested anchors of one step starting on the same line count once.
+      const list = uniqueSteps(sortTightest(byLine.get(line)!), (it) => this.stepKey(it));
       const first = list[0]!;
       const range = new vscode.Range(line, 0, line, 0);
       const more = list.length - 1;
       const title = `$(book) ${escapeIcons(this.describe(first))}${first.state === 'stale' ? ' (code changed a lot)' : ''}${more ? ` and ${more} more` : ''}`;
+      // "and N more" opens exactly the steps it counted.
       const command: vscode.Command = more
-        ? { title, command: 'sidestory.showHere', arguments: [{ uri: doc.uri.toString(), line: line + 1 }] }
+        ? { title, command: 'sidestory.showHere', arguments: [{ uri: doc.uri.toString(), line: line + 1, keys: list.map((it) => this.stepKey(it)) }] }
         : { title, command: 'sidestory.openAt', arguments: [this.openArgs(first, 'lens')] };
       out.push(new vscode.CodeLens(range, command));
     }
     if (lines.length > HERE_LIMITS.lensLines) {
-      const rest = lines.slice(HERE_LIMITS.lensLines).reduce((n, l) => n + byLine.get(l)!.length, 0);
+      const rest = new Set(lines.slice(HERE_LIMITS.lensLines).flatMap((l) => byLine.get(l)!.map((it) => this.stepKey(it)))).size;
       const line = lines[HERE_LIMITS.lensLines]!;
       const title = `$(book) +${rest} more sidestory step${rest === 1 ? '' : 's'} in this file`;
       out.push(new vscode.CodeLens(new vscode.Range(line, 0, line, 0), { title, command: 'sidestory.showHere', arguments: [{ uri: doc.uri.toString(), all: true }] }));
@@ -226,6 +235,23 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     return step >= 0 ? it.entry.steps[step]!.title : it.id;
   }
 
+  /** Identifies an item's (sidestory, step): nested anchors fold into their step. */
+  stepKey(it: HereItem): string {
+    return `${it.entry.key}\u0000${this.openArgs(it, '').anchor}`;
+  }
+
+  /** Items of a document whose step keys are given (what an "and N more" lens counted), in that order. */
+  byKeys(uri: vscode.Uri, keys: readonly string[]): HereItem[] {
+    const r = this.results.get(uriKey(uri));
+    if (!r) return [];
+    const found = new Map<string, HereItem>();
+    for (const it of this.visibleItems(r)) {
+      const k = this.stepKey(it);
+      if (!found.has(k)) found.set(k, it);
+    }
+    return keys.map((k) => found.get(k)).filter((x): x is HereItem => !!x);
+  }
+
   openArgs(it: HereItem, source: string): { dir: string; anchor: string; trail: string[]; source: string } {
     const step = it.entry.outlined ? it.entry.stepOf[it.index]! : -1;
     // Nested anchors fold into their step: open at the step, as the panel's navigator would.
@@ -239,7 +265,11 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
   private resolve(doc: vscode.TextDocument): Promise<void> {
     const key = uriKey(doc.uri);
     const running = this.inflight.get(key);
-    if (running) return running;
+    if (running) {
+      // A resolve for an older version gives up at its next check: start again for this one once it has.
+      return running.version === doc.version ? running.p : running.p.then(() => (this.results.get(key)?.version === doc.version || doc.isClosed ? undefined : this.resolve(doc)));
+    }
+    const version = doc.version;
     const p = new Promise<void>((done) => {
       const go = () => {
         this.running++;
@@ -255,7 +285,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       if (this.running < HERE_LIMITS.resolving) go();
       else this.queue.push(go);
     });
-    this.inflight.set(key, p);
+    this.inflight.set(key, { version, p });
     return p;
   }
 
@@ -273,7 +303,8 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       return;
     }
     // Documents too large to compare are skipped (§7.1).
-    if (doc.getText().length > MAX_CODE_BYTES) {
+    // (Measured without copying the buffer: characters, a lower bound on bytes.)
+    if (doc.offsetAt(doc.lineAt(Math.max(0, doc.lineCount - 1)).range.end) > MAX_CODE_BYTES) {
       this.store(key, { version, items: [], hiddenAt: 0, shape: '' });
       return;
     }
@@ -343,7 +374,8 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
         if (!visible.has(k)) this.results.delete(k);
       }
     }
-    if (!old || old.shape !== r.shape) this.lensEmitter.fire();
+    const early = this.servedEarly.delete(key);
+    if (!old || old.shape !== r.shape || early) this.lensEmitter.fire();
     this.paintGutter();
     this.scheduleStatus();
   }
@@ -381,6 +413,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const k = uriKey(uri);
     this.results.delete(k);
     this.seq.delete(k);
+    this.servedEarly.delete(k);
   }
 
   /** The index or a panel changed: resolve shown documents again. */
@@ -493,7 +526,10 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       this.index.pathLabel(first.entry),
       this.stepTitle(first),
       parents.length ? `Also under ${parents.slice(0, 5).map((n) => (this.index.sibling(first.entry, n) ? this.index.name(this.index.sibling(first.entry, n)!) : n)).join(', ')}${parents.length > 5 ? ` and ${parents.length - 5} more` : ''}` : '',
-      items.length > 1 ? `${items.length - 1} more cover this line` : '',
+      ...(() => {
+        const more = new Set(items.map((it) => this.stepKey(it))).size - 1;
+        return more > 0 ? [`${more} more cover this line`] : [];
+      })(),
       'Click to open',
     ]
       .filter(Boolean)
@@ -563,6 +599,16 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     this.results.clear();
     this.queue.length = 0;
   }
+}
+
+function uniqueSteps(list: HereItem[], key: (it: HereItem) => string): HereItem[] {
+  const seen = new Set<string>();
+  return list.filter((it) => {
+    const k = key(it);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function sortTightest(list: HereItem[]): HereItem[] {

@@ -124,4 +124,22 @@ describe('drift', () => {
     drift.live = (k) => (k === entry('b').key ? { outOfDate: 7, lost: 0, unchecked: 0 } : undefined);
     expect(drift.get(entry('b'))).toEqual({ outOfDate: 7, lost: 0, unchecked: 0 });
   });
+
+  it('asks nothing for a sidestory the index hasn’t read yet, and keeps short stamps', async () => {
+    write(join(root, 'f.ts'), code(20));
+    story(root, '', 'b', { anchors: { x: { file: 'f.ts', range: [1, 2] } } });
+    await start();
+    const e = entry('b');
+    const stamp = e.manifestStamp;
+    e.manifestStamp = undefined;
+    let fired = 0;
+    drift.onDidChange(() => fired++);
+    expect(drift.get(e)).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fired).toBe(0);
+    e.manifestStamp = stamp;
+    await driftOf('b');
+    const cached = (drift as unknown as { cache: Map<string, { stamp: string }> }).cache.get(e.key)!;
+    expect(cached.stamp.length).toBeLessThan(80);
+  });
 });

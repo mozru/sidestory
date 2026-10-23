@@ -9,6 +9,7 @@ import { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, uriKey } from './explainers.ts';
 import { log } from './log.ts';
+import { shellQuote, shellSafePath } from './shell.ts';
 import { DriftQueue } from './nav/drift.ts';
 import { ExplainedHere } from './nav/explained-here.ts';
 import { SidestoryIndex } from './nav/index.ts';
@@ -52,10 +53,9 @@ let lastTextEditor: vscode.TextEditor | undefined;
 
 /** The text a reader can paste to their coding agent (the README's "Ask your agent"). */
 export const AGENT_PROMPT =
-  'Explain how <this part of the code> works, as a Sidestory: write a folder .sidestory/<name>/ with sidestory.html (a step-by-step explainer, ' +
-  'each step an element with data-explain-anchor="<id>") and manifest.json (version 2, a title, and anchors {<id>: {file, range: [start, end]}} ' +
-  'pointing at the code each step is about). See https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md for the format. ' +
-  'In Claude Code, the sidestory plugin does this: /plugin install sidestory@sidestory.';
+  'Write a sidestory for `<the code to explain>` in `.sidestory/<name>/`: a section per part, a diagram where it helps, and a widget only where ' +
+  'interaction makes it clearer. Follow https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and ' +
+  'https://github.com/mozru/sidestory/blob/main/docs/WIDGETS.md, then run the checker until it reports no errors.';
 
 export function activateFull(context: vscode.ExtensionContext): FullApi {
   lastTextEditor = vscode.window.activeTextEditor;
@@ -162,10 +162,10 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   });
   navigator = nav;
   // Sidestories in use first: open panels, then recently opened (§6.1, §6.5).
+  // Cheap: the index calls it once per key per sort (open panels are few; recent ranks are cached).
   index.priority = (key) => {
-    if ([...sessions].some((s) => uriKey(s.ref.dir) === key)) return 0;
-    const i = nav.recent().findIndex((d) => uriKey(vscode.Uri.parse(d)) === key);
-    return i >= 0 ? i + 1 : Number.MAX_SAFE_INTEGER;
+    for (const s of sessions) if (uriKey(s.ref.dir) === key) return 0;
+    return nav.recentRank(key) ?? Number.MAX_SAFE_INTEGER;
   };
 
   // ---- the sidebar ----
@@ -299,12 +299,13 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (r) await nav.openAt({ dir: r.entry.ref.dir.toString(), anchor: r.step, trail: index.primaryPath(r.entry), source: 'step' });
     },
     'sidestory.showHere': async (args?: unknown) => {
-      const a = (args && typeof args === 'object' ? args : {}) as { uri?: unknown; line?: unknown; all?: unknown };
+      const a = (args && typeof args === 'object' ? args : {}) as { uri?: unknown; line?: unknown; all?: unknown; keys?: unknown };
       const editor = vscode.window.activeTextEditor;
       const uri = typeof a.uri === 'string' ? vscode.Uri.parse(a.uri) : editor?.document.uri;
       if (!uri) return;
       const line = typeof a.line === 'number' ? a.line : editor && editor.document.uri.toString() === uri.toString() ? editor.selection.active.line + 1 : 1;
-      const items = a.all === true ? here.all(uri) : here.covering(uri, line);
+      const keys = Array.isArray(a.keys) && a.keys.length <= 200 && a.keys.every((k) => typeof k === 'string') ? (a.keys as string[]) : undefined;
+      const items = keys ? here.byKeys(uri, keys) : a.all === true ? here.all(uri) : here.covering(uri, line);
       if (!items.length) {
         vscode.window.setStatusBarMessage('No sidestory covers this code.', 3000);
         return;
@@ -417,7 +418,12 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     'sidestory.copyWidgetCheckCommand': async (dir?: unknown) => {
       const ref = await explainerFor(nodeDir(dir) ?? dir);
       const target = ref ? vscode.workspace.asRelativePath(ref.dir, false) : '.sidestory/<name>';
-      const cmd = `node "${vscode.Uri.joinPath(context.extensionUri, 'dist', 'check.cjs').fsPath}" ${JSON.stringify(target)}`;
+      // The command is pasted into a shell: only names and paths that can't carry shell syntax are copied.
+      if (ref && (!explainerNameSchema.safeParse(ref.name).success || !shellSafePath(target))) {
+        void vscode.window.showWarningMessage('This sidestory\'s folder path has characters the checker command can\'t quote safely. Use letters, digits, ".", "-" and "_".');
+        return;
+      }
+      const cmd = `node ${shellQuote(vscode.Uri.joinPath(context.extensionUri, 'dist', 'check.cjs').fsPath)} ${shellQuote(target)}`;
       await vscode.env.clipboard.writeText(cmd);
       void vscode.window.showInformationMessage(`Copied: ${plainForMessage(cmd, 1000)}`);
     },

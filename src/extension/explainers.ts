@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { log } from './log.ts';
-import { open as openFile } from 'node:fs/promises';
+import { open as openFile, stat as statFile } from 'node:fs/promises';
 import { assertSize, realPathInside } from './paths.ts';
 
 /** One explainer folder: `<root>/.sidestory/<name>/`. */
@@ -44,8 +44,12 @@ export async function readSliceInside(uri: vscode.Uri, root: vscode.Uri, offset:
   if (!real) return undefined;
   let handle: Awaited<ReturnType<typeof openFile>> | undefined;
   try {
+    // A regular file only: opening a FIFO would block a thread of the file system pool.
+    if (!(await lstatFile(real))) return undefined;
     handle = await openFile(real, 'r');
-    const size = (await handle.stat()).size;
+    const st = await handle.stat();
+    if (!st.isFile()) return undefined;
+    const size = st.size;
     if (size > maxBytes || offset + length > size) return undefined;
     const buf = new Uint8Array(length);
     const { bytesRead } = await handle.read(buf, 0, length, offset);
@@ -119,5 +123,13 @@ export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: nu
   } catch (e) {
     log.warn(`Can't read ${uri.fsPath}: ${(e as Error).message}`);
     return undefined;
+  }
+}
+
+async function lstatFile(path: string): Promise<boolean> {
+  try {
+    return (await statFile(path)).isFile();
+  } catch {
+    return false;
   }
 }

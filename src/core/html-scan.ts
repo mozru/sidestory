@@ -16,11 +16,41 @@ import { displayText, firstSentence } from './display-text.ts';
 import { stepTitle } from './step-title.ts';
 import { DROPPED_ELEMENTS } from '../shared/sanitize-lists.ts';
 
+/** A copy of `s` that shares no memory with the string it was cut from. */
+export function flat(s: string): string {
+  // JSON.parse builds a new sequential string; the one it was cut from can then be collected.
+  return s.length === 0 ? '' : (JSON.parse(JSON.stringify(s)) as string);
+}
+
 // ---- entities ----
 
-const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+/** Named references matched in any case (as HTML does for these). */
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
+/**
+ * Common named references (case-sensitive, as in HTML), so the outline's titles read like the panel's text.
+ * Not the whole HTML5 table: anything else is kept as written.
+ */
+const NAMED: Record<string, string> = {
+  mdash: '\u2014', ndash: '\u2013', hellip: '\u2026', middot: '\u00b7', bull: '\u2022', deg: '\u00b0',
+  rarr: '\u2192', larr: '\u2190', harr: '\u2194', uarr: '\u2191', darr: '\u2193', rArr: '\u21d2', lArr: '\u21d0',
+  hArr: '\u21d4', times: '\u00d7', divide: '\u00f7', plusmn: '\u00b1', minus: '\u2212', le: '\u2264', ge: '\u2265',
+  ne: '\u2260', asymp: '\u2248', equiv: '\u2261', infin: '\u221e', sum: '\u2211', prod: '\u220f', radic: '\u221a',
+  part: '\u2202', isin: '\u2208', notin: '\u2209', and: '\u2227', or: '\u2228', not: '\u00ac', cap: '\u2229',
+  cup: '\u222a', sub: '\u2282', sup: '\u2283', forall: '\u2200', exist: '\u2203', lsquo: '\u2018', rsquo: '\u2019',
+  ldquo: '\u201c', rdquo: '\u201d', sbquo: '\u201a', bdquo: '\u201e', laquo: '\u00ab', raquo: '\u00bb',
+  lsaquo: '\u2039', rsaquo: '\u203a', prime: '\u2032', Prime: '\u2033', dagger: '\u2020', Dagger: '\u2021',
+  sect: '\u00a7', para: '\u00b6', copy: '\u00a9', reg: '\u00ae', trade: '\u2122', euro: '\u20ac', pound: '\u00a3',
+  yen: '\u00a5', cent: '\u00a2', micro: '\u00b5', frac12: '\u00bd', frac14: '\u00bc', frac34: '\u00be',
+  sup1: '\u00b9', sup2: '\u00b2', sup3: '\u00b3', alpha: '\u03b1', beta: '\u03b2', gamma: '\u03b3', delta: '\u03b4',
+  epsilon: '\u03b5', lambda: '\u03bb', mu: '\u03bc', pi: '\u03c0', sigma: '\u03c3', tau: '\u03c4', phi: '\u03c6',
+  omega: '\u03c9', Delta: '\u0394', Sigma: '\u03a3', Omega: '\u03a9', shy: '\u00ad', zwj: '\u200d', zwnj: '\u200c',
+  ensp: '\u2002', emsp: '\u2003', thinsp: '\u2009', iexcl: '\u00a1', iquest: '\u00bf', auml: '\u00e4',
+  ouml: '\u00f6', uuml: '\u00fc', Auml: '\u00c4', Ouml: '\u00d6', Uuml: '\u00dc', szlig: '\u00df', eacute: '\u00e9',
+  egrave: '\u00e8', aacute: '\u00e1', agrave: '\u00e0', ccedil: '\u00e7', ntilde: '\u00f1', oslash: '\u00f8',
+  aring: '\u00e5',
+};
 
-/** Decodes numeric references and a few named ones; everything else is kept as written. Linear. */
+/** Decodes numeric references and common named ones; everything else is kept as written. Linear. */
 export function decodeEntities(s: string): string {
   if (!s.includes('&')) return s;
   return s.replace(/&(#[xX][0-9a-fA-F]{1,8}|#\d{1,8}|[a-zA-Z]{1,10});/g, (m, e: string) => {
@@ -28,7 +58,7 @@ export function decodeEntities(s: string): string {
       const n = e[1] === 'x' || e[1] === 'X' ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
       return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
     }
-    return ENTITIES[e.toLowerCase()] ?? m;
+    return NAMED[e] ?? ENTITIES[e.toLowerCase()] ?? m;
   });
 }
 
@@ -546,14 +576,16 @@ export class OutlineScanner {
   }
 
   result(): Outline {
+    // Every string is flattened: slices of the page would otherwise keep the whole page source alive for as long
+    // as the index keeps the outline (V8 sliced strings).
     return {
       steps: this.steps.map((s) => ({
-        id: s.id,
-        title: displayText(stepTitle(s.explainTitle, s.heading, s.id), OUTLINE_LIMITS.titleChars),
-        blurb: s.blurb ? firstSentence(s.blurb, OUTLINE_LIMITS.blurbChars) : '',
+        id: flat(s.id),
+        title: flat(displayText(stepTitle(s.explainTitle, s.heading, s.id), OUTLINE_LIMITS.titleChars)),
+        blurb: s.blurb ? flat(firstSentence(s.blurb, OUTLINE_LIMITS.blurbChars)) : '',
       })),
-      anchorStep: new Map(this.anchorStep),
-      details: this.details.map((d) => ({ ...d })),
+      anchorStep: new Map([...this.anchorStep].map(([k, v]) => [flat(k), flat(v)])),
+      details: this.details.map((d) => ({ ...d, name: flat(d.name), ...(d.stepId !== undefined ? { stepId: flat(d.stepId) } : {}) })),
       truncated: this.truncated,
     };
   }

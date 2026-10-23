@@ -210,6 +210,34 @@ describe('Go to Step', () => {
       () => goToStep(index, { fileKey: uriKey(Uri.file(join(root, 'svc/other.ts')) as never), recent: [], memento: memento as never }),
       (qp) => {
         expect(qp.title).toBe('Go to Step: svc');
+        // Forced: the toggle can't undo it, so it isn't offered, and the placeholder says why.
+        expect(qp.buttons).toEqual([]);
+        expect(qp.placeholder).toBe('All packages have more than 3 steps: showing this package');
+      },
+    );
+  });
+
+  it('offers the scope toggle only when a package is current, and names no scope with one package', async () => {
+    workspaceWithTwoPackages();
+    await start();
+    memory[SCOPE_KEY] = 'all';
+    await run(
+      () => goToStep(index, { recent: [], memento: memento as never }),
+      (qp) => {
+        expect(qp.buttons).toEqual([]);
+        expect(qp.title).toBe('Go to Step: All packages');
+      },
+    );
+  });
+
+  it('with a single package, the title is just "Go to Step"', async () => {
+    story(root, '', 'one', { title: 'One', anchors: { a: { file: 'f.ts', range: [1, 2] } } });
+    await start();
+    await run(
+      () => goToStep(index, { recent: [], memento: memento as never }),
+      (qp) => {
+        expect(qp.title).toBe('Go to Step');
+        expect(qp.buttons).toEqual([]);
       },
     );
   });

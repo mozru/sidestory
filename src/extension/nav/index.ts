@@ -103,6 +103,7 @@ export interface FileSlot {
 }
 
 const EMPTY_GRAPH = buildDetailGraph([]);
+const TOO_LARGE = 'sidestory.html is too large to outline.';
 const quoteSchema = anchorSpecSchema.shape.quote;
 
 /** Holds every sidestory, keeps it current, and answers the navigation features' questions. */
@@ -112,6 +113,8 @@ export class SidestoryIndex implements vscode.Disposable {
   /** Interned file keys (`uriKey`): anchors store the number. */
   private readonly fileIds = new Map<string, number>();
   private readonly fileKeys: string[] = [];
+  /** Ids no file uses now, reused before new ones. */
+  private readonly freeIds: number[] = [];
   /** Which sidestories anchor each file. */
   private readonly fileRefs = new Map<number, Set<string>>();
   /** Per file: the anchors kept for it (fair, capped), built lazily. */
@@ -257,7 +260,8 @@ export class SidestoryIndex implements vscode.Disposable {
     if (!table) {
       table = [];
       const refs = [...(this.fileRefs.get(id) ?? [])].map((k) => this.entries.get(k)).filter((e): e is IndexEntry => !!e);
-      refs.sort((a, b) => this.priority(a.key) - this.priority(b.key) || a.pkg.localeCompare(b.pkg) || a.ref.name.localeCompare(b.ref.name));
+      const rank = this.ranker();
+      refs.sort((a, b) => rank(a.key) - rank(b.key) || a.pkg.localeCompare(b.pkg) || a.ref.name.localeCompare(b.ref.name));
       for (const e of refs) {
         let n = 0;
         for (let i = 0; i < e.ids.length && n < INDEX_LIMITS.anchorsPerFilePerSidestory && table.length < INDEX_LIMITS.anchorsPerFile; i++) {
@@ -315,14 +319,27 @@ export class SidestoryIndex implements vscode.Disposable {
       anchors += e.ids.length;
       steps += e.steps.length;
     }
-    return { sidestories: this.entries.size, packages: this.packagesByKey.size, files: this.fileKeys.length, anchors, steps, state: this.stateValue, capped: this.capped, discoveryCut: this.discoveryCut };
+    return { sidestories: this.entries.size, packages: this.packagesByKey.size, files: this.fileIds.size, anchors, steps, state: this.stateValue, capped: this.capped, discoveryCut: this.discoveryCut };
   }
 
   // ---- building ----
 
+  /** A priority function computed once per sort: `priority` may be slow, comparators call it many times. */
+  private ranker(): (key: string) => number {
+    const memo = new Map<string, number>();
+    return (k) => {
+      let r = memo.get(k);
+      if (r === undefined) memo.set(k, (r = this.priority(k)));
+      return r;
+    };
+  }
+
   /** Discovers everything again (startup, Refresh, folders or exclusions changed). */
   async refresh(): Promise<void> {
     const epoch = ++this.epoch;
+    // Caps are judged afresh; package labels follow the workspace folders (a single root may have become several).
+    this.capped = false;
+    for (const p of this.packagesByKey.values()) p.label = packageLabel(p.root);
     this.setState(this.entries.size ? this.stateValue : 'loading');
     const patterns = excludePatterns(vscode.workspace.getConfiguration('files').get('exclude'));
     this.exclude = globMatcher(patterns);
@@ -464,9 +481,10 @@ export class SidestoryIndex implements vscode.Disposable {
   private removeUnder(uris: readonly vscode.Uri[]): void {
     let removed = false;
     for (const u of uris) {
-      const prefix = uriKey(u).replace(/\/?$/, '/');
+      const key = uriKey(u);
+      const prefix = key.replace(/\/?$/, '/');
       for (const k of [...this.entries.keys()]) {
-        if (k === uriKey(u) || k.startsWith(prefix)) {
+        if (k === key || k.startsWith(prefix)) {
           this.removeEntry(k);
           removed = true;
         }
@@ -554,9 +572,10 @@ export class SidestoryIndex implements vscode.Disposable {
       return;
     }
     // Sidestories in use first, then in sidebar order, so the visible part fills first (§6.5).
+    const rank = this.ranker();
     const order = keys
       .map((k) => this.entries.get(k)!)
-      .sort((a, b) => this.priority(a.key) - this.priority(b.key) || this.packageOrder(a.pkg) - this.packageOrder(b.pkg) || a.ref.name.localeCompare(b.ref.name));
+      .sort((a, b) => rank(a.key) - rank(b.key) || this.packageOrder(a.pkg) - this.packageOrder(b.pkg) || a.ref.name.localeCompare(b.ref.name));
     const budget: Budget = { manifestBytes: INDEX_LIMITS.manifestBytesPerBatch, pageBytes: INDEX_LIMITS.pageBytesPerBatch, scanMs: INDEX_LIMITS.scanMsPerBatch };
     const touched = new Set<string>();
     const skipped: IndexEntry[] = [];
@@ -568,6 +587,8 @@ export class SidestoryIndex implements vscode.Disposable {
         const r = await this.read(e, budget);
         if (r === 'changed') touched.add(e.pkg);
         else if (r === 'budget') skipped.push(e);
+        // Read (changed) but its page not read or outlined within the budget: it comes back in the follow-up too.
+        if (r === 'changed' && (e.state === 'not-read' || e.state === 'not-outlined')) skipped.push(e);
         else if (r === 'gone') {
           touched.add(e.pkg);
           this.removeEntry(e.key);
@@ -710,7 +731,7 @@ export class SidestoryIndex implements vscode.Disposable {
       if (s && (pageStamp !== e.pageStamp || !e.outlined)) {
         if (s.size > MAX_HTML_BYTES) {
           html = '';
-          e.errors = [...e.errors, 'sidestory.html is too large to outline.'].slice(0, 6);
+          if (!e.errors.includes(TOO_LARGE)) e.errors = [...e.errors, TOO_LARGE].slice(0, 6);
         } else if (s.size > budget.pageBytes) {
           e.state = 'not-read';
           return changed ? 'changed' : 'budget';
@@ -774,6 +795,13 @@ export class SidestoryIndex implements vscode.Disposable {
       const refs = this.fileRefs.get(f);
       refs?.delete(e.key);
       this.fileTables.delete(f);
+      // Nothing anchors it any more: its id goes back to the pool, so the file table doesn't grow forever.
+      if (refs && refs.size === 0) {
+        this.fileRefs.delete(f);
+        this.fileIds.delete(this.fileKeys[f]!);
+        this.fileKeys[f] = '';
+        this.freeIds.push(f);
+      }
     }
     this.totals.anchors -= e.ids.length;
     const room = Math.max(0, INDEX_LIMITS.anchors - this.totals.anchors);
@@ -827,8 +855,8 @@ export class SidestoryIndex implements vscode.Disposable {
   private intern(key: string): number {
     let id = this.fileIds.get(key);
     if (id === undefined) {
-      id = this.fileKeys.length;
-      this.fileKeys.push(key);
+      id = this.freeIds.pop() ?? this.fileKeys.length;
+      this.fileKeys[id] = key;
       this.fileIds.set(key, id);
     }
     return id;

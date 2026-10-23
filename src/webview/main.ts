@@ -1444,8 +1444,14 @@ pillShow.addEventListener('click', () => {
 $('.cx-pill-close').addEventListener('click', hidePill);
 backEl.addEventListener('click', () => goTo(trail.length - 2));
 $('.cx-preview-keep').addEventListener('click', () => {
+  // The button goes away with the bar: keep keyboard focus somewhere sensible instead of dropping it on the body.
+  const hadFocus = app.contains(document.activeElement);
   previewEl.hidden = true;
   vscode.postMessage({ type: 'keepOpen' });
+  if (hadFocus) {
+    titleEl.tabIndex = -1;
+    titleEl.focus({ preventScroll: true });
+  }
 });
 bannerOpen.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: 'manifest.json' }));
 

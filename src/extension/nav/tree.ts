@@ -227,7 +227,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
         item.id = node.id;
         item.description = `${node.pkg.entries.size} sidestor${node.pkg.entries.size === 1 ? 'y' : 'ies'}`;
         item.iconPath = new vscode.ThemeIcon('folder-library');
-        item.tooltip = `${node.pkg.label}\n${vscode.workspace.asRelativePath(node.pkg.folder, true)}`;
+        item.tooltip = `${node.pkg.label}\n${displayText(vscode.workspace.asRelativePath(node.pkg.folder, true), 300)}`;
         item.contextValue = 'package';
         return item;
       }
@@ -246,10 +246,10 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
         item.description = node.reason === 'deep' ? 'nested too deep' : undefined;
         item.iconPath = new vscode.ThemeIcon(node.reason === 'back' ? 'debug-step-back' : 'ellipsis');
         item.contextValue = 'cycle';
-        // Opening a back-link cuts the trail back to it, as diving back up does.
-        const at = node.path.indexOf(node.entry.ref.name);
-        const trail = node.reason === 'back' ? node.path.slice(0, at + 1) : node.path.slice(0, MAX_TRAIL);
-        item.command = { title: 'Open', command: 'sidestory.openAt', arguments: [{ dir: node.entry.ref.dir.toString(), trail: trail.slice(0, trail.lastIndexOf(node.entry.ref.name) + 1), source: 'tree' }] };
+        // Opening a back-link cuts the trail back to it, as diving back up does; one nested too deep opens on its
+        // primary path.
+        const trail = node.reason === 'back' ? node.path.slice(0, node.path.indexOf(node.entry.ref.name) + 1) : this.index.primaryPath(node.entry);
+        item.command = { title: 'Open', command: 'sidestory.openAt', arguments: [{ dir: node.entry.ref.dir.toString(), trail, source: 'tree' }] };
         item.tooltip = `${this.index.pathLabel(node.entry)}\n.sidestory/${displayText(node.entry.ref.name, 64)}`;
         return item;
       }
@@ -279,8 +279,12 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     if (e.outlined) parts.push(`${e.steps.length} step${e.steps.length === 1 ? '' : 's'}`);
     else if (e.state === 'not-read' || e.state === 'not-outlined') parts.push(e.state === 'not-read' ? 'not read (budget)' : 'not outlined (budget)');
     if (drift) parts.push(...driftWords(drift));
-    // A grouped sidestory that is also a detail says so in both places, so it doesn't look like a duplicate.
-    if (e.group && parents.length) parts.push(`also under ${this.nameOf(pkg, parents[0]!)}${parents.length > 1 ? ` and ${parents.length - 1} more` : ''}`);
+    // A sidestory listed at the top level (a group, or top: true) that is also a detail says so in both places,
+    // naming the *other* place, so it doesn't look like a duplicate.
+    if ((e.group || e.top) && parents.length) {
+      if (node.path.length === 1) parts.push(`also under ${this.nameOf(pkg, parents[0]!)}${parents.length > 1 ? ` and ${parents.length - 1} more` : ''}`);
+      else parts.push(e.group ? `also in ${e.group}` : 'also at the top level');
+    }
     if (e.truncated) parts.push('page too complex to outline');
     item.description = parts.join(' · ');
     const broken = pkg?.graph.brokenLinks(e.ref.name) ?? [];
@@ -326,7 +330,8 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     if (!e || !pkg) return undefined;
     const names = s.trailRefs.map((r) => r.name);
     const valid = pkg.graph.isTop(names[0]!) && names.every((n, i) => i === 0 || pkg.graph.children(names[i - 1]!).includes(n)) && new Set(names).size === names.length;
-    const path = valid ? names : this.index.primaryPath(e);
+    // Start here is listed on its own at the top level, even when it is someone's detail: reveal it there.
+    const path = valid ? names : pkg.graph.startHere === e.ref.name ? [e.ref.name] : this.index.primaryPath(e);
     return this.pathNode(pkg, path);
   }
 

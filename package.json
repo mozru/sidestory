@@ -386,6 +386,14 @@
         {
           "command": "sidestory.tree.copyPath",
           "when": "false"
+        },
+        {
+          "command": "sidestory.checkWidgets",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "sidestory.copyWidgetCheckCommand",
+          "when": "isWorkspaceTrusted"
         }
       ],
       "editor/context": [
@@ -462,7 +470,7 @@
         },
         {
           "command": "sidestory.copyWidgetCheckCommand",
-          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
+          "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/ && isWorkspaceTrusted",
           "group": "3_edit@3"
         },
         {

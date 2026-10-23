@@ -31,6 +31,11 @@ describe('outlineHtml', () => {
     expect(o.truncated).toBe(false);
   });
 
+  it('decodes common named entities as the panel does (case-sensitive), and keeps unknown ones as written', () => {
+    const o = outlineHtml('<section data-explain-anchor="s" data-explain-title="Reset &rarr; Idle &mdash; done&hellip; &Dagger;&dagger; &AMP; &bogus;"></section>');
+    expect(o.steps[0]!.title).toBe('Reset → Idle — done… ‡† & &bogus;');
+  });
+
   it('skips comments, scripts, styles, templates and everything the sanitizer removes', () => {
     const o = outlineHtml(
       [

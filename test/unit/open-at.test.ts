@@ -178,6 +178,41 @@ describe('where it opens', () => {
     expect(nav.preview).toBeUndefined();
   });
 
+  it('a double-click arrives as two opens at once: the second waits for the first and keeps its panel', async () => {
+    const first = nav.openAt(args('a', { source: 'tree' }));
+    const second = nav.openAt(args('a', { source: 'tree' }));
+    const [p, q] = await Promise.all([first, second]);
+    expect(q).toBe(p);
+    expect(started).toHaveLength(1);
+    expect(p!.preview).toBe(false);
+    expect(nav.preview).toBeUndefined();
+  });
+
+  it('with workbench.list.openMode doubleClick, every open from the tree keeps its panel', async () => {
+    config['workbench.list.openMode'] = 'doubleClick';
+    const p = await nav.openAt(args('a', { source: 'tree' }));
+    expect(p!.preview).toBe(false);
+    // Opened from elsewhere, still a preview.
+    const reader = fake(['zzz']);
+    sessions.push(reader);
+    current = reader;
+    const q = await nav.openAt(args('b', { source: 'lens' }));
+    expect(q!.preview).toBe(true);
+  });
+
+  it('a section is set only while the panel still shows that sidestory (two opens racing for one panel)', async () => {
+    const s = fake(['top', 'a']);
+    sessions = [s];
+    current = s;
+    // The switch to b loses to a newer one (to c): show() returns without b on screen.
+    s.show = async () => {
+      s.trailRefs = [ref('top'), ref('c')];
+      s.ref = ref('c');
+    };
+    await nav.openAt(args('b', { anchor: 'x', trail: ['top', 'b'] }));
+    expect(s.goTo).not.toHaveBeenCalledWith('x');
+  });
+
   it('a closed preview is forgotten', async () => {
     const p = (await nav.openAt(args('a'))) as unknown as Fake;
     sessions = sessions.filter((s) => s !== p);

@@ -66,7 +66,7 @@ export class Navigator {
   private readonly host: NavigatorHost;
   /** The newest panel `openAt` opened in which the reader hasn't navigated since. */
   private previewPanel: ExplainerSession | undefined;
-  private lastTreeOpen: { key: string; at: number; session?: ExplainerSession } | undefined;
+  private lastTreeOpen: { key: string; at: number; pending: Promise<ExplainerSession | undefined> } | undefined;
 
   constructor(host: NavigatorHost) {
     this.host = host;
@@ -78,10 +78,29 @@ export class Navigator {
     return Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string').slice(0, MAX_RECENT) : [];
   }
 
+  private recentRanks: Map<string, number> | undefined;
+
+  /** Rank (1 = newest) of a recently opened sidestory by `uriKey`, else undefined; cached until the list changes. */
+  recentRank(key: string): number | undefined {
+    if (!this.recentRanks) {
+      this.recentRanks = new Map();
+      this.recent().forEach((d, i) => {
+        try {
+          const k = uriKey(vscode.Uri.parse(d));
+          if (!this.recentRanks!.has(k)) this.recentRanks!.set(k, i + 1);
+        } catch {
+          // not a URI: skip it
+        }
+      });
+    }
+    return this.recentRanks.get(key);
+  }
+
   /** Every open, switch and dive records the sidestory. */
   noteOpened(ref: ExplainerRef): void {
     const dir = ref.dir.toString();
     const next = [dir, ...this.recent().filter((d) => d !== dir)].slice(0, MAX_RECENT);
+    this.recentRanks = undefined;
     void this.host.memento.update(RECENT_KEY, next);
   }
 
@@ -92,7 +111,6 @@ export class Navigator {
     });
     s.onDidDispose(() => {
       if (this.previewPanel === s) this.previewPanel = undefined;
-      if (this.lastTreeOpen?.session === s) this.lastTreeOpen = undefined;
     });
   }
 
@@ -110,19 +128,28 @@ export class Navigator {
     const key = uriKey(ref.dir);
     const same = (s: ExplainerSession) => uriKey(s.ref.dir) === key;
 
-    // A second open of the same tree item within 500 ms is a double-click: keep the panel it opened.
-    // With workbench.list.openMode "doubleClick", every open from the tree is one.
+    // A second open of the same tree item within 500 ms is a double-click: keep the panel it opened. VS Code sends
+    // both invocations at once, so the first is recorded (with its pending result) before anything is awaited.
+    // With workbench.list.openMode "doubleClick", every open from the tree is one, so every tree open keeps its panel.
+    const doubleMode = source === 'tree' && vscode.workspace.getConfiguration('workbench.list').get<string>('openMode') === 'doubleClick';
     if (source === 'tree') {
-      const now = Date.now();
-      const doubleMode = vscode.workspace.getConfiguration('workbench.list').get<string>('openMode') === 'doubleClick';
-      const again = this.lastTreeOpen && this.lastTreeOpen.key === key && now - this.lastTreeOpen.at < DOUBLE_OPEN_MS;
-      if (again || doubleMode) {
-        const s = again ? this.lastTreeOpen?.session : undefined;
+      const last = this.lastTreeOpen;
+      if (last && last.key === key && Date.now() - last.at < DOUBLE_OPEN_MS) {
+        const s = await last.pending;
         if (s && this.previewPanel === s) this.keep(s);
-        if (again) return s;
+        return s;
       }
     }
+    const pending = this.place(ref, trail, anchor, newPanel, key);
+    if (source === 'tree') this.lastTreeOpen = { key, at: Date.now(), pending };
+    const session = await pending;
+    if (session && doubleMode && this.previewPanel === session) this.keep(session);
+    return session;
+  }
 
+  /** Decides where the sidestory opens (§7.5) and opens it there. */
+  private async place(ref: ExplainerRef, trail: [ExplainerRef, ...ExplainerRef[]], anchor: string | undefined, newPanel: boolean, key: string): Promise<ExplainerSession | undefined> {
+    const same = (s: ExplainerSession) => uriKey(s.ref.dir) === key;
     let session: ExplainerSession | undefined;
     if (newPanel) {
       session = await this.host.start(trail, anchor);
@@ -153,8 +180,8 @@ export class Navigator {
         this.host.previewChanged?.(session);
       }
     }
-    if (anchor && session) session.goTo(anchor);
-    if (source === 'tree') this.lastTreeOpen = { key, at: Date.now(), session };
+    // Another open may have taken this panel meanwhile (two lenses clicked quickly): its section isn't ours to set.
+    if (anchor && session && same(session)) session.goTo(anchor);
     return session;
   }
 

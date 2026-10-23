@@ -19,13 +19,20 @@ let api: FullApi | undefined;
 
 /** Loads dist/full.cjs once. */
 function load(context: vscode.ExtensionContext): Promise<FullApi> {
-  full ??= Promise.resolve().then(() => {
+  if (full) return full;
+  const loading = Promise.resolve().then(() => {
     void vscode.commands.executeCommand('setContext', 'sidestory.indexState', 'loading');
     const mod = loader.load();
     api = mod.activateFull(context);
     return api;
   });
-  return full;
+  full = loading;
+  // A failed load isn't remembered: say so once, and let the next command try again.
+  loading.catch((e: unknown) => {
+    if (full === loading) full = undefined;
+    void vscode.window.showErrorMessage(`Sidestory couldn't start: ${e instanceof Error ? e.message : String(e)}`);
+  });
+  return loading;
 }
 
 /** The first command that needs full.cjs shows progress while it loads, so the click never looks dead. */
