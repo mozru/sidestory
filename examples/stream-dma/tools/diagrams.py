@@ -8,7 +8,10 @@ static diagram and the simulation widget draw the same picture. Run from example
     python3 tools/diagrams.py
 
 Styling lives in each sidestory's <style> (classes .blk, .w-data, .w-addr, .w-ctl ...), so the
-diagrams take the reader's VS Code theme colours; nothing here is a literal colour.
+diagrams take the reader's VS Code theme colours; nothing here is a literal colour. The overview
+uses the diagram tokens (--cx-wire-data, --cx-box-fill, ...) and lights up per step: blocks and
+wires carry `data-explain-on` with the steps they matter in, and the page wraps each copy in
+`data-explain-diagram` (docs/GUIDE.md, "Diagrams that follow the steps").
 """
 import json
 import math
@@ -25,12 +28,18 @@ class Diagram:
         self.w, self.h, self.label, self.x0, self.y0 = w, h, label, x0, y0
         self.blocks, self.wires, self.extra = [], [], []
 
-    def block(self, id, x, y, w, h, title, sub='', kind='data', ref=None, lines=()):
-        self.blocks.append(dict(id=id, x=x, y=y, w=w, h=h, title=title, sub=sub, kind=kind, ref=ref, lines=list(lines)))
+    def block(self, id, x, y, w, h, title, sub='', kind='data', ref=None, lines=(), on=None):
+        """on: the anchor ids of the steps this block matters in (data-explain-on)."""
+        self.blocks.append(dict(id=id, x=x, y=y, w=w, h=h, title=title, sub=sub, kind=kind, ref=ref, lines=list(lines), on=on))
 
-    def wire(self, id, kind, pts, label='', at=None, anchor='middle', both=False, tag=None):
+    def wire(self, id, kind, pts, label='', at=None, anchor='middle', both=False, tag=None, on=None):
         """kind: data | addr | ctl. label lines split on '|'. at = (x, y) of the label's first line."""
-        self.wires.append(dict(id=id, kind=kind, pts=pts, label=label, at=at, anchor=anchor, both=both, tag=tag or kind))
+        self.wires.append(dict(id=id, kind=kind, pts=pts, label=label, at=at, anchor=anchor, both=both, tag=tag or kind, on=on))
+
+    @staticmethod
+    def on_attr(item):
+        return f' data-explain-on="{escape(" ".join(item["on"]))}"' if item.get('on') is not None else ''
+
 
     # ---- rendering
     @staticmethod
@@ -46,7 +55,7 @@ class Diagram:
         size = {'data': 5.5, 'addr': 4.5, 'ctl': 4}[wdef['kind']]
         pts = wdef['pts']
         d = 'M' + ' L'.join(f'{x},{y}' for x, y in pts)
-        out = [f'<g class="w w-{wdef["kind"]}" data-wire="{wdef["id"]}">',
+        out = [f'<g class="w w-{wdef["kind"]}" data-wire="{wdef["id"]}"{self.on_attr(wdef)}>',
                f'<path class="w-line" d="{d}"/>',
                f'<polygon class="w-head" points="{self.head(pts[-2], pts[-1], size)}"/>']
         if wdef['both']:
@@ -61,7 +70,7 @@ class Diagram:
     def block_svg(self, b):
         attrs = f' data-explain-ref="{b["ref"]}" aria-label="{escape(b["title"])}: show its code"' if b['ref'] else ''
         cx = b['x'] + b['w'] / 2
-        out = [f'<g class="blk blk-{b["kind"]}" data-block="{b["id"]}"{attrs}>',
+        out = [f'<g class="blk blk-{b["kind"]}" data-block="{b["id"]}"{attrs}{self.on_attr(b)}>',
                f'<rect class="blk-box" x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" rx="6"/>']
         if b['kind'] in ('data', 'ctl'):
             out.append(f'<rect class="blk-bar" x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="5" rx="2"/>')
@@ -75,11 +84,15 @@ class Diagram:
 
     def svg(self, cls='dia'):
         body = ''.join(self.wire_svg(w) for w in self.wires) + ''.join(self.block_svg(b) for b in self.blocks) + ''.join(self.extra)
-        return (f'<svg class="{cls}" viewBox="{self.x0} {self.y0} {self.w} {self.h}" role="img" '
+        # With links inside, a group: role="img" would make its children presentational to screen readers.
+        role = 'group' if any(b['ref'] for b in self.blocks) else 'img'
+        return (f'<svg class="{cls}" viewBox="{self.x0} {self.y0} {self.w} {self.h}" role="{role}" '
                 f'aria-label="{escape(self.label)}">{body}</svg>')
 
     def layout(self):
-        return dict(viewBox=[self.x0, self.y0, self.w, self.h], blocks=self.blocks, wires=self.wires)
+        """The geometry the simulation widget draws (without the step tags, which only the page uses)."""
+        strip = lambda items: [{k: v for k, v in i.items() if k != 'on'} for i in items]
+        return dict(viewBox=[self.x0, self.y0, self.w, self.h], blocks=strip(self.blocks), wires=strip(self.wires))
 
 
 def legend(d, x, y, items=(('data', 'data path (beats, 64 bits)'), ('addr', 'addresses and configuration'), ('ctl', 'control: strobes, handshakes, status'))):
@@ -89,11 +102,17 @@ def legend(d, x, y, items=(('data', 'data path (beats, 64 bits)'), ('addr', 'add
         out.append(f'<g class="w w-{kind} legend"><path class="w-line" d="M{lx},{y} L{lx + 44},{y}"/>'
                    f'<polygon class="w-head" points="{Diagram.head((lx, y), (lx + 52, y), 4.5)}"/>'
                    f'<text class="w-label" x="{lx + 60}" y="{y + 4}">{escape(text)}</text></g>')
-    d.extra.append(''.join(out))
+    # Kept: a legend never fades while a step lights its parts.
+    d.extra.append('<g class="legend-keys" data-explain-keep>' + ''.join(out) + '</g>')
 
 
 # ---------------------------------------------------------------------------------------------
-# The overview: the whole engine.
+# The overview: the whole engine. Each block and wire names the steps (anchor ids) it matters in.
+CTL = ['control']
+DATA = ['datapath']
+BP = ['backpressure']
+ERR = ['errors']
+READY = DATA + BP  # handshakes back along the data path
 def overview():
     d = Diagram(1100, 610, 'Block diagram of dma_top. Data path, left to right along the bottom: the read bus feeds '
                 'dma_rd_port, which pushes 64-bit beats into dma_fifo; dma_packer realigns them and dma_wr_port '
@@ -101,49 +120,49 @@ def overview():
                 'the FSM drives the two address generators and the ports with strobes and gets done, error and '
                 'almost_full back. dma_csr raises irq.', y0=-6)
     # control plane
-    d.block('cpu', 10, 40, 110, 80, 'CPU', 'driver', kind='ext')
-    d.block('csr', 190, 30, 180, 110, 'dma_csr', 'registers', kind='ctl', ref='m-csr', lines=['SRC · DST · LEN', 'CTRL · STATUS · ERR'])
-    d.block('ctrl', 470, 30, 220, 130, 'dma_ctrl', 'control FSM', kind='ctl', ref='m-ctrl', lines=['IDLE → LOAD → READ_BURST', '→ WAIT_DATA → WRITE_BURST', '→ WAIT_WRITE → DONE | ERROR'])
-    d.block('rdag', 140, 235, 170, 80, 'dma_addr_gen', 'u_rd_agen · source', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'])
-    d.block('wrag', 800, 235, 170, 80, 'dma_addr_gen', 'u_wr_agen · destination', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'])
+    d.block('cpu', 10, 40, 110, 80, 'CPU', 'driver', kind='ext', on=CTL + ERR)
+    d.block('csr', 190, 30, 180, 110, 'dma_csr', 'registers', kind='ctl', ref='m-csr', lines=['SRC · DST · LEN', 'CTRL · STATUS · ERR'], on=CTL + ERR + ['m-csr'])
+    d.block('ctrl', 470, 30, 220, 130, 'dma_ctrl', 'control FSM', kind='ctl', ref='m-ctrl', lines=['IDLE → LOAD → READ_BURST', '→ WAIT_DATA → WRITE_BURST', '→ WAIT_WRITE → DONE | ERROR'], on=CTL + BP + ERR + ['m-ctrl'])
+    d.block('rdag', 140, 235, 170, 80, 'dma_addr_gen', 'u_rd_agen · source', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'])
+    d.block('wrag', 800, 235, 170, 80, 'dma_addr_gen', 'u_wr_agen · destination', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'])
     # data plane
-    d.block('rdbus', 10, 390, 50, 130, 'rd', 'bus', kind='ext')
-    d.block('rdp', 140, 390, 150, 130, 'dma_rd_port', 'read requests', kind='data', ref='m-rdport', lines=['one burst at a time', 'beats → FIFO'])
-    d.block('fifo', 370, 390, 130, 130, 'dma_fifo', '32 × 64 bits', kind='data', ref='m-fifo', lines=['first word', 'falls through'])
-    d.block('pack', 580, 390, 150, 130, 'dma_packer', 'byte realign', kind='data', ref='m-packer', lines=['rotate by dst−src', 'strobes at the ends'])
-    d.block('wrp', 810, 390, 150, 130, 'dma_wr_port', 'write bursts', kind='data', ref='m-wrport', lines=['last beat, response', 'stalls on ready'])
-    d.block('wrbus', 1040, 390, 50, 130, 'wr', 'bus', kind='ext')
+    d.block('rdbus', 10, 390, 50, 130, 'rd', 'bus', kind='ext', on=DATA)
+    d.block('rdp', 140, 390, 150, 130, 'dma_rd_port', 'read requests', kind='data', ref='m-rdport', lines=['one burst at a time', 'beats → FIFO'], on=DATA + BP + ERR + ['m-rdport'])
+    d.block('fifo', 370, 390, 130, 130, 'dma_fifo', '32 × 64 bits', kind='data', ref='m-fifo', lines=['first word', 'falls through'], on=DATA + BP + ['m-fifo'])
+    d.block('pack', 580, 390, 150, 130, 'dma_packer', 'byte realign', kind='data', ref='m-packer', lines=['rotate by dst−src', 'strobes at the ends'], on=DATA + BP + ERR + ['m-packer'])
+    d.block('wrp', 810, 390, 150, 130, 'dma_wr_port', 'write bursts', kind='data', ref='m-wrport', lines=['last beat, response', 'stalls on ready'], on=DATA + BP + ERR + ['m-wrport'])
+    d.block('wrbus', 1040, 390, 50, 130, 'wr', 'bus', kind='ext', on=DATA + BP)
 
     # data beats (thick)
-    d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0]', (100, 424))
-    d.wire('fifo_wdata', 'data', [(290, 450), (370, 450)], 'fifo_wdata|[63:0]', (330, 424))
-    d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424))
-    d.wire('packed_data', 'data', [(730, 450), (810, 450)], 'packed_data|[63:0] +strb', (770, 424))
-    d.wire('wr_dat_data', 'data', [(960, 450), (1040, 450)], 'wr_dat_data|[63:0]', (1000, 424))
+    d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0]', (100, 424), on=DATA)
+    d.wire('fifo_wdata', 'data', [(290, 450), (370, 450)], 'fifo_wdata|[63:0]', (330, 424), on=DATA)
+    d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424), on=DATA)
+    d.wire('packed_data', 'data', [(730, 450), (810, 450)], 'packed_data|[63:0] +strb', (770, 424), on=DATA)
+    d.wire('wr_dat_data', 'data', [(960, 450), (1040, 450)], 'wr_dat_data|[63:0]', (1000, 424), on=DATA)
     # handshakes going back (ready / full)
-    d.wire('rd_rsp_ready', 'ctl', [(140, 495), (60, 495)], 'rd_rsp_ready', (100, 512), tag='ready')
-    d.wire('fifo_full', 'ctl', [(370, 495), (290, 495)], 'fifo_full', (330, 512), tag='ready')
-    d.wire('fifo_pop', 'ctl', [(580, 495), (500, 495)], 'fifo_pop', (540, 512), tag='ready')
-    d.wire('pk_ready', 'ctl', [(810, 495), (730, 495)], 'pk_ready', (770, 512), tag='ready')
-    d.wire('wr_dat_ready', 'ctl', [(1040, 495), (960, 495)], 'wr_dat_ready', (1000, 512), tag='ready')
+    d.wire('rd_rsp_ready', 'ctl', [(140, 495), (60, 495)], 'rd_rsp_ready', (100, 512), tag='ready', on=READY)
+    d.wire('fifo_full', 'ctl', [(370, 495), (290, 495)], 'fifo_full', (330, 512), tag='ready', on=READY)
+    d.wire('fifo_pop', 'ctl', [(580, 495), (500, 495)], 'fifo_pop', (540, 512), tag='ready', on=READY)
+    d.wire('pk_ready', 'ctl', [(810, 495), (730, 495)], 'pk_ready', (770, 512), tag='ready', on=READY)
+    d.wire('wr_dat_ready', 'ctl', [(1040, 495), (960, 495)], 'wr_dat_ready', (1000, 512), tag='ready', on=READY)
     # addresses and configuration
-    d.wire('csr_bus', 'addr', [(120, 60), (190, 60)], 'csr bus', (155, 52))
-    d.wire('rd_req', 'addr', [(140, 405), (60, 405)], 'rd_req_addr', (100, 385))
-    d.wire('wr_req', 'addr', [(960, 405), (1040, 405)], 'wr_req_addr', (1000, 385))
-    d.wire('src_cfg', 'addr', [(230, 140), (230, 235)], 'src_base · len', (238, 192), anchor='start')
-    d.wire('dst_cfg', 'addr', [(330, 30), (330, 6), (940, 6), (940, 235)], 'dst_base · len', (700, 0))
-    d.wire('rd_burst', 'addr', [(225, 315), (225, 390)], 'rd_burst_addr|· len', (218, 332), anchor='end')
-    d.wire('wr_burst', 'addr', [(900, 315), (900, 390)], 'wr_burst_addr|· len', (908, 332), anchor='start')
+    d.wire('csr_bus', 'addr', [(120, 60), (190, 60)], 'csr bus', (155, 52), on=CTL)
+    d.wire('rd_req', 'addr', [(140, 405), (60, 405)], 'rd_req_addr', (100, 385), on=CTL)
+    d.wire('wr_req', 'addr', [(960, 405), (1040, 405)], 'wr_req_addr', (1000, 385), on=CTL)
+    d.wire('src_cfg', 'addr', [(230, 140), (230, 235)], 'src_base · len', (238, 192), anchor='start', on=CTL)
+    d.wire('dst_cfg', 'addr', [(330, 30), (330, 6), (940, 6), (940, 235)], 'dst_base · len', (700, 0), on=CTL)
+    d.wire('rd_burst', 'addr', [(225, 315), (225, 390)], 'rd_burst_addr|· len', (218, 332), anchor='end', on=CTL)
+    d.wire('wr_burst', 'addr', [(900, 315), (900, 390)], 'wr_burst_addr|· len', (908, 332), anchor='start', on=CTL)
     # control
-    d.wire('start', 'ctl', [(370, 60), (470, 60)], 'start', (420, 52))
-    d.wire('status', 'ctl', [(470, 110), (370, 110)], 'done_set|err_set', (420, 90))
-    d.wire('irq', 'ctl', [(190, 105), (120, 105)], 'irq', (155, 97))
-    d.wire('c_rdag', 'ctl', [(480, 160), (480, 275), (310, 275)], 'load · rd_start ⇄|rd_has_burst', (395, 258), both=True)
-    d.wire('c_rdp', 'ctl', [(505, 160), (505, 350), (250, 350), (250, 390)], 'rd_start ↓   rd_done · rd_err ↑', (378, 343), both=True)
-    d.wire('almost_full', 'ctl', [(465, 390), (465, 368), (535, 368), (535, 160)], 'fifo_almost_full|fifo_push', (542, 300), anchor='start')
-    d.wire('c_pack', 'ctl', [(640, 160), (640, 390)], 'load', (647, 372), anchor='start')
-    d.wire('c_wrp', 'ctl', [(665, 160), (665, 350), (850, 350), (850, 390)], 'wr_start ↓   wr_done · wr_err ↑', (758, 343), both=True)
-    d.wire('c_wrag', 'ctl', [(690, 110), (885, 110), (885, 235)], 'wr_start · wr_burst_len ⇄|wr_has_burst', (790, 96), both=True)
+    d.wire('start', 'ctl', [(370, 60), (470, 60)], 'start', (420, 52), on=CTL)
+    d.wire('status', 'ctl', [(470, 110), (370, 110)], 'done_set|err_set', (420, 90), on=CTL + ERR)
+    d.wire('irq', 'ctl', [(190, 105), (120, 105)], 'irq', (155, 97), on=CTL + ERR)
+    d.wire('c_rdag', 'ctl', [(480, 160), (480, 275), (310, 275)], 'load · rd_start ⇄|rd_has_burst', (395, 258), both=True, on=CTL)
+    d.wire('c_rdp', 'ctl', [(505, 160), (505, 350), (250, 350), (250, 390)], 'rd_start ↓   rd_done · rd_err ↑', (378, 343), both=True, on=CTL + ERR)
+    d.wire('almost_full', 'ctl', [(465, 390), (465, 368), (535, 368), (535, 160)], 'fifo_almost_full|fifo_push', (542, 300), anchor='start', on=CTL + BP)
+    d.wire('c_pack', 'ctl', [(640, 160), (640, 390)], 'load', (647, 372), anchor='start', on=CTL + ERR)
+    d.wire('c_wrp', 'ctl', [(665, 160), (665, 350), (850, 350), (850, 390)], 'wr_start ↓   wr_done · wr_err ↑', (758, 343), both=True, on=CTL + BP + ERR)
+    d.wire('c_wrag', 'ctl', [(690, 110), (885, 110), (885, 235)], 'wr_start · wr_burst_len ⇄|wr_has_burst', (790, 96), both=True, on=CTL)
     legend(d, 140, 575)
     return d
 
@@ -386,11 +405,37 @@ DIA_CSS = """
 """
 
 
-def splice_css(path):
+# The overview's diagram styles: the diagram tokens (they follow the theme, high contrast and forced colors
+# included), and how a part the current step lights up looks. Links get the panel's built-in look.
+OVERVIEW_CSS = """
+  .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
+  .dia text { fill: var(--cx-box-text); }
+  .dia .w-line { fill: none; stroke-linejoin: round; }
+  .dia .w-data .w-line { stroke: var(--cx-wire-data); stroke-width: 5; }
+  .dia .w-data .w-head { fill: var(--cx-wire-data); }
+  .dia .w-addr .w-line { stroke: var(--cx-wire-addr); stroke-width: 2.5; }
+  .dia .w-addr .w-head { fill: var(--cx-wire-addr); }
+  .dia .w-ctl .w-line { stroke: var(--cx-wire-ctrl); stroke-width: 1.5; stroke-dasharray: var(--cx-dash-ctrl); }
+  .dia .w-ctl .w-head { fill: var(--cx-wire-ctrl); }
+  .dia text.w-label { font-size: 10.5px; fill: var(--cx-label); }
+  .dia .blk-box { fill: var(--cx-box-fill); stroke: var(--cx-box-stroke); stroke-width: 1.2; }
+  .dia .blk-data .blk-bar { fill: var(--cx-wire-data); }
+  .dia .blk-ctl .blk-bar { fill: var(--cx-wire-ctrl); }
+  .dia .blk-addr .blk-box { stroke: var(--cx-wire-addr); stroke-width: 1.8; }
+  .dia .blk-ext .blk-box { fill: none; stroke: var(--cx-label); stroke-dasharray: 3 3; }
+  .dia text.blk-title { font-weight: 600; font-size: 13px; }
+  .dia text.blk-sub, .dia text.blk-line { font-size: 10.5px; fill: var(--cx-label); }
+  /* lit by the current step (data-explain-on): a block in the step's color, control wires thicker */
+  .dia .blk.cx-on .blk-box { stroke: var(--cx-on); stroke-width: 2.5; }
+  .dia .w-ctl.cx-on .w-line { stroke-width: 2.5; }
+"""
+
+
+def splice_css(path, css=DIA_CSS):
     text = path.read_text()
     pat = re.compile(r'(/\* dia-css \*/)(.*?)(/\* /dia-css \*/)', re.S)
     if pat.search(text):
-        path.write_text(pat.sub(lambda m: m.group(1) + DIA_CSS + '  ' + m.group(3), text))
+        path.write_text(pat.sub(lambda m: m.group(1) + css + '  ' + m.group(3), text))
 
 
 def splice(path, name, svg):
@@ -413,7 +458,7 @@ def main():
     jobs = [('dma-ctrl', 'inside', m_ctrl), ('dma-addr-gen', 'inside', m_agen), ('dma-packer', 'inside', m_packer),
             ('dma-fifo', 'inside', m_fifo), ('dma-rd-port', 'inside', lambda: m_port('rd')),
             ('dma-wr-port', 'inside', lambda: m_port('wr')), ('dma-csr', 'inside', m_csr)]
-    splice_css(page)
+    splice_css(page, OVERVIEW_CSS)
     for folder, name, fn in jobs:
         p = SIDESTORY / folder / 'sidestory.html'
         if p.exists():
