@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import type { AnchorView, FromWebview, ToWebview } from '../../src/shared/protocol.ts';
 import { type ThemeName, THEMES, themeCss } from './themes.ts';
 
-const FIXTURE = 'fixtures/sample-workspace/.explain/bit-reader';
-const HTML = readFileSync(`${FIXTURE}/explainer.html`, 'utf8');
+const FIXTURE = 'fixtures/sample-workspace/.sidestory/bit-reader';
+const HTML = readFileSync(`${FIXTURE}/sidestory.html`, 'utf8');
 const MANIFEST = JSON.parse(readFileSync(`${FIXTURE}/manifest.json`, 'utf8')) as {
   title: string;
   anchors: Record<string, { file: string; range: [number, number]; color?: string }>;
@@ -21,8 +21,8 @@ function anchors(states: Record<string, AnchorView['state']> = {}): AnchorView[]
   }));
 }
 
-const DIR = 'file:///ws/.explain/bit-reader';
-const base = (page: Page, name = 'bit-reader') => page.evaluate((n) => `${location.origin}/fixtures/sample-workspace/.explain/${n}/`, name);
+const DIR = 'file:///ws/.sidestory/bit-reader';
+const base = (page: Page, name = 'bit-reader') => page.evaluate((n) => `${location.origin}/fixtures/sample-workspace/.sidestory/${n}/`, name);
 const ROOT_TRAIL = [{ name: 'bit-reader', title: MANIFEST.title }];
 
 async function open(page: Page, opts: { theme?: ThemeName; html?: string; active?: string } = {}): Promise<void> {
@@ -482,11 +482,11 @@ test('the trail shows where the reader is and leads back up', async ({ page }) =
     title: 'Retry with backoff',
     html: '<section data-explain-anchor="loop"><h2>Loop</h2></section>',
     anchors: [],
-    dir: 'file:///ws/.explain/retry-backoff',
+    dir: 'file:///ws/.sidestory/retry-backoff',
     base: await base(page, 'retry-backoff'),
     trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Retry with backoff' }],
   });
-  const trail = page.getByRole('navigation', { name: 'Explainer path' });
+  const trail = page.getByRole('navigation', { name: 'Sidestory path' });
   await expect(trail).toBeVisible();
   await expect(trail.locator('[aria-current="page"]')).toHaveText('Retry with backoff');
   await clearPosted(page);
@@ -505,7 +505,7 @@ test('going back returns to the place the reader left', async ({ page }) => {
   await open(page);
   await page.locator('.cx-step', { hasText: 'Handshakes' }).click();
   await expect(page.locator('.cx-position')).toHaveText('Step 3 of 5');
-  const child = { anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff') };
+  const child = { anchors: [], dir: 'file:///ws/.sidestory/retry-backoff', base: await base(page, 'retry-backoff') };
   await send(page, { type: 'init', title: 'Child', html: '<section data-explain-anchor="a"><h2>A</h2></section><section data-explain-anchor="b"><h2>B</h2></section>', ...child, trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
   await expect(page.locator('.cx-title')).toHaveText('Child');
   await expect(page.locator('.cx-position')).toHaveText('Step 1 of 2');
@@ -600,7 +600,7 @@ test('a detail naming an explainer already on the trail goes back up to it', asy
     title: 'Child',
     html: '<section data-explain-anchor="a"><h2>A</h2><div data-explain-detail="bit-reader"></div><div data-explain-detail="retry-backoff"></div></section>',
     anchors: [],
-    dir: 'file:///ws/.explain/retry-backoff',
+    dir: 'file:///ws/.sidestory/retry-backoff',
     base: await base(page, 'retry-backoff'),
     trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }],
   });
@@ -699,7 +699,7 @@ const TALL = Array.from({ length: 6 }, (_, i) => `<section data-explain-anchor="
 
 test('the saved trail survives scrolling (it restores the way back after a restart)', async ({ page }) => {
   await open(page, { html: TALL });
-  await send(page, { type: 'init', title: 'Child', html: TALL, anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
+  await send(page, { type: 'init', title: 'Child', html: TALL, anchors: [], dir: 'file:///ws/.sidestory/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
   await expect(page.locator('.cx-title')).toHaveText('Child');
   await page.mouse.move(300, 400);
   await page.mouse.wheel(0, 500);
@@ -764,7 +764,7 @@ test('going back restores the parent place even when its assets are slow', async
   await expect(page.locator('.cx-position')).toHaveText('Step 5 of 6');
   await page.waitForTimeout(1200);
   const before = await page.locator('.cx-scroll').evaluate((el) => el.scrollTop);
-  await send(page, { type: 'init', title: 'Child', html: TALL.replace(/"t(\d)"/g, '"c$1"'), anchors: [], dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
+  await send(page, { type: 'init', title: 'Child', html: TALL.replace(/"t(\d)"/g, '"c$1"'), anchors: [], dir: 'file:///ws/.sidestory/retry-backoff', base: await base(page, 'retry-backoff'), trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Child' }] });
   await expect(page.locator('.cx-title')).toHaveText('Child');
   // The reader scrolls down in the child before going back.
   await page.mouse.move(300, 400);
@@ -808,4 +808,27 @@ test('messages that do not come from VS Code’s host are ignored', async ({ pag
   // Messages with another origin are ignored too.
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'error', message: 'x' }, origin: 'https://evil.example' })));
   await expect(page.locator('.cx-banner')).toBeHidden();
+});
+
+test('the panel chrome says "sidestory": no accessible name, tooltip or visible text says "explainer"', async ({ page }) => {
+  await open(page);
+  await send(page, {
+    type: 'init',
+    title: 'Retry with backoff',
+    html: '<section data-explain-anchor="loop"><h2>Loop</h2><p data-explain-detail="missing">A detail that isn’t there.</p></section>',
+    anchors: [],
+    dir: 'file:///ws/.sidestory/retry-backoff',
+    base: await base(page, 'retry-backoff'),
+    trail: [...ROOT_TRAIL, { name: 'retry-backoff', title: 'Retry with backoff' }],
+  });
+  await expect(page.getByRole('navigation', { name: 'Sidestory path' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Sidestory' })).toBeAttached();
+  const chrome = await page.evaluate(() => {
+    const out = [document.title, document.body.innerText];
+    for (const el of document.querySelectorAll('[aria-label], [title], [placeholder], [alt]')) {
+      for (const a of ['aria-label', 'title', 'placeholder', 'alt']) out.push(el.getAttribute(a) ?? '');
+    }
+    return out.join('\n');
+  });
+  expect(chrome).not.toMatch(/explainer/i);
 });

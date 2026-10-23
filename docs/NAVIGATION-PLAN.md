@@ -1,6 +1,6 @@
 # Navigation in large repositories: plan
 
-> **Status: plan, not implemented** (revision 2, 2026-10-23, after review).
+> **Status: plan, not implemented** (revision 2, 2026-10-23, after review). **§2 and §3, the rename, are done** (with Q1: the page is `sidestory.html`); the rest is not built yet.
 >
 > **Covers:**
 > - renaming the folder (`.explain/` → `.sidestory/`) and the word users see ("explainer" → "sidestory");
@@ -35,7 +35,7 @@
 
 User-facing words come first. The code names that stay unchanged are in brackets.
 
-- **Sidestory**: one folder `<root>/.sidestory/<name>/` holding `manifest.json` and the page (`explainer.html` today; see §13, Q1) [`ExplainerRef`].
+- **Sidestory**: one folder `<root>/.sidestory/<name>/` holding `manifest.json` and the page `sidestory.html` (§13, Q1) [`ExplainerRef`].
 - **Sidestory folder**: a folder named `.sidestory` that holds sidestories. A repository can have several (monorepos).
 - **Root**: the folder that contains a Sidestory folder. An anchor's `file` is relative to it, as today.
 - **Package**: one Sidestory folder with the sidestories in it.

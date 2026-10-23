@@ -48,7 +48,7 @@ declare module 'explainer' {
   export function prev(): Promise<boolean>;
 
   // ---- code ----
-  /** Every anchor of the explainer, live. */
+  /** Every anchor of the sidestory, live. */
   export function useAnchors(): WidgetAnchor[];
   /**
    * An anchor's code, live (unsaved edits included). null until the panel answers; then status 'ok' with
@@ -85,7 +85,7 @@ declare module 'explainer' {
   export function useVisible(): boolean;
   /** True when the reader asked for less motion (OS setting or VS Code's workbench.reduceMotion). */
   export function useReducedMotion(): boolean;
-  /** A file from the explainer folder as a data URL, if the widget also imports it; '' otherwise. Prefer `import url from './x.png'`. */
+  /** A file from the sidestory folder as a data URL, if the widget also imports it; '' otherwise. Prefer `import url from './x.png'`. */
   export function asset(path: string): string;
 }
 

@@ -118,7 +118,7 @@ function widgetPlaceholder(el: Element, warnings: string[]): void {
   const src = el.getAttribute('src') ?? '';
   const name = src || '(no src)';
   if (!isWidgetSrc(src)) {
-    warnings.push(`<explain-widget src="${src.slice(0, 100)}">: src must be a .tsx, .ts, .jsx or .js file inside the explainer folder.`);
+    warnings.push(`<explain-widget src="${src.slice(0, 100)}">: src must be a .tsx, .ts, .jsx or .js file inside the sidestory folder.`);
     el.removeAttribute('src');
   }
   el.removeAttribute(WIDGET_PROPS_ATTR); // only ever set here

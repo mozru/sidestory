@@ -27,7 +27,7 @@ const builds = [
   { ...common, entryPoints: ['src/extension/widgets/compile-worker.ts'], outfile: 'dist/compile-worker.cjs', platform: 'node', format: 'cjs' },
   // The code block highlighter's worker (Shiki); grammars are read from dist/highlight/grammars when needed.
   { ...common, entryPoints: ['src/extension/highlight/worker.ts'], outfile: 'dist/highlight-worker.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
-  // The standalone widget checker (node dist/check.cjs <explainer-dir>); uses the worker and widget-data beside it.
+  // The standalone widget checker (node dist/check.cjs <sidestory-dir>); uses the worker and widget-data beside it.
   { ...common, entryPoints: ['src/cli/check-widgets.ts'], outfile: 'dist/check.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
 ];
 

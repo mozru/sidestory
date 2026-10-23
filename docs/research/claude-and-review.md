@@ -1,5 +1,7 @@
 # Claude loop, PR review flow, and security
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Research date: 2026-10-21. Extends DESIGN.md §6 and §7. **Hard requirement:** everything is live. No reloads, and no manual "sync" or "send" step except as a last-resort fallback.
 
 ---

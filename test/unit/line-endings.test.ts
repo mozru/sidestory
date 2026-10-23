@@ -14,7 +14,7 @@ const crlf = (s: string) => s.replace(/\r?\n/g, '\r\n');
 describe('line endings', () => {
   for (const name of explainers) {
     it(`${name}: every anchor resolves to the same lines with LF, CRLF and CR files and manifests`, () => {
-      const raw = readFileSync(`${WS}/.explain/${name}/manifest.json`, 'utf8');
+      const raw = readFileSync(`${WS}/.sidestory/${name}/manifest.json`, 'utf8');
       for (const manifestText of [raw, crlf(raw)]) {
         const parsed = parseManifest(manifestText);
         expect(parsed.ok).toBe(true);

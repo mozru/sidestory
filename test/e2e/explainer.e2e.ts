@@ -69,7 +69,7 @@ test('a reference or a step shows the start of its lines: an editor scrolled sid
 test('edits to the explainer file appear live, without a reload', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');
   await chooseStep(panel, 'handshakes');
-  inContainer(`sed -i 's/Three one-line rules/Three tiny rules/' ${WORKSPACE}/.explain/bit-reader/explainer.html`);
+  inContainer(`sed -i 's/Three one-line rules/Three tiny rules/' ${WORKSPACE}/.sidestory/bit-reader/sidestory.html`);
   await expect(content(panel).locator('[data-explain-anchor="handshakes"] h2')).toHaveText('Three tiny rules');
   await expect(panel.locator('.cx-position')).toHaveText('Step 3 of 5');
 });
@@ -144,7 +144,7 @@ test('diving into a detail and coming back keeps the reader’s place', async ({
   // Dive: the same panel shows the detail, with a trail back.
   await detail.locator('.cx-dive').click();
   await expect(panel.locator('.cx-title')).toHaveText('A backward bit reader in five moves');
-  await expect(panel.getByRole('navigation', { name: 'Explainer path' })).toContainText('Sample workspace tour');
+  await expect(panel.getByRole('navigation', { name: 'Sidestory path' })).toContainText('Sample workspace tour');
   await chooseStep(panel, 'refill');
   await expect(activeTab(page, 'bit_reader.sv')).toBeVisible();
   await expect(editorLines(page)).toContainText('refill below valid bits');
@@ -161,7 +161,7 @@ test('diving into a detail and coming back keeps the reader’s place', async ({
 test('a file reopening with its old cursor (view state restored) does not pull the explainer back: only the reader’s own cursor moves do', async ({ page }) => {
   // The stream DMA example: step 1's dma_ctrl card references dma_ctrl.sv, step 2 is in dma_top.sv, step 3 is
   // back in dma_ctrl.sv. Reopening it for step 3 restores the cursor the reference left in step 1's code.
-  const tar = execFileSync('tar', ['--no-xattrs', '-C', 'examples/stream-dma', '-cf', '-', 'rtl', '.explain']);
+  const tar = execFileSync('tar', ['--no-xattrs', '-C', 'examples/stream-dma', '-cf', '-', 'rtl', '.sidestory']);
   execFileSync('docker', ['exec', '-i', CONTAINER, 'tar', '-C', WORKSPACE, '-xf', '-'], { input: tar });
   const panel = await openExplainer(page, 'dma-overview');
   await expect(panel.locator('.cx-position')).toHaveText('Step 1 of 7');

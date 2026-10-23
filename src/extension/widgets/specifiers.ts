@@ -32,16 +32,16 @@ export function lexicalProblem(spec: string): { code: string; message: string } 
   if (spec.length > 1024) return { code: 'bad-specifier', message: 'a path longer than 1024 characters' };
   if (/[\x00-\x1f\x7f]/.test(spec)) return { code: 'bad-specifier', message: 'paths may not contain control characters' };
   if (spec.includes('\\')) return { code: 'bad-specifier', message: 'use / in paths, not \\' };
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec) || spec.includes(':')) return { code: 'bad-specifier', message: 'URLs (file:, http:, data:) are not allowed; use a path inside the explainer folder' };
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(spec) || spec.includes(':')) return { code: 'bad-specifier', message: 'URLs (file:, http:, data:) are not allowed; use a path inside the sidestory folder' };
   if (spec.includes('?') || spec.includes('#')) return { code: 'bad-specifier', message: 'query strings and fragments (? and #) are not allowed in paths' };
-  if (spec.startsWith('/')) return { code: 'bad-specifier', message: 'absolute paths are not allowed; use a path relative to the explainer folder' };
+  if (spec.startsWith('/')) return { code: 'bad-specifier', message: 'absolute paths are not allowed; use a path relative to the sidestory folder' };
   return undefined;
 }
 
 /** Checks a normalized, folder-relative key: inside the folder, and segments safe on every OS. */
 function checkKey(key: string, trailingSlash: boolean): SpecResult {
-  if (key === '..' || key.startsWith('../')) return { ok: false, code: 'outside-folder', message: 'the path leads outside the explainer folder' };
-  if (key === '.' || key === '') return { ok: false, code: 'bad-specifier', message: 'the path names the explainer folder itself' };
+  if (key === '..' || key.startsWith('../')) return { ok: false, code: 'outside-folder', message: 'the path leads outside the sidestory folder' };
+  if (key === '.' || key === '') return { ok: false, code: 'bad-specifier', message: 'the path names the sidestory folder itself' };
   for (const seg of key.split('/')) {
     if (seg.toLowerCase() === '.git' || /[. ]$/.test(seg) || RESERVED_SEGMENT.test(seg)) {
       return { ok: false, code: 'bad-specifier', message: `'${seg}' is not allowed as a path segment` };

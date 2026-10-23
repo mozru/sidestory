@@ -33,7 +33,7 @@ It must work for **any codebase** (software and hardware alike), in **local and 
 3. **Generic, not domain-specific.** Nothing in the core assumes a language. Domain extras (e.g. RTL waveforms) are optional plugins.
 4. **Native to VS Code.** Inherit the user's color theme, fonts and icons, and use native UI (comments, tree views, CodeLens, status bar) wherever it exists.
 5. **Remote-first.** Must work over Remote-SSH, `code tunnel`, WSL, Dev Containers, Codespaces, and vscode.dev connected to a tunnel.
-6. **Files over servers.** State lives in files in the repo (`.explain/`). It is versioned with the code, travels with branches and PRs, and needs no network connection between machines.
+6. **Files over servers.** State lives in files in the repo (`.sidestory/`). It is versioned with the code, travels with branches and PRs, and needs no network connection between machines.
 7. **Claude is a participant, not the owner.** Humans can write and edit explainers by hand. Claude reads and writes the same files through the same tools.
 
 ---
@@ -43,8 +43,8 @@ It must work for **any codebase** (software and hardware alike), in **local and 
 ```
 ┌────────────────────────── repo ──────────────────────────┐
 │  src/...               (the code)                         │
-│  .explain/                                                │
-│    <name>/explainer.html   free-form HTML with anchors    │
+│  .sidestory/                                                │
+│    <name>/sidestory.html   free-form HTML with anchors    │
 │    <name>/manifest.json    anchors, commit pin, metadata  │
 │    <name>/threads/*.jsonl  comment threads                │
 │    story.jsonl             Claude's live narration        │
@@ -78,9 +78,9 @@ It must work for **any codebase** (software and hardware alike), in **local and 
 ### 4.1 Layout
 
 ```
-.explain/
+.sidestory/
   bit-reader/                 one folder per explainer
-    explainer.html            the page (free-form)
+    sidestory.html            the page (free-form)
     manifest.json             anchors + metadata
     assets/                   optional images, data
     threads/
@@ -247,13 +247,13 @@ Extension → Webview:
 
 GitHub's PR page can't host a custom side panel, so in review:
 
-1. **Commit `.explain/` in the PR.** Reviewers who check out the branch in VS Code (local, SSH, or Codespace) get the full experience.
+1. **Commit `.sidestory/` in the PR.** Reviewers who check out the branch in VS Code (local, SSH, or Codespace) get the full experience.
 2. **Standalone web viewer via a GitHub Action.**
    - Builds a self-contained two-pane page with the code embedded at the PR's head commit.
    - Deploys it as a per-PR preview (e.g. GitHub Pages) and posts the link as a PR comment, updating that comment on new pushes.
    - Each section links to the matching lines in the PR diff or a permalink.
 3. **Change-focused explainers.** Claude generates an explainer for *the change*: before/after views, with steps that follow the diff. This can run from the Claude Code GitHub Action when a PR opens.
-4. **Thread mirroring.** `.explain` threads anchored to code can mirror to GitHub PR review comments and back. `@claude` mentions can be answered by the Claude Code GitHub Action *(verify trigger setup)*.
+4. **Thread mirroring.** `.sidestory` threads anchored to code can mirror to GitHub PR review comments and back. `@claude` mentions can be answered by the Claude Code GitHub Action *(verify trigger setup)*.
 
 GitHub is the first target, since it is by far the most common review platform. GitLab merge requests are next, with the same approach as a CI job.
 
@@ -283,7 +283,7 @@ Draft tools:
 | `thread_open` | open a new thread (e.g., Claude asking the human a question) |
 | `story_post` | append status/plan/done entries to `story.jsonl` |
 
-Writes go to files. The VS Code extension watches `.explain/` and updates the view, so the MCP server and the extension never need a direct connection.
+Writes go to files. The VS Code extension watches `.sidestory/` and updates the view, so the MCP server and the extension never need a direct connection.
 
 ### 7.3 Human → Claude: getting comments into a running session
 
@@ -313,14 +313,14 @@ Writes go to files. The VS Code extension watches `.explain/` and updates the vi
 ## 8. Roadmap
 
 **v0: prove the loop** (local + SSH)
-- Format: `explainer.html` + `manifest.json` with section anchors.
+- Format: `sidestory.html` + `manifest.json` with section anchors.
 - Webview beside the editor, theme variables only.
 - Explainer → editor: reveal and decorations. Editor → explainer: cursor sync.
 - Snippet- and range-based anchors.
 - A sample explainer for a small module, as a fixture.
 
 **v1: native + Claude**
-- Comments API threads plus `.explain/threads/`.
+- Comments API threads plus `.sidestory/threads/`.
 - MCP server with the tools in §7.2.
 - Channel prototype, with the hook fallback.
 - Story strip and follow mode.
@@ -442,4 +442,5 @@ Add a small software fixture too (e.g. a TypeScript or Python function), so v0 i
 - **2026-10-21: Manifest format for v0.** `version: 1` (the brief's format, with `snippet`) and `version: 2` (the anchors research format, `docs/research/anchors.md` §3) are both read. The `spec: "explain/1.0"` shape sketched in `docs/research/architecture.md` §6 is not adopted. In v2, `quote` (exact text plus up to 3 lines / ~160 characters of context) is the source of truth and `range` is a hint. A v1 `snippet` is resolved as "text near the start of the range", not as a full quote. Anchors are line-granular for now; columns, `symbol`, `pin`, `fp` and other fields are preserved in the raw manifest for lossless rewrites but not used yet. A bad anchor is reported and skipped; only a bad top level (or an unknown future `version`) fails the whole manifest. `file` must be a canonical repo-relative POSIX path, and files are read only if they resolve inside the repo after following symlinks.
 - **2026-10-21: Explainer isolation for v0.** *(Superseded the same day: explainer HTML now renders in a sandboxed iframe without `allow-scripts`, driven from the panel; its assets come from the extension as blob: URLs. Never add `allow-scripts` alongside `allow-same-origin`. See SECURITY.md.)* Originally: explainer HTML rendered in a shadow root inside the webview, not in a sandboxed iframe. Safety rests on the CSP (no script but the extension's own, no network, `base-uri`/`object-src`/`frame-src` none) plus a sanitizer that drops active elements, event handlers and URLs leaving the explainer folder, and hands over parsed nodes (never re-parsed strings). Author layout is contained (`contain: paint`, own stacking context) so it can't cover the panel's controls. Explainers can't run their own scripts. Before allowing author scripts or adding trusted UI such as a comment composer, move explainer content to a sandboxed iframe (`docs/research/architecture.md` §4.5).
 - **2026-10-21: Anchor scoring weights.** L = 0.45·S + 0.35·C + 0.10·T + 0.10·P (the research suggested 0.55/0.25). Context weighs more so that an edited copy in the right place beats an untouched duplicate elsewhere. A live-tracked or confidently resolved position is trusted: a close rival elsewhere doesn't make it ambiguous. Guesses (ambiguous or stale results) are never fed back as trusted positions.
-- **2026-10-21: Known v0 limits to address before v1.** Section state badges are CSS (`::after`) on the author's own elements, so they can't hold actions ("Still accurate", "Re-link here") or thread badges. v1 adds per-section chrome kept outside the morphed content (`docs/research/ux-design.md` §0.5), including the mockup's file/lines chip on the active section. `localResourceRoots` includes the explainer folder; VS Code checks resource paths by prefix, not realpath, so a symlink inside `.explain/<name>/` could expose another readable file to the page. With no script or network access in the page this can't leak anywhere, but the iframe move should also resolve symlinks.
+- **2026-10-21: Known v0 limits to address before v1.** Section state badges are CSS (`::after`) on the author's own elements, so they can't hold actions ("Still accurate", "Re-link here") or thread badges. v1 adds per-section chrome kept outside the morphed content (`docs/research/ux-design.md` §0.5), including the mockup's file/lines chip on the active section. `localResourceRoots` includes the explainer folder; VS Code checks resource paths by prefix, not realpath, so a symlink inside `.sidestory/<name>/` could expose another readable file to the page. With no script or network access in the page this can't leak anywhere, but the iframe move should also resolve symlinks.
+- **2026-10-23: "explainer" → "sidestory", `.explain/` → `.sidestory/`, `explainer.html` → `sidestory.html`.** Users and the docs call an explainer a **sidestory**; the folder and the page file follow, as a clean switch with no fallback (nothing was released). The format keeps its names: `data-explain-*`, `<explain-widget>` and the widget module `explainer`, as do internal identifiers (`ExplainerRef`, the `sidestory.explainer` view type). This document's body above is kept as written and still says "explainer". Plan: `docs/NAVIGATION-PLAN.md` §2–§3.

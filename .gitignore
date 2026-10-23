@@ -5,5 +5,5 @@ dist/
 .vscode-test/
 test-results/
 playwright-report/
-.explain/.local/
+.sidestory/.local/
 dist-test/

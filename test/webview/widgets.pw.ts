@@ -531,14 +531,14 @@ test.describe('heights, state, caps', () => {
     await expect(out(f)).toContainText('w:2');
     const sent = async () => (await posted(page)).filter((m): m is Extract<FromWebview, { type: 'widgetStates' }> => m.type === 'widgetStates');
     await expect.poll(async () => (await sent()).at(-1)?.states).toEqual([['#p', '{"n":2}']]);
-    expect((await sent()).at(-1)!.dir).toBe('file:///ws/.explain/w');
+    expect((await sent()).at(-1)!.dir).toBe('file:///ws/.sidestory/w');
     expect((await sent()).length).toBeLessThanOrEqual(2); // coalesced, not one message per click
     // A fresh page with no saved state of its own: the extension's copy arrives before the gate.
     await page.goto('/test/webview/harness.html');
     await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
     await serve(page, builds);
-    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
-    await send(page, { type: 'init', title: 'Widgets', html: explainerHtml(probeTag(' id="p"')), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.explain/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
+    await send(page, { type: 'init', title: 'Widgets', html: explainerHtml(probeTag(' id="p"')), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.sidestory/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
     await send(page, { type: 'widgetStates', states: [['#p', '{"n":2}']] });
     await send(page, { type: 'widgets', gate: ON });
     await expect(out(widgetFrame(page))).toContainText('w:2');
@@ -567,7 +567,7 @@ test.describe('the consent bar (panel chrome)', () => {
   test('asks, offers trust in Restricted Mode, and offers to confirm anchors; buttons only post requests', async ({ page }) => {
     await openWith(page, explainerHtml(probeTag()), builds, { gate: { ...ON, status: 'ask' } });
     const bar = page.locator('.cx-consent');
-    await expect(bar).toContainText('This explainer has 1 interactive widget');
+    await expect(bar).toContainText('This sidestory has 1 interactive widget');
     await clearPosted(page);
     await bar.getByRole('button', { name: 'Run widgets…' }).click();
     expect(await posted(page)).toEqual([{ type: 'widgetConsent' }]);
@@ -734,12 +734,12 @@ export default function G() { const [rows, setRows] = useState(1); return <div><
     await widgetEval(page, 0, 'grow', 60);
     await page.waitForTimeout(150);
     await clearPosted(page);
-    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
     const anchors = [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' as const }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' as const }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' as const }];
-    await send(page, { type: 'init', title: 'Other', html: '<section data-explain-anchor="intro"><h2>Other</h2></section>', anchors, active: 'intro', dir: 'file:///ws/.explain/other', base, trail: [{ name: 'w', title: 'Widgets' }, { name: 'other', title: 'Other' }] });
+    await send(page, { type: 'init', title: 'Other', html: '<section data-explain-anchor="intro"><h2>Other</h2></section>', anchors, active: 'intro', dir: 'file:///ws/.sidestory/other', base, trail: [{ name: 'w', title: 'Widgets' }, { name: 'other', title: 'Other' }] });
     await page.waitForTimeout(1500);
     expect((await posted(page)).filter((m) => m.type === 'widgetHeights')).toEqual([]);
-    await send(page, { type: 'init', title: 'Widgets', html, anchors, active: 'ring', dir: 'file:///ws/.explain/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
+    await send(page, { type: 'init', title: 'Widgets', html, anchors, active: 'ring', dir: 'file:///ws/.sidestory/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
     await send(page, { type: 'widgets', gate: ON });
     await expect(out(widgetFrame(page))).toContainText('w:3');
   });
@@ -854,8 +854,8 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     // Suspended, then another explainer is shown: its widgets mount.
     await send(page, { type: 'widgetsReset', phase: 'unmount' });
     await expect(frames(page)).toHaveCount(0);
-    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
-    await send(page, { type: 'init', title: 'Other', html: explainerHtml(probeTag()), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.explain/other', base, trail: [{ name: 'other', title: 'Other' }] });
+    const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
+    await send(page, { type: 'init', title: 'Other', html: explainerHtml(probeTag()), anchors: [{ id: 'intro', file: 'src/a.ts', range: { start: 1, end: 10 }, state: 'exact' }, { id: 'ring', file: 'src/a.ts', range: { start: 11, end: 30 }, state: 'exact' }, { id: 'tail', file: 'src/a.ts', range: { start: 31, end: 40 }, state: 'exact' }], active: 'ring', dir: 'file:///ws/.sidestory/other', base, trail: [{ name: 'other', title: 'Other' }] });
     await send(page, { type: 'widgets', gate: ON });
     await expect(out(widgetFrame(page))).toContainText('w:0');
   });

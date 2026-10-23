@@ -507,7 +507,7 @@ export class WidgetFrames {
       if (gate.disabled.includes(w.src)) {
         this.unmount(w, true);
         this.fail(w, gate.stopped
-          ? "This explainer's widgets kept freezing the panel, so they were stopped."
+          ? "This sidestory's widgets kept freezing the panel, so they were stopped."
           : 'This widget was turned off because it stopped responding.', undefined, 'retry');
       } else if ((was.disabled.includes(w.src) || was.stopped) && w.status === 'error') {
         w.error = undefined;
@@ -664,7 +664,7 @@ export class WidgetFrames {
     const n = this.widgets.size;
     const g = this.gate;
     const parts: { text: string; act?: string; label?: string }[] = [];
-    const what = `This explainer has ${n} interactive widget${n === 1 ? '' : 's'}`;
+    const what = `This sidestory has ${n} interactive widget${n === 1 ? '' : 's'}`;
     if (n && g.status === 'untrusted') parts.push({ text: `${what}. Widgets don't run in Restricted Mode.`, act: 'trust', label: 'Trust workspace…' });
     else if (n && g.status === 'ask') parts.push({ text: `${what}: code from this repository that runs in the panel.`, act: 'consent', label: 'Run widgets…' });
     else if (n && g.status === 'on' && g.unconfirmed) parts.push({ text: `Widgets here want to read code that hasn't been confirmed.`, act: 'confirm', label: `Let widgets read ${g.unconfirmed.anchors} anchor${g.unconfirmed.anchors === 1 ? '' : 's'} (${g.unconfirmed.summary})…` });
@@ -724,12 +724,12 @@ export class WidgetFrames {
       }
       if (this.suspended) continue;
       if (!w.src) {
-        if (w.status !== 'error') this.fail(w, "This widget's src isn't a widget file in the explainer folder.");
+        if (w.status !== 'error') this.fail(w, "This widget's src isn't a widget file in the sidestory folder.");
         continue;
       }
       if (this.gate.disabled.includes(w.src)) continue;
       if (w.index >= MAX_WIDGETS) {
-        if (w.status !== 'error') this.fail(w, `This explainer has more than ${MAX_WIDGETS} widgets; only the first ${MAX_WIDGETS} run.`);
+        if (w.status !== 'error') this.fail(w, `This sidestory has more than ${MAX_WIDGETS} widgets; only the first ${MAX_WIDGETS} run.`);
         continue;
       }
       if (remeasure || !w.layout) w.layout = this.measure(w, win);

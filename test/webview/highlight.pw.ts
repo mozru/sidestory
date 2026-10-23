@@ -75,8 +75,8 @@ async function open(page: Page, host: FakeHost, html: string, theme: ThemeName =
     document.documentElement.setAttribute('style', css);
     document.body.className = cls;
   }, [themeCss(theme), THEMES[theme].bodyClass] as const);
-  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
-  await send(page, { type: 'init', title: 'Code', html, anchors: anchors(['one', 'two']), dir: 'file:///ws/.explain/code', base, trail: [{ name: 'code', title: 'Code' }] });
+  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
+  await send(page, { type: 'init', title: 'Code', html, anchors: anchors(['one', 'two']), dir: 'file:///ws/.sidestory/code', base, trail: [{ name: 'code', title: 'Code' }] });
 }
 
 /** The computed color of the span containing `text` in the first block with that text. */
@@ -313,10 +313,10 @@ test('live updates of an explainer with 40 colored blocks cost about what plain 
   await host.setKind('dark');
   await host.attach(page);
   await page.goto('/test/webview/harness.html');
-  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
   const ids = Array.from({ length: 40 }, (_, i) => `s${i}`);
   const time = async (lang: string) => {
-    await send(page, { type: 'init', title: 'Code', html: doc(lang, 'start'), anchors: anchors(ids), dir: `file:///ws/.explain/${lang}`, base, trail: [{ name: lang, title: 'Code' }] });
+    await send(page, { type: 'init', title: 'Code', html: doc(lang, 'start'), anchors: anchors(ids), dir: `file:///ws/.sidestory/${lang}`, base, trail: [{ name: lang, title: 'Code' }] });
     if (lang === 'ts') await expect(frame(page).locator('section[data-explain-anchor="s39"] pre span').first()).toBeAttached();
     await page.waitForTimeout(200);
     return page.evaluate(async (docs) => {

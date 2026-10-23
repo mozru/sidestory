@@ -210,7 +210,7 @@ export class ExplainerSession implements vscode.Disposable {
 
   // ---- the trail: diving into details and coming back ----
 
-  /** A detail explainer: a sibling folder under the same `.explain/`. */
+  /** A detail explainer: a sibling folder under the same `.sidestory/`. */
   private detailRef(name: string): ExplainerRef | undefined {
     if (!explainerNameSchema.safeParse(name).success) return undefined;
     return refFromDir(vscode.Uri.joinPath(this.ref.dir, '..', name));
@@ -235,7 +235,7 @@ export class ExplainerSession implements vscode.Disposable {
     // Another dive or Back came in meanwhile (a double click, say): the newer one wins.
     if (request !== this.navRequest || this.disposed || this.trail.some(onTrail)) return;
     if (!found) {
-      void vscode.window.showWarningMessage(`There's no explainer called "${name}" next to this one.`);
+      void vscode.window.showWarningMessage(`There's no sidestory called "${name}" next to this one.`);
       return;
     }
     await this.switchTo([...this.trail, child], section);
@@ -257,7 +257,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.manifestError = null;
     this.html = '';
     this.title = this.titles.get(this.ref.dir.toString()) ?? '';
-    this.panel.title = `Explainer: ${this.title || this.ref.name}`;
+    this.panel.title = this.title || this.ref.name;
     this.lastError = null;
     this.warnings = null;
     this.resolutions.clear();
@@ -365,7 +365,7 @@ export class ExplainerSession implements vscode.Disposable {
     // Read for an explainer the panel has since left.
     if (this.disposed || generation !== this.generation) return;
     if (manifestText === undefined || html === undefined) {
-      const which = manifestText === undefined ? 'manifest.json' : 'explainer.html';
+      const which = manifestText === undefined ? 'manifest.json' : 'sidestory.html';
       // The title still comes from the manifest, so the tab and trail name the right explainer.
       const parsed = manifestText === undefined ? undefined : parseManifest(manifestText);
       if (parsed?.ok) this.setTitle(parsed.manifest.title);
@@ -431,7 +431,7 @@ export class ExplainerSession implements vscode.Disposable {
   private setTitle(title: string): void {
     this.title = title;
     this.titles.set(this.ref.dir.toString(), title);
-    this.panel.title = `Explainer: ${title || this.ref.name}`;
+    this.panel.title = title || this.ref.name;
   }
 
   /**
@@ -745,7 +745,7 @@ export class ExplainerSession implements vscode.Disposable {
     const url = safeExternalUrl(raw);
     if (!url) return;
     const open = 'Open';
-    const choice = await ourModal(() => vscode.window.showInformationMessage(`The explainer links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open));
+    const choice = await ourModal(() => vscode.window.showInformationMessage(`The sidestory links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open));
     if (choice === open) await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 

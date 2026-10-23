@@ -176,7 +176,7 @@ describe('compileWidget: rejections', () => {
   ])('src %j → %s', async (src, code) => {
     const r = await compileFiles({ 'w.tsx': WIDGET, 'w.css': '', 'w.json': '{}' }, src);
     expect(codes(r)).toEqual([code]);
-    expect(r.errors[0]!.file).toBe('explainer.html');
+    expect(r.errors[0]!.file).toBe('sidestory.html');
     expect(r.modules).toEqual({});
   });
 
@@ -470,7 +470,7 @@ describe('compileWidget: hashing, worker limits and caching', () => {
 
 describe('widget compiler helpers', () => {
   it('worker failure messages carry no absolute paths', () => {
-    const dir = join(tmpdir(), 'repo', '.explain', 'x');
+    const dir = join(tmpdir(), 'repo', '.sidestory', 'x');
     expect(relativize(`Cannot read ${join(dir, 'w', 'a.tsx')} at ${join(tmpdir(), 'node_modules', 'sucrase', 'dist', 'index.js')}:1:2`, dir)).toBe(`Cannot read w${process.platform === 'win32' ? '\\' : '/'}a.tsx at …/index.js:1:2`);
   });
 

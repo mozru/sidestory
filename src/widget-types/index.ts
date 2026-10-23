@@ -8,8 +8,8 @@ import { join } from 'node:path';
 export const WIDGET_TYPE_FILES = ['react.d.ts', 'explainer.d.ts', 'ui.d.ts', 'libraries.d.ts', 'lucide-react.d.ts'] as const;
 
 /**
- * The `.explain/tsconfig.json` that goes with them. `typesDir` is where the declaration files are written,
- * relative to `.explain/` (for example `.types`).
+ * The `.sidestory/tsconfig.json` that goes with them. `typesDir` is where the declaration files are written,
+ * relative to `.sidestory/` (for example `.types`).
  */
 export function widgetTsconfig(typesDir: string): string {
   const config = {
@@ -49,4 +49,4 @@ export async function writeWidgetTypes(explainDir: string, sourceDir: string): P
 }
 
 /** How to typecheck once the files are there (TypeScript isn't shipped: npx fetches it). */
-export const TYPECHECK_COMMAND = 'npx -y -p typescript tsc -p .explain';
+export const TYPECHECK_COMMAND = 'npx -y -p typescript tsc -p .sidestory';

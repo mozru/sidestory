@@ -1,7 +1,7 @@
 {
   "name": "sidestory",
   "displayName": "Sidestory",
-  "description": "Rich explainers beside your code: diagrams, live React widgets and prose linked both ways to the code. Written by you or any AI agent.",
+  "description": "Rich sidestories beside your code: diagrams, live React widgets and prose linked both ways to the code. Written by you or any AI agent.",
   "version": "0.1.0",
   "publisher": "paperkite",
   "license": "MIT",
@@ -59,11 +59,11 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Explainers render safely in Restricted Mode, but a panel left open isn't restored automatically: open it again yourself."
+      "description": "Sidestories render safely in Restricted Mode, but a panel left open isn't restored automatically: open it again yourself."
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "Explainers are resolved against files on disk."
+      "description": "Sidestories are resolved against files on disk."
     }
   },
   "categories": [
@@ -73,14 +73,14 @@
   ],
   "main": "./dist/extension.cjs",
   "activationEvents": [
-    "workspaceContains:**/.explain/*/manifest.json",
+    "workspaceContains:**/.sidestory/*/manifest.json",
     "onWebviewPanel:sidestory.explainer"
   ],
   "contributes": {
     "commands": [
       {
         "command": "sidestory.open",
-        "title": "Open Explainer",
+        "title": "Open Sidestory…",
         "category": "Sidestory"
       },
       {
@@ -147,20 +147,20 @@
         "sidestory.dimUnfocused": {
           "type": "boolean",
           "default": true,
-          "description": "Dim code outside the active step when you move through the explainer."
+          "description": "Dim code outside the active step when you move through a sidestory."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "markdownDescription": "Run interactive widgets in explainers. Widgets are code from the repository: they never run in Restricted Mode, and each workspace asks before running them. A repository's own settings can't turn this on."
+          "markdownDescription": "Run interactive widgets in sidestories. Widgets are code from the repository: they never run in Restricted Mode, and each workspace asks before running them. A repository's own settings can't turn this on."
         }
       }
     },
     "colors": [
       {
         "id": "sidestory.focusBackground",
-        "description": "Background of the lines the active explainer step is about.",
+        "description": "Background of the lines the active sidestory step is about.",
         "defaults": {
           "dark": "editor.rangeHighlightBackground",
           "light": "editor.rangeHighlightBackground",
@@ -220,7 +220,7 @@
       },
       {
         "id": "sidestory.staleForeground",
-        "description": "Explainer sections whose code changed a lot.",
+        "description": "Sidestory sections whose code changed a lot.",
         "defaults": {
           "dark": "editorWarning.foreground",
           "light": "#8a6100",
@@ -230,7 +230,7 @@
       },
       {
         "id": "sidestory.lostForeground",
-        "description": "Explainer sections whose code can't be found.",
+        "description": "Sidestory sections whose code can't be found.",
         "defaults": {
           "dark": "editorError.foreground",
           "light": "editorError.foreground",
@@ -260,7 +260,7 @@
       "explorer/context": [
         {
           "command": "sidestory.open",
-          "when": "explorerResourceIsFolder && resourceDirname =~ /\\.explain$/",
+          "when": "explorerResourceIsFolder && resourceDirname =~ /\\.sidestory$/",
           "group": "navigation@90"
         }
       ]

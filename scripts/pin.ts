@@ -1,5 +1,5 @@
 // Records each anchor's current text (quote + context) from its range, upgrading the manifest to v2.
-// Usage: npm run pin -- <path/to/.explain/name> [anchorId ...]
+// Usage: npm run pin -- <path/to/.sidestory/name> [anchorId ...]
 // Only the pinned anchors' fields change; the rest of the file keeps its formatting.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -12,7 +12,7 @@ import { realPathInside } from '../src/extension/paths.ts';
 
 const [dirArg, ...only] = process.argv.slice(2);
 if (!dirArg) {
-  console.error('usage: npm run pin -- <path/to/.explain/name> [anchorId ...]');
+  console.error('usage: npm run pin -- <path/to/.sidestory/name> [anchorId ...]');
   process.exit(2);
 }
 const dir = resolve(dirArg);

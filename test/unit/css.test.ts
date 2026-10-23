@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { rewriteCss } from '../../src/webview/sanitize.ts';
 
-const BASE = 'https://res.example/ws/.explain/demo/';
+const BASE = 'https://res.example/ws/.sidestory/demo/';
 
 describe('rewriteCss', () => {
   it('points relative url() at the explainer folder and drops others', () => {
@@ -56,7 +56,7 @@ describe('rewriteCss: round 3 audit', () => {
 });
 
 describe('rewriteCss: comments and newlines (navigation audit)', () => {
-  const BASE = 'https://x.vscode-cdn.net/ws/.explain/a/';
+  const BASE = 'https://x.vscode-cdn.net/ws/.sidestory/a/';
   const remote = (css: string) => /url\("?https:\/\/(evil|file)/.test(rewriteCss(css, BASE));
   it.each([
     "/* ' */ a{background-image:url(https://evil.example/a.png)} /* ' */",

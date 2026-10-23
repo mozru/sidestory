@@ -1,5 +1,7 @@
 # Sidestory: System Architecture
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Status: proposal, 2026-10-21. Scope: the live data flow from end to end. The hard requirement is that **everything updates live**: the user never reloads a panel or reruns a command.
 
 ---

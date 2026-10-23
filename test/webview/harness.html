@@ -5,7 +5,7 @@
 <!-- The same policy as the real panel (src/extension/panel.ts), with 'self' for the webview resource origin.
      The bootstrap's hash is checked against src/shared/widget-bootstrap.ts by test/unit/widgets-host.test.ts. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' blob:; script-src 'nonce-harness' 'sha256-9/cCe0BkoEmMIMlnzualYMporpsGZHUNWwFbHOI/00w=' 'strict-dynamic'; require-trusted-types-for 'script'; trusted-types cx-static cx-sanitize cx-widget default cx-test; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
-<title>Explainer webview harness</title>
+<title>Sidestory webview harness</title>
 <link rel="stylesheet" href="/dist/webview/codicons/codicon.css">
 <link rel="stylesheet" href="/dist/webview/main.css">
 <script nonce="harness">
@@ -47,8 +47,8 @@
 </script>
 </head>
 <body>
-<div id="app" data-dir="file:///ws/.explain/bit-reader"></div>
-<script nonce="harness">document.getElementById('app').dataset.base = `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`;</script>
+<div id="app" data-dir="file:///ws/.sidestory/bit-reader"></div>
+<script nonce="harness">document.getElementById('app').dataset.base = `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`;</script>
 <script type="module" nonce="harness" src="/dist/webview/main.js"></script>
 </body>
 </html>

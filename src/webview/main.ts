@@ -120,7 +120,7 @@ const DETAIL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 app.innerHTML = staticHtml`
 <header class="cx-header">
-  <nav class="cx-trail" aria-label="Explainer path" hidden></nav>
+  <nav class="cx-trail" aria-label="Sidestory path" hidden></nav>
   <div class="cx-titlerow">
     <h1 class="cx-title"></h1>
     <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>
@@ -134,7 +134,7 @@ app.innerHTML = staticHtml`
 </header>
 <div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span><button class="cx-banner-open" type="button" hidden>Open manifest.json</button></div>
 <div class="cx-consent" role="region" aria-label="Interactive widgets" hidden></div>
-<main class="cx-scroll" tabindex="0" aria-label="Explainer"><div class="cx-frame"><div class="cx-widget-layer"></div></div></main>
+<main class="cx-scroll" tabindex="0" aria-label="Sidestory"><div class="cx-frame"><div class="cx-widget-layer"></div></div></main>
 <div class="cx-pill" hidden>
   <button class="cx-pill-show" type="button"></button>
   <button class="cx-pill-close" type="button" aria-label="Dismiss"><span class="codicon codicon-close" aria-hidden="true"></span></button>
@@ -194,7 +194,7 @@ let lastRender: { title: string; html: string } | undefined;
 async function buildFrame(): Promise<void> {
   const el = document.createElement('iframe');
   el.className = 'cx-content-frame';
-  el.title = 'Explainer content';
+  el.title = 'Sidestory content';
   el.setAttribute('sandbox', 'allow-same-origin');
   el.srcdoc = staticHtml`<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>` as unknown as string;
   $('.cx-frame').replaceChildren(el, layerEl);
@@ -526,7 +526,7 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
   for (const w of parsed.warnings) {
     if (warned.has(w) || warned.size > 50) continue;
     warned.add(w);
-    vscode.postMessage({ type: 'widgetLog', src: '', level: 'warn', message: `explainer.html: ${w}` });
+    vscode.postMessage({ type: 'widgetLog', src: '', level: 'warn', message: `sidestory.html: ${w}` });
   }
   const next = frame.createElement('div');
   next.append(...parsed.styles, ...parsed.body);
@@ -735,7 +735,7 @@ function decorateDetails(root: HTMLElement): void {
     setText(peek, `${open ? '▾' : '▸'} ${title} in brief`);
     peek.setAttribute('aria-expanded', String(open));
     peek.disabled = missing;
-    setText(dive, missing ? `No explainer named “${name}”` : depth === trail.length - 1 ? 'You are reading it' : depth >= 0 ? `‹ Back to ${title}` : `Dive into ${title} ›`);
+    setText(dive, missing ? `No sidestory named “${name}”` : depth === trail.length - 1 ? 'You are reading it' : depth >= 0 ? `‹ Back to ${title}` : `Dive into ${title} ›`);
     dive.disabled = missing || depth === trail.length - 1;
     setText(box.querySelector('.cx-detail-steps')!, info?.found ? `${info.steps} step${info.steps === 1 ? '' : 's'}` : '');
     setText(body, info?.summary || (info ? 'No summary.' : 'Loading…'));

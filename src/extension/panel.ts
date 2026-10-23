@@ -14,7 +14,7 @@ export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscod
     enableFindWidget: true,
     // Hidden panels are rebuilt from `init` when shown again, so no need to keep them alive.
     retainContextWhenHidden: false,
-    // The whole `.explain/` folder, so it covers whichever explainer the panel dives into.
+    // The whole `.sidestory/` folder, so it covers whichever explainer the panel dives into.
     localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview'), vscode.Uri.joinPath(ref.dir, '..')],
   };
 }
@@ -22,7 +22,7 @@ export function panelOptions(extensionUri: vscode.Uri, ref: ExplainerRef): vscod
 export function createPanel(extensionUri: vscode.Uri, ref: ExplainerRef, column: vscode.ViewColumn = vscode.ViewColumn.Beside): vscode.WebviewPanel {
   return vscode.window.createWebviewPanel(
     VIEW_TYPE,
-    `Explainer: ${ref.name}`,
+    ref.name,
     { viewColumn: column, preserveFocus: true },
     panelOptions(extensionUri, ref),
   );
@@ -62,7 +62,7 @@ export function shellHtml(webview: vscode.Webview, extensionUri: vscode.Uri, ref
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="${asset('codicons', 'codicon.css')}">
 <link rel="stylesheet" href="${asset('main.css')}">
-<title>Explainer</title>
+<title>Sidestory</title>
 </head>
 <body>
 <div id="app" data-base="${base}/" data-dir="${dir}"></div>

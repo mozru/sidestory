@@ -74,7 +74,7 @@ test.beforeAll(async () => {
 
 async function open(page: Page) {
   await page.goto('/test/webview/harness.html');
-  const origin = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
+  const origin = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
   const tags = `<explain-widget src="w/sibling.tsx" id="s"></explain-widget><explain-widget src="w/hostile.tsx" id="h" props='{"base": "${origin}"}'></explain-widget>`;
   await openWith(page, explainerHtml(tags), builds, { active: 'ring' });
   await expect(widgetFrame(page, 0).getByTestId('s')).toHaveText('sibling');

@@ -1,5 +1,7 @@
 # Component kit: research and design
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Status: research draft, 2026-10-21. Extends DESIGN.md §4.5 and §5.3. Versions and licenses come from the npm registry on 2026-10-21 unless a URL is cited. Re-verify before pinning.
 
 ## 1. Decisions

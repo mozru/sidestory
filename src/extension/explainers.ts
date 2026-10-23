@@ -2,12 +2,12 @@ import * as vscode from 'vscode';
 import { log } from './log.ts';
 import { assertSize, realPathInside } from './paths.ts';
 
-/** One explainer folder: `<root>/.explain/<name>/`. */
+/** One explainer folder: `<root>/.sidestory/<name>/`. */
 export interface ExplainerRef {
   name: string;
   /** The folder holding the explainer's files. */
   dir: vscode.Uri;
-  /** The folder that holds `.explain/`; anchor file paths are relative to it. */
+  /** The folder that holds `.sidestory/`; anchor file paths are relative to it. */
   root: vscode.Uri;
 }
 
@@ -15,11 +15,14 @@ export const MAX_MANIFEST_BYTES = 1_000_000;
 export const MAX_HTML_BYTES = 5_000_000;
 export const MAX_CODE_BYTES = 10_000_000;
 
-/** Builds a ref for `<root>/.explain/<name>`, or undefined if the folder isn't laid out like that inside the workspace. */
+/**
+ * Builds a ref for `<root>/.sidestory/<name>`, or undefined if the folder isn't laid out like that inside the workspace.
+ * A root that itself lies inside a Sidestory folder (`.sidestory/x/.sidestory/y`) is refused.
+ */
 export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   const parts = dir.path.split('/').filter(Boolean);
   const name = parts.at(-1);
-  if (!name || parts.at(-2) !== '.explain') return undefined;
+  if (!name || parts.at(-2) !== '.sidestory' || parts.slice(0, -2).includes('.sidestory')) return undefined;
   const root = vscode.Uri.joinPath(dir, '..', '..');
   const folder = vscode.workspace.getWorkspaceFolder(dir);
   if (!folder || !(root.path + '/').startsWith(folder.uri.path.replace(/\/?$/, '/'))) return undefined;
@@ -27,8 +30,8 @@ export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
 }
 
 export async function findExplainers(): Promise<ExplainerRef[]> {
-  const manifests = await vscode.workspace.findFiles('**/.explain/*/manifest.json', '**/{node_modules,.git,dist,out,build,target}/**', 200);
-  if (manifests.length === 200) log.warn('Found 200 or more explainers; only the first 200 are listed.');
+  const manifests = await vscode.workspace.findFiles('**/.sidestory/*/manifest.json', '**/{node_modules,.git,dist,out,build,target}/**', 200);
+  if (manifests.length === 200) log.warn('Found 200 or more sidestories; only the first 200 are listed.');
   return manifests
     .map((m) => refFromDir(vscode.Uri.joinPath(m, '..')))
     .filter((r): r is ExplainerRef => r !== undefined)
@@ -43,7 +46,7 @@ export function uriKey(uri: vscode.Uri | string): string {
 }
 
 export const manifestUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'manifest.json');
-export const htmlUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'explainer.html');
+export const htmlUri = (ref: ExplainerRef) => vscode.Uri.joinPath(ref.dir, 'sidestory.html');
 
 export const MAX_ASSET_BYTES = 5_000_000;
 

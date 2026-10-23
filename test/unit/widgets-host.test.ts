@@ -1,6 +1,6 @@
 // The rules behind widgets in the extension and the panel that need no browser or VS Code: consent hashing
 // and the git re-ask rule, what useAnchorCode may serve, state caps, the activation evidence, the watchdog's
-// escalation, and the extension's view of placeholders in explainer.html.
+// escalation, and the extension's view of placeholders in sidestory.html.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -83,18 +83,18 @@ describe('consent', () => {
   });
 
   it('an explainer whose widgets never ran here asks the first time, with or without git (an unzipped or copied-in explainer)', () => {
-    const rec = acknowledge(EMPTY_CONSENT, [file('.explain/a/w.tsx', 'h1')], true);
-    expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2')])).toMatchObject({ ask: true, first: true });
-    expect(decideConsent(rec, [file('.explain/b/w.tsx', 'h2', repo(null))])).toMatchObject({ ask: true, first: true });
+    const rec = acknowledge(EMPTY_CONSENT, [file('.sidestory/a/w.tsx', 'h1')], true);
+    expect(decideConsent(rec, [file('.sidestory/b/w.tsx', 'h2')])).toMatchObject({ ask: true, first: true });
+    expect(decideConsent(rec, [file('.sidestory/b/w.tsx', 'h2', repo(null))])).toMatchObject({ ask: true, first: true });
     // Nothing of it is recorded as the user's own while it asks: looking again still asks.
     for (const git of [undefined, repo(null)]) {
-      const d = decideConsent(rec, [file('.explain/b/w.tsx', 'h2', git)]);
+      const d = decideConsent(rec, [file('.sidestory/b/w.tsx', 'h2', git)]);
       expect(d.observed).toEqual([]);
-      expect(decideConsent(acknowledge(rec, d.observed, false), [file('.explain/b/w.tsx', 'h2', git)])).toMatchObject({ ask: true, first: true });
+      expect(decideConsent(acknowledge(rec, d.observed, false), [file('.sidestory/b/w.tsx', 'h2', git)])).toMatchObject({ ask: true, first: true });
     }
     // Agreed to: from then on, edits are the user's own.
-    const after = acknowledge(rec, [file('.explain/b/w.tsx', 'h2')], true);
-    expect(decideConsent(after, [file('.explain/b/w.tsx', 'h3'), file('.explain/b/x.ts', 'h4')])).toMatchObject({ ask: false, first: false });
+    const after = acknowledge(rec, [file('.sidestory/b/w.tsx', 'h2')], true);
+    expect(decideConsent(after, [file('.sidestory/b/w.tsx', 'h3'), file('.sidestory/b/x.ts', 'h4')])).toMatchObject({ ask: false, first: false });
   });
 
   it('git: switching back to a branch already agreed to doesn’t ask again; another version of it does', () => {
@@ -450,7 +450,7 @@ describe('watchdog (§4)', () => {
   });
 });
 
-describe('placeholders in explainer.html (extension side)', () => {
+describe('placeholders in sidestory.html (extension side)', () => {
   it('finds widget sources, and reports self-closing tags, bad src and broken props by line', () => {
     const html = [
       '<section>',

@@ -9,8 +9,8 @@ const EXTENSION_ID = 'paperkite.sidestory';
 const VIEW_TYPE = 'sidestory.explainer';
 const workspace = process.env.CX_WORKSPACE!;
 const eol = process.env.CX_EOL ?? 'lf';
-const explainerDir = vscode.Uri.file(join(workspace, '.explain', 'bit-reader'));
-const manifestPath = join(workspace, '.explain', 'bit-reader', 'manifest.json');
+const explainerDir = vscode.Uri.file(join(workspace, '.sidestory', 'bit-reader'));
+const manifestPath = join(workspace, '.sidestory', 'bit-reader', 'manifest.json');
 const caseInsensitiveFs = process.platform === 'win32' || process.platform === 'darwin';
 
 interface Manifest {

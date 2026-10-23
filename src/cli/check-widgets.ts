@@ -1,15 +1,15 @@
 // The standalone widget checker (docs/WIDGETS-PLAN.md §2 "Checking"), bundled as dist/check.cjs:
 //
-//   node <extension>/dist/check.cjs <explainer-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]
+//   node <extension>/dist/check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]
 //
-// Finds explainer.html's <explain-widget> elements, compiles each with the extension's widget compiler,
+// Finds sidestory.html's <explain-widget> elements, compiles each with the extension's widget compiler,
 // validates their props, checks the anchor ids widget code names against manifest.json, reports anchors
 // read through useAnchorCode that widgets won't get (not pinned, secret-looking files …) and placement
 // problems visible in the HTML and CSS. Prints `file:line: severity code: message`; exits 1 on errors.
 // Runs nothing from the repository (compiling isn't running), so it needs no consent.
 //
-// --types also writes .explain/tsconfig.json and .explain/.types/*.d.ts (as "Add Widget Types" does), so
-// `npx -y -p typescript tsc -p .explain` typechecks the widgets.
+// --types also writes .sidestory/tsconfig.json and .sidestory/.types/*.d.ts (as "Add Widget Types" does), so
+// `npx -y -p typescript tsc -p .sidestory` typechecks the widgets.
 //
 // --pin records each anchor's current code from the files on disk, as "Pin Anchors" does, never for
 // secret-looking files, and never for anchors widgets read unless --yes-widgets-may-read is given: those
@@ -61,7 +61,7 @@ export interface PinReport {
 }
 
 export interface CheckReport {
-  explainer: string;
+  sidestory: string;
   widgets: WidgetReport[];
   findings: Finding[];
   pin?: PinReport;
@@ -327,14 +327,14 @@ async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: 
     reports.push(report);
     if (w.nested) continue;
     if (!src) {
-      add(ctx, { severity: 'error', file: ctx.htmlFile, line: w.line, code: 'no-src', message: '<explain-widget> needs src="widgets/name.tsx" (a file in the explainer folder).' });
+      add(ctx, { severity: 'error', file: ctx.htmlFile, line: w.line, code: 'no-src', message: '<explain-widget> needs src="widgets/name.tsx" (a file in the sidestory folder).' });
       continue;
     }
     let p = bySrc.get(src);
     if (!p) bySrc.set(src, (p = compiler.compile(ctx.dir, src, { timeoutMs: 10_000 })));
     const r = await p;
     for (const d of [...r.errors.map((e) => ({ ...e, severity: 'error' as const })), ...r.warnings.map((e) => ({ ...e, severity: 'warning' as const }))]) {
-      const inHtml = d.file === 'explainer.html';
+      const inHtml = d.file === 'sidestory.html';
       add(ctx, { severity: d.severity, file: inHtml ? ctx.htmlFile : join(ctx.dir, d.file), line: inHtml ? w.line : d.line, column: inHtml ? undefined : d.column, code: d.code, message: d.message });
     }
     report.ok = r.errors.length === 0;
@@ -353,7 +353,7 @@ async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: 
       for (const u of found) {
         if (u.kind === 'useAnchorCode' && u.dynamic) mayReadAny = true;
         if (u.kind === 'highlight' && u.implicit && !w.anchor) {
-          add(ctx, { severity: 'warning', file: u.file, line: u.line, code: 'highlight-no-anchor', message: `highlight() without {anchor} uses the widget's enclosing anchor, but the widget at explainer.html:${w.line} isn't inside an element with data-explain-anchor; it highlights nothing. Put the widget in an anchored section or pass {anchor: 'id'}.` });
+          add(ctx, { severity: 'warning', file: u.file, line: u.line, code: 'highlight-no-anchor', message: `highlight() without {anchor} uses the widget's enclosing anchor, but the widget at sidestory.html:${w.line} isn't inside an element with data-explain-anchor; it highlights nothing. Put the widget in an anchored section or pass {anchor: 'id'}.` });
         }
         uses.push(u);
       }
@@ -399,7 +399,7 @@ async function checkAnchors(ctx: Context, manifest: Manifest | undefined, scan: 
       continue;
     }
     if ((u.kind === 'goToStep' || u.kind === 'useStepValue' || u.kind === 'useIsActive') && steps.size && !steps.has(u.id)) {
-      add(ctx, { severity: 'warning', ...at, code: 'not-a-step', message: `${call}: "${u.id}" isn't a step (a top-level element with data-explain-anchor in explainer.html), so it never becomes the current step.` });
+      add(ctx, { severity: 'warning', ...at, code: 'not-a-step', message: `${call}: "${u.id}" isn't a step (a top-level element with data-explain-anchor in sidestory.html), so it never becomes the current step.` });
     }
     if (u.kind === 'useAnchorCode') {
       if (!served.has(u.id)) served.set(u.id, (await servingProblem(ctx.root, manifest.anchors.get(u.id)!)) ?? null);
@@ -473,16 +473,16 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
 
 export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): Promise<CheckReport> {
   let dir = resolve(dirArg);
-  if (/explainer\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
-  const ctx: Context = { dir, root: dirname(dirname(dir)), htmlFile: join(dir, 'explainer.html'), manifestFile: join(dir, 'manifest.json'), findings: [] };
-  const report: CheckReport = { explainer: dir, widgets: [], findings: ctx.findings, errors: 0, warnings: 0 };
+  if (/sidestory\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
+  const ctx: Context = { dir, root: dirname(dirname(dir)), htmlFile: join(dir, 'sidestory.html'), manifestFile: join(dir, 'manifest.json'), findings: [] };
+  const report: CheckReport = { sidestory: dir, widgets: [], findings: ctx.findings, errors: 0, warnings: 0 };
 
-  if (basename(dirname(dir)) !== '.explain') {
-    add(ctx, { severity: 'warning', file: dir, code: 'not-in-explain', message: 'Explainers live in a folder under .explain/ at the repository root; manifest paths are read from the folder that holds .explain/.' });
+  if (basename(dirname(dir)) !== '.sidestory') {
+    add(ctx, { severity: 'warning', file: dir, code: 'not-in-sidestory', message: 'Sidestories live in a folder under .sidestory/ at the repository root; manifest paths are read from the folder that holds .sidestory/.' });
   }
   const html = await readText(ctx.htmlFile);
   if (html === undefined) {
-    add(ctx, { severity: 'error', file: ctx.htmlFile, code: 'not-found', message: "explainer.html can't be read." });
+    add(ctx, { severity: 'error', file: ctx.htmlFile, code: 'not-found', message: "sidestory.html can't be read." });
     return finish(report);
   }
   let manifestText = await readText(ctx.manifestFile);
@@ -502,7 +502,7 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   const scanned = scanHtml(html);
   const widgets = scanned.widgets;
   if (widgets.length > CHECK_LIMITS.widgetsPerExplainer) {
-    add(ctx, { severity: 'warning', file: ctx.htmlFile, line: widgets[CHECK_LIMITS.widgetsPerExplainer]!.line, code: 'too-many-widgets', message: `${widgets.length} widgets: at most ${CHECK_LIMITS.widgetsPerExplainer} run per explainer (and 8 at once); the rest show their fallback.` });
+    add(ctx, { severity: 'warning', file: ctx.htmlFile, line: widgets[CHECK_LIMITS.widgetsPerExplainer]!.line, code: 'too-many-widgets', message: `${widgets.length} widgets: at most ${CHECK_LIMITS.widgetsPerExplainer} run per sidestory (and 8 at once); the rest show their fallback.` });
   }
   const ids = new Map<string, number>();
   const css = await loadCss(ctx, scanned.styles);
@@ -561,16 +561,16 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
   if (p) {
     out.push(`Pinned ${p.pinned.length} anchor(s)${p.pinned.length ? `: ${p.pinned.map((x) => x.anchor).join(', ')}` : ''}; ${p.unchanged.length} already pinned; ${p.skipped.length + p.needsConsent.length} not pinned.`);
     if (p.widgetsMayRead.length) {
-      out.push('Widgets in this explainer may now read (once the quotes are committed, or confirmed in VS Code):');
+      out.push('Widgets in this sidestory may now read (once the quotes are committed, or confirmed in VS Code):');
       for (const e of p.widgetsMayRead) out.push(`  ${e.file} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`);
     }
   }
   const n = report.widgets.length;
-  out.push(n === 0 ? 'No <explain-widget> elements in explainer.html.' : `${n} widget${n === 1 ? '' : 's'} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
+  out.push(n === 0 ? 'No <explain-widget> elements in sidestory.html.' : `${n} widget${n === 1 ? '' : 's'} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
   return out.join('\n');
 }
 
-const USAGE = 'usage: node check.cjs <explainer-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]';
+const USAGE = 'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]';
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types')): Promise<number> {
@@ -593,10 +593,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   // --types: what "Add Widget Types" writes, for a terminal (typecheck with TYPECHECK_COMMAND).
   if (flags.has('--types')) {
     let dir = resolve(args[0]!);
-    if (/explainer\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
+    if (/sidestory\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
     const explain = dirname(dir);
-    if (!typesDir || basename(explain) !== '.explain') {
-      io.err(!typesDir ? 'check.cjs: the widget types are missing next to it' : `--types writes into the .explain folder, and ${dir} isn't in one`);
+    if (!typesDir || basename(explain) !== '.sidestory') {
+      io.err(!typesDir ? 'check.cjs: the widget types are missing next to it' : `--types writes into the .sidestory folder, and ${dir} isn't in one`);
       return 2;
     }
     const written = await writeWidgetTypes(explain, typesDir);

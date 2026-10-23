@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generates the diagrams and widget data of the tiny-lsm explainers.
+"""Generates the diagrams and widget data of the tiny-lsm sidestories.
 
-- SVGs go between `<!-- diagram:NAME -->` and `<!-- /diagram:NAME -->` markers in each explainer.html,
+- SVGs go between `<!-- diagram:NAME -->` and `<!-- /diagram:NAME -->` markers in each sidestory.html,
   and the shared diagram styles between `/* dia-css */` markers in their <style>.
-- The overview's geometry goes to .explain/lsm-overview/widgets/layout.json, so the static diagram and
+- The overview's geometry goes to .sidestory/lsm-overview/widgets/layout.json, so the static diagram and
   the simulation widget draw the same picture.
 - lines.json (next to the widgets) maps each simulation step to the line of Python it "runs", relative
   to the anchor it is shown in, found by searching the code: rerun this after editing the code.
@@ -14,7 +14,7 @@ Run from examples/tiny-lsm with Python 3.11+:
 
     python3 tools/diagrams.py
 
-Styling lives in each explainer's <style> (classes .blk, .w-write, .w-read ...), so the diagrams take
+Styling lives in each sidestory's <style> (classes .blk, .w-write, .w-read ...), so the diagrams take
 the reader's VS Code theme colours; nothing here is a literal colour.
 """
 import heapq
@@ -28,7 +28,7 @@ from html import escape
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPLAIN = ROOT / ".explain"
+SIDESTORY = ROOT / ".sidestory"
 sys.path.insert(0, str(ROOT))
 
 from tiny_lsm import DB, Options  # noqa: E402
@@ -550,7 +550,7 @@ LINES = {
 
 def anchor_start(folder, anchor, path):
     """The anchor's first line in the file: from its pinned quote if it has one, else its range."""
-    manifest = json.loads((EXPLAIN / folder / "manifest.json").read_text())
+    manifest = json.loads((SIDESTORY / folder / "manifest.json").read_text())
     a = manifest["anchors"][anchor]
     text = (ROOT / path).read_text()
     quote = a.get("quote", {}).get("exact")
@@ -573,7 +573,7 @@ def lines_json(folder):
                 raise SystemExit(f"{path}: no line matches {pattern!r} for {anchor}.{key}")
             first = hits[0] - start + 1
             out[anchor][key] = first if count == 1 else [first, first + count - 1]
-    (EXPLAIN / folder / "widgets" / "lines.json").write_text(json.dumps(out, indent=1) + "\n")
+    (SIDESTORY / folder / "widgets" / "lines.json").write_text(json.dumps(out, indent=1) + "\n")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -668,13 +668,13 @@ def splice(path, name, svg):
 
 def main():
     ov = overview()
-    (EXPLAIN / "lsm-overview" / "widgets" / "layout.json").write_text(json.dumps(ov.layout(), separators=(",", ":")) + "\n")
-    # The compaction visualizer runs the same model as the simulation: one source, copied (widgets can't import across explainers).
-    shutil.copyfile(EXPLAIN / "lsm-overview" / "widgets" / "model.ts", EXPLAIN / "lsm-compaction" / "widgets" / "model.ts")
+    (SIDESTORY / "lsm-overview" / "widgets" / "layout.json").write_text(json.dumps(ov.layout(), separators=(",", ":")) + "\n")
+    # The compaction visualizer runs the same model as the simulation: one source, copied (widgets can't import across sidestories).
+    shutil.copyfile(SIDESTORY / "lsm-overview" / "widgets" / "model.ts", SIDESTORY / "lsm-compaction" / "widgets" / "model.ts")
     for folder in LINES:
-        if (EXPLAIN / folder / "manifest.json").exists():
+        if (SIDESTORY / folder / "manifest.json").exists():
             lines_json(folder)
-    pages = {p.parent.name: p for p in EXPLAIN.glob("*/explainer.html")}
+    pages = {p.parent.name: p for p in SIDESTORY.glob("*/sidestory.html")}
     for page in pages.values():
         splice_css(page)
     if "lsm-overview" in pages:

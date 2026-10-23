@@ -267,7 +267,7 @@ export class Highlighter {
     if (who.tripped) return;
     who.tripped = true;
     who.trippedAt = Date.now();
-    this.opts.log?.(`Code blocks in this explainer ${why}; they stay plain in this panel for ${BREAKER_WINDOW_MS / 60_000} minutes.`);
+    this.opts.log?.(`Code blocks in this sidestory ${why}; they stay plain in this panel for ${BREAKER_WINDOW_MS / 60_000} minutes.`);
   }
 
   /** Runs a job in the worker; resolves with its outcome and the worker time it took (`ms`). */

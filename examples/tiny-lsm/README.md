@@ -1,6 +1,6 @@
 # tiny-lsm: a log-structured merge tree, explained
 
-A small but real key-value store in Python (stdlib only, 3.11+, under 900 lines plus tests), and a set of [Sidestory](../../README.md) explainers that walk through it beside the code: an overview with block diagrams of the write and read paths, one explainer per component, and interactive widgets.
+A small but real key-value store in Python (stdlib only, 3.11+, under 900 lines plus tests), and a set of [Sidestory](../../README.md) sidestories that walk through it beside the code: an overview with block diagrams of the write and read paths, one sidestory per component, and interactive widgets.
 
 ![The overview's block diagram, with the code beside it](screenshots/01-overview-block-diagram.png)
 
@@ -26,11 +26,11 @@ python3 -m tiny_lsm.tests            # or: python3 -m unittest
 python3 -m tiny_lsm /tmp/db          # then: put a 1, get a, load 2000, stats, scan key0100 key0110
 ```
 
-## The explainers
+## The sidestories
 
-Open the folder in VS Code with Sidestory installed, run **Sidestory: Open Explainer** and pick **lsm-overview**. Each component card offers a peek at its explainer or a dive into it.
+Open the folder in VS Code with Sidestory installed, run **Sidestory: Open Sidestory** and pick **lsm-overview**. Each component card offers a peek at its sidestory or a dive into it.
 
-| Explainer | Steps |
+| Sidestory | Steps |
 |---|---|
 | `lsm-overview` | At a glance (block diagram) · A put · Compaction · A get · A scan · Recovery |
 | `lsm-wal` | A record (byte layout) · flush and fsync · Replay (pick a crash) · On open · Old logs · Rotation |
@@ -40,7 +40,7 @@ Open the folder in VS Code with Sidestory installed, run **Sidestory: Open Expla
 | `lsm-compaction` | Levels · Watch it (visualizer) · Picking · Merging · Tombstones · The swap · The cost |
 | `lsm-merge` | Why a heap · Step by step (a CSS stepper through a real merge) · Refilling · Tombstones |
 
-Three widgets; VS Code asks once per explainer before running them, and each has a static fallback:
+Three widgets; VS Code asks once per sidestory before running them, and each has a static fallback:
 
 - **The simulation** (`lsm-overview`, in the put, compaction, get and scan steps): the overview's block diagram driven by a model of the Python code, step by step. Entries travel to the log and the memtable, flushes add L0 tables, compactions merge them down, gets probe tables through their bloom filters, and a scan pops entries off its heap. The editor highlights the line of Python each step runs. Add your own puts, gets and deletes.
 - **The bloom filter playground** (`lsm-bloom`): add keys, look keys up, change m and k; the bits, the false-positive rate (measured and by formula) and a chart of the rate against k.
@@ -50,7 +50,7 @@ Three widgets; VS Code asks once per explainer before running them, and each has
 
 ## How the pictures stay true to the code
 
-- The widget model ([`.explain/lsm-overview/widgets/model.ts`](.explain/lsm-overview/widgets/model.ts)) follows the Python line for line, with the same byte sizes and the same bloom filter hash. `node tools/model_trace.mjs | python3 tools/check_model.py` runs its scenarios through the real code and compares every table, entry and filter bit.
+- The widget model ([`.sidestory/lsm-overview/widgets/model.ts`](.sidestory/lsm-overview/widgets/model.ts)) follows the Python line for line, with the same byte sizes and the same bloom filter hash. `node tools/model_trace.mjs | python3 tools/check_model.py` runs its scenarios through the real code and compares every table, entry and filter bit.
 - [`tools/diagrams.py`](tools/diagrams.py) draws the block diagram (and the geometry the simulation reuses), and draws the SSTable layout, the bloom filter, the compaction and the merge figures from data that tiny_lsm itself wrote. It also finds, by searching the code, which line each simulation step highlights. Rerun it after editing the code: `python3 tools/diagrams.py`.
 
 ## Screenshots

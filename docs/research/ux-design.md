@@ -1,5 +1,7 @@
 # Sidestory: UX / UI spec
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Companion to `docs/DESIGN.md`. Written 2026-10-21. Opinionated; argue with it in a PR.
 
 **Prime directive: nothing ever requires a reload.** Code edits, explainer edits (Claude or human), comments, narration and staleness stream into a pane that keeps your scroll position, focus, half-typed text and active step. Every design choice below is checked against that.

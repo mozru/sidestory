@@ -21,7 +21,7 @@ export interface Quote {
 
 /** An anchor as written, without its id. Thread code anchors reuse this shape. */
 export interface AnchorSpec {
-  /** Repo-relative POSIX path, from the directory that holds `.explain/`. */
+  /** Repo-relative POSIX path, from the directory that holds `.sidestory/`. */
   file: string;
   /** Where the code was when the anchor was written. A hint, not the truth. */
   range: LineRange;
@@ -118,8 +118,8 @@ export const anchorSpecSchema = z.looseObject({
     .optional(),
 });
 
-/** An explainer's folder name under `.explain/`, as used in `data-explain-detail`. */
-export const explainerNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, 'explainer names use letters, digits, ".", "-" and "_"');
+/** An explainer's folder name under `.sidestory/`, as used in `data-explain-detail`. */
+export const explainerNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, 'sidestory names use letters, digits, ".", "-" and "_"');
 
 export const anchorIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/, 'anchor ids start with a letter and use letters, digits, - and _');
 

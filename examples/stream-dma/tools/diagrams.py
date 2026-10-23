@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Generates the block diagrams in the stream-dma explainers.
+"""Generates the block diagrams in the stream-dma sidestories.
 
 The SVGs are written between `<!-- diagram:NAME -->` and `<!-- /diagram:NAME -->` markers in each
-explainer.html, and the overview's geometry goes to .explain/dma-overview/widgets/layout.json, so the
+sidestory.html, and the overview's geometry goes to .sidestory/dma-overview/widgets/layout.json, so the
 static diagram and the simulation widget draw the same picture. Run from examples/stream-dma:
 
     python3 tools/diagrams.py
 
-Styling lives in each explainer's <style> (classes .blk, .w-data, .w-addr, .w-ctl ...), so the
+Styling lives in each sidestory's <style> (classes .blk, .w-data, .w-addr, .w-ctl ...), so the
 diagrams take the reader's VS Code theme colours; nothing here is a literal colour.
 """
 import json
@@ -17,7 +17,7 @@ from pathlib import Path
 from html import escape
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPLAIN = ROOT / '.explain'
+SIDESTORY = ROOT / '.sidestory'
 
 
 class Diagram:
@@ -344,7 +344,7 @@ def fsm_static():
             + ''.join(out) + '</svg>')
 
 
-# Shared diagram styles, spliced into each explainer's <style> between /* dia-css */ markers.
+# Shared diagram styles, spliced into each sidestory's <style> between /* dia-css */ markers.
 DIA_CSS = """
   .dia { display: block; width: 100%; height: auto; font-family: var(--vscode-editor-font-family); overflow: visible; }
   .dia text { fill: var(--vscode-editor-foreground); }
@@ -404,9 +404,9 @@ def splice(path, name, svg):
 
 def main():
     ov = overview()
-    (EXPLAIN / 'dma-overview' / 'widgets').mkdir(parents=True, exist_ok=True)
-    (EXPLAIN / 'dma-overview' / 'widgets' / 'layout.json').write_text(json.dumps(ov.layout(), separators=(',', ':')) + '\n')
-    page = EXPLAIN / 'dma-overview' / 'explainer.html'
+    (SIDESTORY / 'dma-overview' / 'widgets').mkdir(parents=True, exist_ok=True)
+    (SIDESTORY / 'dma-overview' / 'widgets' / 'layout.json').write_text(json.dumps(ov.layout(), separators=(',', ':')) + '\n')
+    page = SIDESTORY / 'dma-overview' / 'sidestory.html'
     for name in ('overview', 'control', 'datapath', 'backpressure', 'errors'):
         if f'<!-- diagram:{name} -->' in page.read_text():
             splice(page, name, ov.svg())
@@ -415,11 +415,11 @@ def main():
             ('dma-wr-port', 'inside', lambda: m_port('wr')), ('dma-csr', 'inside', m_csr)]
     splice_css(page)
     for folder, name, fn in jobs:
-        p = EXPLAIN / folder / 'explainer.html'
+        p = SIDESTORY / folder / 'sidestory.html'
         if p.exists():
             splice(p, name, fn().svg())
             splice_css(p)
-    p = EXPLAIN / 'dma-ctrl' / 'explainer.html'
+    p = SIDESTORY / 'dma-ctrl' / 'sidestory.html'
     if p.exists() and '<!-- diagram:fsm -->' in p.read_text():
         splice(p, 'fsm', fsm_static())
 

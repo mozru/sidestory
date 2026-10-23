@@ -1,5 +1,7 @@
 # Code anchors: research and recommended design
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Answers DESIGN.md §4.2 and open question 1. Researched 2026-10-21.
 
 ## 1. What others do

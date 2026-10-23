@@ -65,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const start = async (trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, opts: SessionOptions = {}) => {
     const decorations = new Decorations();
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png'); // marks the tab, so its title is just the sidestory's
     const s = new ExplainerSession(trail, panel, context.extensionUri, decorations, host, opts);
     sessions.add(s);
     current = s;
@@ -121,9 +122,9 @@ export function activate(context: vscode.ExtensionContext): void {
       toldSkipped = true;
       const refs = skipped;
       skipped = [];
-      const open = refs.length === 1 ? 'Open Explainer' : 'Open Explainers';
-      const what = refs.length === 1 ? `The explainer “${refs[0]!.name}” was` : `${refs.length} explainers were`;
-      void vscode.window.showInformationMessage(`${what} open, but explainers aren't reopened automatically in Restricted Mode.`, open).then(async (choice) => {
+      const open = refs.length === 1 ? 'Open Sidestory' : 'Open Sidestories';
+      const what = refs.length === 1 ? `The sidestory “${refs[0]!.name}” was` : `${refs.length} sidestories were`;
+      void vscode.window.showInformationMessage(`${what} open, but sidestories aren't reopened automatically in Restricted Mode.`, open).then(async (choice) => {
         // The click is the user's consent to show them.
         if (choice === open) for (const r of refs) await vscode.commands.executeCommand('sidestory.open', r.dir);
       });
@@ -142,7 +143,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('sidestory.open', async (dir?: vscode.Uri | string) => {
       const ref = dir ? refFromDir(typeof dir === 'string' ? vscode.Uri.parse(dir) : dir) : await pickExplainer();
       if (!ref) {
-        if (dir) void vscode.window.showWarningMessage('Not an explainer: expected a folder like .explain/<name> inside the workspace.');
+        if (dir) void vscode.window.showWarningMessage('Not a sidestory: expected a folder like .sidestory/<name> inside the workspace.');
         return;
       }
       const existing = showing(ref);
@@ -180,7 +181,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('sidestory.revokeWidgetConsent', async () => {
       await widgets.revokeConsent();
-      void vscode.window.showInformationMessage('Widget consent revoked: explainers ask again before running widgets in this workspace.');
+      void vscode.window.showInformationMessage('Widget consent revoked: sidestories ask again before running widgets in this workspace.');
     }),
     vscode.commands.registerCommand('sidestory.enableWidgets', async () => {
       if (!widgets.enabled()) {
@@ -206,7 +207,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('sidestory.copyWidgetCheckCommand', async (dir?: vscode.Uri | string) => {
       const ref = await explainerFor(dir);
-      const target = ref ? vscode.workspace.asRelativePath(ref.dir, false) : '.explain/<name>';
+      const target = ref ? vscode.workspace.asRelativePath(ref.dir, false) : '.sidestory/<name>';
       const cmd = `node "${vscode.Uri.joinPath(context.extensionUri, 'dist', 'check.cjs').fsPath}" ${JSON.stringify(target)}`;
       await vscode.env.clipboard.writeText(cmd);
       void vscode.window.showInformationMessage(`Copied: ${cmd}`);
@@ -247,7 +248,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 /**
  * The trail a restored panel had: the explainer it showed, with the explainers it was dived into from
- * (siblings under the same `.explain/`). Just the one explainer if the saved trail doesn't fit.
+ * (siblings under the same `.sidestory/`). Just the one explainer if the saved trail doesn't fit.
  */
 export function restoredTrail(state: PanelState | undefined): [ExplainerRef, ...ExplainerRef[]] | undefined {
   const shown = typeof state?.dir === 'string' ? refFromDir(vscode.Uri.parse(state.dir)) : undefined;
@@ -278,13 +279,13 @@ function target(): ExplainerSession | undefined {
 async function pickExplainer(): Promise<ExplainerRef | undefined> {
   const all = await findExplainers();
   if (all.length === 0) {
-    void vscode.window.showInformationMessage('No explainers found. An explainer is a folder like .explain/<name>/ with explainer.html and manifest.json.');
+    void vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with a page and manifest.json.');
     return undefined;
   }
   if (all.length === 1) return all[0];
   const pick = await vscode.window.showQuickPick(
     all.map((ref) => ({ label: ref.name, description: vscode.workspace.asRelativePath(ref.dir), ref })),
-    { placeHolder: 'Open which explainer?' },
+    { placeHolder: 'Open which sidestory?' },
   );
   return pick?.ref;
 }

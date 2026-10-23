@@ -128,7 +128,7 @@ export class WidgetHost implements vscode.Disposable {
     this.context = context;
     // Widget files are observed in every explainer, not only while a panel is open, so edits are recorded
     // as the user's own (and diagnostics stay current).
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.explain/*/**');
+    const watcher = vscode.workspace.createFileSystemWatcher('**/.sidestory/*/**');
     const changed = (uri: vscode.Uri) => this.onWorkspaceFile(uri);
     this.subscriptions.push(
       watcher,
@@ -361,13 +361,13 @@ export class WidgetHost implements vscode.Disposable {
     };
     let hash = await read();
     const unknown = (): WidgetFile => ({ path, hash, git: { kind: 'unknown' } });
-    // Any link from the repository root down (the explainer folder itself, `.explain`, a folder in it): git
+    // Any link from the repository root down (the explainer folder itself, `.sidestory`, a folder in it): git
     // knows the file by another path, or not at all.
     if (await throughLink(uri, root)) return unknown();
     const l = await this.git.lookup(uri);
     if (l.kind !== 'repo') return { path, hash, git: l };
-    // And from the repository's own root: a link above the folder holding `.explain` (b -> a, opened as
-    // b/.explain/x) makes git know the file by another path, or not at all.
+    // And from the repository's own root: a link above the folder holding `.sidestory` (b -> a, opened as
+    // b/.sidestory/x) makes git know the file by another path, or not at all.
     if (await throughLink(uri, l.repo.rootUri)) return unknown();
     const known = this.consent().files[path];
     const settle = known?.hash !== hash;
@@ -400,7 +400,7 @@ export class WidgetHost implements vscode.Disposable {
    */
   private onWorkspaceFile(uri: vscode.Uri): void {
     const at = Date.now();
-    const m = /^(.*\/\.explain\/[^/]+)(\/.*)$/.exec(uri.path);
+    const m = /^(.*\/\.sidestory\/[^/]+)(\/.*)$/.exec(uri.path);
     if (!m) return;
     const ref = refFromDir(uri.with({ path: m[1]! }));
     if (!ref) return;
@@ -411,7 +411,7 @@ export class WidgetHost implements vscode.Disposable {
       this.checkTimers.delete(key);
       void this.check(ref);
     }, 300));
-    if (!vscode.workspace.isTrusted || !this.consent().granted || /\/(manifest\.json|explainer\.html)$/.test(uri.path)) return;
+    if (!vscode.workspace.isTrusted || !this.consent().granted || /\/(manifest\.json|sidestory\.html)$/.test(uri.path)) return;
     const path = this.consentPath(uri);
     if (!Object.hasOwn(this.consent().files, path)) return;
     void (async () => {
@@ -654,7 +654,7 @@ export class WidgetHost implements vscode.Disposable {
     // No reset loop: a recreated panel that still misses beats is left alone.
     if (p.port.recovered) {
       p.stopped = true;
-      void vscode.window.showErrorMessage(`The explainer panel “${modalText(p.port.title() || ref.name)}” is still not responding. Close it to recover.`);
+      void vscode.window.showErrorMessage(`The sidestory panel “${modalText(p.port.title() || ref.name)}” is still not responding. Close it to recover.`);
       return;
     }
     if (!(await this.escalate(p, p.watchdog.suspect()))) {
@@ -1009,8 +1009,8 @@ export class PanelWidgets {
       const runAndRead = 'Run Widgets and Let Them Read';
       const list = (xs: string[]) => xs.slice(0, 10).join(', ') + (xs.length > 10 ? `, and ${xs.length - 10} more` : '');
       const detail = [
-        `Explainer: “${modalText(this.port.title() || ref.name)}” (${plural(this.srcs.length, 'widget')}: ${list(this.srcs)})`,
-        this.first && !this.changed.length && !this.added.length ? "This explainer's widgets haven't run in this workspace before." : '',
+        `Sidestory: “${modalText(this.port.title() || ref.name)}” (${plural(this.srcs.length, 'widget')}: ${list(this.srcs)})`,
+        this.first && !this.changed.length && !this.added.length ? "This sidestory's widgets haven't run in this workspace before." : '',
         this.changed.length ? `Changed through git since you last agreed: ${list(this.changed)}` : '',
         this.added.length ? `New from git (not agreed to before): ${list(this.added)}` : '',
         'Your answer covers this code. Your own edits to it keep running; code that arrives through git (a pull, a checkout) asks again.',
@@ -1018,7 +1018,7 @@ export class PanelWidgets {
         'Widgets run in a sandbox that blocks the usual network calls (fetch fails), but the sandbox is best effort: treat what they can see as something they could send.',
       ].filter(Boolean).join('\n');
       const choice = await ourModal(() => vscode.window.showWarningMessage(
-        "Widgets are code from this repository. They can read the code this explainer points at (including unsaved edits) and may be able to reach the network. Run this explainer's widgets?",
+        "Widgets are code from this repository. They can read the code this sidestory points at (including unsaved edits) and may be able to reach the network. Run this sidestory's widgets?",
         { modal: true, detail },
         ...(reads.length ? [runAndRead, run] : [run]),
       ));

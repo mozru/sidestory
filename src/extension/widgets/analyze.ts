@@ -473,7 +473,7 @@ export function analyzeSource(file: string, text: string): ModuleAnalysis {
     if (s.length > 100_000) return;
     let m: RegExpExecArray | null;
     if ((m = RE_FULL_HEIGHT.exec(s))) warn('full-height', node, `${m[0]} sizes to the panel, not the widget; widgets are as tall as their content (use a fixed height like h-80).`, m[0]);
-    if (RE_REMOTE_URL.test(s)) warn('remote-url', node, 'Widgets can\'t load remote URLs; put the file in the explainer folder and import it (./image.png, ./data.json).');
+    if (RE_REMOTE_URL.test(s)) warn('remote-url', node, 'Widgets can\'t load remote URLs; put the file in the sidestory folder and import it (./image.png, ./data.json).');
     if (RE_HSL_VAR.test(s)) warn('hsl-var', node, 'hsl(var(--…)) doesn\'t work here: theme variables are complete colors; use var(--primary) or the Tailwind class (bg-primary).');
     if ((m = RE_TW3_OPACITY.exec(s))) warn('tw3-opacity', node, `${m[0]} is Tailwind v3; Tailwind v4 uses a slash: bg-black/50.`, m[0]);
     if ((m = RE_PALETTE_TEXT.exec(s)) && !RE_DARK_TEXT.test(s)) warn('palette-text', node, `${m[0]} is a fixed grey: it nearly vanishes in dark (or light) themes. Use text-foreground or text-muted-foreground, which follow the theme.`, m[0]);

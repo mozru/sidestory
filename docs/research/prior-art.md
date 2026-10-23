@@ -1,5 +1,7 @@
 # Prior art: Sidestory
 
+> Written when the folder was `.explain/`, the page was `explainer.html` and sidestories were called explainers.
+
 Researched 2026-10-21. Lens: the DESIGN.md brief, plus the hard requirement that **everything updates live** (no reloads, reopening or re-running, and scroll and focus are kept). Items marked *(unverified)* come only from secondary sources.
 
 ---

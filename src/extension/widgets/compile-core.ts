@@ -144,13 +144,13 @@ export class WidgetCompilerCore {
     const entry = normalizeEntry(src);
     const empty = (e: Diag): CompileResult => ({ entry: entry.ok ? entry.key : '', modules: {}, libraries: [], icons: {}, warnings: [], errors: [e], hash: '', files: [] });
     const shownSrc = JSON.stringify(src.slice(0, 200));
-    if (!entry.ok) return empty({ file: 'explainer.html', code: entry.code, message: `Widget src ${shownSrc}: ${entry.message}.` });
+    if (!entry.ok) return empty({ file: 'sidestory.html', code: entry.code, message: `Widget src ${shownSrc}: ${entry.message}.` });
 
     let root: string;
     try {
       root = await realpath(explainerDir);
     } catch {
-      return empty({ file: 'explainer.html', code: 'not-found', message: "The explainer folder can't be read." });
+      return empty({ file: 'sidestory.html', code: 'not-found', message: "The sidestory folder can't be read." });
     }
 
     const loaded = new Map<string, Loaded>();
@@ -171,7 +171,7 @@ export class WidgetCompilerCore {
       const real = await realPathInside(abs, root);
       if (!real) {
         const exists = await lstat(abs).then(() => true, () => false);
-        return exists ? { code: 'outside-folder', message: 'the file is a link to somewhere outside the explainer folder' } : { code: 'not-found', message: 'no such file' };
+        return exists ? { code: 'outside-folder', message: 'the file is a link to somewhere outside the sidestory folder' } : { code: 'not-found', message: 'no such file' };
       }
       if (isSecretFileName(basename(real))) return { code: 'secret-file', message: 'the file links to a file with a secret-looking name; widgets never get those' };
       const max = kind === 'image' ? LIMITS.imageBytes : LIMITS.totalSourceBytes - sourceBytes;
@@ -260,7 +260,7 @@ export class WidgetCompilerCore {
       return true;
     };
 
-    const ok = await load(entry.key, { file: 'explainer.html', code: '', message: `Widget src ${shownSrc}` });
+    const ok = await load(entry.key, { file: 'sidestory.html', code: '', message: `Widget src ${shownSrc}` });
 
     if (ok) {
       // Named imports between the widget's own modules.
@@ -365,7 +365,7 @@ export class WidgetCompilerCore {
           errors.push(
             ext && !kindOf(r.key) && !r.key.endsWith('/')
               ? { ...at, code: 'bad-extension', message: `Can't import '${spec}': widgets can import ${ALLOWED_EXTENSIONS.join(', ')} files.` }
-              : { ...at, code: 'not-found', message: `Can't import '${spec}': no such file in the explainer folder.` },
+              : { ...at, code: 'not-found', message: `Can't import '${spec}': no such file in the sidestory folder.` },
           );
           continue;
         }
@@ -384,7 +384,7 @@ export class WidgetCompilerCore {
         else if (spec.startsWith(UI_PREFIX)) {
           errors.push({ ...at, code: 'unknown-import', message: `'${spec}' isn't one of the provided components (${UI_COMPONENTS.join(', ')}).${didYouMean(spec.slice(UI_PREFIX.length), UI_COMPONENTS)}` });
         } else {
-          errors.push({ ...at, code: 'unknown-import', message: `'${spec}' can't be imported in a widget.${didYouMean(spec, ALLOWED_SPECIFIERS) || ' Widgets can import react, recharts, d3, motion/react, lucide-react, lodash, clsx, tailwind-merge, @/components/ui/*, @/lib/utils and explainer, plus files in the explainer folder.'}` });
+          errors.push({ ...at, code: 'unknown-import', message: `'${spec}' can't be imported in a widget.${didYouMean(spec, ALLOWED_SPECIFIERS) || ' Widgets can import react, recharts, d3, motion/react, lucide-react, lodash, clsx, tailwind-merge, @/components/ui/*, @/lib/utils and explainer (the widget helpers), plus files in the sidestory folder.'}` });
         }
         continue;
       }

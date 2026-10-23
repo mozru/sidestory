@@ -23,7 +23,7 @@ beforeAll(() => {
 const panels: { dispose(): void }[] = [];
 
 function open(name: string, decorations: Record<string, unknown> = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} }) {
-  const ref = refFromDir(Uri.file(`${root}/.explain/${name}`) as never)!;
+  const ref = refFromDir(Uri.file(`${root}/.sidestory/${name}`) as never)!;
   const posted: ToWebview[] = [];
   const messages = new EventEmitter<unknown>();
   const disposed = new EventEmitter<void>();

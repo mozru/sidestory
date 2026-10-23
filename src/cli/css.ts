@@ -329,7 +329,7 @@ export function describeProblem(p: PlacementProblem, isWidget: boolean): string 
   const who = isWidget ? 'the <explain-widget> itself' : `ancestor ${describeElement(p.element)} (line ${p.element.line})`;
   const where = p.source.kind === 'inline'
     ? 'in its style attribute'
-    : `from \`${p.source.selector}\` (${p.source.file ?? 'explainer.html'}:${p.source.line}${p.source.conditions.length ? `, inside ${p.source.conditions.join(' ')}` : ''})`;
+    : `from \`${p.source.selector}\` (${p.source.file ?? 'sidestory.html'}:${p.source.line}${p.source.conditions.length ? `, inside ${p.source.conditions.join(' ')}` : ''})`;
   const decl = `${p.property}: ${p.value}`;
   if (/^overflow/.test(p.property)) {
     return `${who} scrolls (${decl}, ${where}). The widget is shown only while that box doesn't actually overflow; when it does, readers get the fallback. Move the widget out of the scrolling box.`;

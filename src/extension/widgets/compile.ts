@@ -39,7 +39,7 @@ export function relativize(message: string, explainerDir: string): string {
 
 function failed(src: string, code: string, message: string): CompileResult {
   const e = normalizeEntry(src);
-  const file = e.ok ? e.key : 'explainer.html';
+  const file = e.ok ? e.key : 'sidestory.html';
   return { entry: e.ok ? e.key : '', modules: {}, libraries: [], icons: {}, warnings: [], errors: [{ file, code, message } satisfies Diag], hash: '', files: [] };
 }
 

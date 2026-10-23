@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks the simulation widget's model against the real code.
 
-Runs every scenario of .explain/lsm-overview/widgets/model.ts through tiny_lsm with the
+Runs every scenario of .sidestory/lsm-overview/widgets/model.ts through tiny_lsm with the
 model's limits, and compares what each ends with: the tables of every level (file
 number, key range, size, entries and bloom filter bits), the memtable, the live log,
 and what each get and scan returned. From examples/tiny-lsm (Python 3.11+, Node 22.18+):

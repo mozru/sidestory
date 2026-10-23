@@ -1,8 +1,8 @@
-// Prints what the simulation widget's model (.explain/lsm-overview/widgets/model.ts) does with each of its
+// Prints what the simulation widget's model (.sidestory/lsm-overview/widgets/model.ts) does with each of its
 // scenarios, as JSON, for tools/check_model.py to compare with the real code. Node 22.18 or later:
 //
 //     node tools/model_trace.mjs | python3 tools/check_model.py
-import { OPTS, SCENARIOS, simulate } from '../.explain/lsm-overview/widgets/model.ts';
+import { OPTS, SCENARIOS, simulate } from '../.sidestory/lsm-overview/widgets/model.ts';
 
 const out = { opts: OPTS, scenarios: {} };
 for (const [name, s] of Object.entries(SCENARIOS)) {

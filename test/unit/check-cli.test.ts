@@ -28,14 +28,14 @@ afterAll(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-/** A repository holding `.explain/demo` with `files` (paths relative to the repository). Returns the explainer folder. */
+/** A repository holding `.sidestory/demo` with `files` (paths relative to the repository). Returns the explainer folder. */
 function repoWith(files: Record<string, string>): string {
   const root = join(base, `repo${n++}`);
   for (const [p, content] of Object.entries(files)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), content);
   }
-  return join(root, '.explain/demo');
+  return join(root, '.sidestory/demo');
 }
 
 const CODE = 'line 1\nfunction refill() {\n  a = b;\n}\nline 5\nconst x = 1;\n';
@@ -156,7 +156,7 @@ describe('placement (CSS)', () => {
 describe('anchorUses', () => {
   it('finds anchor ids in compiled widget code, through renamed and namespace imports', async () => {
     const dir = repoWith({
-      '.explain/demo/w.tsx': [
+      '.sidestory/demo/w.tsx': [
         "import { reveal as rv, Ref, useAnchorCode, highlight, goToStep, useStepValue, useIsActive } from 'explainer';",
         "import * as ex from 'explainer';",
         'export default function W({ id }: { id: string }) {',
@@ -186,9 +186,9 @@ describe('checkExplainer', () => {
   it('passes a clean explainer (an unpinned useAnchorCode anchor is a warning)', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
-      '.explain/demo/manifest.json': manifest(ANCHORS),
-      '.explain/demo/explainer.html': page(section('refill', widgetEl('widgets/w.tsx', ' height="240"')) + section('other', '<p>x</p>')),
-      '.explain/demo/widgets/w.tsx': GOOD_WIDGET,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('widgets/w.tsx', ' height="240"')) + section('other', '<p>x</p>')),
+      '.sidestory/demo/widgets/w.tsx': GOOD_WIDGET,
     });
     const r = await check(dir);
     expect(r.errors).toBe(0);
@@ -203,9 +203,9 @@ describe('checkExplainer', () => {
   it('reads a CRLF checkout (Windows) the same way: same findings, same lines', async () => {
     const files = (eol: string) => ({
       'src/a.ts': CODE.replace(/\n/g, eol),
-      '.explain/demo/manifest.json': manifest(ANCHORS).replace(/\n/g, eol),
-      '.explain/demo/explainer.html': page(section('refill', ['<div style="transform: scale(2)">', '<explain-widget src="widgets/w.tsx" title="W">', '<script type="application/json">{', '  "depth": 8,', '}</script>', 'fallback', '</explain-widget></div>'].join('\n'))).replace(/\n/g, eol),
-      '.explain/demo/widgets/w.tsx': ["import { goToStep } from 'explainer';", 'export default function W() {', "  return <button onClick={() => goToStep('nope')}>x</button>;", '}'].join(eol),
+      '.sidestory/demo/manifest.json': manifest(ANCHORS).replace(/\n/g, eol),
+      '.sidestory/demo/sidestory.html': page(section('refill', ['<div style="transform: scale(2)">', '<explain-widget src="widgets/w.tsx" title="W">', '<script type="application/json">{', '  "depth": 8,', '}</script>', 'fallback', '</explain-widget></div>'].join('\n'))).replace(/\n/g, eol),
+      '.sidestory/demo/widgets/w.tsx': ["import { goToStep } from 'explainer';", 'export default function W() {', "  return <button onClick={() => goToStep('nope')}>x</button>;", '}'].join(eol),
     });
     const lines = async (eol: string) => {
       const dir = repoWith(files(eol));
@@ -217,8 +217,8 @@ describe('checkExplainer', () => {
   it('reports compile errors in the widget file, bad props, unknown anchors and placement, and exits 1', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
-      '.explain/demo/manifest.json': manifest(ANCHORS),
-      '.explain/demo/explainer.html': page(
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(
         section('refill', [
           '<div style="transform: scale(2)">',
           '<explain-widget src="widgets/w.tsx" title="W">',
@@ -229,7 +229,7 @@ describe('checkExplainer', () => {
           '</explain-widget></div>',
         ].join('\n')),
       ),
-      '.explain/demo/widgets/w.tsx': [
+      '.sidestory/demo/widgets/w.tsx': [
         "import { reveal, goToStep } from 'explainer';",
         "import { Buton } from '@/components/ui/button';",
         'export default function W() {',
@@ -239,8 +239,8 @@ describe('checkExplainer', () => {
     });
     const r = await check(dir);
     const errors = r.findings.filter((f) => f.severity === 'error').map((f) => `${f.file.slice(dir.length + 1).replaceAll('\\', '/')}:${f.line}:${f.code}`);
-    expect(errors).toContain('explainer.html:9:props-json'); // the line JSON.parse stopped at
-    expect(errors).toContain('explainer.html:6:placement');
+    expect(errors).toContain('sidestory.html:9:props-json'); // the line JSON.parse stopped at
+    expect(errors).toContain('sidestory.html:6:placement');
     expect(errors).toContain('widgets/w.tsx:2:unknown-export');
     expect(errors).toContain('widgets/w.tsx:4:unknown-anchor');
     expect(r.findings.find((f) => f.code === 'unknown-export')!.message).toMatch(/Did you mean 'Button'/i);
@@ -253,9 +253,9 @@ describe('checkExplainer', () => {
   it('warns about highlight() outside an anchor, steps that are not steps, and missing fallback or title', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
-      '.explain/demo/manifest.json': manifest({ ...ANCHORS, nested: { file: 'src/a.ts', range: [3, 3] } }),
-      '.explain/demo/explainer.html': page(`<explain-widget src="w.tsx"></explain-widget>\n${section('refill', '<p data-explain-anchor="nested">n</p>')}`),
-      '.explain/demo/w.tsx': [
+      '.sidestory/demo/manifest.json': manifest({ ...ANCHORS, nested: { file: 'src/a.ts', range: [3, 3] } }),
+      '.sidestory/demo/sidestory.html': page(`<explain-widget src="w.tsx"></explain-widget>\n${section('refill', '<p data-explain-anchor="nested">n</p>')}`),
+      '.sidestory/demo/w.tsx': [
         "import { highlight, goToStep } from 'explainer';",
         "export default function W() { return <button onClick={() => { highlight(1); goToStep('nested'); }}>x</button>; }",
       ].join('\n'),
@@ -269,7 +269,7 @@ describe('checkExplainer', () => {
     const dir = repoWith({
       'src/a.ts': CODE.replace('a = b;', 'a = c + d;'),
       'config/.env': 'TOKEN=1\n',
-      '.explain/demo/manifest.json': JSON.stringify({
+      '.sidestory/demo/manifest.json': JSON.stringify({
         version: 2, title: 'Demo',
         anchors: {
           refill: { file: 'src/a.ts', range: [2, 4], quote: { exact: 'function refill() {\n  a = b;\n}', prefix: 'line 1', suffix: 'line 5', norm: 'ws' } },
@@ -277,8 +277,8 @@ describe('checkExplainer', () => {
           ci: { file: 'src/a.ts', range: [6, 6], quote: { exact: 'const x = 1;', prefix: '', suffix: '', norm: 'ws-ci' } },
         },
       }),
-      '.explain/demo/explainer.html': page(section('refill', widgetEl('w.tsx'))),
-      '.explain/demo/w.tsx': "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); useAnchorCode('env'); useAnchorCode('ci'); return null; }\n",
+      '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('w.tsx'))),
+      '.sidestory/demo/w.tsx': "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); useAnchorCode('env'); useAnchorCode('ci'); return null; }\n",
     });
     const r = await check(dir);
     expect(codes(r).sort()).toEqual(['changed', 'not-pinned', 'secret-file']);
@@ -288,21 +288,21 @@ describe('checkExplainer', () => {
   it('doesn’t take ordinary code named like tokens for a secret file (file names only; source files never)', async () => {
     const dir = repoWith({
       'src/tokens/tokenBucket.ts': CODE,
-      '.explain/demo/manifest.json': JSON.stringify({ version: 2, title: 'Demo', anchors: { refill: { file: 'src/tokens/tokenBucket.ts', range: [2, 4] } } }),
-      '.explain/demo/explainer.html': page(section('refill', widgetEl('tokens-chart.tsx'))),
-      '.explain/demo/tokens-chart.tsx': "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); return null; }\n",
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 2, title: 'Demo', anchors: { refill: { file: 'src/tokens/tokenBucket.ts', range: [2, 4] } } }),
+      '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('tokens-chart.tsx'))),
+      '.sidestory/demo/tokens-chart.tsx': "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); return null; }\n",
     });
     const r = await check(dir);
     expect(codes(r)).not.toContain('secret-file');
     expect(codes(r)).toContain('not-pinned');
   });
 
-  it('--types writes the widget types and tsconfig into .explain, and says how to typecheck from a terminal', async () => {
+  it('--types writes the widget types and tsconfig into .sidestory, and says how to typecheck from a terminal', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
-      '.explain/demo/manifest.json': manifest(ANCHORS),
-      '.explain/demo/explainer.html': page(section('refill', widgetEl('widgets/w.tsx'))),
-      '.explain/demo/widgets/w.tsx': GOOD_WIDGET,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('widgets/w.tsx'))),
+      '.sidestory/demo/widgets/w.tsx': GOOD_WIDGET,
     });
     const out: string[] = [];
     const err: string[] = [];
@@ -310,12 +310,12 @@ describe('checkExplainer', () => {
     const explain = dirname(dir);
     expect(JSON.parse(readFileSync(join(explain, 'tsconfig.json'), 'utf8')).include[0]).toBe('.types/*.d.ts');
     expect(readFileSync(join(explain, '.types/explainer.d.ts'), 'utf8')).toBe(readFileSync(join(repo, 'src/widget-types/explainer.d.ts'), 'utf8'));
-    expect(err.join('\n')).toContain('npx -y -p typescript tsc -p .explain');
+    expect(err.join('\n')).toContain('npx -y -p typescript tsc -p .sidestory');
     expect(out.join('\n')).toMatch(/1 widget checked/);
   });
 
-  it('reports a missing explainer.html', async () => {
-    const r = await check(join(base, 'nowhere/.explain/demo'));
+  it('reports a missing sidestory.html', async () => {
+    const r = await check(join(base, 'nowhere/.sidestory/demo'));
     expect(codes(r, 'error')).toEqual(['not-found']);
   });
 });
@@ -324,9 +324,9 @@ describe('--pin', () => {
   const files = (widget: string, anchors: Record<string, unknown> = { ...ANCHORS, env: { file: 'src/.env', range: [1, 1] } }) => ({
     'src/a.ts': CODE,
     'src/.env': 'TOKEN=1\n',
-    '.explain/demo/manifest.json': manifest(anchors),
-    '.explain/demo/explainer.html': page(section('refill', widgetEl('w.tsx'))),
-    '.explain/demo/w.tsx': widget,
+    '.sidestory/demo/manifest.json': manifest(anchors),
+    '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('w.tsx'))),
+    '.sidestory/demo/w.tsx': widget,
   });
   const reads = (id: string) => `import { useAnchorCode } from 'explainer';\nexport default function W({ id }: { id: string }) { useAnchorCode(${id}); return null; }\n`;
   const pinned = (dir: string) => JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')).anchors as Record<string, { quote?: { exact: string }; range: number[] }>;
@@ -353,7 +353,7 @@ describe('--pin', () => {
     expect(pinned(dir).refill!.quote!.exact).toBe('function refill() {\n  a = b;\n}');
     expect(codes(again)).toContain('unconfirmed');
     expect(codes(again)).not.toContain('not-pinned');
-    expect(formatReport(again, dir)).toContain('Widgets in this explainer may now read');
+    expect(formatReport(again, dir)).toContain('Widgets in this sidestory may now read');
     // Pinning again changes nothing and needs no go-ahead.
     const third = await check(dir, { pin: true });
     expect(third.pin!.pinned).toEqual([]);

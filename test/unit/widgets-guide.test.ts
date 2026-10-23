@@ -53,7 +53,7 @@ describe('docs/WIDGETS.md examples', () => {
   });
 
   it('every tsx block typechecks against the widget types (Add Widget Types), and a typo does not', () => {
-    const explain = join(base, 'types/.explain');
+    const explain = join(base, 'types/.sidestory');
     mkdirSync(join(explain, '.types'), { recursive: true });
     mkdirSync(join(explain, 'demo/widgets'), { recursive: true });
     for (const f of WIDGET_TYPE_FILES) copyFileSync(join(typesDir, f), join(explain, '.types', f));
@@ -108,15 +108,15 @@ describe('docs/WIDGETS.md examples', () => {
 
   it('the minimal example passes the checker', async () => {
     const root = join(base, 'minimal');
-    const ex = join(root, '.explain/bit-reader');
+    const ex = join(root, '.sidestory/bit-reader');
     mkdirSync(join(ex, 'widgets'), { recursive: true });
     mkdirSync(join(root, 'rtl'), { recursive: true });
     const sample = join(repo, 'fixtures/sample-workspace');
     copyFileSync(join(sample, 'rtl/bit_reader.sv'), join(root, 'rtl/bit_reader.sv'));
-    copyFileSync(join(sample, '.explain/bit-reader/manifest.json'), join(ex, 'manifest.json'));
+    copyFileSync(join(sample, '.sidestory/bit-reader/manifest.json'), join(ex, 'manifest.json'));
     const section = blocks('html')[0]!;
     expect(section).toContain('<explain-widget src="widgets/refill.tsx"');
-    writeFileSync(join(ex, 'explainer.html'), `<!doctype html>\n<section data-explain-anchor="state"><h2>State</h2></section>\n${section}`);
+    writeFileSync(join(ex, 'sidestory.html'), `<!doctype html>\n<section data-explain-anchor="state"><h2>State</h2></section>\n${section}`);
     writeFileSync(join(ex, 'widgets/refill.tsx'), tsx[0]!);
     const r = await checkExplainer(ex, { compiler: { workerFile: join(repo, 'src/extension/widgets/compile-worker.ts'), dataDir } });
     expect(r.findings.filter((f) => f.severity !== 'info')).toEqual([]);

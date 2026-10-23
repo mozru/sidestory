@@ -5,15 +5,15 @@ import { readFileSync } from 'node:fs';
 import type { AnchorView, ToWebview } from '../../src/shared/protocol.ts';
 import { compile, ON, serve } from './widget-helpers.ts';
 
-const FIXTURE = 'fixtures/sample-workspace/.explain/bit-reader';
-const HTML = readFileSync(`${FIXTURE}/explainer.html`, 'utf8');
+const FIXTURE = 'fixtures/sample-workspace/.sidestory/bit-reader';
+const HTML = readFileSync(`${FIXTURE}/sidestory.html`, 'utf8');
 const MANIFEST = JSON.parse(readFileSync(`${FIXTURE}/manifest.json`, 'utf8')) as { title: string; anchors: Record<string, { file: string; range: [number, number] }> };
 const ANCHORS: AnchorView[] = Object.entries(MANIFEST.anchors).map(([id, a]) => ({ id, file: a.file, range: { start: a.range[0], end: a.range[1] }, state: 'exact' }));
 const ROOT_TRAIL = [{ name: 'bit-reader', title: MANIFEST.title }];
-const DIR = 'file:///ws/.explain/bit-reader';
+const DIR = 'file:///ws/.sidestory/bit-reader';
 
 const send = (page: Page, m: ToWebview) => page.evaluate((msg) => (window as unknown as { __send(m: unknown): void }).__send(msg), m);
-const base = (page: Page, name: string) => page.evaluate((n) => `${location.origin}/fixtures/sample-workspace/.explain/${n}/`, name);
+const base = (page: Page, name: string) => page.evaluate((n) => `${location.origin}/fixtures/sample-workspace/.sidestory/${n}/`, name);
 const frame = (page: Page) => page.frameLocator('iframe.cx-content-frame');
 
 interface Sample {
@@ -130,7 +130,7 @@ test.describe('memory', () => {
 
   test('diving and going back release the explainer left', async ({ page }) => {
     const cdp = await start(page);
-    const child = { dir: 'file:///ws/.explain/retry-backoff', base: await base(page, 'retry-backoff') };
+    const child = { dir: 'file:///ws/.sidestory/retry-backoff', base: await base(page, 'retry-backoff') };
     const root = { dir: DIR, base: await base(page, 'bit-reader') };
     let warm: Sample | undefined;
     for (let i = 1; i <= 50; i++) {

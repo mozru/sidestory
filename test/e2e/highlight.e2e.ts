@@ -5,11 +5,11 @@ import { command, content, inContainer, openExplainer, resetWorkbench } from './
 
 test.beforeEach(async ({ page }) => resetWorkbench(page));
 
-const FILE = `${WORKSPACE}/.explain/retry-backoff/explainer.html`;
+const FILE = `${WORKSPACE}/.sidestory/retry-backoff/sidestory.html`;
 const BLOCK = '<pre><code class="language-ts">const answer: number = 42; // the answer\nexport function ask() { return "why"; }</code></pre>';
 
 test('code blocks get the editor theme’s token colors, and follow a theme change', async ({ page }) => {
-  inContainer(`cp ${FILE} /tmp/explainer.html.bak && printf '%s\\n' '${BLOCK}' >> ${FILE}`);
+  inContainer(`cp ${FILE} /tmp/sidestory.html.bak && printf '%s\\n' '${BLOCK}' >> ${FILE}`);
   try {
     const panel = await openExplainer(page, 'retry-backoff');
     const code = content(panel).locator('pre code.language-ts');
@@ -27,6 +27,6 @@ test('code blocks get the editor theme’s token colors, and follow a theme chan
     if (process.env.CX_HL_SHOTS) await content(panel).locator('pre').last().screenshot({ path: `${process.env.CX_HL_SHOTS}/e2e-light.png` });
     await command(page, 'Preferences: Toggle between Light/Dark Themes');
   } finally {
-    inContainer(`cp /tmp/explainer.html.bak ${FILE}`);
+    inContainer(`cp /tmp/sidestory.html.bak ${FILE}`);
   }
 });

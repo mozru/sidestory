@@ -1,4 +1,4 @@
-// Widget placeholders as the extension sees them in explainer.html (it has no DOM): their sources, for
+// Widget placeholders as the extension sees them in sidestory.html (it has no DOM): their sources, for
 // compiling, consent and diagnostics, and problems an author should see in the Problems panel. The panel's
 // sanitizer is what renders them (src/webview/sanitize.ts); this mirrors its rules for diagnostics.
 import { isWidgetSrc, MAX_WIDGETS } from '../../shared/protocol.ts';
@@ -59,7 +59,7 @@ export function scanWidgets(html: string): { widgets: HtmlWidget[]; problems: Ht
     for (const a of body.matchAll(ATTR)) attrs.set(a[1]!.toLowerCase(), decode(a[2] ?? a[3] ?? a[4] ?? ''));
     const src = attrs.get('src') ?? '';
     if (!isWidgetSrc(src)) {
-      problems.push({ line, severity: 'error', message: `<explain-widget src="${src}">: src must be a .tsx, .ts, .jsx or .js file inside the explainer folder.` });
+      problems.push({ line, severity: 'error', message: `<explain-widget src="${src}">: src must be a .tsx, .ts, .jsx or .js file inside the sidestory folder.` });
       continue;
     }
     widgets.push({ src, line });

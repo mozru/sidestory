@@ -137,8 +137,8 @@ describe('a committed symlink to an ignored file (H1)', () => {
       version: 2, title: 'x',
       anchors: { x: { file: 'src/a.ts', range: [4, 4], quote: { exact: 'password:', prefix: 'adapter: postgresql\nusername: app', suffix: 'host: localhost\npool: 5', norm: 'ws' } } },
     });
-    mkdirSync(join(root, '.explain', 'e'), { recursive: true });
-    writeFileSync(join(root, '.explain', 'e', 'manifest.json'), manifestText);
+    mkdirSync(join(root, '.sidestory', 'e'), { recursive: true });
+    writeFileSync(join(root, '.sidestory', 'e', 'manifest.json'), manifestText);
     // What git says about the link itself: committed, not ignored, and `git show` gives the link's target.
     fakeRepo({
       show: async (_ref: string, path: string) => {
@@ -152,7 +152,7 @@ describe('a committed symlink to an ignored file (H1)', () => {
     const resolution = resolveAnchor(PreparedText.from(secret), anchor);
     const state = new Map<string, unknown>();
     const host = new WidgetHost({ workspaceState: { get: (k: string, d: unknown) => state.get(k) ?? d, update: async (k: string, v: unknown) => void state.set(k, v) }, extensionUri: Uri.file('/ext') } as never);
-    const ref = refFromDir(Uri.file(join(root, '.explain', 'e')) as never)!;
+    const ref = refFromDir(Uri.file(join(root, '.sidestory', 'e')) as never)!;
     const port = { ref: () => ref, manifest: () => manifest, resolution: () => resolution } as never;
     const code = await host.codeFor(port, 'x');
     host.dispose();
@@ -179,7 +179,7 @@ describe('consent for widget files reached through links, or read while git move
   };
 
   it.skipIf(process.platform === 'win32')('a file in a symlinked folder of the explainer is unknown to git, so a new one asks', async () => {
-    const dir = join(root, '.explain', 'x');
+    const dir = join(root, '.sidestory', 'x');
     mkdirSync(join(dir, 'real'), { recursive: true });
     writeFileSync(join(dir, 'real', 'a.tsx'), 'export default () => null;');
     symlinkSync('real', join(dir, 'w'));
@@ -194,29 +194,29 @@ describe('consent for widget files reached through links, or read while git move
     host.dispose();
   });
 
-  it.skipIf(process.platform === 'win32')('a symlinked explainer folder (.explain/x -> ../docs/x) is unknown to git, so a new widget asks', async () => {
+  it.skipIf(process.platform === 'win32')('a symlinked explainer folder (.sidestory/x -> ../docs/x) is unknown to git, so a new widget asks', async () => {
     mkdirSync(join(root, 'docs', 'x', 'w'), { recursive: true });
     writeFileSync(join(root, 'docs', 'x', 'w', 'a.tsx'), 'export default () => null;');
-    mkdirSync(join(root, '.explain'), { recursive: true });
-    symlinkSync('../docs/x', join(root, '.explain', 'x'));
+    mkdirSync(join(root, '.sidestory'), { recursive: true });
+    symlinkSync('../docs/x', join(root, '.sidestory', 'x'));
     fakeRepo({ getObjectDetails: async () => { throw new Error('Path not known'); } });
     const host = new WidgetHost(memento());
     await host.acknowledge([], true);
-    const ref = refFromDir(Uri.file(join(root, '.explain', 'x')) as never)!;
+    const ref = refFromDir(Uri.file(join(root, '.sidestory', 'x')) as never)!;
     const [f] = await host.widgetFiles(ref, [{ files: ['w/a.tsx'] } as never]);
     expect(f!.git).toEqual({ kind: 'unknown' });
     expect(decideConsent(host.consent(), [f!])).toMatchObject({ ask: true, added: [f!.path] });
     host.dispose();
   });
 
-  it.skipIf(process.platform === 'win32')('a symlink above the folder holding .explain (b -> a, opened as b/.explain/x) is unknown to git, so a new widget asks', async () => {
-    mkdirSync(join(root, 'a', '.explain', 'x', 'w'), { recursive: true });
-    writeFileSync(join(root, 'a', '.explain', 'x', 'w', 'a.tsx'), 'export default () => null;');
+  it.skipIf(process.platform === 'win32')('a symlink above the folder holding .sidestory (b -> a, opened as b/.sidestory/x) is unknown to git, so a new widget asks', async () => {
+    mkdirSync(join(root, 'a', '.sidestory', 'x', 'w'), { recursive: true });
+    writeFileSync(join(root, 'a', '.sidestory', 'x', 'w', 'a.tsx'), 'export default () => null;');
     symlinkSync('a', join(root, 'b'));
     fakeRepo({ getObjectDetails: async () => { throw new Error('Path not known'); } });
     const host = new WidgetHost(memento());
     await host.acknowledge([], true);
-    const ref = refFromDir(Uri.file(join(root, 'b', '.explain', 'x')) as never)!;
+    const ref = refFromDir(Uri.file(join(root, 'b', '.sidestory', 'x')) as never)!;
     const [f] = await host.widgetFiles(ref, [{ files: ['w/a.tsx'] } as never]);
     expect(f!.git).toEqual({ kind: 'unknown' });
     expect(decideConsent(host.consent(), [f!])).toMatchObject({ ask: true, added: [f!.path] });
@@ -224,7 +224,7 @@ describe('consent for widget files reached through links, or read while git move
   });
 
   it('bytes that change while git is asked (a pull landing) give unknown, not a mismatched record', async () => {
-    const dir = join(root, '.explain', 'x');
+    const dir = join(root, '.sidestory', 'x');
     mkdirSync(dir, { recursive: true });
     const path = join(dir, 'a.tsx');
     writeFileSync(path, 'old');

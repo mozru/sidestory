@@ -51,7 +51,7 @@ function newHost() {
 
 function open(opts: { host?: InstanceType<typeof WidgetHost>; onPost?: (m: ToWebview) => void } = {}) {
   const host = opts.host ?? newHost();
-  const ref = refFromDir(Uri.file(`${root}/.explain/retry-backoff`) as never)!;
+  const ref = refFromDir(Uri.file(`${root}/.sidestory/retry-backoff`) as never)!;
   const posted: ToWebview[] = [];
   const messages = new EventEmitter<unknown>();
   const disposed = new EventEmitter<void>();
@@ -199,20 +199,20 @@ describe('review regressions (extension side)', () => {
   }
 
   it('a compile request for a widget a live edit just added waits for the gate, instead of a refusal', async () => {
-    const dir = `${root}/.explain/retry-backoff`;
-    const html = readFileSync(`${dir}/explainer.html`, 'utf8');
+    const dir = `${root}/.sidestory/retry-backoff`;
+    const html = readFileSync(`${dir}/sidestory.html`, 'utf8');
     writeFileSync(`${dir}/widgets/extra.tsx`, 'export default function E() { return <p>extra</p>; }');
     let sendNow: ((m: unknown) => void) | undefined;
     // The panel asks as soon as the new content arrives (a message later), while the gate is being computed.
     const p = await consented({ onPost: (m) => { if (m.type === 'content') setTimeout(() => sendNow?.({ type: 'widgetCompile', src: 'widgets/extra.tsx' })); } });
     sendNow = p.send;
     try {
-      writeFileSync(`${dir}/explainer.html`, html.replace('</section>', '<explain-widget src="widgets/extra.tsx"></explain-widget></section>'));
+      writeFileSync(`${dir}/sidestory.html`, html.replace('</section>', '<explain-widget src="widgets/extra.tsx"></explain-widget></section>'));
       await (p.session as unknown as { reload(): Promise<void> }).reload();
       await vi.waitFor(() => expect(p.posted.filter((m) => m.type === 'widget' && m.src === 'widgets/extra.tsx')).toHaveLength(1), { timeout: 10_000 });
       expect(p.last('widget')?.build?.entry).toBe('widgets/extra.tsx');
     } finally {
-      writeFileSync(`${dir}/explainer.html`, html);
+      writeFileSync(`${dir}/sidestory.html`, html);
     }
   });
 
@@ -299,10 +299,10 @@ describe('review regressions (extension side)', () => {
     const host = newHost();
     closers.push(() => host.dispose());
     const p = await consented({ host });
-    const dir = Uri.file(`${root}/.explain/retry-backoff`).toString();
+    const dir = Uri.file(`${root}/.sidestory/retry-backoff`).toString();
     p.send({ type: 'widgetStates', dir, states: [['delay|widgets/backoff.tsx|0', '{"seed":7}']] });
     // Not an explainer this panel showed: ignored.
-    p.send({ type: 'widgetStates', dir: Uri.file(`${root}/.explain/other`).toString(), states: [['k', '{"x":1}']] });
+    p.send({ type: 'widgetStates', dir: Uri.file(`${root}/.sidestory/other`).toString(), states: [['k', '{"x":1}']] });
     await new Promise((r) => setTimeout(r, 100));
     expect(Object.keys(state.get('sidestory.widgetStates') as object)).toEqual([dir]);
     // The panel is closed and opened again (or the window reloads): same workspace state.

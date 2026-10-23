@@ -65,8 +65,8 @@ export async function openWith(page: Page, html: string, builds: Record<string, 
   await page.goto('/test/webview/harness.html');
   await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
   await serve(page, builds, opts.codes);
-  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.explain/bit-reader/`);
-  await send(page, { type: 'init', title: 'Widgets', html, anchors: ANCHORS, active: opts.active, dir: 'file:///ws/.explain/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
+  const base = await page.evaluate(() => `${location.origin}/fixtures/sample-workspace/.sidestory/bit-reader/`);
+  await send(page, { type: 'init', title: 'Widgets', html, anchors: ANCHORS, active: opts.active, dir: 'file:///ws/.sidestory/w', base, trail: [{ name: 'w', title: 'Widgets' }] });
   await expect(page.locator('.cx-title')).toHaveText('Widgets');
   await send(page, { type: 'widgets', gate: opts.gate ?? ON });
   // Opening at a section scrolls there smoothly: let it settle before anything measures positions.
