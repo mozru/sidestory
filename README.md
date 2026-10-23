@@ -1,194 +1,159 @@
 # Sidestory
 
-Rich, free-form HTML explainers that sit beside your code in VS Code and stay linked to it both ways.
+**Rich explainers beside your code: diagrams, live widgets and prose that walk through the code with you, and that you or your AI agent can write.**
 
-- **Step through the explainer** and the editor shows and highlights the code each section is about.
-- **Move your cursor in the code** and the explainer jumps to the section about it.
-- **Everything updates live.** Edit the code (saved or not) or the explainer and the panel follows at once, keeping your place, your focus and anything you're typing. Sections follow code that moves, and tell you when the code changed, needs a look, or can't be found.
-- **Native to your theme**, including high contrast.
-- **Works locally and remotely:** Remote-SSH, WSL, Dev Containers, Codespaces, and browser VS Code backed by a server (code-server, openvscode-server, `code tunnel`). Not on vscode.dev or github.dev alone, which have no server to run it.
-- **Safe with untrusted repositories**, so it runs in Restricted Mode. Explainer content can't run script, reach the network or read files outside the repository. See `SECURITY.md`.
-- **Interactive widgets** (opt-in): live charts, simulations and diagrams written as React components, run in sandboxed frames only after you agree.
+![Stepping through the stream DMA overview: each step scrolls and highlights the code beside it, and a cycle-accurate simulation lights up the FSM line it is in](media/marketplace/hero.gif)
 
-Open one with **Sidestory: Open Explainer** from the Command Palette, or right-click a folder under `.explain/` in the Explorer. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.
+An explainer is an HTML page in your repository (`.explain/<name>/`) whose sections are pinned to the code they describe. Sidestory opens it beside the editor and keeps the two in step: diagrams, tables, block diagrams and interactive React widgets on one side, the real code, highlighted, on the other. Great for onboarding, design reviews, hardware (RTL) walkthroughs and anything too big for comments.
 
-## Writing an explainer
+> **Preview.** Sidestory is new; feedback and bug reports are welcome on [GitHub](https://github.com/mozru/sidestory/issues).
 
-An explainer is a folder in your repository:
+## Linked both ways
 
+Step through the explainer (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the explainer jumps to the section about it. Links in the text and blocks in a diagram show their code when clicked.
+
+![Clicking lines in bit_reader.sv: the explainer beside it follows to the Refill, Handshakes, Consume and State sections](media/marketplace/cursor-follow.gif)
+
+## Diagrams and live widgets
+
+Explainers are free-form HTML and CSS, so they can hold anything a page can: inline SVG block diagrams, tables, tabs, steppers and quizzes, all in your VS Code theme. For what CSS can't do, add **widgets**: React components written the way Claude writes artifacts (Tailwind, shadcn/ui-style components, Recharts, D3, Motion), each in its own sandboxed frame. A widget knows the current step, can read the code its explainer points at, and highlights lines in the editor as it runs.
+
+![A cycle-accurate simulation of the DMA engine: beats move along the data path, the FIFO fills, and the editor highlights the FSM state the controller is in](media/marketplace/widget-sim.gif)
+
+![The block diagram of a stream DMA engine in the explainer, dark theme](media/marketplace/block-diagram-dark.png)
+
+## Big systems: an overview, then the details
+
+Write one explainer per piece and an overview that ties them together. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own explainer in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
+
+![From the DMA overview, peek at dma_ctrl, dive into its explainer and its state graph widget, then return through the trail](media/marketplace/dive.gif)
+
+## Stays in sync with the code
+
+Sections are anchored to the code they describe, not just to line numbers. Insert lines above, move a function, or edit the code (saved or not) and the section follows it as you type. When the code itself changes, the section says so: **Code changed**, **Out of date** when it changed a lot, or **Code not found**. **Sidestory: Pin Anchors to the Current Code** records each anchor's code; **Re-anchor Section to Selection** points a section at new code. Edits to the explainer show up live too, keeping your place.
+
+![Typing two comment lines above the Refill code moves its highlight down with it; editing a line inside it shows "Code changed" on the section](media/marketplace/live-edit.gif)
+
+## Write them with any AI agent
+
+Explainers are plain files: `explainer.html`, `manifest.json` and optional widget `.tsx` files. Claude Code, Codex or any other agent (or you) can write them, and a checker that ships with the extension catches mistakes without running anything: problems appear in the Problems panel as you save, **Sidestory: Check Widgets** checks on demand, and a command-line checker serves agents in a terminal.
+
+![A widget that imports an unavailable library: the checker's diagnostic in the Problems panel, and the panel keeps running the last good version](media/marketplace/problems.png)
+
+## Safe by default
+
+Explainers are content from the repository, so Sidestory treats them like untrusted input. The page itself can't run script, reach the network or read files outside the repository, which is why it works in **Restricted Mode**. Widgets are code, so they run only in trusted workspaces, only with the `sidestory.widgets.enabled` user setting on, and only after you agree in a VS Code dialog that says what they can do. Until then you see each widget's fallback. Details: [SECURITY.md](SECURITY.md).
+
+![The consent dialog before widgets run: what they can read and that they may reach the network](media/marketplace/consent-dialog.png)
+
+## Quick start
+
+### 1. Install
+
+Install **Sidestory** from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paperkite.sidestory), or run:
+
+```bash
+code --install-extension paperkite.sidestory
 ```
-.explain/
-  bit-reader/
-    explainer.html   the page: any HTML and CSS
-    manifest.json    which code each section is about
-    assets/          optional: images, fonts, stylesheets
-```
 
-Open it with **Sidestory: Open Explainer**.
+### 2. Open an example
 
-### Link sections to code
+Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and an explainer per block. Run **Sidestory: Open Explainer** from the Command Palette and pick **dma-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
 
-Mark any element that is about some code with `data-explain-anchor`, and name it in the manifest:
+### 3. Write your first explainer
+
+An explainer is a folder under `.explain/` in your repository; file paths in its manifest are relative to the folder that contains `.explain/`. Mark each section with `data-explain-anchor` and say in `manifest.json` which code it is about.
+
+`.explain/retry/explainer.html`:
 
 ```html
-<section data-explain-anchor="refill" data-explain-title="Refill">
-  <h2>Refill below the valid bits</h2>
-  … anything …
+<section data-explain-anchor="delay" data-explain-title="Delay">
+  <h2>How long to wait</h2>
+  <p>The ceiling doubles every attempt until <code>maxMs</code>; the wait is a random point below it.</p>
+</section>
+
+<section data-explain-anchor="loop" data-explain-title="The loop">
+  <h2>The loop</h2>
+  <p>Try, and on failure sleep for <a data-explain-ref="delay">the delay</a> before the next attempt.</p>
 </section>
 ```
 
-- Top-level anchored elements become the steps in the navigator. Nested anchored elements (a figure inside a section) are linked too, but aren't steps.
-- `data-explain-title` sets the step's short label; otherwise the first heading is used.
-- `<a data-explain-ref="state">peek</a>` jumps the editor to another anchor's code when clicked, without changing the current step.
-- `--cx-accent` is set on each anchored element to its color, so your CSS can use `var(--cx-accent)`.
-
-### The manifest
+`.explain/retry/manifest.json`:
 
 ```json
 {
   "version": 1,
-  "title": "A backward bit reader in five moves",
+  "title": "Retry with full-jitter backoff",
+  "summary": "Why retries wait a random, growing time.",
   "anchors": {
-    "refill": {
-      "file": "rtl/bit_reader.sv",
-      "range": [35, 38],
-      "highlight": ["in_byte", "c"],
-      "color": "charts.purple"
-    }
+    "delay": { "file": "src/retry.ts", "range": [14, 18], "highlight": ["ceiling"], "color": "charts.blue" },
+    "loop": { "file": "src/retry.ts", "range": [20, 30], "color": "charts.green" }
   }
 }
 ```
 
-| Field | Meaning |
+Open it with **Sidestory: Open Explainer**, then run **Sidestory: Pin Anchors to the Current Code** so the anchors follow the code through edits. The [guide](docs/GUIDE.md) covers every attribute, the manifest, overviews and details, styling and limits.
+
+### 4. Or ask your agent
+
+**Claude Code** learns Sidestory from a plugin. Install it once:
+
+```text
+/plugin marketplace add mozru/sidestory
+/plugin install sidestory@sidestory
+```
+
+Then ask in plain words, for example *"Explain how the DMA controller works, with Sidestory."* Claude reads the guides bundled in the plugin, writes the explainer, runs the checker and pins the anchors.
+
+**Codex** and other agents that support [Agent Skills](https://agentskills.io) can use the same skill: copy [`plugins/sidestory/skills/sidestory`](plugins/sidestory/skills/sidestory) into the agent's skills folder (for Codex, `~/.codex/skills/sidestory`).
+
+Any other agent: point it at the guides, for example:
+
+> Write a Sidestory explainer for `rtl/dma_ctrl.sv` in `.explain/dma-ctrl/`: a section per part of the FSM, an SVG state diagram, and a widget that steps through a transfer. Follow https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and https://github.com/mozru/sidestory/blob/main/docs/WIDGETS.md, then run the checker until it reports no errors.
+
+The checker ships with the extension; **Sidestory: Copy Widget Check Command** copies the exact command for your machine. It looks like:
+
+```bash
+node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .explain/dma-ctrl
+```
+
+Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-readable report.
+
+## Commands
+
+| Command | What it does |
 |---|---|
-| `file` | Path from the folder that contains `.explain/`, with `/` separators. |
-| `range` | First and last line (1-based). A hint: the anchor follows the code as it moves. |
-| `highlight` | Identifiers to mark everywhere in the file while the section is active. |
-| `summary` | Top level, optional: one line shown when a parent explainer peeks at this one. |
-| `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
+| **Sidestory: Open Explainer** | Pick an explainer in `.explain/` and open it beside the code (also on a folder's context menu in the Explorer). |
+| **Sidestory: Next Step** / **Previous Step** | Move through the explainer (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
+| **Sidestory: Pin Anchors to the Current Code** | Record each anchor's code so sections follow it through edits and say when it changed. |
+| **Sidestory: Re-anchor Section to Selection** | Point a section at the selected code (also in the editor's context menu). |
+| **Sidestory: Check Widgets** | Check the open explainer's widgets now; results go to the Problems panel. |
+| **Sidestory: Copy Widget Check Command** | Copy the command-line checker's command for this machine, for agents and scripts. |
+| **Sidestory: Add Widget Types** | Write type declarations so `tsc` and IntelliSense work on widget files. |
+| **Sidestory: Enable Widgets** | Turn widgets back on after the watchdog stopped one (and the setting, if it's off). |
+| **Sidestory: Revoke Widget Consent** | Forget that you agreed to run this workspace's widgets. |
 
-Then run **Sidestory: Pin Anchors to the Current Code** to record each anchor's exact code and surrounding lines. That upgrades the manifest to `version: 2` with a `quote` per anchor, which is what lets an anchor survive edits, moves and duplicates. Until then a section is just a line range and can't tell when its code changes; the panel says so once per explainer. Pin edits only the anchors it pins and keeps the rest of `manifest.json` as you wrote it. It pins what the editors show, unsaved changes included, and says when it did.
-
-Pin only pins anchors whose code it finds with confidence. It names each anchor it left alone and why (code changed, out of date, code not found, ambiguous, file missing), then lists the ones it could still pin: where the code is now, and the lines their `range` gives. Tick the ones whose code you changed on purpose to pin them there.
-
-To point a section at different code:
-
-- select the code and run **Sidestory: Re-anchor Section to Selection** (also in the editor's context menu while an explainer is open), then pick the section; sections whose code is lost or out of date are listed first. The selection may be in another file of the same repository; or
-- edit its `range` in the manifest and run Pin: when the recorded code can't be found with confidence, Pin offers the lines `range` gives. (If the recorded code is still there unchanged, Pin follows it instead; use Re-anchor.)
-
-### Big systems: an overview with details
-
-One explainer per piece, plus an overview that ties them together. In the overview, mark where a piece comes up with the name of its explainer (a sibling folder in `.explain/`):
-
-```html
-<section data-explain-anchor="reader">
-  <h2>The bit reader</h2>
-  <p>Bytes arrive last-first; it hands out bits on demand.</p>
-  <div data-explain-detail="bit-reader"></div>
-</section>
-```
-
-Readers then choose, per piece:
-
-- **Skip**: just read on; the overview stands on its own.
-- **Peek**: "*Title* in brief" opens the detail's `summary` in place.
-- **Dive**: "Dive into *Title*" shows the detail explainer in the same panel. A trail at the top shows the way back; **Back**, a trail entry or <kbd>Esc</kbd> returns to the step you left.
-
-Details can have details of their own (up to 16 levels). Give each explainer a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the explainer you're reading doesn't, the panel offers to dive into it.
-
-### How sections follow the code
-
-| State | Meaning | Shown as |
-|---|---|---|
-| exact / moved | The code is there, unchanged (it may have moved). | Normal |
-| changed | Found, slightly edited. The text is probably still right. | "Code changed" badge |
-| stale | Found roughly, but changed a lot. The text may be wrong. | Dashed outline, "Out of date" |
-| lost | Can't be found. | "Code not found" |
-
-This works on unsaved edits too, as you type.
-
-### Styling
-
-Use VS Code's theme variables so your explainer looks right in every theme:
-`var(--vscode-editor-foreground)`, `var(--vscode-descriptionForeground)`, `var(--vscode-panel-border)`, `var(--vscode-editor-font-family)`, `var(--vscode-textLink-foreground)`, `var(--vscode-charts-blue)` and so on.
-
-The built-in styles are light: body text in the editor font and colors, code blocks and tables that scroll sideways when wide, images no wider than the panel, and an outline on the current section. Nothing else is clipped, so your tooltips and pop-outs can overflow their boxes.
-
-Interactivity without script works well, and readers keep what they set while you edit:
-- **Steppers, tabs and switches** built from radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` rules. A switch the reader flipped stays flipped when you edit another part of the explainer; changing that control's own `checked` in the source resets it.
-- **Pop-outs and footnotes** with `:target`: in-page links (`<a href="#id">`) set the target as in a browser.
-- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation** and `@container` queries. Animations in sections far off screen pause until the reader gets there; honour `prefers-reduced-motion` for readers who ask for less motion.
-
-### What's supported, and what's removed
-
-Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, GIF, WebP, AVIF), fonts and videos from the explainer's own folder; inline SVG; tables; `<details>`; form controls (inputs, labels, selects) for CSS-driven interactivity; links.
-
-Removed or ignored, for safety (see `SECURITY.md`):
-- scripts of any kind, event handler attributes, `javascript:` links;
-- `<iframe>`, `<object>`, `<embed>`, `<form>`, `<meta>`, `<base>`, popovers, SVG animation;
-- anything from the network: remote images, fonts, stylesheets, `@import`;
-- links to `localhost` or private addresses.
-
-Limits: `explainer.html` up to 5 MB, `manifest.json` up to 1 MB, 500 anchors, each quote up to 2,000 lines, each asset up to 5 MB (20 MB per open explainer).
-
-### Interactive widgets
-
-For what CSS can't do (a chart that responds to a control, a simulation that runs, a table parsed from the real code), an explainer can hold **widgets**: React components written the way Claude writes artifacts, with Tailwind, shadcn/ui-style components, Recharts, D3, Motion, lucide-react and lodash. Each runs in its own sandboxed frame in the panel; the prose stays plain HTML. A widget knows the current step, can read the code its explainer points at, highlights lines in the editor, and shows code when clicked.
-
-Place one in `explainer.html` with a fallback for readers who don't run widgets, and put the component next to it:
-
-```html
-<section data-explain-anchor="refill">
-  <h2>Refill</h2>
-  <explain-widget src="widgets/refill.tsx" title="Refill simulator" height="200">
-    <script type="application/json">{"width": 64}</script>
-    <img src="assets/refill.svg" alt="The window before and after a refill">
-  </explain-widget>
-</section>
-```
-
-```tsx
-// .explain/bit-reader/widgets/refill.tsx
-import { useStepValue, useWidgetState } from 'explainer';
-import { Button } from '@/components/ui/button';
-
-export default function Refill({ width = 64 }: { width?: number }) {
-  const [valid, setValid] = useWidgetState('valid', 20);
-  const color = useStepValue({ refill: 'var(--chart-1)' }, 'var(--muted-foreground)');
-  return (
-    <div className="flex items-center gap-3">
-      <Button size="sm" onClick={() => setValid((v) => Math.min(width, v + 8))}>Refill a byte</Button>
-      <span style={{ color }}>{valid} of {width} bits valid</span>
-    </div>
-  );
-}
-```
-
-**Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, the `sidestory.widgets.enabled` setting is on (it is by default; it's a user setting, so a repository's settings can't turn it on), and you agree: the panel says how many widgets an explainer has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked once per explainer, and again when widget code arrives through git (checkout, pull, merge), not after your own edits or when you switch back to a version you already agreed to. Consent is kept in VS Code's workspace storage (in browser VS Code, per browser profile). **Sidestory: Revoke Widget Consent** takes it back. A widget that freezes the panel is turned off by a watchdog: its box offers **Try again**, and **Sidestory: Enable Widgets** turns every widget the watchdog stopped back on (and the setting, if it's off). What widgets can and can't reach is in `SECURITY.md`.
-
-**Writing them:** `docs/WIDGETS.md` is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Sidestory: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .explain/<name>`; the guide has the exact command). **Sidestory: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
-
-### Settings
+## Settings
 
 | Setting | Default | |
 |---|---|---|
-| `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through the explainer (never in high contrast themes). |
-| `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
+| `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through an explainer (never in high contrast themes). |
+| `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 
-### Troubleshooting
+## Requirements
 
-**View › Output › Sidestory** shows why a file was refused (missing, outside the repository after following links, too large) and other problems. Files that aren't open in an editor are read as UTF-8.
+- VS Code 1.95 or later.
+- Works locally and over Remote-SSH, WSL, Dev Containers, Codespaces and browser VS Code backed by a server (code-server, openvscode-server, `code tunnel`). Not on vscode.dev or github.dev alone, which have no server to run it.
+- Nothing else to install: widget libraries ship with the extension.
 
-## Development
+## Learn more
 
-```bash
-npm ci
-npm run check          # typecheck, unit tests, build
-npm run test:webview   # the panel in Chromium (first: npx playwright install chromium)
-npm run test:e2e       # browser VS Code with the server in Docker
-npm run package        # dist/sidestory.vsix
-node dist/check.cjs fixtures/sample-workspace/.explain/bit-reader   # the standalone widget checker (after a build)
-node scripts/widget-types.ts           # regenerate src/widget-types/*.d.ts after updating a widget library
-```
+- [Guide](docs/GUIDE.md): writing explainers, the manifest, overviews and details, anchor states, styling, what's supported, limits, troubleshooting, development.
+- [Writing widgets](docs/WIDGETS.md): the widget contract, imports, theming, linking to code, checking, and a gallery. Written for people and for agents.
+- [Security](SECURITY.md): the threat model and what widgets can and can't reach.
+- [Changelog](CHANGELOG.md)
+- [The stream DMA example](examples/stream-dma)
 
-Press <kbd>F5</kbd> to open an Extension Development Host on `fixtures/sample-workspace`. Test plan for remote setups: `docs/TEST-PLAN.md`. Design notes (a draft that includes features not built yet): `docs/DESIGN.md`.
+## License
+
+[MIT](LICENSE)

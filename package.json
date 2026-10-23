@@ -1,9 +1,9 @@
 {
   "name": "sidestory",
   "displayName": "Sidestory",
-  "description": "Rich HTML explainers beside your code, linked both ways, updated live.",
+  "description": "Rich explainers beside your code: diagrams, live React widgets and prose linked both ways to the code. Written by you or any AI agent.",
   "version": "0.1.0",
-  "publisher": "sidestory",
+  "publisher": "paperkite",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,6 +13,7 @@
     "url": "https://github.com/mozru/sidestory/issues"
   },
   "homepage": "https://github.com/mozru/sidestory#readme",
+  "qna": "marketplace",
   "preview": true,
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -20,14 +21,33 @@
     "theme": "dark"
   },
   "keywords": [
+    "explain",
     "explainer",
-    "documentation",
     "walkthrough",
     "code tour",
+    "tour",
+    "documentation",
+    "docs",
+    "onboarding",
+    "code review",
     "literate programming",
+    "diagram",
+    "block diagram",
+    "visualization",
+    "interactive",
+    "widgets",
+    "react",
+    "html",
+    "rtl",
     "verilog",
     "systemverilog",
-    "review"
+    "hardware",
+    "fpga",
+    "asic",
+    "ai",
+    "agent",
+    "claude",
+    "codex"
   ],
   "engines": {
     "vscode": "^1.95.0",
@@ -48,6 +68,7 @@
   },
   "categories": [
     "Visualization",
+    "Education",
     "Other"
   ],
   "main": "./dist/extension.cjs",
@@ -254,7 +275,9 @@
     "test:widgets": "playwright test -c test/widgets/playwright.config.ts",
     "test:e2e": "playwright test -c test/e2e/playwright.config.ts",
     "pin": "node scripts/pin.ts",
-    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --no-rewrite-relative-links -o dist/sidestory.vsix",
+    "release": "node scripts/release.mjs",
+    "sync-skill": "node scripts/sync-skill.mjs",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies -o dist/sidestory.vsix",
     "check": "npm run typecheck && npm test && npm run build",
     "test:desktop": "npm run build && node test/desktop/run.mjs"
   },
@@ -262,16 +285,19 @@
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/browser": "4.3.3",
+    "@types/mocha": "10.0.10",
     "@types/node": "^24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "^4.0.0",
     "clsx": "2.1.1",
     "d3": "7.9.0",
     "esbuild": "^0.28.2",
     "lodash": "4.18.1",
     "lucide-react": "1.52.0",
+    "mocha": "11.7.5",
     "motion": "14.0.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -279,12 +305,13 @@
     "recharts": "3.10.1",
     "tailwind-merge": "3.7.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5",
-    "@vscode/test-electron": "3.1.0",
-    "mocha": "11.7.5",
-    "@types/mocha": "10.0.10"
+    "vitest": "^5.0.5"
   },
   "dependencies": {
+    "@shikijs/core": "4.5.0",
+    "@shikijs/engine-javascript": "4.5.0",
+    "@shikijs/langs": "4.5.0",
+    "@shikijs/themes": "4.5.0",
     "@vscode/codicons": "0.0.46-24",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",

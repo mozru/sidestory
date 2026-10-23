@@ -27,7 +27,7 @@ Explainers already do a lot without script, and that version works for every rea
 
 | Want | Use |
 |---|---|
-| Tabs, a stepper, a before/after switch, a quiz | Radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` (README, "Styling") |
+| Tabs, a stepper, a before/after switch, a quiz | Radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` ([GUIDE.md, "Styling"](GUIDE.md#styling)) |
 | Footnotes, pop-outs | `:target`, `<details>` |
 | Hover callouts, highlighting parts of a diagram | `:hover`, `:focus-within`, inline SVG |
 | A diagram that changes per step | An SVG per step, or classes switched by the stepper above |
@@ -382,10 +382,10 @@ Widget frames are laid over their placeholders by the panel, so the panel must b
 Checking compiles the widgets but runs nothing, so it needs no consent.
 
 - **In VS Code**, problems in widget files and `explainer.html` appear in the Problems panel as you save; **Sidestory: Check Widgets** checks an explainer on demand. When Claude Code is connected to the IDE, it reads these diagnostics. Syntax errors carry their file, line and column (also in the widget's box).
-- **From a terminal** (Claude Code in the user's repository), run the checker that ships with the extension, `dist/check.cjs` in the extension's folder (for example `~/.vscode/extensions/sidestory.sidestory-0.1.0/dist/check.cjs`):
+- **From a terminal** (Claude Code in the user's repository), run the checker that ships with the extension, `dist/check.cjs` in the extension's folder (for example `~/.vscode/extensions/paperkite.sidestory-0.1.0/dist/check.cjs`):
 
   ```bash
-  node ~/.vscode/extensions/sidestory.sidestory-0.1.0/dist/check.cjs .explain/<name>
+  node ~/.vscode/extensions/paperkite.sidestory-0.1.0/dist/check.cjs .explain/<name>
   ```
 
   The version in the folder name changes. To find it (this also covers VS Code Insiders and `~/.vscode-server` on remote hosts), list the candidates and use the newest:

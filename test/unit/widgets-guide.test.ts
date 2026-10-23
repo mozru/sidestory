@@ -95,8 +95,8 @@ describe('docs/WIDGETS.md examples', () => {
     expect(out).toMatch(/typo\.tsx\(3,.*useAnchorCod/);
   }, 60_000);
 
-  it("the README's example compiles", async () => {
-    const readme = lf(readFileSync(join(repo, 'README.md'), 'utf8'));
+  it("the guide's example compiles (docs/GUIDE.md)", async () => {
+    const readme = lf(readFileSync(join(repo, 'docs/GUIDE.md'), 'utf8'));
     const code = /^```tsx\n([\s\S]*?)^```$/m.exec(readme)?.[1];
     expect(code).toBeTruthy();
     const dir = join(base, 'readme');
@@ -157,7 +157,7 @@ describe('widget types (src/widget-types)', () => {
   });
 
   it('ship in the package next to the checker, which ships too (the guide tells Claude to run dist/check.cjs)', () => {
-    const ignore = readFileSync(join(repo, '.vscodeignore'), 'utf8').split('\n');
+    const ignore = readFileSync(join(repo, '.vscodeignore'), 'utf8').split(/\r?\n/);
     expect(ignore).toContain('!dist/check.cjs');
     expect(ignore).toContain('!dist/widget-types/**');
   });
