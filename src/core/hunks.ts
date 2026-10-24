@@ -67,13 +67,33 @@ export function isBinary(b: Uint8Array | undefined): boolean {
   return false;
 }
 
-const LFS_HEAD = 'version https://git-lfs.github.com/spec/v1';
+/**
+ * A complete Git LFS pointer, as the git-lfs spec defines one and nothing more: under 1,024 bytes, LF line endings,
+ * the version line, then optional `ext-<n>-<name> sha256:<64 hex>` lines, then `oid sha256:<64 hex>` and
+ * `size <digits>`, each line ending in a newline, no other line. A file that merely starts with the version line
+ * (a script with `curl … | sh` after it) is not one.
+ */
+const LFS_POINTER = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\n(?:ext-[0-9]+-[a-z0-9]+ sha256:[0-9a-f]{64}\n)*oid sha256:[0-9a-f]{64}\nsize (?:0|[1-9][0-9]{0,18})\n$/;
 
-/** A Git LFS pointer: at most 1 KB, starting with git-lfs's version line. Left out of coverage ("not counted"). */
 export function isLfsPointer(b: Uint8Array | undefined): boolean {
-  if (!b || b.length > 1024 || b.length < LFS_HEAD.length) return false;
-  for (let i = 0; i < LFS_HEAD.length; i++) if (b[i] !== LFS_HEAD.charCodeAt(i)) return false;
-  return true;
+  if (!b || b.length >= 1024) return false;
+  let text = '';
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i]!;
+    if (c > 0x7e || (c < 0x20 && c !== 0x0a)) return false; // ASCII only
+    text += String.fromCharCode(c);
+  }
+  return LFS_POINTER.test(text);
+}
+
+/**
+ * A change left out of coverage as Git LFS ("not counted", §5.1): every side the file has is a complete pointer (an
+ * added or deleted file has one side). A pointer replaced by anything else, or anything replaced by a pointer,
+ * is compared as usual (text, binary, or one change).
+ */
+export function isLfsChange(oldBytes: Uint8Array | undefined, newBytes: Uint8Array | undefined): boolean {
+  if (!oldBytes && !newBytes) return false;
+  return (!oldBytes || isLfsPointer(oldBytes)) && (!newBytes || isLfsPointer(newBytes));
 }
 
 // ---- decoding (§5.2 step 2) ----
@@ -190,6 +210,19 @@ export function textLines(text: string): string[] {
   return lines;
 }
 
+/**
+ * For each of `textLines(text)`'s lines, whether a lone `\r` (not followed by `\n`) ends it; undefined when the
+ * text has none (the common case costs one scan).
+ */
+function loneCrEnds(text: string, lines: number): Uint8Array | undefined {
+  if (!/\r(?!\n)/.test(text)) return undefined;
+  const out = new Uint8Array(lines);
+  const eol = /\r\n|\r|\n/g;
+  let i = 0;
+  for (let m = eol.exec(text); m && i < lines; m = eol.exec(text), i++) if (m[0] === '\r') out[i] = 1;
+  return out;
+}
+
 /** Raised inside the diff when its budget runs out; never escapes `diffTexts`. */
 class OverBudget extends Error {}
 
@@ -202,19 +235,22 @@ export function diffTexts(path: string, oldText: string, newText: string): FileD
   const b = textLines(newText);
   if (a.length > DIFF_LIMITS.maxLines || b.length > DIFF_LIMITS.maxLines) return wholeFile(path, oldText, newText, 'size', a, b);
 
-  // Interned line ids: equal lines compare as equal numbers.
+  // Interned line ids: equal lines compare as equal numbers. A line ended by a lone `\r` is a different line from
+  // the same text ended by `\n` or `\r\n`: only `\r\n` ↔ `\n` is a line-ending change (§5.2 step 3), a lone CR
+  // turning into a newline (or back) is a real one.
   const ids = new Map<string, number>();
-  const intern = (lines: string[]) => {
+  const intern = (lines: string[], cr: Uint8Array | undefined) => {
     const out = new Int32Array(lines.length);
     for (let i = 0; i < lines.length; i++) {
-      let id = ids.get(lines[i]!);
-      if (id === undefined) ids.set(lines[i]!, (id = ids.size));
+      const k = cr?.[i] ? `${lines[i]!}\r` : lines[i]!;
+      let id = ids.get(k);
+      if (id === undefined) ids.set(k, (id = ids.size));
       out[i] = id;
     }
     return out;
   };
-  const x = intern(a);
-  const y = intern(b);
+  const x = intern(a, loneCrEnds(oldText, a.length));
+  const y = intern(b, loneCrEnds(newText, b.length));
   // trimCommon, on the typed arrays: the common head and tail never enter the search.
   let head = 0;
   while (head < x.length && head < y.length && x[head] === y[head]) head++;

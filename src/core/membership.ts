@@ -48,11 +48,47 @@ export function sidestoryFolderOf(path: string): string | undefined {
 }
 
 /**
- * Does a changed file count toward a branch's coverage (§6.3)? Every file does except the sidestories' own files
- * (`sidestoryFolderOf`) and archives (`isArchivePath`): the explanation isn't something to explain.
+ * A file a sidestory owns, left out of a branch's coverage because it is the explanation (§5.1): `manifest.json` or
+ * `sidestory.html` directly in a real sidestory folder (`sidestoryFolderOf`) that is a complete sidestory
+ * (`isComplete(folder)`: both files present, at the head or at the merge-base; assumed when not given). Nothing else
+ * is owned: widget code, assets, helper scripts and any other file under `.sidestory/<name>/` count like code
+ * elsewhere (a branch could otherwise keep code there and require it from src/), and archives count as one change.
  */
-export function countedPath(path: string): boolean {
-  return sidestoryFolderOf(path) === undefined && !isArchivePath(path);
+export function ownedBySidestory(path: string, isComplete?: (folder: string) => boolean): boolean {
+  if (isArchivePath(path)) return false;
+  const folder = sidestoryFolderOf(path);
+  if (!folder) return false;
+  const rest = path.slice(folder.length + 1);
+  if (!(SIDESTORY_FILES as readonly string[]).includes(rest)) return false;
+  return isComplete ? isComplete(folder) : true;
+}
+
+/**
+ * Does a changed path count toward a branch's coverage (§6.3)? Every path does except the files a sidestory owns
+ * (`ownedBySidestory`). Archive paths count (as one change: `isArchivePath`, §12.3). For a rename or copy, use
+ * `countedChange`, which looks at both paths.
+ */
+export function countedPath(path: string, isComplete?: (folder: string) => boolean): boolean {
+  return !ownedBySidestory(path, isComplete);
+}
+
+/**
+ * How a changed entry counts (§5.1): `counted` false when it touches only files sidestories own. A rename or copy
+ * counts when EITHER path counts. Renamed from code into a sidestory's own file, the old side is a deletion
+ * (`as: 'deletion'` of `oldPath`); a copy that way leaves the code where it was, so it isn't counted. Renamed or
+ * copied from a sidestory's own file into code, the new side is an addition (`as: 'addition'` of `path`).
+ */
+export function countedChange(
+  e: { readonly status: string; readonly path: string; readonly oldPath?: string },
+  isComplete?: (folder: string) => boolean,
+): { counted: boolean; as?: 'deletion' | 'addition' } {
+  const newCounts = countedPath(e.path, isComplete);
+  if (e.oldPath === undefined || e.oldPath === e.path) return { counted: newCounts };
+  const oldCounts = countedPath(e.oldPath, isComplete);
+  if (newCounts && oldCounts) return { counted: true };
+  if (!newCounts && !oldCounts) return { counted: false };
+  if (oldCounts) return e.status === 'C' ? { counted: false } : { counted: true, as: 'deletion' };
+  return { counted: true, as: 'addition' };
 }
 
 /** The files a sidestory folder must hold to be one (relative to the folder). */

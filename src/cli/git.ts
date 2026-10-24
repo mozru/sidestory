@@ -539,6 +539,13 @@ export class Git {
     return { bytes, skipped };
   }
 
+  /** Whether a working tree path is a regular file (no link, no folder), without reading it; the file system rule first. */
+  async isWorkingFile(rel: string): Promise<boolean> {
+    if (!isSafeFsPath(rel)) return false;
+    const st = await lstat(join(this.root, ...rel.split('/'))).catch(() => undefined);
+    return !!st?.isFile();
+  }
+
   /**
    * A working tree file's bytes (the new side in working tree mode): a path that passes `isSafeFsPath`, lstat first
    * and no links, its real path inside the root, a regular file only, opened without blocking (an untracked FIFO),

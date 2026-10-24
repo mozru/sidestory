@@ -1,6 +1,6 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
-import { belongs, countedPath, isArchivePath, isCompleteSidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
+import { belongs, countedChange, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
 import { isSafeFsPath, isSafeRepoPath, pathProblem } from '../../src/core/repo-path.ts';
 
 describe('isSafeRepoPath and isSafeFsPath (src/core/repo-path.ts)', () => {
@@ -72,7 +72,7 @@ describe('isArchivePath', () => {
 });
 
 describe('countedPath and sidestoryFolderOf', () => {
-  it('files inside a real sidestory folder and archives are left out; everything else counts', () => {
+  it('only a complete sidestory\'s manifest.json and sidestory.html are left out; everything else counts', () => {
     expect(sidestoryFolderOf('.sidestory/retry/manifest.json')).toBe('.sidestory/retry');
     expect(sidestoryFolderOf('pkg/a/.sidestory/x.y/assets/d.svg')).toBe('pkg/a/.sidestory/x.y');
     expect(sidestoryFolderOf('.sidestory/README.md')).toBeUndefined();
@@ -80,11 +80,29 @@ describe('countedPath and sidestoryFolderOf', () => {
     expect(sidestoryFolderOf('.sidestory/-bad/manifest.json')).toBeUndefined();
     expect(sidestoryFolderOf('src/sidestory/x/a.ts')).toBeUndefined();
     expect(countedPath('.sidestory/retry/sidestory.html')).toBe(false);
-    expect(countedPath('.sidestory/archive/2026-x/manifest.json')).toBe(false);
+    expect(countedPath('pkg/.sidestory/retry/manifest.json')).toBe(false);
+    // Archives count (as one change: the checker's kind 'archive'); so does any other file in a sidestory folder.
+    expect(countedPath('.sidestory/archive/2026-x/manifest.json')).toBe(true);
+    expect(countedPath('.sidestory/helper/run.js')).toBe(true);
+    expect(countedPath('.sidestory/retry/widgets/w.tsx')).toBe(true);
+    expect(countedPath('.sidestory/retry/assets/a.png')).toBe(true);
+    // Only in a folder that is a complete sidestory.
+    expect(countedPath('.sidestory/half/manifest.json', (f) => f !== '.sidestory/half')).toBe(true);
+    expect(ownedBySidestory('.sidestory/retry/manifest.json', () => true)).toBe(true);
     expect(countedPath('.sidestory/README.md')).toBe(true);
     expect(countedPath('.sidestory/-bad/manifest.json')).toBe(true);
     expect(countedPath('src/a.ts')).toBe(true);
   });
+  it('a rename or copy counts when either path counts; into a sidestory\'s own file, the old side is a deletion', () => {
+    expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: '.sidestory/notes/manifest.json' })).toEqual({ counted: true, as: 'deletion' });
+    expect(countedChange({ status: 'R', oldPath: '.sidestory/notes/sidestory.html', path: 'src/page.js' })).toEqual({ counted: true, as: 'addition' });
+    expect(countedChange({ status: 'C', oldPath: '.sidestory/notes/sidestory.html', path: 'src/page.js' })).toEqual({ counted: true, as: 'addition' });
+    expect(countedChange({ status: 'C', oldPath: 'src/auth.js', path: '.sidestory/notes/manifest.json' })).toEqual({ counted: false });
+    expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: '.sidestory/notes/auth.js' })).toEqual({ counted: true });
+    expect(countedChange({ status: 'R', oldPath: '.sidestory/a/manifest.json', path: '.sidestory/b/manifest.json' })).toEqual({ counted: false });
+    expect(countedChange({ status: 'M', path: '.sidestory/a/sidestory.html' })).toEqual({ counted: false });
+  });
+
   it('a sidestory is complete with both its manifest and its page', () => {
     expect(isCompleteSidestory(['manifest.json', 'sidestory.html', 'assets/x.png'])).toBe(true);
     expect(isCompleteSidestory(['manifest.json'])).toBe(false);

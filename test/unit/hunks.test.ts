@@ -76,7 +76,13 @@ describe('changes', () => {
     const crlf = diffTexts('f', 'a\r\nb\r\n', 'a\nb\n');
     expect(crlf).toMatchObject({ changes: [], lineEndingsOnly: true });
     expect(diffTexts('f', 'a\nb', 'a\nb\n')).toMatchObject({ changes: [], lineEndingsOnly: true });
-    expect(diffTexts('f', 'a\rb\r', 'a\nb\n').lineEndingsOnly).toBe(true);
+    // A lone CR becoming a newline is a real change (classic Mac text turned into lines), not a line-ending one.
+    const cr = diffTexts('f', 'a\rb\r', 'a\nb\n');
+    expect(cr.lineEndingsOnly).toBe(false);
+    expect(shape(cr)).toEqual([{ old: { start: 1, end: 2 }, new: { start: 1, end: 2 }, added: 2, removed: 2 }]);
+    expect(shape(diffTexts('f', 'x\na\rb\ny\n', 'x\na\nb\ny\n'))).toEqual([{ old: { start: 2, end: 2 }, new: { start: 2, end: 2 }, added: 1, removed: 1 }]);
+    // CRLF and LF stay equal around a lone CR.
+    expect(diffTexts('f', 'a\r\nb\rc\r\n', 'a\nb\rc\n')).toMatchObject({ changes: [], lineEndingsOnly: true });
     // Mixed endings with a real change: only the real change.
     expect(shape(diffTexts('f', 'a\r\nb\nc\r\n', 'a\nB\r\nc\n'))).toEqual([{ old: { start: 2, end: 2 }, new: { start: 2, end: 2 }, added: 1, removed: 1 }]);
     expect(diffTexts('f', 'same', 'same')).toMatchObject({ changes: [], lineEndingsOnly: false });

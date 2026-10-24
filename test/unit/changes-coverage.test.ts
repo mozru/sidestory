@@ -152,7 +152,7 @@ describe('the checker\'s rules in the extension', () => {
       entries: [...base.entries, { status: 'A', path: 'logo.png' }, { status: 'A', path: 'link' }, { status: 'M', path: 'vendor/lib' }, { status: 'A', path: 'con' }, { status: 'A', path: 'video.mp4' }],
       unsupported: [{ path: 'weird\u0001name' }],
       newBytes: async (p) =>
-        p === 'logo.png' ? new Uint8Array([0x89, 0, 1]) : p === 'link' ? 'link' : p === 'vendor/lib' ? 'submodule' : p === 'con' ? 'unsupported' : p === 'video.mp4' ? enc('version https://git-lfs.github.com/spec/v1\noid sha256:x\nsize 1\n') : base.newBytes(p),
+        p === 'logo.png' ? new Uint8Array([0x89, 0, 1]) : p === 'link' ? 'link' : p === 'vendor/lib' ? 'submodule' : p === 'con' ? 'unsupported' : p === 'video.mp4' ? enc(`version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1\n`) : base.newBytes(p),
       oldBytes: async (p) => (p === 'vendor/lib' ? 'submodule' : base.oldBytes(p)),
     };
     const r = (await computeCoverage(s))!;
@@ -162,6 +162,7 @@ describe('the checker\'s rules in the extension', () => {
     }
     expect(r.files.has('video.mp4')).toBe(false);
     expect(r.unsupported).toEqual(['weird\u0001name']);
+    expect(r.unsupportedLeft).toEqual(['weird\u0001name']);
     expect(r.files.has('weird\u0001name')).toBe(false);
     // The fixture's 1 left, plus 5.
     expect(r.totals).toMatchObject({ explained: 3, trivial: 1, left: 6 });
@@ -182,6 +183,7 @@ describe('the checker\'s rules in the extension', () => {
     };
     const r = (await computeCoverage(s))!;
     expect(r.files.get('img/logo.png')!.coverage!.changes[0]!.state).toBe('trivial');
+    expect(r.unsupportedLeft).toEqual([]); // covered by `weird*`
     expect(r.totals).toMatchObject({ trivial: 3, left: 1 });
   });
 
@@ -198,6 +200,8 @@ describe('the checker\'s rules in the extension', () => {
     const r = (await computeCoverage(s))!;
     expect(r.files.get('docs/new.md')!.entry).toMatchObject({ status: 'R', oldPath: 'docs/old.md', untracked: true });
     expect(r.files.has('docs/old.md')).toBe(false);
+    // The pair is exposed, so the extension maps the deleted and the untracked entry to this one.
+    expect([...r.paired]).toEqual([['docs/old.md', 'docs/new.md']]);
     expect(r.files.get('docs/new.md')!.diff.changes).toEqual([]);
     // The comparison's own untracked entry shows the counts.
     expect(s.entries.find((e) => e.path === 'docs/new.md')).toMatchObject({ added: 0, removed: 0 });
@@ -280,12 +284,12 @@ describe('the coverage service', () => {
     await fired;
     expect(svc.resultFor).toBe(snap);
     expect(svc.result).toMatchObject({ incomplete: true, belonging: [] });
-    // With an earlier result, that one is kept, marked incomplete.
-    svc.result = { ...svc.result!, incomplete: false, total: 7 };
+    // Never an earlier result (it may be another merge-base's): an empty one for this snapshot.
+    svc.result = { ...svc.result!, mergeBase: 'c'.repeat(40), incomplete: false, total: 7 };
     const again = new Promise<void>((resolve) => svc.onDidChange(() => resolve()));
     svc.schedule(0);
     await again;
-    expect(svc.result).toMatchObject({ incomplete: true, total: 7 });
+    expect(svc.result).toMatchObject({ mergeBase: snap.mergeBase, incomplete: true, total: 0 });
     svc.dispose();
   });
 
