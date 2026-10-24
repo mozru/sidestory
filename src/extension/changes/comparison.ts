@@ -226,6 +226,7 @@ export class Comparison implements vscode.Disposable {
   /** Drops the caches and marks the comparison stale without running (a setting changed while the view is hidden). */
   invalidate(): void {
     this.base = this.mergeBase = this.commits = this.committedList = undefined;
+    this.partial = undefined;
     this.counts.clear();
     this.generation++;
     this.schedule();

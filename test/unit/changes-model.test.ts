@@ -3,17 +3,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ChangeEntry } from '../../src/extension/changes/model.ts';
-
-describe('context keys', () => {
-  it('every sidestory.changes.* key a when clause names is one the extension sets', () => {
-    const pkg = readFileSync('package.json', 'utf8');
-    const named = new Set([...pkg.matchAll(/"when": "([^"]*)"/g)].flatMap((m) => [...m[1]!.matchAll(/sidestory\.changes\.[A-Za-z]+/g)].map((k) => k[0])));
-    const src = readFileSync('src/extension/changes/view.ts', 'utf8');
-    const set = new Set([...src.matchAll(/setContext\('(sidestory\.changes\.[A-Za-z]+)'/g)].map((m) => m[1]));
-    expect(named.size).toBeGreaterThan(3);
-    for (const k of named) expect(set, k).toContain(k);
-  });
-});
 import {
   buildTree,
   commitsLabel,
@@ -194,5 +183,16 @@ describe('counting lines later', () => {
   });
   it('a file queued for counting shows an ellipsis', () => {
     expect(countsLabel({ counting: true })).toBe('…');
+  });
+});
+
+describe('context keys', () => {
+  it('every sidestory.changes.* key a when clause names is one the extension sets', () => {
+    const pkg = readFileSync('package.json', 'utf8');
+    const named = new Set([...pkg.matchAll(/"when": "([^"]*)"/g)].flatMap((m) => [...m[1]!.matchAll(/sidestory\.changes\.[A-Za-z]+/g)].map((k) => k[0])));
+    const src = readFileSync('src/extension/changes/view.ts', 'utf8');
+    const set = new Set([...src.matchAll(/setContext\('(sidestory\.changes\.[A-Za-z]+)'/g)].map((m) => m[1]));
+    expect(named.size).toBeGreaterThan(3);
+    for (const k of named) expect(set, k).toContain(k);
   });
 });

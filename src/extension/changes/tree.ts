@@ -70,7 +70,9 @@ export class ChangesTree implements vscode.TreeDataProvider<ChangesNode>, vscode
 
   /** A new comparison starts expanded again after Collapse All. */
   resetExpansion(): void {
+    if (this.expandAll) return;
     this.expandAll = true;
+    this.generation++; // new ids: VS Code forgets the collapsed state
   }
 
   collapseAll(): void {

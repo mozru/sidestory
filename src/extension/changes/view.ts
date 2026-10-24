@@ -93,6 +93,8 @@ export class ChangesView implements vscode.Disposable {
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.init()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.changes.defaultBase') || e.affectsConfiguration('sidestory.changes.includeUncommitted')) {
+          // Filters are kept per mode: the mode may have changed with the setting.
+          this.filterText = this.memento.get<string>(KEYS.filter(this.mode()), '') ?? '';
           this.syncToggles();
           if (this.view.visible) void this.comparison?.refresh(true);
           else this.comparison?.invalidate();
@@ -385,10 +387,12 @@ export class ChangesView implements vscode.Disposable {
             Object.assign(e, patchCounts(patch));
           }
           const counted = { added: e.added, removed: e.removed, noText: e.noText };
-          if (st) {
+          // Kept by the comparison (dropped while the file is changing) and, for a changing file, by its size and time.
+          if (!e.unsaved) c.remember(e.path, counted);
+          if (st && !e.unsaved) {
             if (this.diskCounts.size > 5000) this.diskCounts.clear();
-            if (!e.unsaved) this.diskCounts.set(diskKey, counted);
-          } else c.remember(e.path, counted);
+            this.diskCounts.set(diskKey, counted);
+          }
           this.scheduleRepaint();
         } catch {
           // gone or unreadable: no count
