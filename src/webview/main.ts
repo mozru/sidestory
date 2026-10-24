@@ -687,8 +687,7 @@ function snapshot(): Map<string, string> {
 
 /** A section's HTML without the attributes this script adds. */
 function cleanHtml(el: HTMLElement): string {
-  const c = el.cloneNode(true) as HTMLElement;
-  highlighter.plainCopy(c);
+  const c = highlighter.plainClone(el);
   for (const d of c.querySelectorAll('.cx-detail, .cx-fix, .cx-widget-bar, .cx-widget-desc, .cx-widget-error')) d.remove();
   for (const w of c.querySelectorAll<HTMLElement>('explain-widget')) {
     for (const a of ['data-cx-w', 'data-cx-wstate', 'data-cx-showfb', 'tabindex', 'role', 'aria-label', 'aria-describedby']) w.removeAttribute(a);

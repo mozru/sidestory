@@ -177,12 +177,30 @@ export class CodeHighlighter {
     this.pass(true);
   }
 
-  /** Makes a clone's colored blocks plain text again, so comparing two renders sees only what the author wrote. */
-  plainCopy(root: Element): void {
-    for (const el of root.querySelectorAll(`[${HL_ATTR}="${this.token}"]`)) {
-      el.textContent = el.textContent;
-      el.removeAttribute(HL_ATTR);
-    }
+  /**
+   * A deep copy of `root` whose colored blocks are plain text again, so comparing two renders sees only what the
+   * author wrote. Their spans are never copied: a live update compares every section before and after, and copying
+   * thousands of spans twice per keystroke made colored pages several times slower to update than plain ones.
+   */
+  plainClone<T extends Element>(root: T): T {
+    const blocks = new Set(root.querySelectorAll(`[${HL_ATTR}="${this.token}"]`));
+    if (blocks.size === 0) return root.cloneNode(true) as T;
+    // The blocks' ancestors are copied one level at a time; everything else whole.
+    const above = new Set<Node>();
+    for (const b of blocks) for (let n = b.parentNode; n && n !== root && !above.has(n); n = n.parentNode) above.add(n);
+    const copy = (n: Node): Node => {
+      if (blocks.has(n as Element)) {
+        const c = n.cloneNode(false) as Element;
+        c.textContent = n.textContent;
+        c.removeAttribute(HL_ATTR);
+        return c;
+      }
+      if (n !== root && !above.has(n)) return n.cloneNode(true);
+      const c = n.cloneNode(false);
+      for (let k = n.firstChild; k; k = k.nextSibling) c.appendChild(copy(k));
+      return c;
+    };
+    return copy(root) as T;
   }
 
   onMessage(m: ToWebview): void {
