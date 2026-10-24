@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import { WIDGET_BOOTSTRAP } from '../src/shared/widget-bootstrap.ts';
 import { WIDGET_TYPE_FILES } from '../src/widget-types/index.ts';
-import { buildHighlight } from './build-highlight.mjs';
 import { buildWidgetLibs } from './build-widget-libs.mjs';
 import { generateWidgetData } from './widget-data.ts';
 import { mcpServerBuild } from './mcp-build.mjs';
@@ -28,7 +27,8 @@ const builds = [
   { ...common, entryPoints: ['src/webview/main.css'], outfile: 'dist/webview/main.css' },
   // The widget compiler's worker (Sucrase, acorn); widget code is compiled there, never in the host thread.
   { ...common, entryPoints: ['src/extension/widgets/compile-worker.ts'], outfile: 'dist/compile-worker.cjs', platform: 'node', format: 'cjs' },
-  // The code block highlighter's worker (Shiki); grammars are read from dist/highlight/grammars when needed.
+  // The code block highlighter's worker (vscode-textmate, vscode-oniguruma's JS); grammars come from the installed
+  // extensions and onig.wasm from VS Code itself (docs/HIGHLIGHT-PLAN.md §10), so neither is in dist/.
   { ...common, entryPoints: ['src/extension/highlight/worker.ts'], outfile: 'dist/highlight-worker.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
   // The standalone widget checker (node dist/check.cjs <sidestory-dir>); uses the worker and widget-data beside it.
   { ...common, entryPoints: ['src/cli/check-widgets.ts'], outfile: 'dist/check.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
@@ -51,8 +51,8 @@ if (watch) {
   await Promise.all(builds.map((b) => esbuild.build(b)));
 }
 
-// Grammars and fallback themes for the highlight worker (dist/highlight/).
-await buildHighlight('dist/highlight');
+// VS Code's default themes, for when the reader's color theme can't be read (docs/HIGHLIGHT-PLAN.md §3).
+cpSync('src/extension/highlight/fallback-themes', 'dist/highlight/themes', { recursive: true });
 
 // Export lists and lucide icon data the widget compiler checks imports against (dist/widget-data/).
 await generateWidgetData('dist/widget-data');

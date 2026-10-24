@@ -31,11 +31,12 @@ const MAX_SCOPE = 1_000;
 const MAX_RULES = 5_000;
 
 /**
- * Reads files of one theme extension. `read` returns the text of a URI (a string; `file:` and other schemes) or
- * undefined; `inside` says whether a URI's real file is inside the extension folder (symlinks followed).
+ * Reads files of installed extensions (themes, grammars). `read` returns the text of a URI (a string; `file:` and
+ * other schemes), or undefined when it's missing, unreadable or over `maxBytes` (default: MAX_THEME_FILE);
+ * `inside` says whether a URI's real file is inside the extension folder (symlinks followed).
  */
 export interface ThemeReader {
-  read(uri: string): Promise<string | undefined>;
+  read(uri: string, maxBytes?: number): Promise<string | undefined>;
   inside(uri: string, root: string): Promise<boolean>;
 }
 

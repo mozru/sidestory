@@ -1408,6 +1408,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/test": "^1.64.1",
+    "@shikijs/langs": "4.5.0",
     "@tailwindcss/browser": "4.3.3",
     "@types/mocha": "10.0.10",
     "@types/node": "^24.19.2",
@@ -1432,16 +1433,15 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@shikijs/core": "4.5.0",
     "@shikijs/engine-javascript": "4.5.0",
-    "@shikijs/langs": "4.5.0",
-    "@shikijs/themes": "4.5.0",
     "@vscode/codicons": "0.0.46-24",
     "acorn": "8.19.0",
     "acorn-walk": "8.3.5",
     "idiomorph": "0.8.0",
     "jsonc-parser": "3.3.1",
     "sucrase": "3.35.1",
+    "vscode-oniguruma": "1.7.0",
+    "vscode-textmate": "9.3.2",
     "zod": "4.6.7"
   },
   "type": "module"

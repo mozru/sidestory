@@ -4,6 +4,7 @@ import { explainerTests } from './explainer.test.ts';
 import { navigationTests } from './navigation.test.ts';
 import { changesTests } from './changes.test.ts';
 import { diffStepsTests } from './diff-steps.test.ts';
+import { highlightTests } from './highlight.test.ts';
 
 export function run(): Promise<void> {
   const mocha = new Mocha({ ui: 'bdd', timeout: 30_000, color: true });
@@ -15,6 +16,7 @@ export function run(): Promise<void> {
   else {
     explainerTests();
     navigationTests();
+    highlightTests();
   }
   return new Promise((resolve, reject) => mocha.run((failures) => (failures ? reject(new Error(`${failures} desktop test(s) failed`)) : resolve())));
 }

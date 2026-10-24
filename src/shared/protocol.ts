@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 import { isCodeLink, MAX_CODE_LINKS, parseCodeTarget } from './code-link.ts';
-import { HIGHLIGHT_LANGS, type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
+import { type HighlightStyle, LANG_NAME, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
 import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
 import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
 import { commentsFromWebviewSchemas, type CommentsFromWebview, type CommentsToWebview } from './comments-protocol.ts';
@@ -183,7 +183,7 @@ export type FromWebview =
   /** A widget took focus while the panel didn't have it (from the editor): give focus back to the editor. */
   | { type: 'focusTheft' }
   /** Code blocks to color (text from the sanitized content; languages from the fixed table). */
-  | { type: 'highlight'; blocks: { id: number; lang: HighlightLang; code: string }[] }
+  | { type: 'highlight'; blocks: { id: number; lang: string; code: string }[] }
   /**
    * A `data-explain-code` link was clicked, or activated with Enter or Space (docs/AUTHORING-PLAN.md §8.1). Posted only
    * from the panel's own handlers for trusted input. `path` is relative to the folder that holds `.sidestory/`;
@@ -259,7 +259,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({
     type: z.literal('highlight'),
     blocks: z
-      .array(z.object({ id: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), lang: z.enum(HIGHLIGHT_LANGS), code: z.string().max(MAX_BLOCK_CHARS) }))
+      .array(z.object({ id: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), lang: z.string().regex(LANG_NAME), code: z.string().max(MAX_BLOCK_CHARS) }))
       .min(1)
       .max(MAX_REQUEST_BLOCKS)
       .refine((b) => b.reduce((n, x) => n + x.code.length, 0) <= MAX_REQUEST_CHARS),

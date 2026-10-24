@@ -316,21 +316,11 @@ Mark a code block's language with a class, as in Markdown renderers:
     return 3.14159 * r * r</code></pre>
 ```
 
-It's colored like the editor beside it, in the reader's own color theme (light, dark or high contrast, including their `editor.tokenColorCustomizations`), and recolored when they switch themes. Write the code as plain text (escape `<` and `&` as `&lt;` and `&amp;`); a block with markup inside its `<code>` (a `<mark>`, say) is left exactly as written. The class may be on the `<pre>` instead, and `lang-x` works too.
+It's colored like the editor beside it, with the same grammars and in the reader's own color theme (light, dark or high contrast, including their `editor.tokenColorCustomizations`), and recolored when they switch themes. Write the code as plain text (escape `<` and `&` as `&lt;` and `&amp;`); a block with markup inside its `<code>` (a `<mark>`, say) is left exactly as written. The class may be on the `<pre>` instead, and `lang-x` works too.
 
-| Language | Class names |
-|---|---|
-| TypeScript, TSX | `ts`, `typescript`, `mts`, `cts`, `tsx` |
-| JavaScript, JSX | `js`, `javascript`, `mjs`, `cjs`, `jsx` |
-| Python | `py`, `python`, `python3` |
-| C, C++ | `c`, `h`, `cpp`, `c++`, `cc`, `cxx`, `hpp`, `hh` |
-| Rust, Go, Java, C# | `rs`, `rust`, `go`, `golang`, `java`, `cs`, `csharp`, `c#` |
-| SystemVerilog, Verilog, VHDL | `sv`, `systemverilog`, `svh`, `v`, `verilog`, `vhdl`, `vhd` |
-| JSON, YAML, TOML | `json`, `jsonc`, `json5`, `yaml`, `yml`, `toml` |
-| Shell, SQL | `sh`, `bash`, `shell`, `zsh`, `console`, `sql` |
-| HTML, CSS, Markdown, diff | `html`, `htm`, `css`, `md`, `markdown`, `diff`, `patch` |
+The grammars are the ones the reader's VS Code already has: its built-in language extensions (TypeScript, JavaScript, JSX/TSX, Python, C, C++, C#, Go, Rust, Java, JSON, YAML, shell, SQL, HTML, CSS, Markdown with its fenced code, diff, Dockerfile, PHP, Ruby, Lua, Swift, PowerShell, LaTeX and more) and any language extension they installed (SystemVerilog, Verilog, VHDL, TOML…). The language name is matched the way VS Code names languages: a language id (`typescript`, `python`, `shellscript`), an alias (`bash`, `c++`, `c#`), or a file extension (`ts`, `py`, `rs`, `yml`, `md`, `sv` with a SystemVerilog extension); `python3`, `golang`, `node`, `console`, `shell`, `make` and `json5` work too. Use the first `language-` class for the language: later ones are ignored.
 
-Other languages stay plain monospace, as do blocks over 2,000 lines or 100,000 characters (and single lines over 2,000 characters). Colors are the editor's without semantic highlighting. In a remote window (SSH, WSL, containers), a color theme installed only on your own machine may not be readable; code blocks then use VS Code's default theme of the same kind.
+A language the reader has no grammar for stays plain monospace, as do blocks over 2,000 lines or 100,000 characters (and single lines over 2,000 characters). Colors are the editor's without semantic highlighting. In a remote window (SSH, WSL, containers), a color theme or language extension installed only on your own machine may not be readable; code blocks then use VS Code's default theme of the same kind, and languages without a grammar on the remote side stay plain.
 
 ### What's supported, and what's removed
 

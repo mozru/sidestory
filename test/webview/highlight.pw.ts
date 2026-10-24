@@ -1,16 +1,22 @@
 // Code block colors in the panel (docs/HIGHLIGHT-PLAN.md): the test plays the extension host with the real
-// tokenizer, grammars (dist/highlight) and VS Code's default themes.
+// tokenizer, real grammars in a fake installed extension (§10), and VS Code's default themes.
 import { expect, type Page, test } from '@playwright/test';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LanguageRegistration } from '@shikijs/core';
-import { grammarsFor } from '../../src/extension/highlight/grammars.ts';
+import { pathToFileURL } from 'node:url';
+import { diskReader, ONIG_WASM, writeGrammarExtension } from '../grammar-fixture.ts';
+import { GrammarCatalog, loadGrammarSet } from '../../src/extension/highlight/catalog.ts';
 import { type HighlightTheme, loadThemeChain, normalizeTheme, type ThemeKind } from '../../src/extension/highlight/theme.ts';
-import { Tokenizer } from '../../src/extension/highlight/tokenize.ts';
+import { createOnigLib, Tokenizer } from '../../src/extension/highlight/tokenize.ts';
 import type { FromWebview, ToWebview } from '../../src/shared/protocol.ts';
 import { type ThemeName, THEMES, themeCss } from './themes.ts';
 
-const DIST = join(import.meta.dirname, '../../dist/highlight');
+const THEMES_DIR = join(import.meta.dirname, '../../src/extension/highlight/fallback-themes');
+let catalogOnce: Promise<GrammarCatalog> | undefined;
+/** TypeScript, Python and HTML, as an installed extension would give them (once per test process). */
+const catalog = () => (catalogOnce ??= writeGrammarExtension(mkdtempSync(join(tmpdir(), 'cx-hl-pw-')), ['typescript', 'python', 'html']).then((e) => new GrammarCatalog([e])));
+const engine = createOnigLib([ONIG_WASM]);
 /** Screenshots for people to look at (not compared). */
 const SHOTS = process.env.CX_HL_SHOTS;
 
@@ -18,31 +24,34 @@ type Request = Extract<FromWebview, { type: 'highlight' }>;
 
 /** Plays the host: tokenizes requests with the real tokenizer, or holds them until released. */
 class FakeHost {
-  readonly tokenizer = new Tokenizer((n) => JSON.parse(readFileSync(join(DIST, 'grammars', `${n}.json`), 'utf8')) as LanguageRegistration);
+  readonly tokenizer = new Tokenizer(engine.then((e) => e.lib));
   theme!: HighlightTheme;
   hold = false;
-  held: { m: Request; resolve: (r: ToWebview | null) => void }[] = [];
+  held: { m: Request; resolve: (r: ToWebview | null | Promise<ToWebview>) => void }[] = [];
   requests: Request[] = [];
 
   async setKind(kind: ThemeKind): Promise<void> {
-    const root = `file://${DIST}/themes`;
+    const root = pathToFileURL(THEMES_DIR).href;
     const reader = { read: async (u: string) => readFileSync(new URL(u), 'utf8'), inside: async () => true };
     this.theme = normalizeTheme((await loadThemeChain(`${root}/${kind}.json`, root, reader))!, kind, kind);
     this.tokenizer.setTheme(this.theme);
   }
 
-  answer(m: Request): ToWebview {
-    const blocks = m.blocks.map((b) => {
-      this.tokenizer.load(grammarsFor(b.lang, b.code));
-      return { id: b.id, runs: this.tokenizer.tokenize(b.code, b.lang, this.theme.key)?.runs ?? null };
-    });
+  async answer(m: Request): Promise<ToWebview> {
+    const c = await catalog();
+    const blocks = [];
+    for (const b of m.blocks) {
+      const scope = c.scopeFor(b.lang);
+      if (scope) await this.tokenizer.load(scope, (await loadGrammarSet(c, scope, diskReader))!);
+      blocks.push({ id: b.id, runs: (scope && this.tokenizer.tokenize(b.code, scope, this.theme.key)?.runs) || null });
+    }
     return { type: 'highlighted', theme: this.theme.key, palette: this.tokenizer.palette(this.theme.key), blocks };
   }
 
   async attach(page: Page): Promise<void> {
     await page.exposeFunction('__highlight', (m: Request) => {
       this.requests.push(m);
-      if (!this.hold) return Promise.resolve(this.answer(m));
+      if (!this.hold) return this.answer(m);
       return new Promise<ToWebview | null>((resolve) => this.held.push({ m, resolve }));
     });
   }
@@ -96,10 +105,10 @@ for (const [theme, kw, str] of [['dark', '#ff7b72', '#a5d6ff'], ['light', '#cf22
     expect(await colorOf(page, '"hello"')).toBe(hex(str));
     // The text is exactly what the author wrote.
     expect(await frame(page).locator('pre code.language-ts').textContent()).toBe(TS);
-    // A language from the <pre>'s class; an unknown one stays plain and isn't asked for.
+    // A language from the <pre>'s class; one no installed grammar knows stays plain (asked for once).
     await expect(frame(page).locator('pre.lang-py span').first()).toBeAttached();
     await expect(frame(page).locator('code.language-klingon span')).toHaveCount(0);
-    expect(host.requests.flatMap((r) => r.blocks.map((b) => b.lang)).sort()).toEqual(['python', 'typescript']);
+    expect(host.requests.flatMap((r) => r.blocks.map((b) => b.lang)).sort()).toEqual(['klingon', 'py', 'ts']);
     if (SHOTS) {
       mkdirSync(SHOTS, { recursive: true });
       await frame(page).locator('section[data-explain-anchor="one"]').screenshot({ path: join(SHOTS, `highlight-${theme}.png`) });
@@ -135,7 +144,7 @@ test('malformed results from the host are ignored', async ({ page }) => {
   await open(page, host, page1());
   await expect.poll(() => host.held.length).toBe(1);
   const ids = host.held[0]!.m.blocks.map((b) => b.id);
-  const tsId = host.held[0]!.m.blocks.find((b) => b.lang === 'typescript')!.id;
+  const tsId = host.held[0]!.m.blocks.find((b) => b.lang === 'ts')!.id;
   const bad = (runs: unknown, palette: unknown = [{}, { color: '#ff0000' }]) =>
     send(page, { type: 'highlighted', theme: 'x', palette, blocks: [{ id: tsId, runs }] } as ToWebview);
   await bad([TS.length + 1, 1]); // too long
@@ -146,7 +155,9 @@ test('malformed results from the host are ignored', async ({ page }) => {
   await page.waitForTimeout(100);
   await expect(frame(page).locator('code.language-ts span')).toHaveCount(0);
   // A palette entry that isn't a hex color gives no style.
-  await send(page, { type: 'highlighted', theme: 'y', palette: [{}, { color: 'red; background: url(x)' }, { color: 'expression(1)', font: 99 }], blocks: [{ id: ids.find((i) => i !== tsId)!, runs: [PY.length, 1] }] } as ToWebview);
+  const pyId = host.held[0]!.m.blocks.find((b) => b.lang === 'py')!.id;
+  expect(ids).toContain(pyId);
+  await send(page, { type: 'highlighted', theme: 'y', palette: [{}, { color: 'red; background: url(x)' }, { color: 'expression(1)', font: 99 }], blocks: [{ id: pyId, runs: [PY.length, 1] }] } as ToWebview);
   await page.waitForTimeout(100);
   await expect(frame(page).locator('pre.lang-py span')).toHaveCount(0);
 });
@@ -190,7 +201,7 @@ test('a block is asked for once at a time; one whose request was dropped is aske
   // Another block edited: a newer request, which (as the real host does) replaces the waiting one.
   await send(page, { type: 'content', title: 'Code', html: page1(edited, 'abc').replace('return x + 1', 'return x + 2') });
   await expect.poll(() => host.held.length).toBe(2);
-  expect(host.held[1]!.m.blocks.map((b) => b.lang)).toEqual(['python']);
+  expect(host.held[1]!.m.blocks.map((b) => b.lang)).toEqual(['py']);
   host.release(true); // the first request is never answered
   // Its reply tells the panel the first was dropped: the TypeScript block is asked for again, and completed.
   await expect.poll(() => host.held.length).toBe(1);
@@ -244,7 +255,7 @@ test('switching back to a theme whose palette was dropped asks again', async ({ 
     host.theme = { ...host.theme, key: `${host.theme.key}-${Math.random().toString(36).slice(2, 6)}` };
     host.tokenizer.setTheme(host.theme);
     await send(page, { type: 'highlightTheme', theme: host.theme.key });
-    await expect.poll(() => host.requests.at(-1)?.blocks.length).toBe(2);
+    await expect.poll(() => host.requests.at(-1)?.blocks.length).toBe(3);
     await page.waitForTimeout(50);
   }
   host.requests = [];
@@ -257,7 +268,7 @@ test('switching back to a theme whose palette was dropped asks again', async ({ 
 
 test('more code answered plain than the panel caches hold is not asked for again and again', async ({ page }) => {
   const host = new FakeHost();
-  host.answer = (m) => ({ type: 'highlighted', theme: 'k', palette: [{}], blocks: m.blocks.map((b) => ({ id: b.id, runs: null })) });
+  host.answer = async (m) => ({ type: 'highlighted', theme: 'k', palette: [{}], blocks: m.blocks.map((b) => ({ id: b.id, runs: null })) });
   // 14 blocks of ~92K characters (under the per-block caps): more than the panel's 1M-character caches.
   const big = (i: number) => `// ${i}\n${'let a = 1; // padding padding padding padding padding padding pad\n'.repeat(1400)}`;
   const html = `<section data-explain-anchor="one"><h2>One</h2>${Array.from({ length: 14 }, (_, i) => `<pre><code class="language-ts">${big(i)}</code></pre>`).join('')}</section>`;
@@ -297,7 +308,7 @@ test('a theme change asks again for every block and recolors in place', async ({
   await host.setKind('light');
   await send(page, { type: 'highlightTheme', theme: host.theme.key });
   await expect.poll(() => host.held.length).toBe(1);
-  expect(host.held[0]!.m.blocks.length).toBe(2);
+  expect(host.held[0]!.m.blocks.length).toBe(3);
   // Until the reply, the old colors stay (no flash of plain text), also through a render.
   await send(page, { type: 'content', title: 'Code', html: page1(TS, 'Typing during the switch.') });
   expect(await colorOf(page, 'const')).toBe(hex('#ff7b72'));

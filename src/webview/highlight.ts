@@ -1,7 +1,7 @@
 // Code block colors in the panel (docs/HIGHLIGHT-PLAN.md §2). The extension host tokenizes; this module only
 // ever gets lengths and palette indexes back, slices its own text with them, and builds spans with textContent
 // and CSSOM. Nothing here turns a string into HTML or CSS text.
-import { HEX_COLOR, type HighlightLang, type HighlightStyle, langFromClass, MAX_BLOCK_CHARS, MAX_BLOCK_LINES, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from '../shared/highlight-languages.ts';
+import { HEX_COLOR, type HighlightStyle, langFromClass, MAX_BLOCK_CHARS, MAX_BLOCK_LINES, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from '../shared/highlight-languages.ts';
 import type { FromWebview, ToWebview } from '../shared/protocol.ts';
 
 /** Marks blocks this module colored. Its value is a random token per panel, so author HTML can't pass for one. */
@@ -17,7 +17,7 @@ const PENDING_MS = 30_000;
 interface Colored {
   /** The text the block was colored from (compared with incoming text, never the live textContent). */
   text: string;
-  lang: HighlightLang;
+  lang: string;
   theme: string;
   /** False: colors carried over an edit, for the lines above it; the rest is plain until the reply comes. */
   complete: boolean;
@@ -120,7 +120,7 @@ export class CodeHighlighter {
   /** A colored block the morph is changing: its old colors, for the lines above the edit. */
   private readonly previous = new WeakMap<Element, Colored>();
   /** Blocks asked for, by request id (ids grow), and the ids by `lang\ntext`, so a block is asked for once at a time. */
-  private readonly pending = new Map<number, { lang: HighlightLang; text: string; at: number }>();
+  private readonly pending = new Map<number, { lang: string; text: string; at: number }>();
   private readonly pendingKeys = new Map<string, number>();
   private nextId = 1;
   private selectionPass = 0;
@@ -135,7 +135,7 @@ export class CodeHighlighter {
     this.host = host;
   }
 
-  private key(lang: HighlightLang, text: string, theme = this.theme): string | undefined {
+  private key(lang: string, text: string, theme = this.theme): string | undefined {
     return theme === undefined ? undefined : `${theme}\n${lang}\n${text}`;
   }
 
@@ -261,7 +261,7 @@ export class CodeHighlighter {
   private pass(request: boolean): void {
     this.deferred = false;
     this.spans = 0;
-    const misses: { id: number; lang: HighlightLang; code: string }[] = [];
+    const misses: { id: number; lang: string; code: string }[] = [];
     let chars = 0;
     const now = Date.now();
     const root = this.host.root();
@@ -323,7 +323,7 @@ export class CodeHighlighter {
   }
 
   /** The block was colored before this edit: keep the colors of the lines above the first changed line. */
-  private carryOver(el: Element, text: string, lang: HighlightLang): void {
+  private carryOver(el: Element, text: string, lang: string): void {
     const old = this.previous.get(el);
     this.previous.delete(el);
     if (!old || old.lang !== lang) return;
@@ -382,7 +382,7 @@ export class CodeHighlighter {
 }
 
 /** The language of a block element as `targets` sees it: its own class, then (for a `<code>`) its `<pre>`'s. */
-function langOf(el: Element): HighlightLang | undefined {
+function langOf(el: Element): string | undefined {
   if (el.localName === 'pre') return langFromClass(el.getAttribute('class'));
   return langFromClass(el.getAttribute('class')) ?? langFromClass(el.parentElement?.getAttribute('class'));
 }
@@ -400,7 +400,7 @@ function sameAttributes(a: Element, b: Element): boolean {
  * `<pre>` with no elements in it. The language comes from the code's class, else the pre's. `ours` says whether
  * an element holds spans this module made (otherwise elements inside mean author markup).
  */
-export function* targets(root: Element, ours: (el: Element) => boolean): Generator<{ el: Element; lang: HighlightLang }> {
+export function* targets(root: Element, ours: (el: Element) => boolean): Generator<{ el: Element; lang: string }> {
   for (const pre of root.querySelectorAll('pre')) {
     let el: Element | undefined;
     const only = pre.firstElementChild;

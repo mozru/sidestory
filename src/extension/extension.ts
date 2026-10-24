@@ -596,6 +596,12 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       })),
       vscode.commands.registerCommand('sidestory._focus', () => [...sessions].map((s) => s.focusInfo())),
       vscode.commands.registerCommand('sidestory._thisFile', () => thisFile.stats()),
+      // Code block colors from the installed grammars (docs/HIGHLIGHT-PLAN.md §10), as a panel would get them.
+      vscode.commands.registerCommand('sidestory._highlight', async (lang: string, code: string) => {
+        await highlight.whenReady();
+        const r = await highlight.highlighter.request(highlight.highlighter.newRequester(), [{ id: 0, lang, code }]);
+        return r && { theme: r.theme, palette: r.palette, runs: r.blocks[0]?.runs ?? null, engine: highlight.highlighter.engine };
+      }),
       vscode.commands.registerCommand('sidestory._coverage', () => {
         const r = changes.coverage.result;
         return r && { totals: r.totals, belonging: r.belonging.map((b) => b.folder), files: [...r.files].map(([p, f]) => [p, f.coverage?.changes.map((c) => c.state)]) };

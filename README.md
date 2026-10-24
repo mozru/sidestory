@@ -45,7 +45,7 @@ Write one sidestory per piece and an overview that ties them together. Readers s
 
 ## Any language: a Python example
 
-Code blocks in the page are syntax-highlighted in your editor's theme (mark them `class="language-python"`, as in Markdown), and anchors work in any language. [`examples/tiny-lsm`](examples/tiny-lsm) is a small log-structured merge-tree key-value store in Python, with an overview, a sidestory per component and simulations of its write, compaction, read and scan paths.
+Code blocks in the page are syntax-highlighted in your editor's theme, with the grammars of the language extensions you already have (mark them `class="language-python"`, as in Markdown), and anchors work in any language. [`examples/tiny-lsm`](examples/tiny-lsm) is a small log-structured merge-tree key-value store in Python, with an overview, a sidestory per component and simulations of its write, compaction, read and scan paths.
 
 ![tiny-lsm's overview: the "A put" step shows a highlighted Python code block, then the write-path simulation steps through db.py in the editor](media/marketplace/python.gif)
 

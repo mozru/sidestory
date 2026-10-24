@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Code blocks use the grammars of your installed extensions.** A `<pre><code class="language-…">` block is colored with the same TextMate grammar the editor uses for that language: VS Code's built-in language extensions (80-odd grammars, including Dockerfile, PHP, Ruby, Lua, Swift, PowerShell and LaTeX, which weren't colored before) and any language extension you installed (SystemVerilog, VHDL, TOML…). Languages are named as VS Code names them: an id, an alias or a file extension (`ts`, `py`, `sv`). Installing or removing an extension recolors open sidestories.
+- The regex engine is VS Code's own Oniguruma, so grammars behave exactly as in the editor. Sidestory no longer ships grammars: the package is about 215 KB smaller (1.99 MB → 1.77 MB).
+- Without a SystemVerilog, Verilog, VHDL or TOML extension installed, those blocks are now plain (they were colored by grammars Sidestory used to ship).
+
 ## 0.2.1 (2026-10-24)
 
 ### Comments, and Ask Claude

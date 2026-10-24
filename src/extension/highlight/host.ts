@@ -4,17 +4,29 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_BLOCK_LINES } from '../../shared/highlight-languages.ts';
+import { type HighlightStyle, MAX_BLOCK_CHARS, MAX_BLOCK_LINES } from '../../shared/highlight-languages.ts';
 import { SizeLru } from '../widgets/lru.ts';
+import type { GrammarSet } from './catalog.ts';
 import type { HighlightTheme } from './theme.ts';
-import { countLines, grammarsFor } from './grammars.ts';
+import { countLines } from './grammars.ts';
+import type { EngineName } from './tokenize.ts';
 import type { WorkerReply, WorkerRequest } from './worker-protocol.ts';
+
+/** Where grammars come from (docs/HIGHLIGHT-PLAN.md §10): the installed extensions, through a GrammarCatalog. */
+export interface GrammarSource {
+  /** Changes when what it would load changes. */
+  readonly key: string;
+  /** The scope a block's language name picks, or undefined (the block stays plain). */
+  scopeFor(lang: string): string | undefined;
+  /** A scope's grammar files (its includes and injections with it), or undefined when it can't be read. */
+  load(scope: string): Promise<GrammarSet | undefined>;
+}
 
 export interface HighlighterOptions {
   /** The worker script. Default: highlight-worker.cjs next to the extension bundle. */
   workerFile?: string;
-  /** Folder of grammar JSON files. Default: highlight/grammars next to the extension bundle. */
-  grammarDir?: string;
+  /** Candidate paths of VS Code's onig.wasm; the worker uses the first that loads, else a JavaScript regex engine. */
+  wasmFiles?: string[];
   /** Limit for loading grammars (default 10 s). */
   loadTimeoutMs?: number;
   /** Minimum per-block limit (default 1 s; more for large blocks: 30 ms per KB). */
@@ -34,7 +46,8 @@ export interface HighlighterOptions {
 
 export interface BlockRequest {
   id: number;
-  lang: HighlightLang;
+  /** The language name the block gives (`ts`, `python`); the grammar source maps it to a scope. */
+  lang: string;
   code: string;
 }
 
@@ -87,6 +100,14 @@ export class Highlighter {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   private theme: HighlightTheme | undefined;
+  private grammars: GrammarSource | undefined;
+  /** Bumped by every theme or grammar change: a result made under an older one is made again. */
+  private version = 0;
+  /** The worker must be replaced before its next job (the grammars changed). */
+  private restartWorker = false;
+  /** Scopes whose grammar couldn't be read or loaded, under the current grammars. */
+  private readonly failed = new Set<string>();
+  private engineName: EngineName | undefined;
   /** Results by (theme, lang, hash of code). */
   private readonly cache: SizeLru<Uint32Array | null>;
   /** Blocks being tokenized now, so a second request for the same block waits for the same answer. */
@@ -103,11 +124,29 @@ export class Highlighter {
   }
 
   setTheme(theme: HighlightTheme): void {
+    if (theme.key !== this.theme?.key) this.version++;
     this.theme = theme;
   }
 
+  /** New grammars: results are made again, and the worker is replaced (it has the old ones loaded). */
+  setGrammars(grammars: GrammarSource): void {
+    // The same grammars (a refresh for another reason): keep the source, so reads in progress stay valid.
+    if (grammars.key === this.grammars?.key) return;
+    this.grammars = grammars;
+    this.version++;
+    this.failed.clear();
+    if (this.current) this.restartWorker = true;
+    else this.stopWorker();
+  }
+
+  /** What the panel sees as "the theme": its colors and the grammars, so either changing recolors blocks. */
   get themeKey(): string | undefined {
-    return this.theme?.key;
+    return this.theme && `${this.theme.key}.${this.grammars?.key ?? 'none'}`;
+  }
+
+  /** The regex engine the worker last reported (tests, logs). */
+  get engine(): EngineName | undefined {
+    return this.engineName;
   }
 
   newRequester(): Requester {
@@ -152,16 +191,18 @@ export class Highlighter {
     }
     for (let attempt = 0; attempt < 3; attempt++) {
       const theme = this.theme;
-      if (!theme || this.disposed) return undefined;
+      const version = this.version;
+      const key = this.themeKey;
+      if (!theme || !key || this.disposed) return undefined;
       const out: HighlightResult['blocks'] = [];
       for (const b of blocks) {
-        if (this.theme !== theme || who.disposed) break;
-        out.push({ id: b.id, runs: who.tripped ? null : await this.block(who, theme, b) });
+        if (this.version !== version || who.disposed) break;
+        out.push({ id: b.id, runs: who.tripped ? null : await this.block(who, theme, key, b) });
       }
-      // The theme changed meanwhile: do it again (mostly from the cache) under the new one.
+      // The theme or the grammars changed meanwhile: do it again (mostly from the cache) under the new ones.
       if (who.disposed) return undefined;
-      if (this.theme !== theme) continue;
-      return { theme: theme.key, palette: this.palette(theme.key).styles, blocks: out };
+      if (this.version !== version) continue;
+      return { theme: key, palette: this.palette(theme.key).styles, blocks: out };
     }
     return undefined;
   }
@@ -176,36 +217,52 @@ export class Highlighter {
     return p;
   }
 
-  private async block(who: Requester, theme: HighlightTheme, b: BlockRequest): Promise<number[] | null> {
-    const key = `${theme.key}\n${b.lang}\n${createHash('sha256').update(b.code).digest('base64url')}`;
+  private async block(who: Requester, theme: HighlightTheme, themeKey: string, b: BlockRequest): Promise<number[] | null> {
+    const scope = this.grammars?.scopeFor(b.lang);
+    if (!scope || this.failed.has(scope)) return null;
+    const key = `${themeKey}\n${scope}\n${createHash('sha256').update(b.code).digest('base64url')}`;
     const hit = this.cache.get(key);
     if (hit !== undefined) return hit && Array.from(hit);
     let p = this.inflight.get(key);
     if (!p) {
-      p = this.tokenize(who, theme, b, key).finally(() => this.inflight.delete(key));
+      p = this.tokenize(who, theme, scope, b.code, key).finally(() => this.inflight.delete(key));
       this.inflight.set(key, p);
     }
     return p;
   }
 
-  private async tokenize(who: Requester, theme: HighlightTheme, b: BlockRequest, key: string): Promise<number[] | null> {
-    if (b.code.length > MAX_BLOCK_CHARS || countLines(b.code) > MAX_BLOCK_LINES) return null;
-    const langs = grammarsFor(b.lang, b.code);
+  private async tokenize(who: Requester, theme: HighlightTheme, scope: string, code: string, key: string): Promise<number[] | null> {
+    if (code.length > MAX_BLOCK_CHARS || countLines(code) > MAX_BLOCK_LINES) return null;
     // Two rounds: a worker replaced between loading and tokenizing (another job's timeout) answers "cold".
     for (let round = 0; round < 2; round++) {
-      for (let tries = 0; !langs.every((l) => this.warm.has(l)); tries++) {
-        if (tries >= 2 || who.tripped) return null;
-        const r = await this.job({ id: 0, type: 'load', langs }, this.opts.loadTimeoutMs ?? 10_000, theme); // loading grammars isn't charged: it happens once per worker
+      for (let tries = 0; !this.warm.has(scope); tries++) {
+        if (tries >= 2 || who.tripped || this.failed.has(scope)) return null;
+        const grammars = this.grammars;
+        const set = await grammars?.load(scope).catch(() => undefined);
+        if (grammars !== this.grammars) return null; // changed while reading: the result is made again anyway
+        if (!set) {
+          this.failed.add(scope);
+          this.opts.log?.(`Code block colors: couldn't read the grammar ${scope}; its blocks stay plain.`);
+          return null;
+        }
+        const r = await this.job({ id: 0, type: 'load', scope, set }, this.opts.loadTimeoutMs ?? 10_000, theme); // loading grammars isn't charged: it happens once per worker
         if (r === 'timeout') this.timedOut(who);
-        else if (typeof r === 'object' && r.ok) for (const l of langs) this.warm.add(l);
-        else {
+        else if (typeof r === 'object' && r.ok) {
+          this.noteEngine(r);
+          if (!r.loaded) {
+            this.failed.add(scope);
+            this.opts.log?.(`Code block colors: the grammar ${scope} didn't load; its blocks stay plain.`);
+            return null;
+          }
+          this.warm.add(scope);
+        } else {
           if (r === 'crashed') this.timedOut(who);
           return null; // crashed or failed: give up on this block for now
         }
       }
       if (who.tripped) return null;
-      const limit = Math.max(this.opts.blockTimeoutMs ?? 1000, Math.ceil((b.code.length / 1024) * (this.opts.msPerKb ?? 30)));
-      const r = await this.job({ id: 0, type: 'tokenize', lang: b.lang, code: b.code, themeKey: theme.key }, limit, theme, who);
+      const limit = Math.max(this.opts.blockTimeoutMs ?? 1000, Math.ceil((code.length / 1024) * (this.opts.msPerKb ?? 30)));
+      const r = await this.job({ id: 0, type: 'tokenize', scope, code, themeKey: theme.key }, limit, theme, who);
       if (r === 'timeout' || r === 'crashed') {
         this.timedOut(who);
         this.cache.set(key, null, 64); // warm and still too slow, or it killed the worker: stays plain under this theme
@@ -226,6 +283,14 @@ export class Highlighter {
       return runs;
     }
     return null;
+  }
+
+  private noteEngine(r: { engine?: EngineName; engineNote?: string }): void {
+    if (!r.engine || r.engine === this.engineName) return;
+    this.engineName = r.engine;
+    this.opts.log?.(r.engine === 'oniguruma'
+      ? "Code block colors: using VS Code's Oniguruma regex engine."
+      : `Code block colors: VS Code's Oniguruma regex engine isn't available here${r.engineNote ? ` (${r.engineNote})` : ''}; using a JavaScript one, which may leave a few patterns uncolored.`);
   }
 
   /** Worker palette indexes → the host's stable ones. */
@@ -297,6 +362,10 @@ export class Highlighter {
       return;
     }
     clearTimeout(this.idleTimer);
+    if (this.restartWorker) {
+      this.restartWorker = false;
+      this.stopWorker();
+    }
     try {
       this.worker ??= this.startWorker();
     } catch (e) {
@@ -331,7 +400,7 @@ export class Highlighter {
     const file = this.opts.workerFile ?? (bundleDir && join(bundleDir, 'highlight-worker.cjs'));
     if (!file || !existsSync(file)) throw new Error('The highlight worker is missing from this build.');
     const w = new Worker(resolve(file), {
-      workerData: { grammarDir: this.opts.grammarDir ?? (bundleDir && join(bundleDir, 'highlight', 'grammars')) },
+      workerData: { wasmFiles: this.opts.wasmFiles ?? [] },
       resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
       stdout: false,
       stderr: false,

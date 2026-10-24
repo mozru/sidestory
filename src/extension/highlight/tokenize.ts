@@ -1,31 +1,104 @@
-// Shiki, as the highlight worker uses it (docs/HIGHLIGHT-PLAN.md §2): grammars loaded on first use from
-// dist/highlight/grammars, themes given by the host, and results as run lengths plus a palette. No DOM, no HTML.
-import { createHighlighterCoreSync, type HighlighterCore, type LanguageRegistration, type ThemeRegistrationRaw } from '@shikijs/core';
+// The tokenizer the highlight worker runs (docs/HIGHLIGHT-PLAN.md §10.4): vscode-textmate, as VS Code runs it,
+// with grammars the host read from the installed extensions and VS Code's own Oniguruma (or a JavaScript regex
+// engine when that can't be loaded). Results are run lengths plus a palette. No DOM, no HTML.
+import { readFileSync, statSync } from 'node:fs';
 import { createJavaScriptRegexEngine } from '@shikijs/engine-javascript';
+// Both are CommonJS bundles whose exports Node can't name statically: default imports work in Node and esbuild.
+import onig from 'vscode-oniguruma';
+import textmate, { type IGrammar, type IOnigLib, type IRawGrammar, type StateStack } from 'vscode-textmate';
 import { countLines } from './grammars.ts';
-import { HEX_COLOR, type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_BLOCK_LINES, MAX_LINE_CHARS } from '../../shared/highlight-languages.ts';
+import { HEX_COLOR, type HighlightStyle, MAX_BLOCK_CHARS, MAX_BLOCK_LINES, MAX_LINE_CHARS } from '../../shared/highlight-languages.ts';
+import type { GrammarSet } from './catalog.ts';
 import type { HighlightTheme } from './theme.ts';
-
-/** Reads a shipped grammar by its Shiki name (a fixed list, never a name from content); undefined if missing. */
-export type GrammarReader = (name: string) => LanguageRegistration | undefined;
 
 export interface Tokenized {
   /** [length, style, length, style, …] covering the whole text; style 0 is unstyled. */
   runs: number[];
 }
 
+export type EngineName = 'oniguruma' | 'javascript';
+
+const { INITIAL, parseRawGrammar, Registry } = textmate;
+
 const MAX_THEMES = 3;
+const MAX_WASM = 8 * 1024 * 1024;
+/** Per line, as VS Code's own tokenizer limits it. */
+const LINE_TIME_MS = 500;
+
+// Bits of vscode-textmate's encoded token attributes (EncodedTokenAttributes, not exported).
+const FONT_STYLE_OFFSET = 11;
+const FONT_STYLE_MASK = 0b1111 << FONT_STYLE_OFFSET;
+const FOREGROUND_OFFSET = 15;
+const FOREGROUND_MASK = 0b111111111 << FOREGROUND_OFFSET;
+
+/**
+ * The regex engine: Oniguruma from the first of `wasmFiles` that loads and answers a smoke test (VS Code ships
+ * onig.wasm; we ship only vscode-oniguruma's JS for it), else the JavaScript engine.
+ */
+export async function createOnigLib(wasmFiles: readonly string[], log?: (m: string) => void): Promise<{ lib: IOnigLib; engine: EngineName }> {
+  for (const file of wasmFiles) {
+    try {
+      if (statSync(file).size > MAX_WASM) continue;
+      const data = readFileSync(file);
+      await onig.loadWASM({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer, print: () => {} });
+      const lib: IOnigLib = { createOnigScanner: (p) => new onig.OnigScanner(p), createOnigString: (s) => new onig.OnigString(s) };
+      // A wasm of another vscode-oniguruma version could load and still answer wrongly.
+      const scanner = lib.createOnigScanner(['(?<=a)b', '\\Gx']);
+      const str = lib.createOnigString('ab');
+      const m = scanner.findNextMatchSync(str, 0, 0);
+      scanner.dispose?.();
+      str.dispose?.();
+      if (m?.index === 0 && m.captureIndices[0]?.start === 1) return { lib, engine: 'oniguruma' };
+      log?.(`onig.wasm at ${file} answered wrongly`);
+    } catch (e) {
+      log?.(`onig.wasm at ${file}: ${(e as Error).message}`);
+    }
+  }
+  const js = createJavaScriptRegexEngine({ forgiving: true });
+  const lib: IOnigLib = {
+    createOnigScanner: (p) => js.createScanner(p) as unknown as ReturnType<IOnigLib['createOnigScanner']>,
+    createOnigString: (s) => js.createString(s) as unknown as ReturnType<IOnigLib['createOnigString']>,
+  };
+  return { lib, engine: 'javascript' };
+}
+
+interface Palette {
+  styles: HighlightStyle[];
+  index: Map<string, number>;
+  fg: string;
+  theme: HighlightTheme;
+}
 
 export class Tokenizer {
-  private readonly shiki: HighlighterCore;
-  private readonly loaded = new Set<string>();
+  private readonly registry: InstanceType<typeof Registry>;
+  /** Grammar texts the host sent, by scope; parsed when vscode-textmate asks for them. */
+  private readonly files = new Map<string, GrammarSet['files'][number]>();
+  private readonly injections = new Map<string, string[]>();
+  private readonly loaded = new Map<string, IGrammar>();
   /** Theme key → palette (style index → style), built as tokens are seen. Index 0 is "no style". */
-  private readonly palettes = new Map<string, { styles: HighlightStyle[]; index: Map<string, number>; fg: string }>();
-  private readonly readGrammar: GrammarReader;
+  private readonly palettes = new Map<string, Palette>();
+  private currentTheme: string | undefined;
 
-  constructor(readGrammar: GrammarReader) {
-    this.readGrammar = readGrammar;
-    this.shiki = createHighlighterCoreSync({ engine: createJavaScriptRegexEngine({ forgiving: true }), langs: [], themes: [] });
+  constructor(lib: Promise<IOnigLib> | IOnigLib) {
+    this.registry = new Registry({
+      onigLib: Promise.resolve(lib),
+      loadGrammar: async (scope) => this.parse(scope),
+      getInjections: (scope) => this.injections.get(scope),
+    });
+  }
+
+  private parse(scope: string): IRawGrammar | null {
+    const f = this.files.get(scope);
+    if (!f) return null;
+    try {
+      // The file name only picks the parser (vscode-textmate: .json is JSON, anything else plist).
+      return parseRawGrammar(f.text, f.format === 'json' ? `${scope}.json` : `${scope}.tmLanguage`);
+    } catch {
+      return null;
+    } finally {
+      // Parsed once: the registry keeps the grammar.
+      this.files.delete(scope);
+    }
   }
 
   hasTheme(key: string): boolean {
@@ -34,31 +107,37 @@ export class Tokenizer {
 
   setTheme(theme: HighlightTheme): void {
     if (this.palettes.has(theme.key)) return;
-    const reg: ThemeRegistrationRaw = { name: theme.key, type: theme.type, fg: theme.fg, bg: theme.bg, colors: { 'editor.foreground': theme.fg, 'editor.background': theme.bg }, settings: theme.rules as ThemeRegistrationRaw['settings'] };
-    this.shiki.loadThemeSync(reg);
-    // Shiki keeps themes for good; ours are few (the active one, perhaps the previous), but cap the palettes we keep.
+    // Ours are few (the active one, perhaps the previous): cap the palettes we keep.
     if (this.palettes.size >= MAX_THEMES) this.palettes.delete(this.palettes.keys().next().value!);
-    this.palettes.set(theme.key, { styles: [{}], index: new Map(), fg: theme.fg.toLowerCase() });
+    this.palettes.set(theme.key, { styles: [{}], index: new Map(), fg: theme.fg.toLowerCase(), theme });
   }
 
-  /** Whether every grammar the block needs is loaded (the host warms the worker before timing a block). */
-  isWarm(langs: readonly string[]): boolean {
-    return langs.every((l) => this.loaded.has(l));
+  private useTheme(key: string): Palette | undefined {
+    const pal = this.palettes.get(key);
+    if (pal && this.currentTheme !== key) {
+      const t = pal.theme;
+      this.registry.setTheme({ name: t.key, settings: [{ settings: { foreground: t.fg, background: t.bg } }, ...t.rules] });
+      this.currentTheme = key;
+    }
+    return pal;
   }
 
-  /** Loads grammars and their embedded grammars (by fixed names), then tokenizes a line so the first block is fast. */
-  load(langs: readonly string[]): void {
-    for (const l of langs) this.loadOne(l, 0);
-    for (const l of langs) if (this.loaded.has(l)) this.shiki.codeToTokensBase('x', { lang: l, theme: this.shiki.getLoadedThemes()[0] ?? 'none' });
+  /** Whether a scope's grammar is loaded (the host warms the worker before timing a block). */
+  isWarm(scope: string): boolean {
+    return this.loaded.has(scope);
   }
 
-  private loadOne(name: string, depth: number): void {
-    if (this.loaded.has(name) || depth > 4) return;
-    const g = this.readGrammar(name);
-    if (!g) return;
-    for (const dep of g.embeddedLangs ?? []) this.loadOne(dep, depth + 1);
-    this.shiki.loadLanguageSync(g);
-    this.loaded.add(name);
+  /** Loads a scope's grammar from the files the host read, then tokenizes a line so the first block is fast. */
+  async load(scope: string, set: GrammarSet): Promise<boolean> {
+    if (this.loaded.has(scope)) return true;
+    for (const f of set.files) if (!this.files.has(f.scopeName)) this.files.set(f.scopeName, f);
+    for (const [s, inj] of set.injections) this.injections.set(s, inj);
+    // A grammar that's missing or doesn't parse is reported by throwing.
+    const g = await this.registry.loadGrammar(scope).catch(() => null);
+    if (!g) return false;
+    this.loaded.set(scope, g);
+    g.tokenizeLine2('x', INITIAL, LINE_TIME_MS);
+    return true;
   }
 
   palette(themeKey: string): HighlightStyle[] {
@@ -66,28 +145,48 @@ export class Tokenizer {
   }
 
   /** Runs for one block, or null if it's over the caps or its grammar or theme isn't loaded. */
-  tokenize(code: string, lang: HighlightLang, themeKey: string): Tokenized | null {
-    const pal = this.palettes.get(themeKey);
-    if (!pal || !this.loaded.has(lang) || code.length > MAX_BLOCK_CHARS || countLines(code) > MAX_BLOCK_LINES) return null;
-    const lines = this.shiki.codeToTokensBase(code, { lang, theme: themeKey, tokenizeMaxLineLength: MAX_LINE_CHARS, tokenizeTimeLimit: 500 });
+  tokenize(code: string, scope: string, themeKey: string): Tokenized | null {
+    const g = this.loaded.get(scope);
+    if (!g || !this.palettes.has(themeKey) || code.length > MAX_BLOCK_CHARS || countLines(code) > MAX_BLOCK_LINES) return null;
+    const pal = this.useTheme(themeKey)!;
+    const colors = this.registry.getColorMap();
     const runs: number[] = [];
-    let pos = 0;
     const push = (len: number, style: number) => {
       if (len <= 0) return;
       const n = runs.length;
       if (n && runs[n - 1] === style) runs[n - 2]! += len;
       else runs.push(len, style);
     };
-    for (const line of lines) {
-      for (const t of line) {
-        if (t.offset > pos) push(t.offset - pos, this.whitespaceStyle(runs, pal.styles));
-        if (t.offset < pos) continue; // never overlap (shouldn't happen)
-        const style = /^\s+$/.test(t.content) ? this.whitespaceStyle(runs, pal.styles) : this.styleOf(pal, t.color, t.fontStyle);
-        push(t.content.length, style);
-        pos = t.offset + t.content.length;
+    let state: StateStack = INITIAL;
+    let start = 0;
+    while (start <= code.length) {
+      const nl = code.indexOf('\n', start);
+      const end = nl < 0 ? code.length : nl;
+      const lineEnd = end > start && code.charCodeAt(end - 1) === 13 ? end - 1 : end;
+      const line = code.slice(start, lineEnd);
+      if (line.length > MAX_LINE_CHARS) push(line.length, 0); // plain, state carried over (as VS Code does)
+      else if (line.length) {
+        const r = g.tokenizeLine2(line, state, LINE_TIME_MS);
+        if (r.stoppedEarly) push(line.length, 0);
+        else {
+          const t = r.tokens;
+          for (let i = 0; i < t.length; i += 2) {
+            const from = t[i]!;
+            const to = i + 2 < t.length ? t[i + 2]! : line.length;
+            const meta = t[i + 1]!;
+            const text = line.slice(from, to);
+            const style = /^\s*$/.test(text)
+              ? this.whitespaceStyle(runs, pal.styles)
+              : this.styleOf(pal, colors[(meta & FOREGROUND_MASK) >>> FOREGROUND_OFFSET], (meta & FONT_STYLE_MASK) >>> FONT_STYLE_OFFSET);
+            push(to - from, style);
+          }
+          state = r.ruleStack;
+        }
       }
+      if (nl < 0) break;
+      push(nl + 1 - lineEnd, this.whitespaceStyle(runs, pal.styles)); // the line break (\n or \r\n)
+      start = nl + 1;
     }
-    if (pos < code.length) push(code.length - pos, this.whitespaceStyle(runs, pal.styles));
     return { runs };
   }
 
@@ -97,9 +196,9 @@ export class Tokenizer {
     return (styles[prev]?.font ?? 0) & (4 | 8) ? 0 : prev;
   }
 
-  private styleOf(pal: { styles: HighlightStyle[]; index: Map<string, number>; fg: string }, color: string | undefined, font: number | undefined): number {
+  private styleOf(pal: Palette, color: string | undefined, font: number): number {
     const c = color && HEX_COLOR.test(color) && color.toLowerCase() !== pal.fg ? color.toLowerCase() : undefined;
-    const f = font && font > 0 ? font & 15 : 0;
+    const f = font & 15;
     if (!c && !f) return 0;
     const k = `${c ?? ''}|${f}`;
     let i = pal.index.get(k);

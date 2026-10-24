@@ -18,6 +18,9 @@ test('code blocks get the editor theme’s token colors, and follow a theme chan
     await expect(keyword).toHaveCSS('color', 'rgb(86, 156, 214)');
     await expect(code.locator('span', { hasText: '"why"' })).toHaveCSS('color', 'rgb(206, 145, 120)');
     expect(await code.textContent()).toBe('const answer: number = 42; // the answer\nexport function ask() { return "why"; }');
+    // With the server's own grammar (vscode.typescript) and its own onig.wasm (docs/HIGHLIGHT-PLAN.md §10).
+    const engineLog = () => inContainer(`find ~/.openvscode-server/data/logs -name '*Sidestory*.log' -exec grep -h 'regex engine' {} + 2>/dev/null | tail -1 || true`);
+    await expect.poll(engineLog, { timeout: 10_000 }).toMatch(/using VS Code's Oniguruma regex engine/);
     if (process.env.CX_HL_SHOTS) await content(panel).locator('pre').last().screenshot({ path: `${process.env.CX_HL_SHOTS}/e2e-dark-modern.png` });
     // VS Code's own light/dark toggle, to its light theme: Light Modern colors storage keywords #0000FF, Light 2026
     // (the default in newer VS Code versions) #CF222E, and Light High Contrast (when an earlier test left the

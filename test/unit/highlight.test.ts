@@ -1,42 +1,46 @@
-// Code block highlighting (docs/HIGHLIGHT-PLAN.md): languages, theme loading, the tokenizer, the host's worker
-// manager, the protocol, and the size of what ships.
-import { mkdtempSync, readFileSync, rmSync, statSync, existsSync, readdirSync } from 'node:fs';
+// Code block highlighting (docs/HIGHLIGHT-PLAN.md): language names, the grammar catalog built from installed
+// extensions, theme loading, the tokenizer, the host's worker manager, the protocol, and the size of what ships.
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { LanguageRegistration } from '@shikijs/core';
-// @ts-expect-error: a build script without types
-import { buildHighlight } from '../../scripts/build-highlight.mjs';
-import { grammarsFor } from '../../src/extension/highlight/grammars.ts';
-import { BREAKER_TIMEOUTS, Highlighter } from '../../src/extension/highlight/host.ts';
+import { diskReader, ONIG_WASM, writeGrammarExtension } from '../grammar-fixture.ts';
+import { type ExtensionInfo, GrammarCatalog, includedScopes, loadGrammarSet, MAX_GRAMMAR_SET_FILES } from '../../src/extension/highlight/catalog.ts';
+import { BREAKER_TIMEOUTS, type GrammarSource, Highlighter } from '../../src/extension/highlight/host.ts';
 import {
   candidateThemes, customizationRules, findContribution, loadThemeChain, normalizeTheme, resolveInside, type ThemeContribution, themeKeyMatches,
   type ThemeReader,
 } from '../../src/extension/highlight/theme.ts';
-import { Tokenizer } from '../../src/extension/highlight/tokenize.ts';
-import { grammarFor, HIGHLIGHT_LANGS, langFromClass } from '../../src/shared/highlight-languages.ts';
+import { createOnigLib, type EngineName, Tokenizer } from '../../src/extension/highlight/tokenize.ts';
+import { langFromClass, langName } from '../../src/shared/highlight-languages.ts';
 import { fromWebviewSchema } from '../../src/shared/protocol.ts';
 
 const repo = join(import.meta.dirname, '../..');
+const themesDir = join(repo, 'src/extension/highlight/fallback-themes');
+/** The languages of the fake "built-in" extension (as VS Code's own language extensions would give them). */
+const LANGS = ['typescript', 'tsx', 'javascript', 'python', 'rust', 'go', 'c', 'cpp', 'json', 'yaml', 'shellscript', 'html', 'css', 'markdown', 'diff'];
 let out: string;
-let grammarDir: string;
+let builtin: ExtensionInfo;
+let catalog: GrammarCatalog;
+let source: GrammarSource;
 
 beforeAll(async () => {
   out = mkdtempSync(join(tmpdir(), 'cx-hl-'));
-  await buildHighlight(out);
-  grammarDir = join(out, 'grammars');
+  builtin = await writeGrammarExtension(join(out, 'builtin'), LANGS, 'vscode.languages');
+  catalog = new GrammarCatalog([builtin]);
+  source = sourceOf(catalog);
 }, 60_000);
 afterAll(() => rmSync(out, { recursive: true, force: true }));
 
-const readGrammar = (name: string) => {
-  const f = join(grammarDir, `${name}.json`);
-  return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as LanguageRegistration) : undefined;
-};
+function sourceOf(c: GrammarCatalog): GrammarSource {
+  return { key: c.key, scopeFor: (l) => c.scopeFor(l), load: (s) => loadGrammarSet(c, s, diskReader) };
+}
 
 /** A theme from the bundled fallbacks (VS Code's defaults). */
 async function fallback(kind: 'dark' | 'light' | 'hc-dark' | 'hc-light') {
-  const root = `file://${out}/themes`;
+  const root = pathToFileURL(themesDir).href;
   const raw = await loadThemeChain(`${root}/${kind}.json`, root, fileReader);
   return normalizeTheme(raw!, kind, kind);
 }
@@ -51,33 +55,122 @@ const fileReader: ThemeReader = {
   inside: async () => true,
 };
 
-describe('languages', () => {
-  it('maps classes and aliases to the grammars we ship', () => {
-    expect(grammarFor('ts')).toBe('typescript');
-    expect(grammarFor('PY')).toBe('python');
-    expect(grammarFor('sv')).toBe('system-verilog');
-    expect(grammarFor('c++')).toBe('cpp');
-    expect(grammarFor('jsx')).toBe('javascript');
-    expect(grammarFor('sh')).toBe('shellscript');
-    expect(grammarFor('yml')).toBe('yaml');
-    expect(langFromClass('foo language-rust bar')).toBe('rust');
+const engines: Record<EngineName, ReturnType<typeof createOnigLib>> = {} as never;
+/** A tokenizer with the fake extension's grammars loaded for `scopes`, on Oniguruma (node_modules' wasm) or JS. */
+async function tokenizerFor(scopes: string[], engine: EngineName = 'oniguruma') {
+  engines[engine] ??= createOnigLib(engine === 'oniguruma' ? [ONIG_WASM] : []);
+  const e = await engines[engine];
+  expect(e.engine).toBe(engine);
+  const t = new Tokenizer(e.lib);
+  for (const s of scopes) expect(await t.load(s, (await loadGrammarSet(catalog, s, diskReader))!), s).toBe(true);
+  return t;
+}
+
+/** The colors of the runs' pieces: [text, color] in order. */
+function pieces(code: string, runs: number[], pal: { color?: string }[]): [string, string | undefined][] {
+  const out: [string, string | undefined][] = [];
+  let sum = 0;
+  for (let i = 0; i < runs.length; i += 2) {
+    expect(runs[i]).toBeGreaterThan(0);
+    out.push([code.slice(sum, sum + runs[i]!), pal[runs[i + 1]!]?.color]);
+    sum += runs[i]!;
+  }
+  expect(sum).toBe(code.length);
+  return out;
+}
+
+describe('language names', () => {
+  it('takes the first language class that can be a name, lower case', () => {
+    expect(langFromClass('foo language-Rust bar')).toBe('rust');
     expect(langFromClass('lang-go')).toBe('go');
-    expect(langFromClass('language-klingon language-vhdl')).toBe('vhdl');
-    for (const name of ['', 'klingon', '__proto__', 'constructor', 'toString', 'hasOwnProperty', '../x']) expect(grammarFor(name)).toBeUndefined();
-    expect(langFromClass('language-__proto__ lang-constructor')).toBeUndefined();
+    expect(langFromClass('language-c++ language-vhdl')).toBe('c++');
+    expect(langFromClass('language-../x language-c#')).toBe('c#');
     expect(langFromClass(null)).toBeUndefined();
+    for (const bad of ['', ' ', '../x', 'a/b', 'x y', '-x', `a${'b'.repeat(64)}`, 'é']) expect(langName(bad), bad).toBeUndefined();
+    expect(langName(' SystemVerilog ')).toBe('systemverilog');
+  });
+});
+
+describe('grammar catalog', () => {
+  it('maps names through language ids, aliases, file extensions and a few fence names', () => {
+    const c = new GrammarCatalog([{
+      id: 'vscode.x', root: 'file:///ext/x', builtin: true,
+      contributes: {
+        languages: [{ id: 'python', aliases: ['Python', 'py'], extensions: ['.py', '.pyw'] }, { id: 'shellscript', aliases: ['Shell Script', 'bash'], extensions: ['.sh'] }, { id: 'go', extensions: ['.go'] }],
+        grammars: [{ language: 'python', scopeName: 'source.python', path: './syntaxes/python.tmLanguage.json' }, { language: 'shellscript', scopeName: 'source.shell', path: 'syntaxes/shell.tmLanguage.json' }, { language: 'go', scopeName: 'source.go', path: './go.tmLanguage' }],
+      },
+    }]);
+    for (const n of ['python', 'PY', 'pyw', 'python3', 'Python']) expect(c.scopeFor(n), n).toBe('source.python');
+    for (const n of ['bash', 'sh', 'shell script', 'console', 'shell']) expect(c.scopeFor(n), n).toBe('source.shell');
+    expect(c.scopeFor('golang')).toBe('source.go');
+    expect(c.grammar('source.go')?.format).toBe('plist');
+    for (const n of ['klingon', '__proto__', 'constructor', 'toString', '', 'json5']) expect(c.scopeFor(n), n).toBeUndefined();
   });
 
-  it('ships a grammar for every language, and the build writes exactly those', () => {
-    const files = readdirSync(grammarDir).map((f) => f.replace(/\.json$/, ''));
-    for (const l of HIGHLIGHT_LANGS) expect(files).toContain(l);
-    expect(files.length).toBe(HIGHLIGHT_LANGS.length + 4);
+  it("lets the reader's extensions win over built-in ones, and keys on what it would load", () => {
+    const builtinX = { id: 'vscode.v', root: 'file:///b', builtin: true, contributes: { languages: [{ id: 'verilog', extensions: ['.v'] }], grammars: [{ language: 'verilog', scopeName: 'source.verilog', path: 'a.json' }] } };
+    const user = { id: 'me.sv', root: 'file:///u', builtin: false, contributes: { languages: [{ id: 'verilog', aliases: ['sv'] }], grammars: [{ language: 'verilog', scopeName: 'source.verilog.mine', path: 'b.json' }] } };
+    const c = new GrammarCatalog([user, builtinX]);
+    expect(c.scopeFor('v')).toBe('source.verilog.mine');
+    expect(c.scopeFor('sv')).toBe('source.verilog.mine');
+    expect(new GrammarCatalog([builtinX]).key).not.toBe(c.key);
+    expect(new GrammarCatalog([builtinX, user]).key).toBe(c.key);
   });
 
-  it('loads markdown fence languages only through the alias table', () => {
-    const md = '```ts\nconst x = 1;\n```\n~~~ ../../x\n~~~\n```__proto__\n```\n```{.python}\n```\n```klingon\n```';
-    expect(grammarsFor('markdown', md)).toEqual(['markdown', 'typescript', 'python']);
-    expect(grammarsFor('python', md)).toEqual(['python']);
+  it('skips grammars outside their extension, of unknown formats, or malformed', () => {
+    const c = new GrammarCatalog([{
+      id: 'evil.x', root: 'file:///ext/x', builtin: false,
+      contributes: {
+        languages: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }, { id: 7 }, null],
+        grammars: [
+          { language: 'a', scopeName: 'source.a', path: '../other/a.json' },
+          { language: 'b', scopeName: 'source.b', path: '/etc/b.json' },
+          { language: 'c', scopeName: 'source.c', path: 'c.js' },
+          { language: 'd', scopeName: 'source.d', path: 'file:///etc/d.json' },
+          { language: 'e', scopeName: 'source e', path: 'e.json' },
+          { language: 'a', scopeName: 7, path: 'x.json' },
+          null,
+        ],
+      },
+    }, { id: 'bad.y', root: 'file:///ext/y', builtin: false, contributes: 'nope' }]);
+    expect(c.size).toBe(0);
+    for (const n of ['a', 'b', 'c', 'd', 'e']) expect(c.scopeFor(n)).toBeUndefined();
+  });
+
+  it('finds included scopes in JSON and plist grammars without parsing them', () => {
+    const json = JSON.stringify({ patterns: [{ include: '#local' }, { include: '$self' }, { include: 'source.js' }, { include: 'text.html.basic#tags' }, { include: 'source.js' }] });
+    expect(includedScopes(json, 'json')).toEqual(['source.js', 'text.html.basic']);
+    const plist = '<dict><key>include</key><string>source.css</string><key>include</key>\n<string>#x</string></dict>';
+    expect(includedScopes(plist, 'plist')).toEqual(['source.css']);
+  });
+
+  it("reads a grammar's includes and injections, breadth first, and refuses files outside the extension", async () => {
+    const md = await loadGrammarSet(catalog, 'text.html.markdown', diskReader);
+    expect(md!.files[0]!.scopeName).toBe('text.html.markdown');
+    const scopes = md!.files.map((f) => f.scopeName);
+    for (const s of ['source.python', 'source.ts', 'text.html.basic']) expect(scopes).toContain(s);
+    expect(scopes.length).toBeLessThanOrEqual(MAX_GRAMMAR_SET_FILES);
+    expect(await loadGrammarSet(catalog, 'source.nope', diskReader)).toBeUndefined();
+
+    // A grammar whose file is a symlink out of its extension folder isn't read.
+    const dir = join(out, 'evil');
+    mkdirSync(join(dir, 'syntaxes'), { recursive: true });
+    writeFileSync(join(out, 'secret.json'), JSON.stringify({ scopeName: 'source.evil', patterns: [] }));
+    symlinkSync(join(out, 'secret.json'), join(dir, 'syntaxes', 'evil.json'));
+    const evil = new GrammarCatalog([{ id: 'evil.x', root: pathToFileURL(dir).href, builtin: false, contributes: { languages: [{ id: 'evil' }], grammars: [{ language: 'evil', scopeName: 'source.evil', path: './syntaxes/evil.json' }] } }]);
+    expect(evil.scopeFor('evil')).toBe('source.evil');
+    expect(await loadGrammarSet(evil, 'source.evil', diskReader)).toBeUndefined();
+  });
+
+  it('collects injections into the scopes it loads', async () => {
+    const dir = join(out, 'inject');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'todo.json'), JSON.stringify({ scopeName: 'todo.injection', injectionSelector: 'L:comment', patterns: [{ match: 'TODO', name: 'keyword.todo' }] }));
+    const ext: ExtensionInfo = { id: 'me.todo', root: pathToFileURL(dir).href, builtin: false, contributes: { grammars: [{ scopeName: 'todo.injection', path: 'todo.json', injectTo: ['source.python'] }] } };
+    const c = new GrammarCatalog([builtin, ext]);
+    const set = await loadGrammarSet(c, 'source.python', diskReader);
+    expect(set!.injections).toEqual([['source.python', ['todo.injection']]]);
+    expect(set!.files.map((f) => f.scopeName)).toContain('todo.injection');
   });
 });
 
@@ -219,114 +312,163 @@ describe('theme loading', () => {
   });
 });
 
+
 describe('tokenizer', () => {
-  it('returns runs that cover the text exactly, with theme colors and unstyled defaults', async () => {
-    const theme = await fallback('dark');
-    const t = new Tokenizer(readGrammar);
-    t.setTheme(theme);
-    t.load(['typescript']);
-    const code = 'const x = "<b>&amp;</b>";\r\n// done\n';
-    const r = t.tokenize(code, 'typescript', theme.key)!;
-    const pal = t.palette(theme.key);
-    let sum = 0;
-    const pieces: [string, string | undefined][] = [];
-    for (let i = 0; i < r.runs.length; i += 2) {
-      pieces.push([code.slice(sum, sum + r.runs[i]!), pal[r.runs[i + 1]!]?.color]);
-      sum += r.runs[i]!;
-      expect(r.runs[i]).toBeGreaterThan(0);
-    }
-    expect(sum).toBe(code.length);
-    const color = (s: string) => pieces.find(([p]) => p.includes(s))?.[1];
-    // Dark 2026's colors, as the editor shows them.
-    expect(color('const')).toBe('#ff7b72');
-    expect(color('"<b>&amp;</b>"')).toBe('#a5d6ff');
-    expect(color('// done')).toBe('#8b949e');
-    expect(pal[0]).toEqual({});
-    expect(pieces.some(([, c]) => c === theme.fg)).toBe(false); // default-colored tokens get no style
-  });
+  for (const engine of ['oniguruma', 'javascript'] as const) {
+    it(`returns runs that cover the text exactly, with theme colors and unstyled defaults (${engine})`, async () => {
+      const theme = await fallback('dark');
+      const t = await tokenizerFor(['source.ts'], engine);
+      t.setTheme(theme);
+      const code = 'const x = "<b>&amp;</b>";\r\n// done\n';
+      const r = t.tokenize(code, 'source.ts', theme.key)!;
+      const pal = t.palette(theme.key);
+      const p = pieces(code, r.runs, pal);
+      const color = (s: string) => p.find(([x]) => x.includes(s))?.[1];
+      // Dark 2026's colors, as the editor shows them.
+      expect(color('const')).toBe('#ff7b72');
+      expect(color('"<b>&amp;</b>"')).toBe('#a5d6ff');
+      expect(color('// done')).toBe('#8b949e');
+      expect(pal[0]).toEqual({});
+      expect(p.some(([, c]) => c === theme.fg)).toBe(false); // default-colored tokens get no style
+    });
+  }
 
   it('refuses blocks over the caps, and unknown grammars or themes', async () => {
     const theme = await fallback('light');
-    const t = new Tokenizer(readGrammar);
+    const t = await tokenizerFor(['source.python']);
     t.setTheme(theme);
-    t.load(['python']);
-    expect(t.tokenize('x\n'.repeat(2001), 'python', theme.key)).toBeNull();
-    expect(t.tokenize('x'.repeat(100_001), 'python', theme.key)).toBeNull();
-    expect(t.tokenize('x = 1', 'rust', theme.key)).toBeNull();
-    expect(t.tokenize('x = 1', 'python', 'nope')).toBeNull();
-    // A line over 2,000 characters is one plain run.
+    expect(t.tokenize('x\n'.repeat(2001), 'source.python', theme.key)).toBeNull();
+    expect(t.tokenize('x'.repeat(100_001), 'source.python', theme.key)).toBeNull();
+    expect(t.tokenize('x = 1', 'source.rust', theme.key)).toBeNull();
+    expect(t.tokenize('x = 1', 'source.python', 'nope')).toBeNull();
+    // A line over 2,000 characters is one plain run, and the next line is still tokenized.
     const long = `x = "${'a'.repeat(2100)}"`;
-    expect(t.tokenize(long, 'python', theme.key)!.runs).toEqual([long.length, 0]);
+    expect(t.tokenize(long, 'source.python', theme.key)!.runs).toEqual([long.length, 0]);
+    const after = t.tokenize(`${long}\ndef f(): pass`, 'source.python', theme.key)!;
+    expect(after.runs.length).toBeGreaterThan(4);
   });
 
-  it('colors fenced code in markdown with the grammars it names', async () => {
+  it('colors fenced code in markdown with the grammars it includes', async () => {
     const theme = await fallback('dark');
-    const t = new Tokenizer(readGrammar);
+    const t = await tokenizerFor(['text.html.markdown']);
     t.setTheme(theme);
-    const md = '# Title\n\n```python\ndef f(): pass\n```\n';
-    t.load(grammarsFor('markdown', md));
-    const r = t.tokenize(md, 'markdown', theme.key)!;
-    const pal = t.palette(theme.key);
-    let pos = 0;
-    let defColor: string | undefined;
-    for (let i = 0; i < r.runs.length; i += 2) {
-      if (md.slice(pos, pos + r.runs[i]!).includes('def')) defColor = pal[r.runs[i + 1]!]?.color;
-      pos += r.runs[i]!;
-    }
-    expect(defColor).toBe('#ff7b72');
+    const md = '# Title\n\n```python\ndef f(): pass\n```\n\n```rust\nfn main() {}\n```\n';
+    const p = pieces(md, t.tokenize(md, 'text.html.markdown', theme.key)!.runs, t.palette(theme.key));
+    expect(p.find(([x]) => x.includes('def'))?.[1]).toBe('#ff7b72');
+    expect(p.find(([x]) => x.startsWith('fn'))?.[1]).toBe('#ff7b72');
   });
 
-  it('colors a markdown fence whose grammar loads after markdown was already used', async () => {
-    const theme = await fallback('dark');
-    const t = new Tokenizer(readGrammar);
+  it('applies injections from other extensions', async () => {
+    const dir = join(out, 'inject2');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'todo.json'), JSON.stringify({ scopeName: 'todo.injection', injectionSelector: 'L:comment', patterns: [{ match: 'TODO', name: 'invalid.illegal.todo' }] }));
+    const c = new GrammarCatalog([builtin, { id: 'me.todo', root: pathToFileURL(dir).href, builtin: false, contributes: { grammars: [{ scopeName: 'todo.injection', path: 'todo.json', injectTo: ['source.python'] }] } }]);
+    const e = await (engines.oniguruma ??= createOnigLib([ONIG_WASM]));
+    const t = new Tokenizer(e.lib);
+    const theme = { ...(await fallback('dark')), key: 'inj' };
+    theme.rules = [...theme.rules, { scope: 'invalid.illegal.todo', settings: { foreground: '#123456' } }];
     t.setTheme(theme);
-    const first = '```python\nx = 1\n```\n';
-    t.load(grammarsFor('markdown', first));
-    t.tokenize(first, 'markdown', theme.key);
-    const md = '```rust\nfn main() {}\n```\n';
-    t.load(grammarsFor('markdown', md));
-    const r = t.tokenize(md, 'markdown', theme.key)!;
-    const pal = t.palette(theme.key);
-    let pos = 0;
-    let fnColor: string | undefined;
-    for (let i = 0; i < r.runs.length; i += 2) {
-      if (md.slice(pos, pos + r.runs[i]!).startsWith('fn')) fnColor = pal[r.runs[i + 1]!]?.color;
-      pos += r.runs[i]!;
-    }
-    expect(fnColor).toBe('#ff7b72');
+    expect(await t.load('source.python', (await loadGrammarSet(c, 'source.python', diskReader))!)).toBe(true);
+    const code = '# a TODO here';
+    const p = pieces(code, t.tokenize(code, 'source.python', 'inj')!.runs, t.palette('inj'));
+    expect(p.find(([x]) => x === 'TODO')?.[1]).toBe('#123456');
   });
 
-  it('tokenizes every shipped language', async () => {
+  it('tokenizes every language of the fake built-in extension', async () => {
     const theme = await fallback('dark');
-    const t = new Tokenizer(readGrammar);
+    const scopes = LANGS.map((l) => catalog.scopeFor(l)!);
+    const t = await tokenizerFor(scopes);
     t.setTheme(theme);
-    for (const l of HIGHLIGHT_LANGS) {
-      t.load([l]);
-      const r = t.tokenize('module x; // a "b" 1\nfn main() {}\n', l, theme.key);
-      expect(r, l).not.toBeNull();
-    }
+    for (const s of scopes) expect(t.tokenize('module x; // a "b" 1\nfn main() {}\n', s, theme.key), s).not.toBeNull();
+  });
+
+  it("leaves a grammar that doesn't parse unloaded", async () => {
+    const e = await (engines.oniguruma ??= createOnigLib([ONIG_WASM]));
+    const t = new Tokenizer(e.lib);
+    expect(await t.load('source.bad', { files: [{ scopeName: 'source.bad', format: 'json', text: '{ "scopeName": ' }], injections: [] })).toBe(false);
+    expect(await t.load('source.bad2', { files: [{ scopeName: 'source.bad2', format: 'plist', text: '<plist><dict><key>' }], injections: [] })).toBe(false);
+    expect(await t.load('source.missing', { files: [], injections: [] })).toBe(false);
+  });
+
+  it('falls back to the JavaScript engine without a usable wasm', async () => {
+    // (A wasm that fails to load is the same path; vscode-oniguruma keeps the first wasm a process gave it, so
+    // that's left to the worker test with no wasm at all.)
+    const logs: string[] = [];
+    const r = await createOnigLib([join(out, 'missing.wasm')], (m) => logs.push(m));
+    expect(r.engine).toBe('javascript');
+    expect(logs.join()).toMatch(/missing\.wasm/);
   });
 });
 
 describe('highlighter (host, with the worker)', () => {
   const workerFile = join(repo, 'src/extension/highlight/worker.ts');
+  const make = (opts: ConstructorParameters<typeof Highlighter>[0] = {}) => {
+    const h = new Highlighter({ workerFile, wasmFiles: [ONIG_WASM], ...opts });
+    h.setGrammars(source);
+    return h;
+  };
 
-  it('highlights, caches and keeps a stable palette', async () => {
-    const h = new Highlighter({ workerFile, grammarDir });
+  it('highlights, caches, keeps a stable palette, and leaves unknown languages plain', async () => {
+    const logs: string[] = [];
+    const h = make({ log: (m) => logs.push(m) });
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
-    const r = (await h.request(who, [{ id: 1, lang: 'typescript', code: 'let a = 1;' }, { id: 2, lang: 'rust', code: 'fn main() {}' }]))!;
-    expect(r.blocks.map((b) => b.id)).toEqual([1, 2]);
-    expect(r.blocks.every((b) => Array.isArray(b.runs))).toBe(true);
+    const r = (await h.request(who, [{ id: 1, lang: 'ts', code: 'let a = 1;' }, { id: 2, lang: 'rust', code: 'fn main() {}' }, { id: 4, lang: 'klingon', code: 'x' }]))!;
+    expect(r.blocks.map((b) => b.id)).toEqual([1, 2, 4]);
+    expect(r.blocks.slice(0, 2).every((b) => Array.isArray(b.runs))).toBe(true);
+    expect(r.blocks[2]!.runs).toBeNull();
     expect(r.palette[0]).toEqual({});
+    expect(h.engine).toBe('oniguruma');
+    expect(logs.join()).toMatch(/Oniguruma/);
     const again = (await h.request(who, [{ id: 3, lang: 'typescript', code: 'let a = 1;' }]))!;
     expect(again.blocks[0]!.runs).toEqual(r.blocks[0]!.runs);
     expect(h.workersStarted).toBe(1);
     h.dispose();
   });
 
+  it('uses the JavaScript engine when no wasm is found', async () => {
+    const h = make({ wasmFiles: [] });
+    h.setTheme(await fallback('dark'));
+    const r = (await h.request(h.newRequester(), [{ id: 1, lang: 'python', code: 'def f(): pass' }]))!;
+    expect(Array.isArray(r.blocks[0]!.runs)).toBe(true);
+    expect(h.engine).toBe('javascript');
+    h.dispose();
+  });
+
+  it('picks up new grammars: the key changes, the worker is replaced, and a new language is colored', async () => {
+    const h = new Highlighter({ workerFile, wasmFiles: [ONIG_WASM] });
+    h.setTheme(await fallback('dark'));
+    const small = new GrammarCatalog([await writeGrammarExtension(join(out, 'small'), ['python'], 'vscode.python')]);
+    h.setGrammars(sourceOf(small));
+    const who = h.newRequester();
+    const before = h.themeKey;
+    expect((await h.request(who, [{ id: 1, lang: 'go', code: 'package main' }]))!.blocks[0]!.runs).toBeNull();
+    expect((await h.request(who, [{ id: 2, lang: 'py', code: 'x = 1' }]))!.blocks[0]!.runs).not.toBeNull();
+    const go = new GrammarCatalog([...[await writeGrammarExtension(join(out, 'small'), ['python'], 'vscode.python')], await writeGrammarExtension(join(out, 'go-ext'), ['go'], 'golang.go', false)]);
+    h.setGrammars(sourceOf(go));
+    expect(h.themeKey).not.toBe(before);
+    expect(h.running).toBe(false);
+    const r = (await h.request(who, [{ id: 3, lang: 'go', code: 'package main' }]))!;
+    expect(r.theme).toBe(h.themeKey);
+    expect(r.blocks[0]!.runs).not.toBeNull();
+    h.dispose();
+  });
+
+  it("leaves a language plain when its grammar can't be read", async () => {
+    const dir = join(out, 'gone');
+    const ext = await writeGrammarExtension(dir, ['go'], 'gone.go', false);
+    rmSync(join(dir, 'syntaxes'), { recursive: true });
+    const logs: string[] = [];
+    const h = new Highlighter({ workerFile, wasmFiles: [ONIG_WASM], log: (m) => logs.push(m) });
+    h.setGrammars(sourceOf(new GrammarCatalog([ext])));
+    h.setTheme(await fallback('dark'));
+    expect((await h.request(h.newRequester(), [{ id: 1, lang: 'go', code: 'package main' }]))!.blocks[0]!.runs).toBeNull();
+    expect(logs.join()).toMatch(/couldn't read the grammar source\.go/);
+    h.dispose();
+  });
+
   it('replaces a waiting request with a newer one, and joins duplicate blocks', async () => {
-    const h = new Highlighter({ workerFile, grammarDir });
+    const h = make();
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
     const code = 'x = 1\n'.repeat(500);
@@ -340,19 +482,20 @@ describe('highlighter (host, with the worker)', () => {
   });
 
   it('answers under the new theme when it changes meanwhile', async () => {
-    const h = new Highlighter({ workerFile, grammarDir });
+    const h = make();
     const dark = await fallback('dark');
     const light = await fallback('light');
     h.setTheme(dark);
     const p = h.request(h.newRequester(), [{ id: 1, lang: 'go', code: 'package main\nfunc main() {}' }]);
     h.setTheme(light);
-    expect((await p)!.theme).toBe(light.key);
+    expect((await p)!.theme).toBe(h.themeKey);
+    expect(h.themeKey!.startsWith(light.key)).toBe(true);
     h.dispose();
   });
 
   it('cuts off a slow block, replaces the worker, and stops after repeated timeouts', async () => {
     const logs: string[] = [];
-    const h = new Highlighter({ workerFile, grammarDir, blockTimeoutMs: 1, msPerKb: 0, log: (m) => logs.push(m) });
+    const h = make({ blockTimeoutMs: 1, msPerKb: 0, log: (m) => logs.push(m) });
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
     const big = (i: number) => `// ${i}\n${'const x: Array<Map<string, number>> = [1, 2, 3].map((v) => v * 2);\n'.repeat(1300)}`;
@@ -373,7 +516,8 @@ describe('highlighter budget', () => {
   const workerFile = join(repo, 'src/extension/highlight/worker.ts');
   it('stops a requester that keeps the worker busy past its time budget, and one whose panel is gone', async () => {
     const logs: string[] = [];
-    const h = new Highlighter({ workerFile, grammarDir, budgetMs: 1, slowJobMs: 0, log: (m) => logs.push(m) });
+    const h = new Highlighter({ workerFile, wasmFiles: [ONIG_WASM], budgetMs: 1, slowJobMs: 0, log: (m) => logs.push(m) });
+    h.setGrammars(source);
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
     const code = 'const x: Array<Map<string, number>> = [1, 2, 3].map((v) => v * 2);\n'.repeat(400);
@@ -392,7 +536,8 @@ describe('highlighter budget', () => {
 
 describe('highlighter during live editing', () => {
   it('many quick re-tokenizations of one block never trip the breaker', async () => {
-    const h = new Highlighter({ workerFile: join(repo, 'src/extension/highlight/worker.ts'), grammarDir });
+    const h = new Highlighter({ workerFile: join(repo, 'src/extension/highlight/worker.ts'), wasmFiles: [ONIG_WASM] });
+    h.setGrammars(source);
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
     for (let i = 0; i < 300; i++) await h.request(who, [{ id: i, lang: 'python', code: `x = ${i}\n`.repeat(50) }]);
@@ -403,10 +548,10 @@ describe('highlighter during live editing', () => {
 
 describe('protocol', () => {
   const msg = (blocks: unknown) => fromWebviewSchema.safeParse({ type: 'highlight', blocks }).success;
-  it('accepts known languages within the caps only', () => {
+  it('accepts language names within the caps only', () => {
     expect(msg([{ id: 1, lang: 'typescript', code: 'x' }])).toBe(true);
-    expect(msg([{ id: 1, lang: 'klingon', code: 'x' }])).toBe(false);
-    expect(msg([{ id: 1, lang: '__proto__', code: 'x' }])).toBe(false);
+    expect(msg([{ id: 1, lang: 'klingon', code: 'x' }])).toBe(true); // the host answers "plain"
+    for (const lang of ['__proto__', '../x', 'TS', '', 'a b', 'x'.repeat(65), 7]) expect(msg([{ id: 1, lang, code: 'x' }]), String(lang)).toBe(false);
     expect(msg([{ id: -1, lang: 'c', code: 'x' }])).toBe(false);
     expect(msg([{ id: 1.5, lang: 'c', code: 'x' }])).toBe(false);
     expect(msg([])).toBe(false);
@@ -417,14 +562,15 @@ describe('protocol', () => {
 });
 
 describe('size', () => {
-  it('keeps the highlighter small, and the package under 2 MB', () => {
-    // What the highlighter adds to the .vsix, compressed as the zip does it.
+  it('ships no grammars or wasm, keeps the fallback themes small, and the package under 2 MB', () => {
     let bytes = 0;
-    for (const dir of ['grammars', 'themes']) {
-      for (const f of readdirSync(join(out, dir))) bytes += deflateRawSync(readFileSync(join(out, dir, f)), { level: 9 }).length;
-    }
-    expect(bytes).toBeLessThan(260 * 1024);
+    for (const f of readdirSync(themesDir)) bytes += deflateRawSync(readFileSync(join(themesDir, f)), { level: 9 }).length;
+    expect(bytes).toBeLessThan(20 * 1024);
+    const ignore = readFileSync(join(repo, '.vscodeignore'), 'utf8');
+    expect(ignore).not.toMatch(/grammars|\.wasm/);
     const vsix = join(repo, 'dist/sidestory.vsix');
     if (existsSync(vsix)) expect(statSync(vsix).size).toBeLessThan(2 * 1024 * 1024);
+    const worker = join(repo, 'dist/highlight-worker.cjs');
+    if (existsSync(worker) && !existsSync(join(repo, 'dist/highlight-worker.cjs.map'))) expect(statSync(worker).size).toBeLessThan(160 * 1024);
   });
 });

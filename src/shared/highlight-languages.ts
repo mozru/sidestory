@@ -1,55 +1,24 @@
-// Code block languages for syntax highlighting (docs/HIGHLIGHT-PLAN.md): the grammars we ship, the class
-// names that pick them, and the limits shared by the panel and the extension host.
+// Code block languages for syntax highlighting (docs/HIGHLIGHT-PLAN.md §10): the language names blocks give,
+// and the limits shared by the panel and the extension host.
 
-/** Grammars shipped in dist/highlight/grammars (Shiki names). Requests may name only these. */
-export const HIGHLIGHT_LANGS = [
-  'typescript', 'tsx', 'javascript', 'python', 'c', 'cpp', 'rust', 'go', 'java', 'csharp', 'system-verilog', 'verilog', 'vhdl',
-  'json', 'jsonc', 'yaml', 'toml', 'shellscript', 'sql', 'html', 'css', 'markdown', 'diff',
-] as const;
-export type HighlightLang = (typeof HIGHLIGHT_LANGS)[number];
+/**
+ * A language name as a code block gives it (`language-ts`, `lang-python`), lower case. The extension host maps it
+ * to a grammar from the installed extensions (src/extension/highlight/catalog.ts); unknown names stay plain.
+ */
+export const LANG_NAME = /^[a-z0-9][a-z0-9_+#.-]{0,63}$/;
 
-/** Grammars shipped only because the ones above embed them (never requested directly). */
-export const EMBEDDED_GRAMMARS = ['cpp-macro', 'regexp', 'glsl', 'html-derivative'] as const;
-
-/** `language-x` / `lang-x` names (lower case) → grammar. A Map, so `__proto__` or `constructor` find nothing. */
-export const LANG_ALIASES: ReadonlyMap<string, HighlightLang> = new Map<string, HighlightLang>([
-  ...(['ts', 'typescript', 'mts', 'cts'] as const).map((a) => [a, 'typescript'] as const),
-  ['tsx', 'tsx'],
-  // VS Code's JavaScript grammar covers JSX.
-  ...(['js', 'javascript', 'mjs', 'cjs', 'jsx', 'node'] as const).map((a) => [a, 'javascript'] as const),
-  ...(['py', 'python', 'python3', 'py3'] as const).map((a) => [a, 'python'] as const),
-  ['c', 'c'], ['h', 'c'],
-  ...(['cpp', 'c++', 'cc', 'cxx', 'hpp', 'hh', 'hxx'] as const).map((a) => [a, 'cpp'] as const),
-  ['rs', 'rust'], ['rust', 'rust'],
-  ['go', 'go'], ['golang', 'go'],
-  ['java', 'java'],
-  ...(['cs', 'csharp', 'c#'] as const).map((a) => [a, 'csharp'] as const),
-  ...(['sv', 'systemverilog', 'system-verilog', 'svh'] as const).map((a) => [a, 'system-verilog'] as const),
-  ['v', 'verilog'], ['verilog', 'verilog'],
-  ['vhdl', 'vhdl'], ['vhd', 'vhdl'],
-  ['json', 'json'],
-  ['jsonc', 'jsonc'], ['json5', 'jsonc'],
-  ['yaml', 'yaml'], ['yml', 'yaml'],
-  ['toml', 'toml'],
-  ...(['sh', 'bash', 'shell', 'shellscript', 'zsh', 'console', 'shell-session'] as const).map((a) => [a, 'shellscript'] as const),
-  ['sql', 'sql'],
-  ...(['html', 'htm', 'xhtml'] as const).map((a) => [a, 'html'] as const),
-  ['css', 'css'],
-  ['md', 'markdown'], ['markdown', 'markdown'],
-  ['diff', 'diff'], ['patch', 'diff'],
-]);
-
-/** The grammar for a language name (`ts`, `Python`, `c++`), or undefined: unknown languages stay plain. */
-export function grammarFor(name: string): HighlightLang | undefined {
-  return LANG_ALIASES.get(name.trim().toLowerCase());
+/** A language name, normalized (trimmed, lower case), or undefined if it can't be one. */
+export function langName(name: string): string | undefined {
+  const n = name.trim().toLowerCase();
+  return LANG_NAME.test(n) ? n : undefined;
 }
 
-/** The language a class attribute names (`language-x` or `lang-x`; the first known one wins). */
-export function langFromClass(className: string | null | undefined): HighlightLang | undefined {
+/** The language a class attribute names (the first `language-x` or `lang-x` that can be a name). */
+export function langFromClass(className: string | null | undefined): string | undefined {
   if (!className) return undefined;
   for (const c of className.split(/\s+/)) {
     const m = /^(?:language|lang)-(.+)$/i.exec(c);
-    const lang = m ? grammarFor(m[1]!) : undefined;
+    const lang = m ? langName(m[1]!) : undefined;
     if (lang) return lang;
   }
   return undefined;

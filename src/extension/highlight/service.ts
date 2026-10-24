@@ -1,11 +1,13 @@
-// Syntax highlighting for explainer code blocks, VS Code side (docs/HIGHLIGHT-PLAN.md §3): works out the active
-// color theme, loads it, follows changes, and owns the shared Highlighter.
+// Syntax highlighting for sidestory code blocks, VS Code side (docs/HIGHLIGHT-PLAN.md §3, §10): works out the
+// active color theme and the installed grammars, loads them, follows changes, and owns the shared Highlighter.
+import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { posix } from 'node:path';
+import { join, posix } from 'node:path';
 import * as vscode from 'vscode';
 import { log } from '../log.ts';
 import { realPathInside } from '../paths.ts';
-import { Highlighter } from './host.ts';
+import { type ExtensionInfo, GrammarCatalog, loadGrammarSet } from './catalog.ts';
+import { type GrammarSource, Highlighter } from './host.ts';
 import {
   candidateThemes, customizationRules, findContribution, type HighlightTheme, loadThemeChain, MAX_THEME_FILE, normalizeTheme,
   type ThemeContribution, type ThemeKind, type ThemeReader,
@@ -30,15 +32,15 @@ const SETTINGS = ['workbench.colorTheme', 'workbench.preferredDarkColorTheme', '
 
 /** Reads theme files through VS Code's file system, real paths checked for local files. */
 const reader: ThemeReader = {
-  async read(uri) {
+  async read(uri, maxBytes = MAX_THEME_FILE) {
     try {
       const u = vscode.Uri.parse(uri, true);
       if (u.scheme === 'file') {
-        if ((await stat(u.fsPath)).size > MAX_THEME_FILE) return undefined;
+        if ((await stat(u.fsPath)).size > maxBytes) return undefined;
         return await readFile(u.fsPath, 'utf8');
       }
       const st = await vscode.workspace.fs.stat(u);
-      if (st.size > MAX_THEME_FILE) return undefined;
+      if (st.size > maxBytes) return undefined;
       return new TextDecoder().decode(await vscode.workspace.fs.readFile(u));
     } catch {
       return undefined;
@@ -78,6 +80,43 @@ function contributions(): ThemeContribution[] {
   return out;
 }
 
+/** The installed extensions, as the grammar catalog needs them. */
+function extensionInfos(): ExtensionInfo[] {
+  return vscode.extensions.all.map((ext) => {
+    const pkg = ext.packageJSON as { contributes?: unknown; isBuiltin?: unknown } | undefined;
+    return { id: ext.id, root: ext.extensionUri.toString(), builtin: pkg?.isBuiltin === true || ext.id.startsWith('vscode.'), contributes: pkg?.contributes };
+  });
+}
+
+/**
+ * Where VS Code keeps vscode-oniguruma's onig.wasm: node_modules in 1.95 and in servers (remote, openvscode-server),
+ * node_modules.asar.unpacked in newer desktop builds (whose node_modules.asar a worker can't read).
+ */
+export function onigWasmCandidates(appRoot: string): string[] {
+  if (!appRoot) return [];
+  return ['node_modules', 'node_modules.asar.unpacked'].map((d) => join(appRoot, d, 'vscode-oniguruma', 'release', 'onig.wasm')).filter((f) => existsSync(f));
+}
+
+class CatalogSource implements GrammarSource {
+  readonly key: string;
+  private readonly catalog: GrammarCatalog;
+  private readonly logOnce: (m: string) => void;
+
+  constructor(catalog: GrammarCatalog, logOnce: (m: string) => void) {
+    this.catalog = catalog;
+    this.key = catalog.key;
+    this.logOnce = logOnce;
+  }
+
+  scopeFor(lang: string): string | undefined {
+    return this.catalog.scopeFor(lang);
+  }
+
+  load(scope: string) {
+    return loadGrammarSet(this.catalog, scope, reader, this.logOnce);
+  }
+}
+
 export class HighlightService implements vscode.Disposable {
   readonly highlighter: Highlighter;
   private readonly emitter = new vscode.EventEmitter<string>();
@@ -92,7 +131,7 @@ export class HighlightService implements vscode.Disposable {
 
   constructor(extensionUri: vscode.Uri) {
     this.fallbackDir = vscode.Uri.joinPath(extensionUri, 'dist', 'highlight', 'themes');
-    this.highlighter = new Highlighter({ log: (m) => log.warn(m) });
+    this.highlighter = new Highlighter({ log: (m) => log.warn(m), wasmFiles: onigWasmCandidates(vscode.env.appRoot) });
     const changed = () => {
       if (this.ready) this.ready = this.refresh();
     };
@@ -126,8 +165,10 @@ export class HighlightService implements vscode.Disposable {
     }
     if (seq !== this.seq || !theme) return;
     const before = this.highlighter.themeKey;
+    this.highlighter.setGrammars(new CatalogSource(new GrammarCatalog(extensionInfos()), (m) => this.logOnce(m)));
     this.highlighter.setTheme(theme);
-    if (before !== undefined && before !== theme.key) this.emitter.fire(theme.key);
+    const after = this.highlighter.themeKey;
+    if (before !== undefined && after !== undefined && before !== after) this.emitter.fire(after);
   }
 
   private async resolve(): Promise<HighlightTheme | undefined> {

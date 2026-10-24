@@ -14,7 +14,7 @@
 
 Shiki wins on the one thing this feature is for: looking like the editor beside it. The size is affordable (§6). The WASM Oniguruma engine isn't needed: the JS engine handles every grammar we ship (`forgiving: true` leaves an unsupported pattern unmatched rather than failing the grammar).
 
-Not chosen: VS Code's installed grammars through `vscode-textmate` + `vscode-oniguruma` (exact parity with whatever language extensions the user has), because it needs WASM, and grammar contributions of UI-side extensions aren't readable from a remote extension host. A later option for languages we don't ship.
+Superseded by §10: grammars now come from the installed extensions (VS Code's built-in language extensions and whatever the reader added), tokenized by `vscode-textmate` with VS Code's own Oniguruma WASM. §2–§5 still hold, with "grammar id" read as "language name, resolved by the host" (§10.2); §6's shipped grammars and alias table are gone.
 
 ## 2. Data flow
 
@@ -95,3 +95,37 @@ A `<Code lang="ts">` UI component needs tokens inside the widget's frame, which 
 - Panel (Playwright, `test/webview`): colored tokens in light and dark from real tokenizer output (keyword vs string colors differ, match the theme); live update keeps the reader's place, leaves unchanged blocks' spans in place without a new request, keeps colors above an edit; HTML in code stays text; author `data-cx-hl` and markup inside code untouched and still flash "updated" when edited; malformed results ignored; theme change re-requests; render time with 40 highlighted blocks.
 - e2e (browser VS Code in Docker): a highlighted block in the real default theme the test sets explicitly (`workbench.colorTheme`) has that theme's keyword color.
 - Panel test for a partly colored block whose request was replaced by a newer one (it's completed). Unit test: markdown fences named `../../x` and `__proto__` load nothing.
+
+## 10. Grammars from installed extensions (supersedes the grammar parts of §1, §2, §6)
+
+The reader's VS Code already knows how to color every language it can open: built-in language extensions (`vscode.typescript-basics`, `vscode.python`, `vscode.markdown-basics`…, 80-odd grammars) and any the reader installed (SystemVerilog, VHDL, TOML…). Code blocks use those grammars instead of a fixed set we ship, so a block looks like the same file in the editor, and new languages need no Sidestory release.
+
+### 10.1 Choices
+
+| | Chosen | Why |
+|---|---|---|
+| Tokenizer | `vscode-textmate` 9.3.2, bundled in the worker (~60 KB) | What VS Code itself runs, same major version as stable (1.95 has 9.1). It resolves `include`s and injections by scope name through a `loadGrammar` callback, which is exactly what discovered grammars need; Shiki's registry is name-based, wants every grammar up front, and is a fork. `@shikijs/core` and `@shikijs/langs` leave the package. |
+| Regex engine | Oniguruma: VS Code's own `onig.wasm`, found under `vscode.env.appRoot`, driven by `vscode-oniguruma` 1.7.0's JS (bundled, 12 KB; the exact version VS Code pins) | The grammars are written for Oniguruma. The wasm is at `node_modules/vscode-oniguruma/release/onig.wasm` (desktop 1.95, openvscode-server/remote servers) or `node_modules.asar.unpacked/vscode-oniguruma/release/onig.wasm` (desktop stable 1.14x); same file in all (sha1 `b1644a9e…`). Its JS glue is inside `node_modules.asar` in stable, which a worker can't read, so the 12 KB glue is ours and the 466 KB wasm is VS Code's. |
+| Fallback engine | `@shikijs/engine-javascript` (`forgiving: true`) | When no wasm is found, or it fails to load or answer a smoke test (a future VS Code with another ABI): grammars still work, a pattern JS can't express just never matches. Logged once. No wasm is bundled. |
+
+### 10.2 Discovery and language names
+
+- The host builds a **grammar catalog** from `vscode.extensions.all` (`contributes.grammars`: `scopeName`, `path`, `language`, `injectTo`; `contributes.languages`: `id`, `aliases`, `extensions`), and rebuilds it on `vscode.extensions.onDidChange`. Built-in extensions first, then the reader's, so a reader's grammar for a language wins as in VS Code. `embeddedLanguages` and `tokenTypes` only set language ids and token types, not colors: not used.
+- **The panel sends the language name** from the first `language-x` / `lang-x` class, lower-cased, if it matches `^[a-z0-9][a-z0-9_+#.-]{0,63}$` (no table in the panel any more). The host maps it: a language `id`, else an alias, else a file extension (`py`, `rs`, `yml`), else a tiny table of fence names VS Code has no alias for (`python3`, `golang`, `node`, `console`, `shell`, `make`, `json5`), all through `Map`s. No grammar → `runs: null` → plain (the panel remembers it).
+- **Grammar set changes** (an extension installed or removed) are folded into the theme key the panel sees, so panels re-request and a language that just got a grammar is colored.
+
+### 10.3 Reading other extensions' files
+
+The host reads, the worker parses:
+- Each contribution's `path` must resolve inside its extension folder (the same `resolveInside` + real-path check as themes, §3); `.json` is read as JSON, `.tmLanguage`/`.plist`/`.tmGrammar` as plist (vscode-textmate's own parser, as VS Code does); anything else is skipped.
+- Per file ≤ 4 MB. A block's grammar set is its grammar plus every scope its files `include` (found by a regex over the text, not parsed in the host) and the injections into those scopes, breadth first, at most 128 grammars and 12 MB (markdown with VS Code's built-ins: 72 grammars, 3.5 MB). Past the caps the remaining includes are left unresolved (those parts stay uncolored), as VS Code does for a missing grammar.
+- Parsing (JSON or plist) and compiling happen in the worker, inside its heap limit and the load timeout; a grammar that fails to parse leaves its block plain.
+- Grammar files come from installed extensions, never from the workspace, so Restricted Mode is unchanged. The web (vscode.dev) doesn't run Sidestory (no browser entry). In a remote window, extensions on the remote side are read with `fs`; others through `vscode.workspace.fs` when their URI is readable, else skipped.
+
+### 10.4 Worker
+
+`load` carries the grammar texts of one scope's set (with the injections map); the worker registers them and loads the grammar through `vscode-textmate`'s `Registry` (includes resolve from what was sent, else `null`), then tokenizes one line to warm it. The theme goes in with `Registry.setTheme`; runs come from `tokenizeLine2` (foreground id → the registry's color map, font style bits as before; the theme's default foreground and no font style → style 0). A line over 2,000 characters is one plain run, and a line that hits the 500 ms per-line limit is plain with the state carried over unchanged. A catalog change restarts the worker between jobs. Timeouts, breaker, caches, heap limit: §5 unchanged.
+
+### 10.5 Size
+
+Out: the 27 shipped grammars and Shiki core. In: vscode-textmate and the oniguruma glue. Measured in the CHANGELOG's entry and the PR.
