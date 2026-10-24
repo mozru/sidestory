@@ -553,7 +553,11 @@ export class CommentsPane {
       // Elapsed time right after "Claude is on it", before any longer hint.
       const text = c.delivery.since !== undefined ? c.delivery.text.replace(/^Claude is on it/, `Claude is on it · ${Math.round(c.delivery.since / 1000)}s`) : c.delivery.text;
       d.append(el('span', undefined, `${c.delivery.state === 'pushed' ? '✓ ' : ''}${text}`));
-      for (const a of c.delivery.actions) d.append(button('cx-c-link', ACTION_TEXT[a], () => this.hooks.post({ type: 'deliveryAction', event: c.id, action: a })));
+      for (const a of c.delivery.actions) {
+        const b = button('cx-c-link', ACTION_TEXT[a], () => this.hooks.post({ type: 'deliveryAction', event: c.id, action: a }));
+        if (a === 'sendElsewhere') b.title = 'If the first session comes back, it may answer too';
+        d.append(b);
+      }
       row.append(d);
     }
     void t;
