@@ -21,6 +21,7 @@ import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection } from './pin.ts';
 import { PreparedTextCache } from './prepared-cache.ts';
 import type { SessionHost, SessionOptions } from './session.ts';
+import { SymbolTables } from './code-links.ts';
 import { ExplainerSession } from './session.ts';
 import { disposeWidgetCompiler } from './widgets/compile.ts';
 import { WidgetHost } from './widgets/host.ts';
@@ -90,6 +91,10 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const highlight = new HighlightService(context.extensionUri);
   context.subscriptions.push(highlight, highlight.onDidChangeTheme((key) => [...sessions].forEach((s) => s.highlightThemeChanged(key))));
 
+  // SV symbol tables for code links and cursor lighting (docs/AUTHORING-PLAN.md §8): one per document version, for every panel.
+  const symbols = new SymbolTables();
+  context.subscriptions.push(symbols);
+
   // Assigned below; the session host only calls it after a panel exists.
   let navigator: Navigator | undefined;
   const host: SessionHost = {
@@ -101,6 +106,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     stepCount: (dir) => index.stepCount(dir),
     titleOf: (dir) => index.entry(dir)?.title || undefined,
     opened: (ref) => navigator?.noteOpened(ref),
+    symbols,
   };
 
   const drift = new DriftQueue(index);

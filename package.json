@@ -215,6 +215,11 @@
     "configuration": {
       "title": "Sidestory",
       "properties": {
+        "sidestory.followCursorInDiagrams": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ring the boxes and links in a sidestory (data-explain-ref, data-explain-code) whose code holds the editor cursor. Steps change only for code a section covers."
+        },
         "sidestory.dimUnfocused": {
           "type": "boolean",
           "default": true,

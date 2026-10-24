@@ -626,13 +626,21 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     if (init.active && init.active !== state.active) state = { ...state, scroll: undefined };
     active = init.active ?? active;
     restoreScroll();
-    // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
+    // Nothing chosen yet: the section at the reading line is the current one.
     // At the top, that's the first step, however many short sections fit above the line.
     if (!active) active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
     markActive();
+    // A section the page chose itself (not the one the extension sent): the extension shows its code when no
+    // editor is open, and otherwise only highlights it, so opening a sidestory never takes over the reader's editor.
+    if (active && active !== init.active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
     initialized = true;
     init.after?.();
     for (const d of pendingSteps.splice(0)) step(d);
+  } else if (initialized && !active && steps.length) {
+    // The page had no steps when it opened (its content arrived after `init`): open at the first, as `init` does.
+    active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
+    markActive();
+    if (active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
   }
   return true;
 }

@@ -179,6 +179,26 @@ async function walkManifests(dir: string, out: Uri[]): Promise<void> {
   }
 }
 
+/** A TextDocument over a string. */
+export function fakeDocument(uri: Uri, text: string, version = 1) {
+  const lines = text.split(/\r\n|\r|\n/);
+  const ext = uri.path.split('.').pop() ?? '';
+  return {
+    uri,
+    version,
+    isClosed: false,
+    languageId: ext === 'sv' || ext === 'svh' ? 'systemverilog' : ext === 'v' ? 'verilog' : ext === 'ts' ? 'typescript' : 'plaintext',
+    lineCount: lines.length,
+    getText: () => text,
+    lineAt: (n: number) => ({ text: lines[n] ?? '' }),
+  };
+}
+
+/** Editors the extension showed (showTextDocument), in order. */
+export const shown: { document: { uri: Uri }; options: Record<string, unknown> }[] = [];
+/** Status bar messages, in order. */
+export const statusMessages: string[] = [];
+
 export const workspace = {
   /** The folder workspace URIs resolve against; set by the test. */
   root: undefined as Uri | undefined,
@@ -207,6 +227,11 @@ export const workspace = {
   asRelativePath: (u: Uri) => (workspace.root && u.path.startsWith(`${workspace.root.path}/`) ? u.path.slice(workspace.root.path.length + 1) : u.path),
   textDocuments: [] as unknown[],
   onDidChangeTextDocument: events.documentChanged.event,
+  /** A document read from disk: enough of TextDocument for the code-link host (docs/AUTHORING-PLAN.md §8). */
+  openTextDocument: async (uri: Uri) => {
+    const text = await readFile(uri.fsPath, 'utf8');
+    return fakeDocument(uri, text);
+  },
   fs: {
     readFile: async (uri: Uri) => {
       counts.reads++;
@@ -386,7 +411,14 @@ export const window = {
     return modal.answer;
   },
   showErrorMessage: async () => undefined,
-  setStatusBarMessage: () => ({ dispose() {} }),
+  setStatusBarMessage: (text: string) => {
+    statusMessages.push(text);
+    return { dispose() {} };
+  },
+  showTextDocument: async (document: { uri: Uri }, options: Record<string, unknown> = {}) => {
+    shown.push({ document, options });
+    return { document, selection: options.selection, revealRange() {}, setDecorations() {} };
+  },
 };
 
 export class ThemeColor {

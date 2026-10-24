@@ -1840,6 +1840,11 @@ export async function scanSvSliced(text: string, opts: ScanOptions & { sliceMs: 
   }
 }
 
+/** Whether a file is SystemVerilog or Verilog, by its language (in VS Code) or its extension. */
+export function isSvPath(path: string, languageId?: string): boolean {
+  return languageId === 'systemverilog' || languageId === 'verilog' || /\.(sv|svh|svi|v|vh)$/i.test(path);
+}
+
 // ---- the reset heuristic (§4.2) ----
 
 /**
