@@ -1,6 +1,14 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
 import { belongs, countedPath, isArchivePath, isCompleteSidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
+import { isSafeRepoPath } from '../../src/core/repo-path.ts';
+
+describe('isSafeRepoPath (src/core/repo-path.ts)', () => {
+  it('refuses paths any OS would read differently or git would read as magic', () => {
+    for (const bad of ['', ':x', ':(literal)a', 'a\\b', 'a/../b', './a', 'a//b', '.git/config', 'x/.GIT/y', 'a\u0001b', 'con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b', 'x'.repeat(4097)]) expect(isSafeRepoPath(bad), JSON.stringify(bad)).toBe(false);
+    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c', '.sidestory/x/manifest.json']) expect(isSafeRepoPath(ok), ok).toBe(true);
+  });
+});
 
 const M = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);

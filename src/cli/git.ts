@@ -17,7 +17,8 @@ import { access, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writ
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 import { MAX_COMPARE_BYTES } from '../core/hunks.ts';
-import { FULL_SHA, isValidBase, RESERVED_SEGMENT } from '../core/manifest.ts';
+import { FULL_SHA, isValidBase } from '../core/manifest.ts';
+import { isSafeRepoPath } from '../core/repo-path.ts';
 import type { RefReader } from '../extension/changes/base.ts';
 
 export const GIT_LIMITS = {
@@ -46,16 +47,8 @@ export class GitError extends Error {
   }
 }
 
-/**
- * Paths read or shown from git output (§4.5): no control characters, `..`, `.git` segments, backslashes or a
- * leading `:` (pathspec magic), and, as `isSafeRelativePath`, no Windows device names (`con`, `nul.txt`) or
- * segments ending in a dot or a space (Windows drops those, so `a.` would read `a`). The same rule as the Changes
- * view's `isSafeRepoPath` (src/extension/changes/comparison.ts, which imports vscode and so can't be shared).
- */
-export function isSafeRepoPath(p: string): boolean {
-  if (!p || p.length > 4096 || p.startsWith(':') || /[\x00-\x1f\x7f\\]/.test(p)) return false;
-  return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && s.toLowerCase() !== '.git' && !/[. ]$/.test(s) && !RESERVED_SEGMENT.test(s));
-}
+/** Paths read or shown from git output (§4.5): the one rule the extension uses too (src/core/repo-path.ts). */
+export { isSafeRepoPath };
 
 export interface RepoLocation {
   /** The working tree's root (a real path). */
