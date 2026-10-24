@@ -293,7 +293,12 @@ export function parseWhy(v: unknown): { value?: string; error?: string } {
   const value = v.trim();
   if (!value) return { error: 'is empty' };
   if (value.length > LIMITS.whyChars) return { error: `is longer than ${LIMITS.whyChars} characters` };
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return { error: 'contains control characters' };
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value)) return { error: 'contains control characters' };
+  // Reviewers read the why to trust a trivial mark: nothing that hides or reorders text (bidi controls, zero-width
+  // and tag characters, lone surrogates; the set displayText removes).
+  if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u00ad\u200b-\u200d\u2060-\u2064\ufeff]|\udb40[\udc00-\udc7f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(value)) {
+    return { error: 'contains invisible or direction-changing characters' };
+  }
   return { value };
 }
 
@@ -305,7 +310,7 @@ export function parseManifest(json: string): ParseResult {
   if (json.length > LIMITS.manifestChars) return { ok: false, code: 'too-large', error: `manifest.json is longer than ${LIMITS.manifestChars} characters` };
   let raw: unknown;
   try {
-    raw = JSON.parse(json.replace(/^﻿/, ''));
+    raw = JSON.parse(json.replace(/^\ufeff/, ''));
   } catch (e) {
     return { ok: false, code: 'invalid', error: `manifest.json is not valid JSON: ${(e as Error).message}` };
   }

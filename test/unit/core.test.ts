@@ -365,6 +365,14 @@ describe('branch fields (docs/CHANGES-PLAN.md §3, §16.1)', () => {
     expect(r.diagnostics.map((d) => d.anchor)).toEqual(['noWhy', 'bad']);
   });
 
+  it('a why with bidi controls, zero-width or tag characters is refused', () => {
+    for (const why of ['import\u202e order', 'import\u200b order', 'tag\udb40\udc41', 'line\u2028break', 'lone \ud800']) {
+      const r = parse({ version: 3, base: 'main' }, { t: { file: 'a.ts', range: [1, 2], trivial: true, why } });
+      expect(r.manifest.anchors.get('t')!.why, JSON.stringify(why)).toBeUndefined();
+      expect(r.diagnostics.some((d) => d.anchor === 't' && /^why: /.test(d.message)), JSON.stringify(why)).toBe(true);
+    }
+  });
+
   it('side "base" without a base skips the anchor', () => {
     const r = parse({}, { old: { file: 'a.ts', range: [1, 2], side: 'base' } });
     expect(r.manifest.anchors.has('old')).toBe(false);
