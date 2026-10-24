@@ -12,17 +12,10 @@ export interface ChangeEntry {
   /** The path at the merge-base, for renames (and copies). */
   readonly oldPath?: string;
   readonly status: ChangeStatus;
-  /** Lines added and removed, when known (numstat, or counted for untracked files). */
-  added?: number;
-  removed?: number;
   /** Not in git yet (working tree mode). */
   readonly untracked?: boolean;
   /** An open document of this file has unsaved edits (working tree mode). */
   unsaved?: boolean;
-  /** Queued for counting. */
-  counting?: boolean;
-  /** Counted, but has no text lines changed: binary, a mode change or an empty file (numstat can't tell). */
-  noText?: boolean;
 }
 
 /** The vscode.git API's `Status` enum (git.d.ts), as numbers: a `const enum` can't be imported at run time. */

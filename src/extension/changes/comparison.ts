@@ -1,6 +1,6 @@
 // One comparison (docs/CHANGES-PLAN.md §1, §4.3–§4.4, §4.6): a repository, a base and a head, with its merge-base and
 // changed files. Everything is read through the vscode.git API; nothing here runs git. Recomputes are coalesced
-// (300 ms, extended to 2 s while events keep arriving), the merge-base and commit count are recomputed only when
+// (300 ms, extended to 2 s while events keep arriving), the merge-base is recomputed only when
 // HEAD or the base moved, and every result carries an epoch so a late answer never overwrites a newer one.
 import * as vscode from 'vscode';
 import type { BaseSource, DefaultBaseInputs, ResolvedBase } from './base.ts';
@@ -17,27 +17,17 @@ export interface Snapshot {
   readonly repo: GitRepo;
   readonly base: ResolvedBase & { source: BaseSource };
   readonly mergeBase: string;
-  readonly head: { readonly sha: string; readonly name?: string; readonly upstream?: string; readonly ahead?: number; readonly behind?: number };
+  readonly head: { readonly sha: string; readonly name?: string };
   readonly mode: Mode;
   /** At most MAX_LISTED, sorted by path. */
   readonly entries: ChangeEntry[];
-  /** Changed files before the cap. */
-  readonly total: number;
-  readonly commits?: { readonly count: number; readonly capped: boolean };
-  /** Line counts came with the list (numstat); otherwise only untracked files get counted. */
-  readonly countsKnown: boolean;
-  readonly partialClone: boolean;
   /** HEAD is the base branch (or its commit). */
   readonly onBase: boolean;
-  /** Working tree mode, and there are uncommitted edits (staged, unstaged, untracked or unsaved). */
-  readonly uncommitted: boolean;
   /**
    * Changed files whose paths Sidestory won't name or read (control characters, `..`, `.git`, a leading `:`): not
    * in `entries`, but each counts as one change in coverage, as the checker counts it (§5.1).
    */
   readonly unsupported: readonly { readonly path: string; readonly oldPath?: string }[];
-  /** Changes the git API gave without a path under the repository root: dropped. */
-  readonly unsafe: number;
 }
 
 export type ComparisonState =
@@ -82,9 +72,8 @@ export function snapshotIdentity(s: Pick<Snapshot, 'mergeBase' | 'mode' | 'entri
 }
 
 /**
- * Everything else a snapshot says (flags, ahead/behind, labels): a change of these repaints, coverage stays. Not the
- * line counts on entries (`added`, `removed`, `counting`, `noText`): coverage writes those onto the entries itself,
- * and comparing them would make every status refresh look like a change.
+ * Everything else a snapshot says (flags, unsaved and untracked marks): a change of these fires onDidChange, coverage
+ * stays.
  */
 export function snapshotDetails(s: Snapshot): string {
   const { repo: _repo, entries, ...rest } = s;
@@ -94,15 +83,15 @@ export function snapshotDetails(s: Snapshot): string {
 /**
  * The git API's changes as entries; `untracked` marks them all as untracked. A path `isSafeRepoPath` refuses is
  * `unsupported` (counted as one change, never read or shown as a file); a change with no path under the root is dropped.
+ * Numstat's line counts, when the list has them, aren't kept: coverage counts from its own diff (§5.2).
  */
 export function toEntries(
   repo: GitRepo,
   changes: readonly (GitChange | GitDiffChange)[],
   untracked = false,
-): { entries: ChangeEntry[]; unsupported: { path: string; oldPath?: string }[]; unsafe: number } {
+): { entries: ChangeEntry[]; unsupported: { path: string; oldPath?: string }[] } {
   const entries: ChangeEntry[] = [];
   const unsupported: { path: string; oldPath?: string }[] = [];
-  let unsafe = 0;
   for (const c of changes) {
     // Read each property once: the API's changes can be class instances with getters (never spread them).
     const status = untracked ? 'A' : statusLetter(c.status);
@@ -110,37 +99,14 @@ export function toEntries(
     const newPath = relPath(repo, c.renameUri ?? c.uri);
     const oldPath = relPath(repo, c.originalUri);
     const path = status === 'D' ? (oldPath ?? newPath) : newPath;
-    if (!path || ((status === 'R' || status === 'C') && !oldPath)) {
-      unsafe++;
-      continue;
-    }
+    if (!path || ((status === 'R' || status === 'C') && !oldPath)) continue;
     if (!isSafeRepoPath(path) || ((status === 'R' || status === 'C') && oldPath && !isSafeRepoPath(oldPath))) {
       unsupported.push({ path, ...((status === 'R' || status === 'C') && oldPath && oldPath !== path ? { oldPath } : {}) });
       continue;
     }
-    const e: ChangeEntry = { path, status, ...((status === 'R' || status === 'C') && oldPath !== path ? { oldPath } : {}), ...(untracked ? { untracked: true } : {}) };
-    if ('insertions' in c && typeof c.insertions === 'number') {
-      e.added = c.insertions;
-      e.removed = c.deletions;
-      if (!c.insertions && !c.deletions) e.noText = true;
-    }
-    entries.push(e);
+    entries.push({ path, status, ...((status === 'R' || status === 'C') && oldPath !== path ? { oldPath } : {}), ...(untracked ? { untracked: true } : {}) });
   }
-  return { entries, unsupported, unsafe };
-}
-
-/** Commits merge-base → head, "1000+" past the cap (§9.2). `log`'s maxEntries is ignored with a range (1.95 and newer). */
-export async function countCommits(repo: GitRepo, mergeBase: string, head: string, cap = 1000): Promise<{ count: number; capped: boolean } | undefined> {
-  if (mergeBase === head) return { count: 0, capped: false };
-  try {
-    // Bounded first: the merge-base among HEAD's latest commits means the range is small.
-    const recent = await repo.log({ maxEntries: cap + 1 });
-    if (!recent.some((c) => c.hash === mergeBase)) return { count: cap, capped: true };
-    const range = await repo.log({ range: `${mergeBase}..${head}` });
-    return range.length > cap ? { count: cap, capped: true } : { count: range.length, capped: false };
-  } catch {
-    return undefined;
-  }
+  return { entries, unsupported };
 }
 
 export interface ComparisonOptions {
@@ -166,7 +132,7 @@ export class Comparison implements vscode.Disposable {
   private current: ComparisonState = { kind: 'loading' };
   /** Bumped on every recompute; async work drops its result when it moved. */
   epoch = 0;
-  /** Set while git is rebasing or merging: the last result stays, marked. */
+  /** Set while git is rebasing or merging: the last result stays. */
   busy = false;
   private readonly emitter = new vscode.EventEmitter<void>();
   /** The state changed. A recompute that finds the same comparison keeps its Snapshot object and doesn't fire. */
@@ -182,7 +148,6 @@ export class Comparison implements vscode.Disposable {
   private firstEventAt = 0;
   private base: { key: string; at: number; value: (ResolvedBase & { source: BaseSource }) | undefined } | undefined;
   private mergeBase: { key: string; value: string | undefined } | undefined;
-  private commits: { key: string; value: Promise<{ count: number; capped: boolean } | undefined> } | undefined;
   private partial: Promise<boolean> | undefined;
   private running: Promise<void> | undefined;
   private again = false;
@@ -194,11 +159,8 @@ export class Comparison implements vscode.Disposable {
   /** Bumped by Refresh: a run that started before it doesn't write its caches back. */
   private generation = 0;
   private lastRunAt = 0;
-  /** Counts found later (per-file patches, untracked files), kept across recomputes of the same merge-base and head. */
-  private readonly counts = new Map<string, { added?: number; removed?: number; noText?: boolean }>();
-  private countsKey = '';
   /** The committed list, per merge-base and head (§4.4: re-read only when either moved). */
-  private committedList: { key: string; list: (GitChange | GitDiffChange)[]; countsKnown: boolean } | undefined;
+  private committedList: { key: string; list: (GitChange | GitDiffChange)[] } | undefined;
 
   constructor(repo: GitRepo, opts: ComparisonOptions) {
     this.repo = repo;
@@ -241,12 +203,11 @@ export class Comparison implements vscode.Disposable {
     if (on && !was && this.stale) this.schedule(0);
   }
 
-  /** Recomputes now; `full` also drops the cached base, merge-base and commit count (Refresh). */
+  /** Recomputes now; `full` also drops the cached base and merge-base (Refresh). */
   refresh(full = false): Promise<void> {
     if (full) {
-      this.base = this.mergeBase = this.commits = this.committedList = undefined;
+      this.base = this.mergeBase = this.committedList = undefined;
       this.partial = undefined;
-      this.counts.clear();
       this.generation++;
     }
     clearTimeout(this.timer);
@@ -282,9 +243,8 @@ export class Comparison implements vscode.Disposable {
 
   /** Drops the caches and marks the comparison stale without running (a setting changed while the view is hidden). */
   invalidate(): void {
-    this.base = this.mergeBase = this.commits = this.committedList = undefined;
+    this.base = this.mergeBase = this.committedList = undefined;
     this.partial = undefined;
-    this.counts.clear();
     this.generation++;
     this.schedule();
   }
@@ -418,39 +378,24 @@ export class Comparison implements vscode.Disposable {
     const partialClone = await this.partial;
     const mode = this.opts.mode();
     let list: (GitChange | GitDiffChange)[] = [];
-    let countsKnown = false;
     // In a partial clone numstat reads (and so downloads) every blob: names only (§4.5).
     const listKey = `${mergeBase}\n${headSha}\n${partialClone}`;
-    if (this.countsKey !== `${listKey}\n${mode}`) {
-      this.counts.clear();
-      this.countsKey = `${listKey}\n${mode}`;
-    }
     if (mode === 'committed') {
-      if (this.committedList?.key === listKey) ({ list, countsKnown } = this.committedList);
+      if (this.committedList?.key === listKey) list = this.committedList.list;
       else {
-        if (mergeBase !== headSha) {
-          if (repo.diffBetweenWithStats && !partialClone) {
-            list = await repo.diffBetweenWithStats(mergeBase, headSha);
-            countsKnown = true;
-          } else list = await repo.diffBetween(mergeBase, headSha);
-        } else countsKnown = true;
-        if (generation === this.generation) this.committedList = { key: listKey, list, countsKnown };
+        if (mergeBase !== headSha) list = repo.diffBetweenWithStats && !partialClone ? await repo.diffBetweenWithStats(mergeBase, headSha) : await repo.diffBetween(mergeBase, headSha);
+        if (generation === this.generation) this.committedList = { key: listKey, list };
       }
-    } else if (repo.diffBetweenWithStats2 && !partialClone) {
-      list = await repo.diffBetweenWithStats2(mergeBase);
-      countsKnown = true;
-    } else list = await repo.diffWith(mergeBase);
+    } else list = repo.diffBetweenWithStats2 && !partialClone ? await repo.diffBetweenWithStats2(mergeBase) : await repo.diffWith(mergeBase);
     if (epoch !== this.epoch) return;
 
     const listed = toEntries(repo, list);
     const entries = listed.entries;
-    let unsafe = listed.unsafe;
     const unsupported = listed.unsupported;
     if (mode === 'workingTree') {
       const seen = new Set(entries.map((e) => e.path));
       const untracked = [...(s.untrackedChanges ?? []), ...s.workingTreeChanges.filter((c) => c.status === 7)];
       const extra = toEntries(repo, untracked, true);
-      unsafe += extra.unsafe;
       for (const u of extra.unsupported) if (!unsupported.some((x) => x.path === u.path)) unsupported.push(u);
       for (const e of extra.entries) {
         if (!seen.has(e.path)) {
@@ -474,49 +419,21 @@ export class Comparison implements vscode.Disposable {
       }
       if (epoch !== this.epoch) return;
     }
-    const touched = new Set<string>();
-    if (mode === 'workingTree') {
-      for (const c of [...s.workingTreeChanges, ...s.indexChanges, ...(s.untrackedChanges ?? [])]) {
-        const r = relPath(repo, c.uri);
-        if (r) touched.add(r);
-      }
-      for (const e of entries) if (e.unsaved) touched.add(e.path);
-    }
-    // A file that is changing now may differ from what was counted (and after a revert or stash it stops being
-    // "touched" with an old count): forget those; the view re-counts them, keyed by the file's size and time.
-    for (const t of touched) this.counts.delete(t);
-    for (const e of entries) {
-      if (e.added !== undefined || e.noText) continue;
-      const c = this.counts.get(e.path);
-      if (c) Object.assign(e, c);
-    }
     entries.sort((a, b) => comparePaths(a.path, b.path));
-    const total = entries.length;
     if (entries.length > MAX_LISTED) entries.length = MAX_LISTED;
 
-    const cKey = `${mergeBase}\n${headSha}`;
-    if (this.commits?.key !== cKey) this.commits = { key: cKey, value: countCommits(repo, mergeBase, headSha) };
-    const commits = await this.commits.value;
-    if (epoch !== this.epoch) return;
-    const upstream = head.upstream ? `${head.upstream.remote}/${head.upstream.name}` : undefined;
     this.set({
       kind: 'ready',
       snapshot: {
         repo,
         base,
         mergeBase,
-        head: { sha: headSha, name: head.name, upstream, ahead: head.ahead, behind: head.behind },
+        head: { sha: headSha, name: head.name },
         mode,
         entries,
-        total,
-        commits,
-        countsKnown,
-        partialClone,
         // HEAD is the base branch itself; a new branch at main's commit is a branch with no changes yet.
         onBase: !!base.branch && base.branch === head.name,
-        uncommitted: mode === 'workingTree' && (s.workingTreeChanges.length > 0 || s.indexChanges.length > 0 || (s.untrackedChanges?.length ?? 0) > 0 || this.dirty.size > 0),
         unsupported: unsupported.sort((a, b) => comparePaths(a.path, b.path)),
-        unsafe,
       },
     });
   }
