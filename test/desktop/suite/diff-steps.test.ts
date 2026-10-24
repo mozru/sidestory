@@ -225,12 +225,14 @@ export function diffStepsTests(): void {
       await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
       const d = await until('the diff of retry.ts', () => (activeDiff()?.modified.path.endsWith('/src/retry/retry.ts') ? activeDiff() : undefined));
       assert.equal(d.original.scheme, 'sidestory-git');
-      const f = await until('the highlight', async () => ((await focus())?.uri === d.modified.toString() ? focus() : undefined));
+      // The side editor is a visible text editor (decorations apply to it); once it shows, the step is framed there.
+      await until('the right side editor', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === d.modified.toString()));
+      const f = await until('the highlight, framed', async () => {
+        const v = await focus();
+        return v?.uri === d.modified.toString() && v.framed ? v : undefined;
+      });
       assert.deepEqual(f.range, { start: 4, end: 9 });
       assert.equal(f.dim, false);
-      assert.equal(f.framed, true);
-      // The side editor is a visible text editor (decorations apply to it).
-      await until('the right side editor', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === d.modified.toString()));
     });
 
     it('a base-side step highlights the left side: the merge-base blob, read-only', async () => {

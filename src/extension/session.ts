@@ -240,7 +240,12 @@ export class ExplainerSession implements vscode.Disposable {
       panel.onDidDispose(() => this.dispose()),
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
       vscode.window.onDidChangeTextEditorSelection((e) => this.onSelection(e)),
-      vscode.window.onDidChangeVisibleTextEditors(() => this.decorations.refresh()),
+      vscode.window.onDidChangeVisibleTextEditors(() => {
+        // A base-side step drawn as a note on the right (its old side had no editor yet, §7.5): the diff's left side
+        // shows a moment after vscode.diff returns, sometimes after the reveal gave up waiting. Put it there now.
+        if (this.decorations.focus?.note) this.decorateActive(this.decorations.isDimmed());
+        else this.decorations.refresh();
+      }),
       // Whether an editor is a diff side (the frame, no dimming) comes from the tabs, which may change after it.
       vscode.window.tabGroups.onDidChangeTabs(() => this.decorations.refresh()),
       // A hidden panel's page is gone (it asks again with `ready`): what it linked to and lit is gone with it.
