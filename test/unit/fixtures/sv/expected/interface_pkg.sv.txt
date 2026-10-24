@@ -1,0 +1,25 @@
+partial: false
+S typedef dma_pkg.addr_t 3-3
+S typedef dma_pkg.req_t 4-7
+S typedef dma_pkg.op_e 8-8
+S enum-member dma_pkg.RD 8-8
+S enum-member dma_pkg.WR 8-8
+S enum-member dma_pkg.RMW 8-8
+S param dma_pkg.MAX_LEN 9-9
+S function dma_pkg.clamp_len 11-13
+S package dma_pkg 2-14
+S param axi_if.W 16-16
+S port axi_if.clk 16-16 dir=input
+S signal axi_if.valid 17-17
+S signal axi_if.ready 18-18
+S signal axi_if.data 19-19
+S clocking axi_if.cb 21-25
+S modport axi_if.mst 27-27
+S modport axi_if.slv 28-28
+S interface axi_if 16-29
+S port bus_user.bus 32-32
+S port bus_user.clk 33-33 dir=input
+S port bus_user.req_q 34-34 dir=output
+S module bus_user 31-38
+D assign bus_user 36-36 drives=bus.ready functional=bus
+D always_ff bus_user 37-37 drives=req_q.addr functional=req_q

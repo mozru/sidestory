@@ -1,0 +1,12 @@
+partial: true (syntax)
+S port unbalanced.clk 3-3 dir=input
+S port unbalanced.d 4-4 dir=input
+S port unbalanced.q 5-5 dir=output
+S signal unbalanced.held 7-7
+S module unbalanced 2-15
+S port after_it.a 17-17 dir=input
+S port after_it.b 17-17 dir=output
+S module after_it 17-19
+D always_ff unbalanced 9-11 drives=q functional=q
+D assign unbalanced 14-14 drives=held functional=held
+D assign after_it 18-18 drives=b functional=b

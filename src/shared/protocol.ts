@@ -126,8 +126,11 @@ export type ToWebview =
 
 export type FromWebview =
   | { type: 'ready' }
-  /** The reader moved to a section: reveal and highlight its code without moving the cursor. */
-  | { type: 'focusAnchor'; anchorId: string; source: 'scroll' | 'click' | 'step' }
+  /**
+   * The reader moved to a section: reveal and highlight its code without moving the cursor. `initial`: the page
+   * opened at a section it chose itself (the first step, or the reader's saved place), not one the extension sent.
+   */
+  | { type: 'focusAnchor'; anchorId: string; source: 'scroll' | 'click' | 'step' | 'initial' }
   /** An inline reference was clicked: jump the cursor there. */
   | { type: 'openRef'; anchorId: string }
   /** A web or mail link was clicked. */
@@ -221,7 +224,7 @@ const breadcrumbs = {
 /** Runtime check for messages from the webview, which renders untrusted HTML. */
 export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
-  z.object({ type: z.literal('focusAnchor'), anchorId: anchorIdSchema, source: z.enum(['scroll', 'click', 'step']) }),
+  z.object({ type: z.literal('focusAnchor'), anchorId: anchorIdSchema, source: z.enum(['scroll', 'click', 'step', 'initial']) }),
   z.object({ type: z.literal('openRef'), anchorId: anchorIdSchema }),
   z.object({ type: z.literal('openExternal'), url: z.string().max(2048).refine((u) => safeExternalUrl(u) !== null) }),
   z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),

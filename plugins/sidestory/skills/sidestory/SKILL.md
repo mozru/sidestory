@@ -30,11 +30,12 @@ Look at existing sidestories in `.sidestory/` and match their style.
 4. **Write `sidestory.html`.** One `<section data-explain-anchor="…" data-explain-title="…">` per step, each with a heading, tight prose and a diagram where it helps. Draw diagrams in inline SVG or HTML/CSS. Use `<a data-explain-ref="anchor">…</a>` to point at other code from inside a step. For diagrams (the guide's "Diagrams that follow the steps", "Code links without an anchor" and "Diagram tokens"):
    - **Color them with the diagram tokens** (`--cx-wire-data`, `--cx-wire-ctrl`, `--cx-box-fill`, `--cx-box-stroke`, `--cx-label`, …) and the dash tokens (`--cx-dash-ctrl`, …), never hex values or ad-hoc `--vscode-charts-*` colors. They follow light, dark and high-contrast themes.
    - **Make it follow the steps.** Draw one block diagram, put `data-explain-diagram="step dim-rest"` on its `<svg>`, tag boxes and wires with `data-explain-on="<anchor ids>"` for the steps they matter in, and mark the legend `data-explain-keep`. A section that needs the diagram again gets its own copy with `data-explain-diagram="section dim-rest"`.
-     - Ids must match manifest anchor ids exactly; a wrong one silently never lights, so check each against the manifest.
+     - Ids must match manifest anchor ids exactly; a wrong one never lights. The checker reports ids that aren't in the manifest, and manifest anchors nothing uses.
      - Put each wire's path, arrowhead and label in one `<g>`, and tag the group.
      - Light both ends of every lit wire, and the block driving each signal the step's text names. Add a box's own anchor id to its list when it has a card or nested section.
      - Add a rule for lit parts, e.g. `.box.cx-on rect { stroke: var(--cx-on); stroke-width: 2.5 }` and `.wire.cx-on path { stroke-width: 3 }` for tagged `<g class="box">` and `<g class="wire">`: without one, only the fading marks them, and high-contrast themes don't fade.
-   - **Make every box a link:** `data-explain-ref="<anchor>"` on its `<g>` when a manifest anchor covers it; for small parts, `data-explain-code="#symbol"` (`#u_fifo`, `#driver(state_q)`, `#driver(state_d).case(IDLE)`, `#u_rd_port(.start)` for a connection in a top-level module, where `driver()` doesn't reach into instances) with `data-explain-code-file="<path>"` on the figure, or `data-explain-code="<path>#L10-L20"`. Links get a built-in look; don't restyle their colors.
+   - **Make every box a link:** `data-explain-ref="<anchor>"` on its `<g>` when a manifest anchor covers it; for small parts, `data-explain-code="#symbol"` (`#u_fifo`, `#driver(state_q)`, `#driver(state_d).case(IDLE)`, `#u_rd_port(.start)` for a connection in a top-level module, where `driver()` doesn't reach into instances) with `data-explain-code-file="<path>"` on the figure, or `data-explain-code="<path>#L10-L20"`. Prefer symbols to line ranges in SystemVerilog: they keep pointing at the code when it's edited. Links get a built-in look; don't restyle their colors.
+   - A box lights up while the reader's cursor is in its code, the tightest box winning, so link each box to the code that does its work: `#driver(x)` for the block that drives a signal, `#driver(state_d).case(IDLE)` for one FSM bubble.
    - Give a diagram with links `role="group"` and an `aria-label`; one without links `role="img"` and an `aria-label`. Name each linked `<g>` with a `<title>`.
 5. **Check and pin** with the checker that ships inside the extension:
 
@@ -42,7 +43,7 @@ Look at existing sidestories in `.sidestory/` and match their style.
    node "$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs ~/.cursor*/extensions/paperkite.sidestory-*/dist/check.cjs 2>/dev/null | tail -n 1)" .sidestory/<name> --pin
    ```
 
-   Fix every error and read every warning, then run it again until it's clean.
+   Fix every error and read every warning, then run it again until it's clean. It checks every `data-explain-code` link too: when it says a symbol isn't found, its message says what to link instead (an input port, a connection in the parent, a name in a later `` `ifdef `` arm).
    - If no checker is found, the extension isn't installed here. Tell the user to install `paperkite.sidestory`, and in VS Code run **Sidestory: Pin Anchors to the Current Code**.
    - **Never pass `--yes-widgets-may-read` on your own.** If the checker says some anchors weren't pinned because widgets read their code, show the user the files and line ranges, explain that the widgets will be able to read that code, and add the flag only if they agree.
 6. **Tell the user** the sidestory's name, and that they open it with **Sidestory: Open Sidestory**. If it has widgets, also say that VS Code will ask them once before running the widgets.

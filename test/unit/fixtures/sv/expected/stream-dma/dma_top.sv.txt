@@ -1,0 +1,211 @@
+partial: false
+S param dma_top.AW 10-10
+S param dma_top.DW 11-11
+S param dma_top.LW 12-12
+S param dma_top.MAX_BURST 13-13
+S param dma_top.FIFO_DEPTH 14-14
+S param dma_top.NB 15-15
+S param dma_top.BW 16-16
+S param dma_top.BLW 17-17
+S port dma_top.clk 19-19 dir=input
+S port dma_top.rst_n 20-20 dir=input
+S port dma_top.csr_we 21-22 dir=input
+S port dma_top.csr_addr 23-23 dir=input
+S port dma_top.csr_wdata 24-24 dir=input
+S port dma_top.csr_rdata 25-25 dir=output
+S port dma_top.irq 26-26 dir=output
+S port dma_top.rd_req_valid 27-28 dir=output
+S port dma_top.rd_req_ready 29-29 dir=input
+S port dma_top.rd_req_addr 30-30 dir=output
+S port dma_top.rd_req_len 31-31 dir=output
+S port dma_top.rd_rsp_valid 32-32 dir=input
+S port dma_top.rd_rsp_ready 33-33 dir=output
+S port dma_top.rd_rsp_data 34-34 dir=input
+S port dma_top.rd_rsp_err 35-35 dir=input
+S port dma_top.wr_req_valid 36-37 dir=output
+S port dma_top.wr_req_ready 38-38 dir=input
+S port dma_top.wr_req_addr 39-39 dir=output
+S port dma_top.wr_req_len 40-40 dir=output
+S port dma_top.wr_dat_valid 41-41 dir=output
+S port dma_top.wr_dat_ready 42-42 dir=input
+S port dma_top.wr_dat_data 43-43 dir=output
+S port dma_top.wr_dat_strb 44-44 dir=output
+S port dma_top.wr_dat_last 45-45 dir=output
+S port dma_top.wr_rsp_valid 46-46 dir=input
+S port dma_top.wr_rsp_err 47-47 dir=input
+S port dma_top.fifo_level 48-49 dir=output
+S signal dma_top.start 52-53
+S signal dma_top.busy 52-53
+S signal dma_top.done_set 52-53
+S signal dma_top.err_set 52-53
+S signal dma_top.load 52-53
+S signal dma_top.drain 52-53
+S signal dma_top.err_code 54-54
+S signal dma_top.rd_has_burst 55-55
+S signal dma_top.rd_start 55-55
+S signal dma_top.rd_busy 55-55
+S signal dma_top.rd_done 55-55
+S signal dma_top.rd_err 55-55
+S signal dma_top.wr_has_burst 56-56
+S signal dma_top.wr_start 56-56
+S signal dma_top.wr_busy 56-56
+S signal dma_top.wr_done 56-56
+S signal dma_top.wr_err 56-56
+S signal dma_top.fifo_full 57-57
+S signal dma_top.fifo_empty 57-57
+S signal dma_top.fifo_almost_full 57-57
+S signal dma_top.src_base 59-60
+S signal dma_top.dst_base 59-60
+S signal dma_top.len 61-61
+S signal dma_top.rd_burst_addr 63-64
+S signal dma_top.wr_burst_addr 63-64
+S signal dma_top.rd_burst_len 65-65
+S signal dma_top.wr_burst_len 65-65
+S signal dma_top.rd_total_beats 66-66
+S signal dma_top.wr_total_beats 66-66
+S signal dma_top.fifo_push 67-67
+S signal dma_top.fifo_pop 67-67
+S signal dma_top.fifo_wdata 68-68
+S signal dma_top.fifo_rdata 68-68
+S signal dma_top.pk_valid 69-69
+S signal dma_top.pk_ready 69-69
+S signal dma_top.packed_data 70-70
+S signal dma_top.packed_strb 71-71
+S instance dma_top.u_csr 73-78 type=dma_csr
+S instance dma_top.u_ctrl 80-87 type=dma_ctrl
+S instance dma_top.u_rd_agen 89-93 type=dma_addr_gen
+S instance dma_top.u_wr_agen 95-99 type=dma_addr_gen
+S instance dma_top.u_rd_port 101-108 type=dma_rd_port
+S instance dma_top.u_fifo 110-114 type=dma_fifo
+S instance dma_top.u_packer 116-122 type=dma_packer
+S instance dma_top.u_wr_port 124-132 type=dma_wr_port
+S module dma_top 9-134
+C dma_top u_csr(.clk) 74-74 = clk
+C dma_top u_csr(.rst_n) 74-74 = rst_n
+C dma_top u_csr(.csr_we) 75-75 = csr_we
+C dma_top u_csr(.csr_addr) 75-75 = csr_addr
+C dma_top u_csr(.csr_wdata) 75-75 = csr_wdata
+C dma_top u_csr(.csr_rdata) 75-75 = csr_rdata
+C dma_top u_csr(.start) 76-76 = start
+C dma_top u_csr(.src_base) 76-76 = src_base
+C dma_top u_csr(.dst_base) 76-76 = dst_base
+C dma_top u_csr(.len) 76-76 = len
+C dma_top u_csr(.busy) 77-77 = busy
+C dma_top u_csr(.done_set) 77-77 = done_set
+C dma_top u_csr(.err_set) 77-77 = err_set
+C dma_top u_csr(.err_code) 77-77 = err_code
+C dma_top u_csr(.irq) 77-77 = irq
+C dma_top u_ctrl(.clk) 81-81 = clk
+C dma_top u_ctrl(.rst_n) 81-81 = rst_n
+C dma_top u_ctrl(.start) 82-82 = start
+C dma_top u_ctrl(.len_zero) 82-82 = len
+C dma_top u_ctrl(.src_off) 82-82 = src_base
+C dma_top u_ctrl(.dst_off) 82-82 = dst_base
+C dma_top u_ctrl(.busy) 83-83 = busy
+C dma_top u_ctrl(.drain) 83-83 = drain
+C dma_top u_ctrl(.done_set) 83-83 = done_set
+C dma_top u_ctrl(.err_set) 83-83 = err_set
+C dma_top u_ctrl(.err_code) 83-83 = err_code
+C dma_top u_ctrl(.load) 84-84 = load
+C dma_top u_ctrl(.rd_has_burst) 85-85 = rd_has_burst
+C dma_top u_ctrl(.rd_start) 85-85 = rd_start
+C dma_top u_ctrl(.rd_busy) 85-85 = rd_busy
+C dma_top u_ctrl(.rd_done) 85-85 = rd_done
+C dma_top u_ctrl(.rd_err) 85-85 = rd_err
+C dma_top u_ctrl(.fifo_push) 85-85 = fifo_push
+C dma_top u_ctrl(.fifo_almost_full) 85-85 = fifo_almost_full
+C dma_top u_ctrl(.wr_has_burst) 86-86 = wr_has_burst
+C dma_top u_ctrl(.wr_burst_len) 86-86 = wr_burst_len
+C dma_top u_ctrl(.wr_start) 86-86 = wr_start
+C dma_top u_ctrl(.wr_busy) 86-86 = wr_busy
+C dma_top u_ctrl(.wr_done) 86-86 = wr_done
+C dma_top u_ctrl(.wr_err) 86-86 = wr_err
+C dma_top u_rd_agen(.clk) 90-90 = clk
+C dma_top u_rd_agen(.rst_n) 90-90 = rst_n
+C dma_top u_rd_agen(.load) 91-91 = load
+C dma_top u_rd_agen(.base) 91-91 = src_base
+C dma_top u_rd_agen(.len) 91-91 = len
+C dma_top u_rd_agen(.burst_ack) 91-91 = rd_start
+C dma_top u_rd_agen(.has_burst) 91-91 = rd_has_burst
+C dma_top u_rd_agen(.burst_addr) 92-92 = rd_burst_addr
+C dma_top u_rd_agen(.burst_len) 92-92 = rd_burst_len
+C dma_top u_rd_agen(.total_beats) 92-92 = rd_total_beats
+C dma_top u_wr_agen(.clk) 96-96 = clk
+C dma_top u_wr_agen(.rst_n) 96-96 = rst_n
+C dma_top u_wr_agen(.load) 97-97 = load
+C dma_top u_wr_agen(.base) 97-97 = dst_base
+C dma_top u_wr_agen(.len) 97-97 = len
+C dma_top u_wr_agen(.burst_ack) 97-97 = wr_start
+C dma_top u_wr_agen(.has_burst) 97-97 = wr_has_burst
+C dma_top u_wr_agen(.burst_addr) 98-98 = wr_burst_addr
+C dma_top u_wr_agen(.burst_len) 98-98 = wr_burst_len
+C dma_top u_wr_agen(.total_beats) 98-98 = wr_total_beats
+C dma_top u_rd_port(.clk) 102-102 = clk
+C dma_top u_rd_port(.rst_n) 102-102 = rst_n
+C dma_top u_rd_port(.start) 103-103 = rd_start
+C dma_top u_rd_port(.addr) 103-103 = rd_burst_addr
+C dma_top u_rd_port(.len) 103-103 = rd_burst_len
+C dma_top u_rd_port(.busy) 104-104 = rd_busy
+C dma_top u_rd_port(.done) 104-104 = rd_done
+C dma_top u_rd_port(.err) 104-104 = rd_err
+C dma_top u_rd_port(.rd_req_valid) 105-105 = rd_req_valid
+C dma_top u_rd_port(.rd_req_ready) 105-105 = rd_req_ready
+C dma_top u_rd_port(.rd_req_addr) 105-105 = rd_req_addr
+C dma_top u_rd_port(.rd_req_len) 105-105 = rd_req_len
+C dma_top u_rd_port(.rd_rsp_valid) 106-106 = rd_rsp_valid
+C dma_top u_rd_port(.rd_rsp_ready) 106-106 = rd_rsp_ready
+C dma_top u_rd_port(.rd_rsp_data) 106-106 = rd_rsp_data
+C dma_top u_rd_port(.rd_rsp_err) 106-106 = rd_rsp_err
+C dma_top u_rd_port(.fifo_push) 107-107 = fifo_push
+C dma_top u_rd_port(.fifo_wdata) 107-107 = fifo_wdata
+C dma_top u_rd_port(.fifo_full) 107-107 = fifo_full
+C dma_top u_fifo(.clk) 111-111 = clk
+C dma_top u_fifo(.rst_n) 111-111 = rst_n
+C dma_top u_fifo(.clear) 111-111 = load
+C dma_top u_fifo(.push) 112-112 = fifo_push
+C dma_top u_fifo(.wdata) 112-112 = fifo_wdata
+C dma_top u_fifo(.full) 112-112 = fifo_full
+C dma_top u_fifo(.almost_full) 112-112 = fifo_almost_full
+C dma_top u_fifo(.pop) 113-113 = fifo_pop
+C dma_top u_fifo(.rdata) 113-113 = fifo_rdata
+C dma_top u_fifo(.empty) 113-113 = fifo_empty
+C dma_top u_fifo(.level) 113-113 = fifo_level
+C dma_top u_packer(.clk) 117-117 = clk
+C dma_top u_packer(.rst_n) 117-117 = rst_n
+C dma_top u_packer(.load) 118-118 = load
+C dma_top u_packer(.drain) 118-118 = drain
+C dma_top u_packer(.src_off) 118-118 = src_base
+C dma_top u_packer(.dst_off) 118-118 = dst_base
+C dma_top u_packer(.len_lo) 118-118 = len
+C dma_top u_packer(.in_beats) 119-119 = rd_total_beats
+C dma_top u_packer(.out_beats) 119-119 = wr_total_beats
+C dma_top u_packer(.in_valid) 120-120 = fifo_empty
+C dma_top u_packer(.in_ready) 120-120 = fifo_pop
+C dma_top u_packer(.in_data) 120-120 = fifo_rdata
+C dma_top u_packer(.out_valid) 121-121 = pk_valid
+C dma_top u_packer(.out_ready) 121-121 = pk_ready
+C dma_top u_packer(.out_data) 121-121 = packed_data
+C dma_top u_packer(.out_strb) 121-121 = packed_strb
+C dma_top u_wr_port(.clk) 125-125 = clk
+C dma_top u_wr_port(.rst_n) 125-125 = rst_n
+C dma_top u_wr_port(.start) 126-126 = wr_start
+C dma_top u_wr_port(.addr) 126-126 = wr_burst_addr
+C dma_top u_wr_port(.len) 126-126 = wr_burst_len
+C dma_top u_wr_port(.busy) 127-127 = wr_busy
+C dma_top u_wr_port(.done) 127-127 = wr_done
+C dma_top u_wr_port(.err) 127-127 = wr_err
+C dma_top u_wr_port(.pk_valid) 128-128 = pk_valid
+C dma_top u_wr_port(.pk_ready) 128-128 = pk_ready
+C dma_top u_wr_port(.pk_data) 128-128 = packed_data
+C dma_top u_wr_port(.pk_strb) 128-128 = packed_strb
+C dma_top u_wr_port(.wr_req_valid) 129-129 = wr_req_valid
+C dma_top u_wr_port(.wr_req_ready) 129-129 = wr_req_ready
+C dma_top u_wr_port(.wr_req_addr) 129-129 = wr_req_addr
+C dma_top u_wr_port(.wr_req_len) 129-129 = wr_req_len
+C dma_top u_wr_port(.wr_dat_valid) 130-130 = wr_dat_valid
+C dma_top u_wr_port(.wr_dat_ready) 130-130 = wr_dat_ready
+C dma_top u_wr_port(.wr_dat_data) 130-130 = wr_dat_data
+C dma_top u_wr_port(.wr_dat_strb) 130-130 = wr_dat_strb
+C dma_top u_wr_port(.wr_dat_last) 130-130 = wr_dat_last
+C dma_top u_wr_port(.wr_rsp_valid) 131-131 = wr_rsp_valid
+C dma_top u_wr_port(.wr_rsp_err) 131-131 = wr_rsp_err

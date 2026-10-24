@@ -119,7 +119,8 @@ describe('docs/WIDGETS.md examples', () => {
     writeFileSync(join(ex, 'sidestory.html'), `<!doctype html>\n<section data-explain-anchor="state"><h2>State</h2></section>\n${section}`);
     writeFileSync(join(ex, 'widgets/refill.tsx'), tsx[0]!);
     const r = await checkExplainer(ex, { compiler: { workerFile: join(repo, 'src/extension/widgets/compile-worker.ts'), dataDir } });
-    expect(r.findings.filter((f) => f.severity !== 'info')).toEqual([]);
+    // The page is one section of the guide's example, with the sample's whole manifest: its other anchors are unused here.
+    expect(r.findings.filter((f) => f.severity !== 'info' && f.code !== 'unused-anchor')).toEqual([]);
     expect(r.widgets).toHaveLength(1);
   });
 

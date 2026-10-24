@@ -8,12 +8,14 @@ import { resolveAnchor } from '../core/resolve.ts';
 import { displayText, plainForMessage } from '../core/display-text.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
+import { parseCodeLink, type CodeLink } from '../shared/code-link.ts';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
 import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { GroupView } from './columns.ts';
 import type { Requester } from './highlight/host.ts';
 import type { HighlightService } from './highlight/service.ts';
 import { codeColumnFor } from './columns.ts';
+import { checkCodePath, OpenCodeGate, resolveLink, SymbolTables } from './code-links.ts';
 import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
@@ -29,6 +31,8 @@ import { ourModal } from './widgets/watchdog.ts';
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
 const CURSOR_DELAY = 100;
+/** How long cursor-follow waits for the ring to be worked out first (§8.2). */
+const LIGHT_WAIT_MS = 100;
 /** Give the extension host back control after this much resolving. */
 const SLICE_MS = 15;
 const MAX_ASSETS_IN_FLIGHT = 4;
@@ -59,6 +63,20 @@ export interface SessionHost {
   titleOf?(dir: vscode.Uri): string | undefined;
   /** A sidestory was shown in this panel (open, switch, dive): the recent list (§7.5). */
   opened?(ref: ExplainerRef): void;
+  /** SV symbol tables shared by every panel (docs/AUTHORING-PLAN.md §8.2); without it, the session keeps its own. */
+  symbols?: SymbolTables;
+}
+
+/** What the page links to, from its last `codeTargets` (docs/AUTHORING-PLAN.md §8.2). */
+interface CodeTargets {
+  /** Every `data-explain-anchor`: only these steer cursor-follow. */
+  sections: Set<string>;
+  /** Anchors `data-explain-ref` names: they light up from the cursor. */
+  refs: Set<string>;
+  /** `data-explain-code` links, canonical, with the key of the file each points into. */
+  links: { text: string; link: CodeLink; key: string }[];
+  /** Keys of the files links point into: a cursor anywhere else costs one lookup. */
+  files: Set<string>;
 }
 
 export interface SessionOptions {
@@ -145,6 +163,24 @@ export class ExplainerSession implements vscode.Disposable {
   /** Recreated by the watchdog, and not yet seen working again. */
   private recovered = false;
 
+  // ---- code links and cursor lighting (docs/AUTHORING-PLAN.md §8.1, §8.2) ----
+  /** What the page links to; undefined until it says (first render) and while the panel is hidden. */
+  private targets: CodeTargets | undefined;
+  /** The `here` the page has now, as JSON, so it's posted only when it changes. */
+  private hereSent = '';
+  /** Bumped per lighting request, so a slower, older one gives way. */
+  private hereSeq = 0;
+  /** Each linked file's link extents, for one document version. */
+  private readonly linkExtents = new Map<string, { doc: vscode.TextDocument; version: number; extents: Promise<Map<string, LineRange> | undefined> }>();
+  private readonly openGate = new OpenCodeGate();
+  /** `openCode` requests opening now: the selection changes they cause aren't the reader's. */
+  private opening = 0;
+  private ownSymbols: SymbolTables | undefined;
+  /** The page chose this section itself at open; reveal it once it resolves. */
+  private revealWhenResolved: string | undefined;
+  /** Bumped per cursor follow, and by the panel's own reveals, so an older follow still lighting gives way. */
+  private cursorSeq = 0;
+
   /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
   constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost, opts: SessionOptions = {}) {
     this.trail = [...trail];
@@ -171,6 +207,13 @@ export class ExplainerSession implements vscode.Disposable {
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
       vscode.window.onDidChangeTextEditorSelection((e) => this.onSelection(e)),
       vscode.window.onDidChangeVisibleTextEditors(() => this.decorations.refresh()),
+      // A hidden panel's page is gone (it asks again with `ready`): what it linked to and lit is gone with it.
+      panel.onDidChangeViewState(() => {
+        if (!panel.visible) this.forgetTargets();
+      }),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('sidestory.followCursorInDiagrams') && !this.lightingOn()) this.postHere({});
+      }),
     );
   }
 
@@ -351,6 +394,8 @@ export class ExplainerSession implements vscode.Disposable {
     this.lastHint = undefined;
     this.assetBytes = 0;
     this.assetRequests = 0;
+    this.forgetTargets();
+    this.revealWhenResolved = undefined;
     this.active = active ?? this.positions.get(this.ref.dir.toString());
     this.decorations.set(undefined);
     this.watchExplainer();
@@ -614,6 +659,16 @@ export class ExplainerSession implements vscode.Disposable {
       this.resolutions.set(a.id, next);
     }
     if (changed && publish) this.publishAnchors();
+    const waiting = this.revealWhenResolved;
+    const r = waiting ? this.resolutions.get(waiting) : undefined;
+    if (waiting && r) {
+      // Once only, whether it was found or not; and not over an editor the reader opened meanwhile.
+      this.revealWhenResolved = undefined;
+      if (r.range && this.active === waiting) {
+        if (this.editorOpen()) this.decorateActive(false);
+        else this.requestReveal(waiting, false);
+      }
+    }
     this.resolveEmitter.fire(uri);
     if (changed && this.active && this.anchorsIn(uri).some((a) => a.id === this.active)) this.decorateActive(this.decorations.isDimmed());
     this.widgets?.onResolved(uri);
@@ -674,22 +729,47 @@ export class ExplainerSession implements vscode.Disposable {
     if (e.kind !== k.Keyboard && e.kind !== k.Mouse && e.kind !== k.Command) return;
     // Nor do the panel's own reveals (an inline reference puts the cursor in its code): the selection changes a
     // reveal causes reach the extension before showTextDocument resolves, so while one runs, none are the reader's.
-    if (this.reveal.running) return;
-    const uri = e.textEditor.document.uri.toString();
+    if (this.reveal.running || this.opening > 0) return;
+    const doc = e.textEditor.document;
+    const uri = doc.uri.toString();
     const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
     // Code a detail explainer covers: when none of this explainer's sections do, offer to dive.
     const detail = [...this.detailFiles].find(([, d]) => d.files.has(uri));
-    if (ids.size === 0 && !detail) {
+    const linked = this.targets?.files.has(uriKey(uri)) ?? false;
+    if (ids.size === 0 && !detail && !linked) {
       this.lastHint = undefined; // left the detail's code: offer it again when the cursor comes back
+      clearTimeout(this.timers.get('cursor'));
+      this.timers.delete('cursor');
+      this.hereSeq++;
+      this.cursorSeq++; // a follow still waiting for its ring is for code the cursor left
+      this.postHere({}); // nothing the page links to is in this file
       return;
     }
     const line = e.selections[0]!.active.line + 1;
     // The reader moved in the code: stop fading the rest of the file.
     if (ids.size && this.decorations.isDimmed()) this.decorateActive(false);
-    this.debounce('cursor', CURSOR_DELAY, () => {
-      // The shared cursor helper (cursor.ts): every anchor of this file counts, as before (the authoring plan's
-      // "only sections count" fix passes `sections` here once the panel reports them).
-      const id = ids.size ? anchorForCursor([...this.resolutions].filter(([k]) => ids.has(k)), line) : undefined;
+    this.debounce('cursor', CURSOR_DELAY, () => void this.followCursor(doc, line, ids, detail));
+  }
+
+  /**
+   * The reader's cursor rested at `line`: light what links there, then follow with the step. Lighting goes first,
+   * so the page knows what's lit when it decides whether to scroll to the step (§8.2).
+   */
+  private async followCursor(doc: vscode.TextDocument, line: number, ids: Set<string>, detail: [string, { title: string }] | undefined): Promise<void> {
+    const mine = ++this.cursorSeq;
+    const generation = this.generation;
+    const light = this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+    // The step waits for the ring only briefly: a scan or a language's symbols mustn't hold up cursor-follow.
+    await Promise.race([light, new Promise((r) => setTimeout(r, LIGHT_WAIT_MS))]);
+    // A newer cursor move, a click, the panel's own reveal, another sidestory, or the cursor already elsewhere.
+    if (mine !== this.cursorSeq || this.disposed || generation !== this.generation) return;
+    const now = vscode.window.activeTextEditor?.document;
+    if (now && now !== doc) return;
+    {
+      // The shared cursor helper (cursor.ts). Only sections steer the step (docs/AUTHORING-PLAN.md §0, §8.2): an
+      // anchor used only by `data-explain-ref` lights its boxes instead. Until the page has said which ids are
+      // sections (first render, hidden panel), every anchor counts, as before.
+      const id = ids.size ? anchorForCursor([...this.resolutions].filter(([k]) => ids.has(k)), line, { sections: this.targets?.sections }) : undefined;
       if (!id) {
         // Remembered only once the page got it: a hidden panel gets the hint next time.
         if (detail && detail[0] !== this.lastHint && this.post({ type: 'childHint', name: detail[0], title: detail[1].title })) {
@@ -702,7 +782,7 @@ export class ExplainerSession implements vscode.Disposable {
       this.setActive(id);
       this.decorateActive(false);
       this.post({ type: 'syncTo', anchorId: id });
-    });
+    }
   }
 
   // ---- webview ----
@@ -725,6 +805,7 @@ export class ExplainerSession implements vscode.Disposable {
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
         this.assetBytes = 0;
         this.assetRequests = 0;
+        this.hereSent = ''; // a new page has nothing lit
         // While switching explainers, the switch sends `init` when it's done.
         if (this.initGeneration === this.generation) this.sendInit();
         break;
@@ -743,7 +824,19 @@ export class ExplainerSession implements vscode.Disposable {
       case 'focusAnchor':
         if (!this.manifest?.anchors.has(m.anchorId)) return;
         this.setActive(m.anchorId);
+        if (m.source === 'initial') {
+          this.showInitial(m.anchorId);
+          return;
+        }
+        this.revealWhenResolved = undefined; // the reader chose a section: the page's own choice is moot
         this.requestReveal(m.anchorId, false);
+        break;
+      case 'codeTargets':
+        // From the page of the sidestory shown before, still answering while this one loads: not ours.
+        if (this.initGeneration === this.generation) this.setTargets(m);
+        break;
+      case 'openCode':
+        void this.openCode(m.path, m.target);
         break;
       case 'openExternal':
         void this.openExternal(m.url);
@@ -771,6 +864,192 @@ export class ExplainerSession implements vscode.Disposable {
         if (!this.manifest?.anchors.has(m.anchorId)) return;
         this.host.reanchor(this.ref, m.anchorId);
         break;
+    }
+  }
+
+  /**
+   * The page opened at a section it chose itself (the first step, or the reader's saved place). With no code
+   * editor open, show its code; with one open, only highlight it where it's visible, rather than take over the
+   * editor the reader was using.
+   */
+  private showInitial(id: string): void {
+    if (this.editorOpen()) {
+      this.decorateActive(false);
+      return;
+    }
+    if (this.resolutions.get(id)?.range) this.requestReveal(id, false);
+    else this.revealWhenResolved = id; // still resolving: resolveFile reveals it
+  }
+
+  /** A code editor is open (an output pane isn't one). */
+  private editorOpen(): boolean {
+    return vscode.window.visibleTextEditors.some((e) => e.viewColumn !== undefined);
+  }
+
+  // ---- code links (docs/AUTHORING-PLAN.md §8.1) and cursor lighting (§8.2) ----
+
+  private get symbols(): SymbolTables {
+    return this.host.symbols ?? (this.ownSymbols ??= new SymbolTables());
+  }
+
+  private lightingOn(): boolean {
+    return vscode.workspace.getConfiguration('sidestory').get<boolean>('followCursorInDiagrams', true) !== false;
+  }
+
+  private forgetTargets(): void {
+    this.cursorSeq++; // a follow still waiting belongs to the page (or sidestory) before
+    this.targets = undefined;
+    this.hereSent = '';
+    this.hereSeq++;
+    this.linkExtents.clear();
+  }
+
+  /** The page said what it links to (after a render that changed it). */
+  private setTargets(m: Extract<FromWebview, { type: 'codeTargets' }>): void {
+    const links: CodeTargets['links'] = [];
+    for (const text of m.links) {
+      const link = parseCodeLink(text);
+      if (link) links.push({ text, link, key: uriKey(vscode.Uri.joinPath(this.ref.root, link.path)) });
+    }
+    this.targets = { sections: new Set(m.sections), refs: new Set(m.refs), links, files: new Set(links.map((l) => l.key)) };
+    this.linkExtents.clear();
+    // Light what the cursor is in now, without waiting for it to move.
+    const ed = vscode.window.activeTextEditor;
+    if (ed) this.lightAt(ed.document, ed.selection.active.line + 1).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+  }
+
+  private postHere(h: { ref?: string; link?: string }): void {
+    const key = JSON.stringify(h);
+    if (key === this.hereSent) return;
+    if (this.post({ type: 'here', ...h })) this.hereSent = key;
+  }
+
+  /**
+   * Rings the tightest element target containing the cursor line (§8.2): an anchor a `data-explain-ref` names, or a
+   * `data-explain-code` link. Steps don't change for these.
+   */
+  private async lightAt(doc: vscode.TextDocument, line: number): Promise<void> {
+    const seq = ++this.hereSeq;
+    const targets = this.targets;
+    if (!targets || !this.lightingOn()) return this.postHere({});
+    type Candidate = { ref?: string; link?: string; range: LineRange; stale: boolean };
+    const found: Candidate[] = [];
+    const uri = doc.uri.toString();
+    if (targets.refs.size) {
+      for (const a of this.anchorsIn(uri)) {
+        if (!targets.refs.has(a.id)) continue;
+        const r = this.resolutions.get(a.id);
+        if (r?.range && r.state !== 'lost' && line >= r.range.start && line <= r.range.end) found.push({ ref: a.id, range: r.range, stale: r.state === 'stale' });
+      }
+    }
+    const key = uriKey(uri);
+    if (targets.files.has(key)) {
+      const extents = await this.extentsFor(doc, key, targets);
+      if (seq !== this.hereSeq || this.disposed || targets !== this.targets) return;
+      // stale extents (a newer version): light what the refs say rather than leave an old ring
+      for (const [link, range] of extents ?? []) if (line >= range.start && line <= range.end) found.push({ link, range, stale: false });
+    }
+    // The tightest wins, as for sections: trustworthy before stale, then the shortest, then the first, refs first.
+    found.sort((a, b) => Number(a.stale) - Number(b.stale) || a.range.end - a.range.start - (b.range.end - b.range.start) || a.range.start - b.range.start || Number(!a.ref) - Number(!b.ref));
+    const best = found[0];
+    this.postHere(best ? (best.ref ? { ref: best.ref } : { link: best.link! }) : {});
+  }
+
+  /** The extents of every link into this document version, resolved once per version (lazily, on first need). */
+  private extentsFor(doc: vscode.TextDocument, key: string, targets: CodeTargets): Promise<Map<string, LineRange> | undefined> {
+    const hit = this.linkExtents.get(key);
+    // The document object too: one closed and opened again starts at version 1 with maybe other text.
+    if (hit && hit.doc === doc && hit.version === doc.version) return hit.extents;
+    const version = doc.version;
+    const entry = { doc, version, extents: Promise.resolve<Map<string, LineRange> | undefined>(undefined) };
+    const stale = () => this.disposed || targets !== this.targets || doc.isClosed || doc.version !== version || this.linkExtents.get(key) !== entry;
+    entry.extents = (async () => {
+      const out = new Map<string, LineRange>();
+      let sliceStart = Date.now();
+      for (const l of targets.links) {
+        if (l.key !== key) continue;
+        // The document is open (the cursor is in it), so asking its language for symbols wakes nothing new.
+        const r = await resolveLink(doc, l.link, this.symbols, true);
+        if (r.ok) out.set(l.text, r.range);
+        // Give the extension host back between slices, and stop for a newer version or other targets.
+        if (Date.now() - sliceStart > SLICE_MS) {
+          await new Promise((r) => setImmediate(r));
+          if (stale()) return undefined;
+          sliceStart = Date.now();
+        }
+      }
+      return out;
+    })().catch(() => undefined);
+    this.linkExtents.set(key, entry);
+    return entry.extents;
+  }
+
+  /**
+   * Opens what a `data-explain-code` link points at (§8.1). The page posts this only from the reader's own click or
+   * Enter; these checks are the backstops: a rate limit and dedupe before any file is touched, the path rules again,
+   * real-path containment with no `.git` segment, and a confirmation for secret-looking files.
+   */
+  private async openCode(path: string, target: string | undefined): Promise<void> {
+    if (!this.openGate.allow(`${path}#${target ?? ''}`)) return;
+    this.cursorSeq++; // the reader clicked a box: a cursor follow still waiting is moot
+    const link = parseCodeLink(target === undefined ? path : `${path}#${target}`);
+    if (!link || link.path !== path) return;
+    const root = this.ref.root;
+    const name = plainForMessage(path.split('/').pop() ?? path, 80);
+    const say = (text: string) => vscode.window.setStatusBarMessage(text, 5000);
+    if (root.scheme !== 'file') return;
+    const generation = this.generation;
+    const checked = await checkCodePath(root.fsPath, path);
+    if (this.disposed || generation !== this.generation) return;
+    if (!checked.ok) {
+      say(`Can't open ${name}: ${checked.why}.`);
+      log.warn(`${this.ref.name}: data-explain-code="${plainForMessage(path, 200)}" not opened: ${checked.why}.`);
+      return;
+    }
+    if (checked.size > MAX_CODE_BYTES) {
+      say(`Can't open ${name}: it is larger than ${MAX_CODE_BYTES / 1e6} MB.`);
+      return;
+    }
+    let file = checked;
+    if (checked.secret) {
+      const open = 'Open';
+      const choice = await ourModal(() => vscode.window.showWarningMessage(`This sidestory links to ${name}. Open it?`, { modal: true, detail: 'Its name looks like it holds secrets (keys, tokens, passwords).' }, open));
+      if (choice !== open || this.disposed || generation !== this.generation) return;
+      // The dialog may have stayed up a long time (a checkout meanwhile): check the path again.
+      const again = await checkCodePath(root.fsPath, path);
+      if (this.disposed || generation !== this.generation) return;
+      if (!again.ok || again.size > MAX_CODE_BYTES) {
+        say(`Can't open ${name}: ${again.ok ? 'it grew past 10 MB' : again.why}.`);
+        return;
+      }
+      file = again;
+    }
+    this.opening++;
+    try {
+      // With no symlink on the way, the workspace path is the same file: the document the anchors and the reader use.
+      const doc = await vscode.workspace.openTextDocument(file.direct ? vscode.Uri.joinPath(root, path) : vscode.Uri.file(file.real));
+      if (this.disposed || generation !== this.generation) return;
+      const r = await resolveLink(doc, link, this.symbols, true);
+      if (this.disposed || generation !== this.generation) return;
+      if (!r.ok) {
+        const what = link.target ? plainForMessage(link.target, 80) : name;
+        say(`“${what}” not found in ${name}`);
+        log.warn(`${this.ref.name}: data-explain-code="${plainForMessage(link.target ? `${path}#${link.target}` : path, 300)}": ${plainForMessage(r.message, 400)}.`);
+        return;
+      }
+      const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
+      const editor = await vscode.window.showTextDocument(doc, { viewColumn: this.codeColumn(doc.uri), preserveFocus: false, preview: true, selection: new vscode.Range(range.start, range.start) });
+      if (this.disposed) return;
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
+      this.decorations.flash(editor, range);
+      // The cursor is now in the link's code: ring what links there (the box just clicked, or a tighter one).
+      this.lightAt(editor.document, r.range.start).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+    } catch (e) {
+      say(`Can't open ${name}.`);
+      log.warn(`${this.ref.name}: can't open ${plainForMessage(path, 200)}: ${(e as Error).message}`);
+    } finally {
+      this.opening--;
     }
   }
 
@@ -871,6 +1150,7 @@ export class ExplainerSession implements vscode.Disposable {
     // The panel's choice overtakes a cursor move still waiting to be followed.
     clearTimeout(this.timers.get('cursor'));
     this.timers.delete('cursor');
+    this.cursorSeq++;
     if (this.reveal.running) {
       this.reveal.next = { id, moveCursor };
       return;
@@ -953,6 +1233,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.timers.clear();
     for (const d of [...this.subscriptions, ...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
     this.widgets?.dispose();
+    this.ownSymbols?.dispose();
     if (this.highlightRequester) this.highlightRequester.who.disposed = true;
     this.decorations.set(undefined);
     this.onDisposeEmitter.fire();
@@ -967,9 +1248,11 @@ export class ExplainerSession implements vscode.Disposable {
 function endsPreview(m: FromWebview): boolean {
   switch (m.type) {
     case 'focusAnchor':
+      return m.source !== 'initial'; // the page opening at a section isn't the reader acting
     case 'dive':
     case 'goTo':
     case 'openRef':
+    case 'openCode':
     case 'widgetStates':
     case 'widgetReveal':
       return true;

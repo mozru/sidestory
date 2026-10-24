@@ -1,0 +1,41 @@
+partial: false
+S param dma_rd_port.AW 4-4
+S param dma_rd_port.DW 5-5
+S param dma_rd_port.BLW 6-6
+S port dma_rd_port.clk 8-8 dir=input
+S port dma_rd_port.rst_n 9-9 dir=input
+S port dma_rd_port.start 10-11 dir=input
+S port dma_rd_port.addr 12-12 dir=input
+S port dma_rd_port.len 13-13 dir=input
+S port dma_rd_port.busy 14-14 dir=output
+S port dma_rd_port.done 15-15 dir=output
+S port dma_rd_port.err 16-16 dir=output
+S port dma_rd_port.rd_req_valid 17-18 dir=output
+S port dma_rd_port.rd_req_ready 19-19 dir=input
+S port dma_rd_port.rd_req_addr 20-20 dir=output
+S port dma_rd_port.rd_req_len 21-21 dir=output
+S port dma_rd_port.rd_rsp_valid 22-23 dir=input
+S port dma_rd_port.rd_rsp_ready 24-24 dir=output
+S port dma_rd_port.rd_rsp_data 25-25 dir=input
+S port dma_rd_port.rd_rsp_err 26-26 dir=input
+S port dma_rd_port.fifo_push 27-28 dir=output
+S port dma_rd_port.fifo_wdata 29-29 dir=output
+S port dma_rd_port.fifo_full 30-30 dir=input
+S signal dma_rd_port.req_q 33-33
+S signal dma_rd_port.addr_q 34-34
+S signal dma_rd_port.len_q 35-35
+S signal dma_rd_port.left_q 36-36
+S signal dma_rd_port.err_q 37-37
+S signal dma_rd_port.beat 38-38
+S module dma_rd_port 3-77
+D assign dma_rd_port 40-41 drives=rd_req_valid functional=rd_req_valid
+D assign dma_rd_port 42-42 drives=rd_req_addr functional=rd_req_addr
+D assign dma_rd_port 43-43 drives=rd_req_len functional=rd_req_len
+D assign dma_rd_port 44-44 drives=rd_rsp_ready functional=rd_rsp_ready
+D assign dma_rd_port 45-45 drives=beat functional=beat
+D assign dma_rd_port 47-48 drives=fifo_push functional=fifo_push
+D assign dma_rd_port 49-49 drives=fifo_wdata functional=fifo_wdata
+D always_ff dma_rd_port 51-71 drives=req_q,addr_q,len_q,left_q,err_q functional=req_q,addr_q,len_q,left_q,err_q
+D assign dma_rd_port 73-73 drives=busy functional=busy
+D assign dma_rd_port 74-74 drives=done functional=done
+D assign dma_rd_port 75-75 drives=err functional=err

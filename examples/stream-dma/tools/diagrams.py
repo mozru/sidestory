@@ -28,13 +28,15 @@ class Diagram:
         self.w, self.h, self.label, self.x0, self.y0 = w, h, label, x0, y0
         self.blocks, self.wires, self.extra = [], [], []
 
-    def block(self, id, x, y, w, h, title, sub='', kind='data', ref=None, lines=(), on=None):
-        """on: the anchor ids of the steps this block matters in (data-explain-on)."""
-        self.blocks.append(dict(id=id, x=x, y=y, w=w, h=h, title=title, sub=sub, kind=kind, ref=ref, lines=list(lines), on=on))
+    def block(self, id, x, y, w, h, title, sub='', kind='data', ref=None, lines=(), on=None, codes=None):
+        """on: the anchor ids of the steps this block matters in (data-explain-on).
+        codes: {word: data-explain-code}: words in `sub` and `lines` that link to code of their own (an FSM state's arm)."""
+        self.blocks.append(dict(id=id, x=x, y=y, w=w, h=h, title=title, sub=sub, kind=kind, ref=ref, lines=list(lines), on=on, codes=codes))
 
-    def wire(self, id, kind, pts, label='', at=None, anchor='middle', both=False, tag=None, on=None):
+    def wire(self, id, kind, pts, label='', at=None, anchor='middle', both=False, tag=None, on=None, code=None, ref=None, name=None):
         """kind: data | addr | ctl. label lines split on '|'. at = (x, y) of the label's first line."""
-        self.wires.append(dict(id=id, kind=kind, pts=pts, label=label, at=at, anchor=anchor, both=both, tag=tag or kind, on=on))
+        # code / ref: the wire links to code (data-explain-code, data-explain-ref); name is its accessible name
+        self.wires.append(dict(id=id, kind=kind, pts=pts, label=label, at=at, anchor=anchor, both=both, tag=tag or kind, on=on, code=code, ref=ref, name=name))
 
     @staticmethod
     def on_attr(item):
@@ -55,7 +57,14 @@ class Diagram:
         size = {'data': 5.5, 'addr': 4.5, 'ctl': 4}[wdef['kind']]
         pts = wdef['pts']
         d = 'M' + ' L'.join(f'{x},{y}' for x, y in pts)
-        out = [f'<g class="w w-{wdef["kind"]}" data-wire="{wdef["id"]}"{self.on_attr(wdef)}>',
+        link = ''
+        if wdef.get('code') and self.with_code:
+            link = f' data-explain-code="{escape(wdef["code"])}"'
+        elif wdef.get('ref'):
+            link = f' data-explain-ref="{escape(wdef["ref"])}"'
+        if link:
+            link += f' aria-label="{escape(wdef.get("name") or wdef["id"] + ": show its code")}"'
+        out = [f'<g class="w w-{wdef["kind"]}" data-wire="{wdef["id"]}"{self.on_attr(wdef)}{link}>',
                f'<path class="w-line" d="{d}"/>',
                f'<polygon class="w-head" points="{self.head(pts[-2], pts[-1], size)}"/>']
         if wdef['both']:
@@ -67,6 +76,14 @@ class Diagram:
         out.append('</g>')
         return ''.join(out)
 
+    @staticmethod
+    def linked(text, codes):
+        """Escapes text, wrapping each whole word in `codes` in a <tspan data-explain-code>."""
+        if not codes:
+            return escape(text)
+        words = re.split(r'(\w+)', text)
+        return ''.join(f'<tspan data-explain-code="{escape(codes[w])}">{escape(w)}</tspan>' if w in codes else escape(w) for w in words)
+
     def block_svg(self, b):
         attrs = f' data-explain-ref="{b["ref"]}" aria-label="{escape(b["title"])}: show its code"' if b['ref'] else ''
         cx = b['x'] + b['w'] / 2
@@ -76,13 +93,17 @@ class Diagram:
             out.append(f'<rect class="blk-bar" x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="5" rx="2"/>')
         out.append(f'<text class="blk-title" x="{cx}" y="{b["y"] + 24}" text-anchor="middle">{escape(b["title"])}</text>')
         if b['sub']:
-            out.append(f'<text class="blk-sub" x="{cx}" y="{b["y"] + 40}" text-anchor="middle">{escape(b["sub"])}</text>')
+            out.append(f'<text class="blk-sub" x="{cx}" y="{b["y"] + 40}" text-anchor="middle">{self.linked(b["sub"], self.with_code and b.get("codes"))}</text>')
         for i, line in enumerate(b['lines']):
-            out.append(f'<text class="blk-line" x="{cx}" y="{b["y"] + 58 + i * 13}" text-anchor="middle">{escape(line)}</text>')
+            out.append(f'<text class="blk-line" x="{cx}" y="{b["y"] + 58 + i * 13}" text-anchor="middle">{self.linked(line, self.with_code and b.get("codes"))}</text>')
         out.append('</g>')
         return ''.join(out)
 
-    def svg(self, cls='dia'):
+    # code links are drawn by default; copies in widget fallbacks leave them out (the panel ignores links there)
+    with_code = True
+
+    def svg(self, cls='dia', code=True):
+        self.with_code = code
         body = ''.join(self.wire_svg(w) for w in self.wires) + ''.join(self.block_svg(b) for b in self.blocks) + ''.join(self.extra)
         # With links inside, a group: role="img" would make its children presentational to screen readers.
         role = 'group' if any(b['ref'] for b in self.blocks) else 'img'
@@ -91,8 +112,9 @@ class Diagram:
 
     def layout(self):
         """The geometry the simulation widget draws (without the step tags, which only the page uses)."""
-        strip = lambda items: [{k: v for k, v in i.items() if k != 'on'} for i in items]
-        return dict(viewBox=[self.x0, self.y0, self.w, self.h], blocks=strip(self.blocks), wires=strip(self.wires))
+        # code links (`codes` on blocks, `code`, `ref` and `name` on wires) are the page's too; a block's `ref` the widget uses
+        strip = lambda items, drop: [{k: v for k, v in i.items() if k not in drop} for i in items]
+        return dict(viewBox=[self.x0, self.y0, self.w, self.h], blocks=strip(self.blocks, ('on', 'codes')), wires=strip(self.wires, ('on', 'code', 'ref', 'name')))
 
 
 def legend(d, x, y, items=(('data', 'data path (beats, 64 bits)'), ('addr', 'addresses and configuration'), ('ctl', 'control: strobes, handshakes, status'))):
@@ -122,9 +144,9 @@ def overview():
     # control plane
     d.block('cpu', 10, 40, 110, 80, 'CPU', 'driver', kind='ext', on=CTL + ERR)
     d.block('csr', 190, 30, 180, 110, 'dma_csr', 'registers', kind='ctl', ref='m-csr', lines=['SRC · DST · LEN', 'CTRL · STATUS · ERR'], on=CTL + ERR + ['m-csr'])
-    d.block('ctrl', 470, 30, 220, 130, 'dma_ctrl', 'control FSM', kind='ctl', ref='m-ctrl', lines=['IDLE → LOAD → READ_BURST', '→ WAIT_DATA → WRITE_BURST', '→ WAIT_WRITE → DONE | ERROR'], on=CTL + BP + ERR + ['fsm', 'm-ctrl'])
-    d.block('rdag', 140, 235, 170, 80, 'dma_addr_gen', 'u_rd_agen · source', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'])
-    d.block('wrag', 800, 235, 170, 80, 'dma_addr_gen', 'u_wr_agen · destination', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'])
+    d.block('ctrl', 470, 30, 220, 130, 'dma_ctrl', 'control FSM', kind='ctl', ref='m-ctrl', lines=['IDLE → LOAD → READ_BURST', '→ WAIT_DATA → WRITE_BURST', '→ WAIT_WRITE → DONE | ERROR'], on=CTL + BP + ERR + ['fsm', 'm-ctrl'], codes={s: f'rtl/dma_ctrl.sv#driver(state_d).case({s})' for s in ('IDLE', 'LOAD', 'READ_BURST', 'WAIT_DATA', 'WRITE_BURST', 'WAIT_WRITE', 'DONE', 'ERROR')})
+    d.block('rdag', 140, 235, 170, 80, 'dma_addr_gen', 'u_rd_agen · source', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'], codes={'u_rd_agen': 'rtl/dma_top.sv#u_rd_agen'})
+    d.block('wrag', 800, 235, 170, 80, 'dma_addr_gen', 'u_wr_agen · destination', kind='addr', ref='m-agen', lines=['≤16 beats, no 4 KB cross'], on=CTL + ['m-agen'], codes={'u_wr_agen': 'rtl/dma_top.sv#u_wr_agen'})
     # data plane
     d.block('rdbus', 10, 390, 50, 130, 'rd', 'bus', kind='ext', on=DATA + BP + ERR)
     d.block('rdp', 140, 390, 150, 130, 'dma_rd_port', 'read requests', kind='data', ref='m-rdport', lines=['one burst at a time', 'beats → FIFO'], on=CTL + DATA + BP + ERR + ['m-rdport'])
@@ -136,13 +158,15 @@ def overview():
     # data beats (thick)
     d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0] · err', (100, 424), on=DATA + ERR)
     d.wire('fifo_wdata', 'data', [(290, 450), (370, 450)], 'fifo_wdata|[63:0]', (330, 424), on=DATA)
-    d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424), on=DATA)
+    # dma_top lists several connections per line, and lighting goes by line: the cursor anywhere on such a line rings
+    # the wire whose connection is there (rd_start's line 85 also holds .rd_busy, .fifo_push …). Accepted here.
+    d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424), on=DATA, code='rtl/dma_top.sv#u_fifo(.rdata)', name='fifo_rdata: its connection at u_fifo')
     d.wire('packed_data', 'data', [(730, 450), (810, 450)], 'packed_data|[63:0] +strb', (770, 424), on=DATA)
     d.wire('wr_dat_data', 'data', [(960, 450), (1040, 450)], 'wr_dat_data|[63:0]', (1000, 424), on=DATA)
     # handshakes going back (ready / full)
     d.wire('rd_rsp_ready', 'ctl', [(140, 495), (60, 495)], 'rd_rsp_ready', (100, 512), tag='ready', on=READY)
     d.wire('fifo_full', 'ctl', [(370, 495), (290, 495)], 'fifo_full', (330, 512), tag='ready', on=READY)
-    d.wire('fifo_pop', 'ctl', [(580, 495), (500, 495)], 'fifo_pop', (540, 512), tag='ready', on=READY + ERR)
+    d.wire('fifo_pop', 'ctl', [(580, 495), (500, 495)], 'fifo_pop', (540, 512), tag='ready', on=READY + ERR, code='rtl/dma_top.sv#u_packer(.in_ready)', name='fifo_pop: its connection at u_packer')
     d.wire('pk_ready', 'ctl', [(810, 495), (730, 495)], 'pk_ready', (770, 512), tag='ready', on=READY)
     d.wire('wr_dat_ready', 'ctl', [(1040, 495), (960, 495)], 'wr_dat_ready', (1000, 512), tag='ready', on=READY)
     # addresses and configuration
@@ -154,12 +178,12 @@ def overview():
     d.wire('rd_burst', 'addr', [(225, 315), (225, 390)], 'rd_burst_addr|· len', (218, 332), anchor='end', on=CTL)
     d.wire('wr_burst', 'addr', [(900, 315), (900, 390)], 'wr_burst_addr|· len', (908, 332), anchor='start', on=CTL)
     # control
-    d.wire('start', 'ctl', [(370, 60), (470, 60)], 'start', (420, 52), on=CTL)
+    d.wire('start', 'ctl', [(370, 60), (470, 60)], 'start', (420, 52), on=CTL, code='rtl/dma_csr.sv#driver(start)', name='start: where dma_csr makes it')
     d.wire('status', 'ctl', [(470, 110), (370, 110)], 'done_set|err_set', (420, 90), on=CTL + ERR)
-    d.wire('irq', 'ctl', [(190, 105), (120, 105)], 'irq', (155, 97), on=CTL + ERR)
-    d.wire('c_rdag', 'ctl', [(480, 160), (480, 275), (310, 275)], 'load · rd_start ⇄|rd_has_burst', (395, 258), both=True, on=CTL)
-    d.wire('c_rdp', 'ctl', [(505, 160), (505, 350), (250, 350), (250, 390)], 'rd_start ↓   rd_done · rd_err ↑', (378, 343), both=True, on=CTL + ERR)
-    d.wire('almost_full', 'ctl', [(465, 390), (465, 368), (535, 368), (535, 160)], 'fifo_almost_full|fifo_push', (542, 300), anchor='start', on=CTL + BP)
+    d.wire('irq', 'ctl', [(190, 105), (120, 105)], 'irq', (155, 97), on=CTL + ERR + ['irq'], ref='irq')
+    d.wire('c_rdag', 'ctl', [(480, 160), (480, 275), (310, 275)], 'load · rd_start ⇄|rd_has_burst', (395, 258), both=True, on=CTL, code='rtl/dma_top.sv#u_rd_agen(.has_burst)', name='rd_has_burst: its connection at u_rd_agen')
+    d.wire('c_rdp', 'ctl', [(505, 160), (505, 350), (250, 350), (250, 390)], 'rd_start ↓   rd_done · rd_err ↑', (378, 343), both=True, on=CTL + ERR, code='rtl/dma_top.sv#u_ctrl(.rd_start)', name='rd_start: its connection at u_ctrl')
+    d.wire('almost_full', 'ctl', [(465, 390), (465, 368), (535, 368), (535, 160)], 'fifo_almost_full|fifo_push', (542, 300), anchor='start', on=CTL + BP, code='rtl/dma_top.sv#u_fifo(.almost_full)', name='fifo_almost_full: its connection at u_fifo')
     d.wire('c_pack', 'ctl', [(640, 160), (640, 390)], 'load · drain', (647, 372), anchor='start', on=CTL + ERR)
     d.wire('c_wrp', 'ctl', [(665, 160), (665, 350), (850, 350), (850, 390)], 'wr_start ↓   wr_done · wr_err ↑', (758, 343), both=True, on=CTL + BP + ERR)
     d.wire('c_wrag', 'ctl', [(690, 110), (885, 110), (885, 235)], 'wr_start · wr_burst_len ⇄|wr_has_burst', (790, 96), both=True, on=CTL)
@@ -454,7 +478,8 @@ def main():
     page = SIDESTORY / 'dma-overview' / 'sidestory.html'
     for name in ('overview', 'control', 'datapath', 'backpressure', 'errors'):
         if f'<!-- diagram:{name} -->' in page.read_text():
-            splice(page, name, ov.svg())
+            # Only the overview copy carries code links: the others are widget fallbacks, where links aren't opened or lit.
+            splice(page, name, ov.svg(code=name == 'overview'))
     jobs = [('dma-ctrl', 'inside', m_ctrl), ('dma-addr-gen', 'inside', m_agen), ('dma-packer', 'inside', m_packer),
             ('dma-fifo', 'inside', m_fifo), ('dma-rd-port', 'inside', lambda: m_port('rd')),
             ('dma-wr-port', 'inside', lambda: m_port('wr')), ('dma-csr', 'inside', m_csr)]

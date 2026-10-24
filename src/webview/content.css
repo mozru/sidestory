@@ -158,6 +158,18 @@ html, body {
   from { outline-color: transparent; }
 }
 
+/* In SVG, a halo that follows the shape: an outline would box an L-shaped wire in its bounding rectangle. */
+:where(svg .cx-here) {
+  outline: none;
+  filter: drop-shadow(0 0 1px var(--cx-here)) drop-shadow(0 0 1.5px var(--cx-here)) drop-shadow(0 0 1.5px var(--cx-here));
+  animation: none;
+}
+
+/* Ringed and hovered: both glows (the ring's filter would otherwise replace the hover one). */
+:where(svg [data-cx-ref].cx-here:not([data-explain-plain]):hover) {
+  filter: drop-shadow(0 0 1px var(--cx-here)) drop-shadow(0 0 1.5px var(--cx-here)) drop-shadow(0 0 2.5px var(--cx-link-hover));
+}
+
 @media (prefers-reduced-motion: reduce) {
   :where([data-explain-diagram] *, svg *, [data-explain-on]) { transition: none; }
   :where(.cx-here) { animation: none; }

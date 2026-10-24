@@ -32,6 +32,7 @@ import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-file
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
+import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -517,6 +518,11 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   }
   await checkOutline(ctx, report, html);
 
+  // Links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1): structure and code links now, ids once widgets are read.
+  const page = scanPageLinks(html);
+  for (const p of page.problems) add(ctx, { ...p, file: ctx.htmlFile });
+  for (const p of await checkCodeLinks(ctx.root, page.codes, CHECK_LIMITS.codeBytes)) add(ctx, { ...p, file: ctx.htmlFile });
+
   const scanned = scanHtml(html);
   const widgets = scanned.widgets;
   if (widgets.length > CHECK_LIMITS.widgetsPerExplainer) {
@@ -557,6 +563,24 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   }
 
   await checkAnchors(ctx, manifest, scan, new Set(scanned.steps));
+  if (manifest) {
+    // Both ways: the page's ids are in the manifest, and each manifest anchor is used by the page or a widget.
+    const widgetIds = scan.mayReadAny || scan.uses.some((u) => u.dynamic) ? 'any' : new Set(scan.uses.flatMap((u) => (u.id ? [u.id] : [])));
+    let lines: ((offset: number) => number) | undefined;
+    const text = manifestText;
+    const manifestLine = (id: string) => {
+      if (text === undefined) return undefined;
+      // the anchor's key: the id in quotes followed by a colon (not a `highlight` entry with the same text)
+      const key = `"${id}"`;
+      for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
+        if (/^\s*:/.test(text.slice(at + key.length, at + key.length + 20))) return (lines ??= lineIndex(text))(at);
+      }
+      return undefined;
+    };
+    const ids = checkIds(page, new Set(manifest.anchors.keys()), widgetIds, manifestLine);
+    for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
+    for (const p of ids.manifest) add(ctx, { ...p, file: ctx.manifestFile });
+  }
   return finish(report);
 }
 
@@ -616,7 +640,7 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
     }
   }
   const n = report.widgets.length;
-  out.push(n === 0 ? 'No <explain-widget> elements in sidestory.html.' : `${n} widget${n === 1 ? '' : 's'} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
+  out.push(`${n === 0 ? 'No widgets' : `${n} widget${n === 1 ? '' : 's'}`} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
   return out.join('\n');
 }
 

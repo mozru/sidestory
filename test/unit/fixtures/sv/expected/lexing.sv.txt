@@ -1,0 +1,14 @@
+partial: false
+S port lexing.\bus[0] 3-3 dir=input
+S port lexing.clk 4-4 dir=input
+S port lexing.out_q 5-5 dir=output
+S signal lexing.s 7-8
+S signal lexing.t 9-9
+S signal lexing.keep_me 10-10
+S signal lexing.lit 11-11
+S signal lexing.lit2 12-12
+S signal lexing.fill 13-13
+S module lexing 2-23
+D always lexing 18-18 drives=keep_me functional=keep_me
+D always_ff lexing 19-21 drives=out_q functional=out_q
+D assign lexing 22-22 drives=fill functional=fill

@@ -1,0 +1,26 @@
+partial: false
+S port fsm_cases.clk 3-3 dir=input
+S port fsm_cases.rst_ni 4-4 dir=input
+S port fsm_cases.sel 5-5 dir=input
+S port fsm_cases.go 6-6 dir=input
+S typedef fsm_cases.state_e 8-8
+S enum-member fsm_cases.IDLE 8-8
+S enum-member fsm_cases.RUN 8-8
+S enum-member fsm_cases.WAIT 8-8
+S enum-member fsm_cases.DONE 8-8
+S param fsm_cases.IDLE_BIT 9-9
+S param fsm_cases.RUN_BIT 9-9
+S signal fsm_cases.state_q 10-10
+S signal fsm_cases.state_d 10-10
+S signal fsm_cases.onehot_q 11-11
+S signal fsm_cases.onehot_d 11-11
+S signal fsm_cases.mux 12-12
+S module fsm_cases 2-53
+D always_comb fsm_cases 14-26 drives=state_d functional=state_d
+  case depth=0: IDLE | WAIT @17-17; RUN @18-23; default @24-24
+  case depth=1: 2'b01 @20-20; default @21-21
+D always_comb fsm_cases 28-34 drives=onehot_d functional=onehot_d
+  case depth=0: onehot_q [ IDLE_BIT ] @31-31; onehot_q [ RUN_BIT ] @32-32
+D always_comb fsm_cases 36-42 drives=mux functional=mux
+  case depth=0: [ 2'd0 : 2'd1 ] @38-38; { 1'b1 , 1'b0 } @39-39; default @40-40
+D always_ff fsm_cases 44-52 drives=state_q,onehot_q functional=state_q,onehot_q

@@ -1,0 +1,52 @@
+partial: false
+S param dma_ctrl.BW 11-11
+S param dma_ctrl.BLW 12-12
+S port dma_ctrl.clk 14-14 dir=input
+S port dma_ctrl.rst_n 15-15 dir=input
+S port dma_ctrl.start 16-17 dir=input
+S port dma_ctrl.len_zero 18-18 dir=input
+S port dma_ctrl.src_off 19-19 dir=input
+S port dma_ctrl.dst_off 20-20 dir=input
+S port dma_ctrl.busy 21-21 dir=output
+S port dma_ctrl.drain 22-22 dir=output
+S port dma_ctrl.done_set 23-23 dir=output
+S port dma_ctrl.err_set 24-24 dir=output
+S port dma_ctrl.err_code 25-25 dir=output
+S port dma_ctrl.load 26-27 dir=output
+S port dma_ctrl.rd_has_burst 28-29 dir=input
+S port dma_ctrl.rd_start 30-30 dir=output
+S port dma_ctrl.rd_busy 31-31 dir=input
+S port dma_ctrl.rd_done 32-32 dir=input
+S port dma_ctrl.rd_err 33-33 dir=input
+S port dma_ctrl.fifo_push 34-34 dir=input
+S port dma_ctrl.fifo_almost_full 35-35 dir=input
+S port dma_ctrl.wr_has_burst 36-37 dir=input
+S port dma_ctrl.wr_burst_len 38-38 dir=input
+S port dma_ctrl.wr_start 39-39 dir=output
+S port dma_ctrl.wr_busy 40-40 dir=input
+S port dma_ctrl.wr_done 41-41 dir=input
+S port dma_ctrl.wr_err 42-42 dir=input
+S typedef dma_ctrl.state_e 45-47
+S enum-member dma_ctrl.IDLE 45-47
+S enum-member dma_ctrl.LOAD 45-47
+S enum-member dma_ctrl.READ_BURST 45-47
+S enum-member dma_ctrl.WAIT_DATA 45-47
+S enum-member dma_ctrl.WRITE_BURST 45-47
+S enum-member dma_ctrl.WAIT_WRITE 45-47
+S enum-member dma_ctrl.DONE 45-47
+S enum-member dma_ctrl.ERROR 45-47
+S signal dma_ctrl.state_q 49-49
+S signal dma_ctrl.state_d 49-49
+S signal dma_ctrl.in_rcvd_q 50-50
+S signal dma_ctrl.out_issued_q 51-51
+S signal dma_ctrl.extra_q 52-52
+S signal dma_ctrl.err_code_q 53-53
+S signal dma_ctrl.err_code_d 53-53
+S signal dma_ctrl.credit_ok 54-54
+S module dma_ctrl 10-160
+D assign dma_ctrl 56-59 drives=credit_ok functional=credit_ok
+D always_comb dma_ctrl 61-134 drives=state_d,err_code_d,load,rd_start,wr_start,done_set,err_set,drain functional=state_d,err_code_d,load,rd_start,wr_start,done_set,err_set,drain
+  case depth=0: IDLE @71-71; LOAD @72-80; READ_BURST @81-88; WAIT_DATA @89-98; WRITE_BURST @99-110; WAIT_WRITE @111-113; DONE @114-117; ERROR @118-124; default @125-125
+D always_ff dma_ctrl 136-155 drives=state_q,in_rcvd_q,out_issued_q,extra_q,err_code_q functional=state_q,err_code_q,in_rcvd_q,out_issued_q,extra_q
+D assign dma_ctrl 157-157 drives=busy functional=busy
+D assign dma_ctrl 158-158 drives=err_code functional=err_code

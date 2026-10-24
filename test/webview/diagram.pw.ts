@@ -360,6 +360,31 @@ test.describe('linked elements', () => {
     expect((await posted(page)).filter((m) => m.type === 'codeTargets').map((m) => (m as { links: string[] }).links[1])).toEqual(['rtl/bit_reader.sv#L4-L5']);
   });
 
+  test('a step the cursor moves to doesn’t scroll away from a ring on screen: the pill offers it instead', async ({ page }) => {
+    const MAP = `<section data-explain-anchor="interface"><h2>Map</h2>
+      <svg viewBox="0 0 200 60" width="200" height="60" role="group" aria-label="map"><g id="box" data-explain-code="rtl/bit_reader.sv#L36"><title>refill box</title><rect width="80" height="40" fill="var(--cx-box-fill)"/></g></svg>
+      <div style="height: 3000px"></div></section>
+      <section data-explain-anchor="refill"><h2>Refill</h2><p>Far below.</p></section>`;
+    await open(page, MAP);
+    const scrollTop = () => page.locator('.cx-scroll').evaluate((e) => e.scrollTop);
+    // The cursor is in code both the box and the refill section cover: the ring arrives first, then the step.
+    await send(page, { type: 'here', link: 'rtl/bit_reader.sv#L36' });
+    await expect(el(page, 'box')).toHaveClass(/cx-here/);
+    await send(page, { type: 'syncTo', anchorId: 'refill' });
+    await expect(page.locator('.cx-pill')).toBeVisible();
+    await expect(page.locator('.cx-pill')).toContainText('Refill');
+    // the step the reader is looking at stays current until they take the pill
+    await expect(page.locator('.cx-position')).toHaveText('Step 1 of 2');
+    expect(await scrollTop()).toBeLessThan(50);
+    await page.locator('.cx-pill button').first().click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
+    // With nothing lit, the panel follows the step as before.
+    await send(page, { type: 'here' });
+    await send(page, { type: 'syncTo', anchorId: 'interface' });
+    await send(page, { type: 'syncTo', anchorId: 'refill' });
+    await expect.poll(scrollTop).toBeGreaterThan(1000);
+  });
+
   test('here rings the elements linked to the cursor’s code, and the ring survives a live edit', async ({ page }) => {
     await open(page, LINKS);
     await send(page, { type: 'here', ref: 'refill' });
@@ -370,6 +395,10 @@ test.describe('linked elements', () => {
     await send(page, { type: 'here', link: 'rtl/bit_reader.sv#driver(count_q)' });
     await expect(frame(page).locator('.cx-here')).toHaveCount(1);
     await expect(el(page, 'svg-code')).toHaveClass(/cx-here/);
+    // in SVG the ring is a halo that follows the shape, not an outline around its bounding box
+    await el(page, 'svg-code').evaluate((e) => (e as SVGElement).blur()); // its focus ring is an outline of its own
+    await expect(el(page, 'svg-code')).toHaveCSS('outline-style', 'none');
+    await expect(el(page, 'svg-code')).toHaveCSS('filter', /drop-shadow/);
     await frame(page).locator('body').evaluate((b) => b.ownerDocument.getAnimations().forEach((a) => a.finish()));
     await send(page, { type: 'content', title: MANIFEST.title, html: LINKS.replace('<p>Refill.</p>', '<p>Refill, edited.</p>') });
     await expect(frame(page).getByText('Refill, edited.')).toBeVisible();

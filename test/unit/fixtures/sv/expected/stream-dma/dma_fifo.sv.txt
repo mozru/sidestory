@@ -1,0 +1,33 @@
+partial: false
+S param dma_fifo.DW 5-5
+S param dma_fifo.DEPTH 6-6
+S param dma_fifo.AF_LEVEL 7-7
+S param dma_fifo.PW 8-8
+S port dma_fifo.clk 10-10 dir=input
+S port dma_fifo.rst_n 11-11 dir=input
+S port dma_fifo.clear 12-12 dir=input
+S port dma_fifo.push 13-14 dir=input
+S port dma_fifo.wdata 15-15 dir=input
+S port dma_fifo.full 16-16 dir=output
+S port dma_fifo.almost_full 17-17 dir=output
+S port dma_fifo.pop 18-19 dir=input
+S port dma_fifo.rdata 20-20 dir=output
+S port dma_fifo.empty 21-21 dir=output
+S port dma_fifo.level 22-22 dir=output
+S signal dma_fifo.mem 25-26
+S signal dma_fifo.wptr_q 27-27
+S signal dma_fifo.rptr_q 27-27
+S signal dma_fifo.count_q 28-28
+S signal dma_fifo.do_push 29-29
+S signal dma_fifo.do_pop 29-29
+S module dma_fifo 4-66
+D assign dma_fifo 31-31 drives=do_push functional=do_push
+D assign dma_fifo 32-32 drives=do_pop functional=do_pop
+D always_ff dma_fifo 34-36 drives=mem[wptr_q] functional=mem
+D assign dma_fifo 38-38 drives=rdata functional=rdata
+D always_ff dma_fifo 40-59 drives=wptr_q,rptr_q,count_q functional=wptr_q,rptr_q,count_q
+  case depth=0: 2'b10 @54-54; 2'b01 @55-55; default @56-56
+D assign dma_fifo 61-61 drives=full functional=full
+D assign dma_fifo 62-62 drives=empty functional=empty
+D assign dma_fifo 63-63 drives=almost_full functional=almost_full
+D assign dma_fifo 64-64 drives=level functional=level

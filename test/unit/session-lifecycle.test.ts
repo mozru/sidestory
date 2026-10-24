@@ -39,6 +39,7 @@ function open(name: string, decorations: Record<string, unknown> = { set() {}, s
       postMessage: async (m: ToWebview) => posted.push(m) > 0,
     },
     onDidDispose: disposed.event,
+    onDidChangeViewState: new EventEmitter<void>().event,
     dispose: () => disposed.fire(),
   };
   const memento = { get: <T>(_k: string, d: T) => d, update: async () => {} };

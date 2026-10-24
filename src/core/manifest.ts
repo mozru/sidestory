@@ -35,8 +35,42 @@ export interface AnchorSpec {
   color?: string;
 }
 
+/**
+ * One place in the code an anchor points at (docs/AUTHORING-PLAN.md §1.1). Release 1 has the type only: every
+ * anchor is single-part, normalized to one part equal to its own fields. Multi-part anchors (`parts` in the
+ * manifest, version 3) come later, and the workspace index stores parts from the start (§10.1, step 3).
+ */
+export interface AnchorPart {
+  /** Addresses the part (`anchor:label`); the anchor-id grammar, up to 24 characters. */
+  label?: string;
+  file: string;
+  range: LineRange;
+  quote?: Quote;
+  snippet?: string;
+  highlight: string[];
+}
+
 export interface Anchor extends AnchorSpec {
   id: string;
+  /**
+   * The anchor's parts, part 1 first. `parseManifest` always sets it (one part, today); anchors built elsewhere may
+   * leave it out, so read it through `anchorParts`.
+   */
+  parts?: readonly [AnchorPart, ...AnchorPart[]];
+}
+
+/** An anchor's parts: `parts`, or the anchor itself as its only part. */
+export function anchorParts(a: Anchor): readonly [AnchorPart, ...AnchorPart[]] {
+  return a.parts ?? [{ file: a.file, range: a.range, quote: a.quote, snippet: a.snippet, highlight: a.highlight }];
+}
+
+/**
+ * The key for state kept per code target (resolutions, hints, orphan flags, confirmed widget anchors). Part 1's
+ * key is the anchor id itself, so state keyed by id today stays valid; later parts are `id:2`, `id:3` …, which no
+ * anchor id can be (ids can't contain `:`). `part` is 0-based.
+ */
+export function partKey(id: string, part = 0): string {
+  return part === 0 ? id : `${id}:${part + 1}`;
 }
 
 export interface Manifest {
@@ -189,7 +223,10 @@ export function parseManifest(json: string): ParseResult {
       continue;
     }
     const spec = parseAnchorSpec(value);
-    if (spec.ok) anchors.set(id, { id, ...spec.spec });
+    if (spec.ok) {
+      const { file, range, quote, snippet, highlight } = spec.spec;
+      anchors.set(id, { id, ...spec.spec, parts: [{ file, range, quote, snippet, highlight }] });
+    }
     else diagnostics.push({ anchor: id, message: spec.error });
   }
   return {

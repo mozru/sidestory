@@ -1,0 +1,18 @@
+partial: false
+S param bit_reader.W 2-2
+S port bit_reader.clk 4-4 dir=input
+S port bit_reader.rst_n 5-5 dir=input
+S port bit_reader.in_byte 6-7 dir=input
+S port bit_reader.in_valid 8-8 dir=input
+S port bit_reader.in_ready 9-9 dir=output
+S port bit_reader.rd_bits 10-11 dir=input
+S port bit_reader.rd_en 12-12 dir=input
+S port bit_reader.peek 13-13 dir=output
+S port bit_reader.avail 14-14 dir=output
+S signal bit_reader.buf_q 16-16
+S signal bit_reader.cnt_q 17-17
+S module bit_reader 1-43
+D assign bit_reader 19-19 drives=in_ready functional=in_ready
+D assign bit_reader 20-20 drives=avail functional=avail
+D assign bit_reader 21-21 drives=peek functional=peek
+D always_ff bit_reader 23-42 drives=buf_q,cnt_q functional=buf_q,cnt_q

@@ -1,6 +1,6 @@
 # Authoring features for hardware sidestories: plan
 
-> **Status: plan, not implemented.** Written 2026-10-23 and revised after two reviews: one by a hardware engineer who writes RTL sidestories, one on security, performance and correctness. It comes from a hardware team's feedback after writing real RTL sidestories. It covers eight features:
+> **Status: release 1 (§10.4) implemented; the rest is a plan.** Release 1 shipped the sanitizer drops, diagram tokens, the link look, `data-explain-on`, `data-explain-code` with the SV scanner lite, cursor lighting with the §0 fix, the `Anchor.parts` type and the release-1 checker findings. Written 2026-10-23 and revised after two reviews: one by a hardware engineer who writes RTL sidestories, one on security, performance and correctness. It comes from a hardware team's feedback after writing real RTL sidestories. It covers eight features:
 > 1. anchors with several parts;
 > 2. diagram parts that light up per step;
 > 3. clickable SVG;

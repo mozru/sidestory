@@ -342,11 +342,13 @@
       {
         "command": "sidestory.nextStep",
         "key": "alt+]",
+        "mac": "ctrl+alt+]",
         "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       },
       {
         "command": "sidestory.prevStep",
         "key": "alt+[",
+        "mac": "ctrl+alt+[",
         "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       },
       {
@@ -365,6 +367,11 @@
     "configuration": {
       "title": "Sidestory",
       "properties": {
+        "sidestory.followCursorInDiagrams": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ring the boxes and links in a sidestory (data-explain-ref, data-explain-code) whose code holds the editor cursor. Steps change only for code a section covers."
+        },
         "sidestory.dimUnfocused": {
           "type": "boolean",
           "default": true,

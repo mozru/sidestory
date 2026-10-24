@@ -626,13 +626,21 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     if (init.active && init.active !== state.active) state = { ...state, scroll: undefined };
     active = init.active ?? active;
     restoreScroll();
-    // Nothing chosen yet: the section at the reading line is the current one (the editor isn't told).
+    // Nothing chosen yet: the section at the reading line is the current one.
     // At the top, that's the first step, however many short sections fit above the line.
     if (!active) active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
     markActive();
+    // A section the page chose itself (not the one the extension sent): the extension shows its code when no
+    // editor is open, and otherwise only highlights it, so opening a sidestory never takes over the reader's editor.
+    if (active && active !== init.active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
     initialized = true;
     init.after?.();
     for (const d of pendingSteps.splice(0)) step(d);
+  } else if (initialized && !active && steps.length) {
+    // The page had no steps when it opened (its content arrived after `init`): open at the first, as `init` does.
+    active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
+    markActive();
+    if (active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
   }
   return true;
 }
@@ -1079,10 +1087,29 @@ function followEditor(id: string): void {
     if (!(top >= view.top && top <= view.bottom - 40)) showPill(id, el);
     return;
   }
+  const visible = top >= view.top && top <= view.top + view.height * 0.6;
+  // A box the cursor rings is on screen (a diagram elsewhere in the page, §8.2): stay with it and offer the step, as
+  // when the reader leads; making the step current here would let a small scroll send the editor elsewhere.
+  if (!visible && ringOnScreen(view)) {
+    showPill(id, el);
+    return;
+  }
   hidePill();
   setActive(id);
-  const visible = top >= view.top && top <= view.top + view.height * 0.6;
   if (!visible) scrollToSection(id);
+}
+
+/** Whether an element the editor cursor rings (cx-here) is visible in the panel now. */
+function ringOnScreen(view: DOMRect): boolean {
+  for (const { el } of linkEls) {
+    if (!el.classList.contains('cx-here')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue; // not rendered (a hidden fallback)
+    const top = topOf(el);
+    const bottom = top + r.height;
+    if (bottom > view.top + 8 && top < view.bottom - 8) return true;
+  }
+  return false;
 }
 
 function showPill(id: string, el: HTMLElement): void {

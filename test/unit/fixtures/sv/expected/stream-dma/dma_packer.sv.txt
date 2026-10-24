@@ -1,0 +1,46 @@
+partial: false
+S param dma_packer.DW 12-12
+S param dma_packer.BW 13-13
+S param dma_packer.NB 14-14
+S param dma_packer.OW 15-15
+S port dma_packer.clk 17-17 dir=input
+S port dma_packer.rst_n 18-18 dir=input
+S port dma_packer.load 19-20 dir=input
+S port dma_packer.drain 21-21 dir=input
+S port dma_packer.src_off 22-22 dir=input
+S port dma_packer.dst_off 23-23 dir=input
+S port dma_packer.len_lo 24-24 dir=input
+S port dma_packer.in_beats 25-25 dir=input
+S port dma_packer.out_beats 26-26 dir=input
+S port dma_packer.in_valid 27-28 dir=input
+S port dma_packer.in_ready 29-29 dir=output
+S port dma_packer.in_data 30-30 dir=input
+S port dma_packer.out_valid 31-32 dir=output
+S port dma_packer.out_ready 33-33 dir=input
+S port dma_packer.out_data 34-34 dir=output
+S port dma_packer.out_strb 35-35 dir=output
+S signal dma_packer.shift_q 38-39
+S signal dma_packer.prime_q 40-40
+S signal dma_packer.first_q 41-41
+S signal dma_packer.in_left_q 42-42
+S signal dma_packer.out_left_q 42-42
+S signal dma_packer.first_strb_q 43-43
+S signal dma_packer.last_strb_q 43-43
+S signal dma_packer.flush 44-44
+S signal dma_packer.take 44-44
+S signal dma_packer.emit 44-44
+S signal dma_packer.prev_q 46-47
+S signal dma_packer.window 48-48
+S signal dma_packer.rot_bits 49-49
+S module dma_packer 11-106
+D assign dma_packer 51-51 drives=flush functional=flush
+D assign dma_packer 53-55 drives=in_ready functional=in_ready
+D assign dma_packer 56-56 drives=out_valid functional=out_valid
+D assign dma_packer 57-57 drives=take functional=take
+D assign dma_packer 58-58 drives=emit functional=emit
+D assign dma_packer 60-61 drives=window functional=window
+D assign dma_packer 62-62 drives=rot_bits functional=rot_bits
+D assign dma_packer 63-63 drives=out_data functional=out_data
+D always_comb dma_packer 65-71 drives=out_strb functional=out_strb
+D always_ff dma_packer 73-100 drives=shift_q,prime_q,first_q,in_left_q,out_left_q,first_strb_q,last_strb_q functional=shift_q,prime_q,first_q,in_left_q,out_left_q,first_strb_q,last_strb_q
+D always_ff dma_packer 102-104 drives=prev_q functional=prev_q
