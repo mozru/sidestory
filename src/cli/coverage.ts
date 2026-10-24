@@ -349,17 +349,24 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
 
   // Stable ids (docs/COMMENTS-PLAN.md §3.1): local comment threads key off a sidestory's manifest `id`.
   const previousIds = await checkIds(git, sorted, { mode, mergeBase, headSha, report: !opts.newId, add: (file, code, message, line) => add('error', abs(file), code, message, line) });
-  // Shared comment event files are the sidestory's own only when they are one: a regular file holding a valid event.
+  // Shared comment event files are the sidestory's own only when they are one: a regular file holding a valid event
+  // (any regular mode, as the extension sees it; links and submodules never are).
   const notEvents = new Set<Entry>();
-  for (const e of sorted) {
-    const ids = e.newMode !== '000000' ? threadEventPath(e.path) : undefined;
-    if (!ids || unsafe(e)) continue;
+  const eventFiles = sorted.flatMap((e) => {
+    const ids = e.newMode !== '000000' && !unsafe(e) ? threadEventPath(e.path) : undefined;
+    return ids ? [{ e, ids }] : [];
+  });
+  // Committed blobs in one batch (a branch may share many comments); working tree files from disk.
+  const eventIds = eventFiles.filter(({ e }) => REGULAR.has(e.newMode) && !ZERO.test(e.newId)).map(({ e }) => e.newId);
+  const eventBlobs = mode === 'working' ? undefined : eventIds.length ? (await git.blobs(eventIds)).bytes : new Map<string, Uint8Array>();
+  for (const { e, ids } of eventFiles) {
     let bytes: Uint8Array | undefined;
-    if (e.newMode === '100644') {
-      if (mode === 'working') {
+    if (REGULAR.has(e.newMode)) {
+      if (eventBlobs) bytes = eventBlobs.get(e.newId);
+      else {
         const disk = isSafeFsPath(e.path) ? await git.readWorkingFile(e.path) : undefined;
         bytes = disk && 'bytes' in disk ? disk.bytes : undefined;
-      } else if (!ZERO.test(e.newId)) bytes = (await git.blobs([e.newId])).bytes.get(e.newId);
+      }
     }
     if (!isThreadEventBytes(ids, bytes)) notEvents.add(e);
   }
