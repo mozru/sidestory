@@ -385,6 +385,8 @@ export class CommentsPane {
   render(): void {
     if (!this.open) return;
     // Never while an IME is composing in one of our boxes: moving the textarea would cancel the composition.
+    // Only while one of our boxes still has focus: a missed compositionend (box removed, pane hidden) can't freeze the pane.
+    if (this.composing && !(document.activeElement instanceof HTMLTextAreaElement && this.pane.contains(document.activeElement))) this.composing = false;
     if (this.composing) {
       this.renderAfterComposition = true;
       return;

@@ -576,7 +576,8 @@ export class CommentService implements vscode.Disposable {
 
   isUnread(e: Entry): boolean {
     const seen = (this.memento.get<Record<string, string>>(READ_KEY) ?? {})[e.thread.id];
-    const newestOther = [...e.thread.comments].reverse().find((c) => c.trust !== 'local_user' && !c.retracted);
+    // Future-dated comments are left out, as in markRead, so a planted one can't keep a thread unread.
+    const newestOther = [...e.thread.comments].reverse().find((c) => c.trust !== 'local_user' && !c.retracted && !c.future);
     return !!newestOther && (!seen || newestOther.id > seen);
   }
 
