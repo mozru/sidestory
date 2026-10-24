@@ -13,5 +13,14 @@ export function mcpServerBuild(outfile, common = {}) {
     target: 'node20',
     mainFields: ['module', 'main'],
     banner: { js: '// Sidestory comments MCP server. Built from src/mcp by `npm run sync-skill`; do not edit.' },
+    plugins: [
+      {
+        name: 'no-ajv',
+        setup(build) {
+          // The SDK's server imports Ajv only for elicitation, which this server never uses (src/mcp/no-ajv.ts).
+          build.onResolve({ filter: /validation\/ajv-provider\.js$/ }, () => ({ path: new URL('../src/mcp/no-ajv.ts', import.meta.url).pathname }));
+        },
+      },
+    ],
   };
 }
