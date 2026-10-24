@@ -45,13 +45,18 @@ export function navigationTests(): void {
 
     it('CodeLens on rtl/bit_reader.sv names the path and step, with openAt arguments', async () => {
       await vscode.window.showTextDocument(bitReader);
-      const lenses = await until('lenses', async () => {
+      // The explainer suite just pinned bit-reader's manifest: its re-read may still be under way, and until it
+      // lands only the overview's lenses show. Wait for bit-reader's own, not merely the first lens.
+      const detail = 'Sample workspace tour › A backward bit reader in five moves · step';
+      let titles: string[] = [];
+      const lenses = await until(`a lens naming "${detail}"`, async () => {
         const l = ours(await lensesOf(bitReader));
-        return l.length ? l : undefined;
+        titles = l.map((x) => x.command!.title);
+        return titles.some((t) => t.includes(detail)) ? l : undefined;
+      }).catch((e: Error) => {
+        throw new Error(`${e.message}; lenses: ${titles.join(' | ')}`);
       });
-      const titles = lenses.map((l) => l.command!.title);
-      assert.ok(titles.some((t) => t.includes('Sample workspace tour › A backward bit reader in five moves · step')), titles.join('\n'));
-      const single = lenses.find((l) => l.command!.command === 'sidestory.openAt')!;
+      const single = lenses.find((l) => l.command!.command === 'sidestory.openAt' && l.command!.title.includes(detail))!;
       const arg = single.command!.arguments![0] as { dir: string; anchor: string; trail: string[] };
       assert.deepEqual(arg.trail, ['overview', 'bit-reader']);
       assert.ok(arg.dir.endsWith('/.sidestory/bit-reader'));
