@@ -12,7 +12,7 @@
 // - refs pass §3.1's grammar and are resolved to full ids through fully qualified candidates; paths follow `--`
 //   with literal pathspecs; only hex ids are written to `cat-file --batch`.
 import { spawn } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { access, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
@@ -90,9 +90,13 @@ export async function findRepository(start: string): Promise<RepoLocation | unde
 }
 
 /** The environment every git call gets: no inherited `GIT_*`, then the fixed set of §13.2. */
-export function gitEnv(root: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function gitEnv(root: string, base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(base)) if (!/^GIT_/i.test(k)) env[k] = v;
+  // PATH keeps only the folders resolveGit would use, so what git starts in turn (git-lfs, a credential helper,
+  // ssh) can't come from `.`, an empty entry or the repository either.
+  const key = pathKey(base, platform);
+  if (key !== undefined) env[key] = safePathEntries(root, base, platform).join(platform === 'win32' ? win32.delimiter : posix.delimiter);
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_OPTIONAL_LOCKS = '0';
   env.GIT_NO_LAZY_FETCH = '1';
@@ -114,19 +118,8 @@ export function gitEnv(root: string, base: NodeJS.ProcessEnv = process.env): Nod
 export async function resolveGit(root: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
   const windows = platform === 'win32';
   const p = windows ? win32 : posix;
-  const pathVar = Object.entries(env).find(([k]) => (windows ? k.toUpperCase() === 'PATH' : k === 'PATH'))?.[1] ?? '';
-  const fold = (s: string) => (windows || platform === 'darwin' ? s.toLowerCase() : s);
-  const rootReal = fold(await realpath(root).catch(() => root));
-  const insideRoot = (d: string) => {
-    const f = fold(d);
-    return f === rootReal || f.startsWith(rootReal.endsWith(p.sep) ? rootReal : rootReal + p.sep);
-  };
   const names = windows ? ['git.exe', 'git.com'] : ['git'];
-  for (let entry of pathVar.split(p.delimiter)) {
-    if (windows) entry = entry.replace(/^"(.*)"$/, '$1');
-    if (!entry || !p.isAbsolute(entry)) continue;
-    const dir = await realpath(entry).catch(() => undefined);
-    if (!dir || insideRoot(dir) || insideRoot(p.resolve(entry))) continue;
+  for (const dir of safePathEntries(root, env, platform)) {
     for (const name of names) {
       const file = p.join(dir, name);
       const st = await stat(file).catch(() => undefined);
@@ -136,6 +129,44 @@ export async function resolveGit(root: string, env: NodeJS.ProcessEnv = process.
     }
   }
   return undefined;
+}
+
+/** The PATH variable's name in `env` (`Path` on Windows is common), or undefined. */
+function pathKey(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
+  return Object.keys(env).find((k) => (platform === 'win32' ? k.toUpperCase() === 'PATH' : k === 'PATH'));
+}
+
+/**
+ * PATH's folders that may be searched, as real paths: absolute entries only (no `.`, no empty entry), existing, and
+ * neither the repository's root nor inside it (compared case-insensitively on Windows and macOS).
+ */
+export function safePathEntries(root: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  const windows = platform === 'win32';
+  const p = windows ? win32 : posix;
+  const key = pathKey(env, platform);
+  const pathVar = (key !== undefined ? env[key] : undefined) ?? '';
+  const fold = (s: string) => (windows || platform === 'darwin' ? s.toLowerCase() : s);
+  const real = (s: string) => {
+    try {
+      return realpathSync(s);
+    } catch {
+      return undefined;
+    }
+  };
+  const rootReal = fold(real(root) ?? root);
+  const insideRoot = (d: string) => {
+    const f = fold(d);
+    return f === rootReal || f.startsWith(rootReal.endsWith(p.sep) ? rootReal : rootReal + p.sep);
+  };
+  const out: string[] = [];
+  for (let entry of pathVar.split(p.delimiter)) {
+    if (windows) entry = entry.replace(/^"(.*)"$/, '$1');
+    if (!entry || !p.isAbsolute(entry)) continue;
+    const dir = real(entry);
+    if (!dir || insideRoot(dir) || insideRoot(p.resolve(entry)) || out.includes(dir)) continue;
+    out.push(dir);
+  }
+  return out;
 }
 
 /** One raw diff record (`--raw -z`). */

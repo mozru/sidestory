@@ -114,7 +114,7 @@ describe('every git call', () => {
   });
 
   it('the environment helper drops every GIT_ variable, whatever its case', () => {
-    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: 'p', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C', NoDefaultCurrentDirectoryInExePath: '1' });
+    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: '', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C', NoDefaultCurrentDirectoryInExePath: '1' });
   });
 
   it('a git planted in the repository never runs: relative, empty and in-repository PATH entries are skipped', async () => {
@@ -137,6 +137,13 @@ describe('every git call', () => {
     expect(none.code).toBe(1);
     expect(none.out).toContain("git wasn't found");
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it("git's own children get the same PATH: no relative, empty or in-repository entries", () => {
+    const dir = copy();
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    const env = gitEnv(dir, { PATH: ['.', '', 'bin', dir, join(dir, 'bin'), fakeDir, join(base, 'does-not-exist'), fakeDir].join(delimiter) });
+    expect(env.PATH).toBe(fakeDir);
   });
 
   it('on Windows only git.exe or git.com, from absolute entries', async () => {
