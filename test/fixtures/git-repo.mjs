@@ -2,7 +2,12 @@
 // and no system or global config. `main` has an initial commit; `feature` (checked out) adds, modifies, deletes
 // and renames files in three commits; then `main` moves on (a new file, an edit) after the fork, so only a
 // three-dot merge diff (merge-base → feature) leaves main's later work out.
-// Usage: node test/fixtures/git-repo.mjs <dir> [--many <n>]   (--many adds n changed files under gen/, for perf)
+// Usage: node test/fixtures/git-repo.mjs <dir> [--many <n>] [--explained]
+//   --many adds n changed files under gen/, for perf.
+//   --explained adds a fourth commit on feature with .sidestory/retry-jitter/ (base main, version 3) that explains
+//   part of the branch (docs/CHANGES-PLAN.md §6.3): jitter.ts and the retry.ts replacement by head-side steps,
+//   the deleted legacy/sleep.ts by a base-side step, backoff.ts's renamed lines by a trivial mark with a why,
+//   and test/retry.test.ts left unexplained, so `check.cjs --coverage --base main` exits 3.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, unlinkSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,6 +15,7 @@ import { dirname, join } from 'node:path';
 const dir = process.argv[2];
 if (!dir) throw new Error('usage: git-repo.mjs <dir> [--many <n>]');
 const many = process.argv.includes('--many') ? Number(process.argv[process.argv.indexOf('--many') + 1]) : 0;
+const explained = process.argv.includes('--explained');
 
 let clock = Date.parse('2026-01-01T00:00:00Z') / 1000;
 const env = {
@@ -64,6 +70,36 @@ commit('Move backoff, drop sleep');
 write('test/retry.test.ts', lines('test retry', 10) + lines('test jitter', 30));
 for (let i = 0; i < many; i++) write(`gen/part-${Math.floor(i / 100)}/file-${i}.ts`, lines(`export const g${i}`, 3));
 commit('Test jitter');
+if (explained) {
+  const quote = (text, start, end) => ({ exact: text.split('\n').slice(start - 1, end).join('\n'), prefix: '', suffix: '', norm: 'ws' });
+  const retryNow = retry.join('\n');
+  const sleepThen = lines('export const sleep', 24);
+  const jitterNow = lines('export const jitter', 19);
+  write('.sidestory/retry-jitter/manifest.json', `${JSON.stringify({
+    version: 3,
+    id: '01JC0RETRYJ1TTER000000000A',
+    title: 'Retry with jitter',
+    summary: 'Why retries now wait a random time below a growing ceiling.',
+    base: 'main',
+    anchors: {
+      jitter: { file: 'src/retry/jitter.ts', range: [1, 19], quote: quote(jitterNow, 1, 19) },
+      'retry-loop': { file: 'src/retry/retry.ts', range: [4, 9], quote: quote(retryNow, 4, 9) },
+      'old-sleep': { file: 'legacy/sleep.ts', side: 'base', range: [1, 24], quote: quote(sleepThen, 1, 24) },
+      'trivial-1': { file: 'src/retry/backoff.ts', range: [1, 2], trivial: true, why: 'the file moved; only its first lines say so' },
+    },
+  }, null, 2)}\n`);
+  write('.sidestory/retry-jitter/sidestory.html', [
+    '<!doctype html>',
+    '<html><head><meta charset="utf-8"><title>Retry with jitter</title></head><body>',
+    '<h1>Retry with jitter</h1>',
+    '<section data-explain-anchor="retry-loop"><h2>The retry loop</h2><p>The fixed delay becomes a ceiling with jitter.</p></section>',
+    '<section data-explain-anchor="jitter"><h2>Jitter</h2><p>A random wait below the ceiling.</p></section>',
+    '<section data-explain-anchor="old-sleep"><h2>No more sleep</h2><p>The old fixed sleep is gone.</p></section>',
+    '</body></html>',
+    '',
+  ].join('\n'));
+  commit('Explain retry jitter');
+}
 
 // main moves on after the fork: none of this is in feature's merge diff.
 run('checkout', '-q', 'main');
