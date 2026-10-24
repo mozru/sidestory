@@ -7,6 +7,7 @@ import { WIDGET_TYPE_FILES } from '../src/widget-types/index.ts';
 import { buildHighlight } from './build-highlight.mjs';
 import { buildWidgetLibs } from './build-widget-libs.mjs';
 import { generateWidgetData } from './widget-data.ts';
+import { mcpServerBuild } from './mcp-build.mjs';
 
 const watch = process.argv.includes('--watch');
 const production = process.argv.includes('--production');
@@ -31,6 +32,8 @@ const builds = [
   { ...common, entryPoints: ['src/extension/highlight/worker.ts'], outfile: 'dist/highlight-worker.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
   // The standalone widget checker (node dist/check.cjs <sidestory-dir>); uses the worker and widget-data beside it.
   { ...common, entryPoints: ['src/cli/check-widgets.ts'], outfile: 'dist/check.cjs', platform: 'node', format: 'cjs', mainFields: ['module', 'main'] },
+  // The comments MCP server for other agents (docs/COMMENTS-PLAN.md §10.2); the same bundle as the plugin's.
+  mcpServerBuild('dist/mcp.cjs', common),
 ];
 
 if (production) rmSync('dist', { recursive: true, force: true });

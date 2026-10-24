@@ -1,0 +1,13 @@
+{
+  "name": "sidestory-comments",
+  "displayName": "Sidestory comments",
+  "description": "Answer Sidestory comment threads from VS Code: tools to read and reply to threads, and a channel that brings the comments you send with Ask Claude into your Claude Code session. Needs Node 20 or later on PATH.",
+  "version": "0.2.1",
+  "author": { "name": "Sidestory contributors" },
+  "homepage": "https://github.com/mozru/sidestory",
+  "repository": "https://github.com/mozru/sidestory",
+  "license": "MIT",
+  "keywords": ["sidestory", "comments", "review", "channel", "mcp", "vscode"],
+  "dependencies": ["sidestory"],
+  "channels": [{ "server": "sidestory", "displayName": "Sidestory comments" }]
+}
