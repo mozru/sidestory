@@ -4,6 +4,7 @@
 // trivial, and leaves test/retry.test.ts unexplained. Coverage shows as decorations on the files (Explorer, Source
 // Control), the "This branch" group of Sidestories, Next Unexplained Change, steps opening the merge diff, This File.
 import { expect, type FrameLocator, type Locator, type Page, test } from '@playwright/test';
+import { writeFileSync } from 'node:fs';
 import { command, inContainer } from './helpers.ts';
 
 const REPO = '/home/workspace/chgx';
@@ -20,6 +21,21 @@ const activeTab = (page: Page, text: string) => expect(page.locator('.tab.active
 const decorated = (editor: Locator) => editor.locator('.view-overlays [class*="ced-"]').count();
 /** A row's file decoration badges, as VS Code draws them (the label's ::after content). */
 const badge = (r: Locator) => r.locator('.monaco-icon-label').first().evaluate((el) => getComputedStyle(el, '::after').content);
+
+// On a failure, the server's recent logs (the Sidestory and Git output channels, the extension hosts) and the
+// fixture's git state go with the test's results: CI's container is gone by the time anyone looks.
+test.afterEach(async ({}, info) => {
+  if (info.status === info.expectedStatus) return;
+  try {
+    const logs = inContainer(
+      `cd ~/.openvscode-server/data/logs 2>/dev/null && for f in $(find . -type f -name '*.log' -mmin -3 | grep -Ei 'sidestory|git|exthost|remoteagent' | head -40); do echo "=== $f"; tail -c 30000 "$f"; done; echo "=== git"; cd ${REPO} && git status --short --branch && git log --oneline -3 --all; ls -la .git; echo "=== ps"; ps -eo pid,etimes,args | grep -E '[e]xtensionHost|[g]it ' | cut -c1-200`,
+    );
+    writeFileSync(info.outputPath('server-logs.txt'), logs);
+  } catch (e) {
+    writeFileSync(info.outputPath('server-logs.txt'), String(e));
+  }
+  await info.attach('server-logs', { path: info.outputPath('server-logs.txt'), contentType: 'text/plain' });
+});
 
 async function openRepo(page: Page, prepare = ''): Promise<void> {
   // Side-by-side diffs beside the panel (the README's tip), so the left side has an editor.
