@@ -98,6 +98,17 @@ describe('discovery', () => {
     expect(index.packagesForFile(fileKey).size).toBe(1);
   });
 
+  it("a base-side anchor isn't on the working file's lines, and the manifest id is kept", async () => {
+    write(join(root, 'src/a.ts'), code(40));
+    const dir = story(root, '', 'branch', { title: 'Branch', anchors: { now: { file: 'src/a.ts', range: [1, 5] }, gone: { file: 'src/a.ts', range: [10, 12] } } });
+    write(join(dir, 'manifest.json'), JSON.stringify({ version: 3, id: '01JC0AANDED00000000000000A', title: 'Branch', base: 'main', anchors: { now: { file: 'src/a.ts', range: [1, 5] }, gone: { file: 'src/a.ts', side: 'base', range: [10, 12] } } }));
+    await start();
+    const fileKey = key(join(root, 'src/a.ts'));
+    expect(index.anchorsIn(fileKey).map((s) => s.entry.ids[s.index])).toEqual(['now']);
+    expect(index.anchorsCovering(fileKey, 10, 12)).toEqual([]);
+    expect(entryOf('', 'branch')!.id).toBe('01JC0AANDED00000000000000A');
+  });
+
   it('keeps a stable cut: the first by path, whatever order findFiles returns', async () => {
     limits.sidestories = 10;
     const all: string[] = [];

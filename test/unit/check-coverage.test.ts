@@ -465,6 +465,8 @@ describe('--pin and --accept with a branch', () => {
     delete m.anchors['old-sleep'].quote;
     delete m.id;
     writeFileSync(join(sd, 'manifest.json'), JSON.stringify(m, null, 2));
+    // Committed without one, so there is no earlier id to put back.
+    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'No id');
     // A file at the old path in the working tree must not be what gets pinned.
     mkdirSync(join(dir, 'legacy'));
     writeFileSync(join(dir, 'legacy/sleep.ts'), 'something else entirely\n');
@@ -527,13 +529,39 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     expect(ids(await json(['--coverage', '--base', head, '--repo', dir])).map((f) => f.code)).toEqual(['id-removed']);
   });
 
-  it('committed changes count too (--committed), and a renamed folder keeps its id', async () => {
+  it('committed changes count too (--committed), a move to another package under the same name too', async () => {
     const { dir, head } = withLanded();
-    git(dir, 'mv', '.sidestory/landed', '.sidestory/moved');
-    writeFileSync(join(dir, '.sidestory/moved/manifest.json'), landed(B));
-    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Rename and rewrite');
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
+    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Rewrite');
     const r = await json(['--coverage', '--base', head, '--committed', '--repo', dir]);
-    expect(ids(r).map((f) => [f.code, f.file.slice(-'.sidestory/moved/manifest.json'.length)])).toEqual([['id-changed', '.sidestory/moved/manifest.json']]);
+    expect(ids(r).map((f) => [f.code, f.file.slice(-'.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', '.sidestory/landed/manifest.json']]);
+    const moved = withLanded();
+    mkdirSync(join(moved.dir, 'pkg'));
+    git(moved.dir, 'mv', '.sidestory', 'pkg/.sidestory');
+    writeFileSync(join(moved.dir, 'pkg/.sidestory/landed/manifest.json'), landed(B));
+    git(moved.dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Move and rewrite');
+    const m = await json(['--coverage', '--base', moved.head, '--committed', '--repo', moved.dir]);
+    expect(ids(m).map((f) => [f.code, f.file.slice(-'pkg/.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', 'pkg/.sidestory/landed/manifest.json']]);
+  });
+
+  it('a manifest renamed into a folder of another name is not compared (git may pair two different sidestories)', async () => {
+    const { dir, head } = withLanded();
+    git(dir, 'mv', '.sidestory/landed', '.sidestory/other');
+    writeFileSync(join(dir, '.sidestory/other/manifest.json'), landed(B));
+    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Rename and rewrite');
+    expect(ids(await json(['--coverage', '--base', head, '--committed', '--repo', dir]))).toEqual([]);
+  });
+
+  it('--pin puts back an id the manifest had, instead of writing a new one', async () => {
+    const dir = copy();
+    const file = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(file, 'utf8'));
+    delete m.id;
+    writeFileSync(file, JSON.stringify(m, null, 2));
+    const r = await json([join(dir, '.sidestory/retry-jitter'), '--pin', '--coverage'], { newId: () => B });
+    expect(r.pin!.id).toBe(RETRY);
+    expect(JSON.parse(readFileSync(file, 'utf8')).id).toBe(RETRY);
+    expect(ids(r)).toEqual([]);
   });
 
   it('nothing when the id is kept, the old manifest had none, or the sidestory is new', async () => {
@@ -588,5 +616,19 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     expect(idProblem('A', undefined, new Set())).toBe('id-removed');
     expect(idProblem('A', 'B', new Set(['A']))).toBeUndefined();
     expect(idProblem('A', undefined, new Set(['A']))).toBeUndefined();
+  });
+});
+
+describe('shared comment threads (docs/COMMENTS-PLAN.md §3.1)', () => {
+  it("are the sidestory's own files: not counted, so sharing a comment never leaves a change unexplained", async () => {
+    const dir = copy();
+    const t = join(dir, '.sidestory/retry-jitter/threads/t_01JC0AANDED00000000000000A');
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(t, 'e_01JC0REP4ACED0000000000000.json'), '{"v":1}\n');
+    // Anything else there is code like any other.
+    writeFileSync(join(t, 'run.js'), 'module.exports = 1;\n');
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    const paths = r.coverage.files.map((f) => f.path);
+    expect(paths.filter((p) => p.includes('/threads/'))).toEqual(['.sidestory/retry-jitter/threads/t_01JC0AANDED00000000000000A/run.js']);
   });
 });

@@ -2,7 +2,7 @@
 // webview in sync. The panel can dive into detail explainers and come back (the trail).
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
-import { explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
+import { anchorParts, explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
 import { decodePair } from '../core/hunks.ts';
 import type { DiffContext } from './changes/open.ts';
 import { isDiffSide, openStepsIn, openTarget } from './changes/open.ts';
@@ -525,7 +525,8 @@ export class ExplainerSession implements vscode.Disposable {
 
   /** Where each anchor's code is now, for placing code comments under steps. */
   anchorSpans(): { id: string; file: string; range: { start: number; end: number } | null }[] {
-    return [...(this.manifest?.anchors.values() ?? [])].map((a) => ({ id: a.id, file: a.file, range: this.resolutions.get(a.id)?.range ?? a.range }));
+    // Code comments are on the working tree: base-side anchors (the merge-base's lines) never place them.
+    return [...(this.manifest?.anchors.values() ?? [])].filter((a) => sideOf(anchorParts(a)[0]) === 'head').map((a) => ({ id: a.id, file: a.file, range: this.resolutions.get(a.id)?.range ?? a.range }));
   }
 
   /** The manifest's stable `id` (docs/COMMENTS-PLAN.md §3.1), as the manifest parser read it. */

@@ -48,10 +48,19 @@ export function sidestoryFolderOf(path: string): string | undefined {
   return m[1] ? `${m[1]}/.sidestory/${m[2]}` : `.sidestory/${m[2]}`;
 }
 
+/** A shared comment's event file, relative to its sidestory folder (docs/COMMENTS-PLAN.md §3.1): JSON data, never code. */
+const THREAD_EVENT_FILE = /^threads\/t_[0-9A-HJKMNP-TV-Z]{26}\/e_[0-9A-HJKMNP-TV-Z]{26}\.json$/;
+
+/** A path, relative to its sidestory folder, that the sidestory owns: its two files, or a shared comment's event file. */
+export function isOwnedFileName(rest: string): boolean {
+  return (SIDESTORY_FILES as readonly string[]).includes(rest) || THREAD_EVENT_FILE.test(rest);
+}
+
 /**
  * A file a sidestory owns, left out of a branch's coverage because it is the explanation (§5.1): `manifest.json` or
  * `sidestory.html` directly in a real sidestory folder (`sidestoryFolderOf`) that is a complete sidestory
- * (`isComplete(folder)`: both files present, at the head or at the merge-base; assumed when not given). Nothing else
+ * (`isComplete(folder)`: both files present, at the head or at the merge-base; assumed when not given), and the
+ * event files of its shared comment threads (`threads/t_<ULID>/e_<ULID>.json`, which Share writes). Nothing else
  * is owned: widget code, assets, helper scripts and any other file under `.sidestory/<name>/` count like code
  * elsewhere (a branch could otherwise keep code there and require it from src/), and archives count as one change.
  */
@@ -59,8 +68,7 @@ export function ownedBySidestory(path: string, isComplete?: (folder: string) => 
   if (isArchivePath(path)) return false;
   const folder = sidestoryFolderOf(path);
   if (!folder) return false;
-  const rest = path.slice(folder.length + 1);
-  if (!(SIDESTORY_FILES as readonly string[]).includes(rest)) return false;
+  if (!isOwnedFileName(path.slice(folder.length + 1))) return false;
   return isComplete ? isComplete(folder) : true;
 }
 

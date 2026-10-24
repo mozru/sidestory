@@ -113,7 +113,8 @@ export class CommentsController implements vscode.Disposable {
   async commentOnSelection(ask: boolean): Promise<void> {
     const ed = vscode.window.activeTextEditor;
     if (!ed || ed.document.uri.scheme !== 'file') {
-      void vscode.window.showInformationMessage('Select lines in a file first.');
+      // A diff's old side (and HEAD's, with includeUncommitted off) is a read-only version from git: no comments there.
+      void vscode.window.showInformationMessage(ed?.document.uri.scheme === 'sidestory-git' ? "This is a read-only version from git. Comments go on the file as it is in your working tree: select the lines there." : 'Select lines in a file first.');
       return;
     }
     const sel = ed.selection;

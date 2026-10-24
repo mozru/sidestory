@@ -235,7 +235,10 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     if (!s || !k) return 'refuse';
     const full = vscode.Uri.joinPath(s.repo.rootUri, ...k.path.split('/'));
     const prefix = ref.root.path.replace(/\/?$/, '/');
-    return full.path.startsWith(prefix) ? { file: full.path.slice(prefix.length), side: k.side } : 'refuse';
+    // The git extension's root and the workspace's may differ in a drive letter's case on Windows (as relPath allows).
+    const head = full.path.slice(0, prefix.length);
+    const inside = process.platform === 'win32' ? head.toLowerCase() === prefix.toLowerCase() : head === prefix;
+    return inside ? { file: full.path.slice(prefix.length), side: k.side } : 'refuse';
   };
   // This File (§9.10), after Sidestories.
   const thisFile = new ThisFileView(index, here, {

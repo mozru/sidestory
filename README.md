@@ -49,6 +49,12 @@ Code blocks in the page are syntax-highlighted in your editor's theme (mark them
 
 ![tiny-lsm's overview: the "A put" step shows a highlighted Python code block, then the write-path simulation steps through db.py in the editor](media/marketplace/python.gif)
 
+## Comments, and Ask Claude
+
+Comment on a step (<kbd>C</kbd> in the panel) or on lines of code (**Sidestory: Comment on Selection**, or the gutter **+** on lines a step covers), reply and resolve. Threads show in a pane under the sidestory, in the editor, and in the **Comments** view. They stay on your machine (`.sidestory/.local/`, ignored by git) until you **Share** one, which commits it with the sidestory.
+
+**Ask Claude** (<kbd>A</kbd>, or **Ask Claude About Selection**) sends your comment to a Claude Code session started with Sidestory's channel, and Claude answers in the thread. Install the channel with `/plugin install sidestory-comments@sidestory`; **Sidestory: Copy Claude Command with Comments** copies the command that starts Claude Code with it. Codex, Cursor and other MCP clients get the same tools from **Sidestory: Copy MCP Server Config**. Details: [Comments and Claude](docs/GUIDE.md#comments-and-claude).
+
 ## Stays in sync with the code
 
 Sections are anchored to the code they describe, not just to line numbers. Insert lines above, move a function, or edit the code (saved or not) and the section follows it as you type. When the code itself changes, the section says so: **Code changed**, **Out of date** when it changed a lot, or **Code not found**. **Sidestory: Pin Anchors to the Current Code** records each anchor's code; **Re-anchor Section to Selection** points a section at new code. Edits to the sidestory show up live too, keeping your place.
@@ -176,6 +182,10 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | **Sidestory: Copy Prompt: Explain This Change** | Copy a prompt for the change at the cursor (editor context menu, This File). |
 | **Sidestory: Mark as Trivial…** | Mark the change at the cursor, or the selected lines, as needing no explanation, with a reason. |
 | **Sidestory: Re-pin This Step** | Pin a step whose code grew since it was written, once its prose covers the new lines. |
+| **Sidestory: Comment on Selection** / **Ask Claude About Selection** | Comment on the selected lines, or send the comment to Claude (also in the editor's context menu). |
+| **Sidestory: Next Comment for You** / **Previous Comment for You** | Go to the next thread with something new for you. |
+| **Sidestory: Copy Claude Command with Comments** | Copy the command that starts Claude Code with Sidestory's channel and its comment tools allowed. |
+| **Sidestory: Copy MCP Server Config** | Copy an MCP server entry with the comment tools, for Codex, Cursor and other clients. |
 | **Sidestory: Set Base…** | Pick the branch to compare this branch with, kept per repository and branch. It wins over a sidestory's `base`; **Use the Default Base** goes back. |
 
 ## Settings
@@ -193,6 +203,11 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…**, no sidestory on the branch gives one, and Git recorded no base for the branch (empty: the remote's default branch, then `main` or `master`). |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |
 | `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
+| `sidestory.comments.defaultLocation` | `"local"` | Where new comment threads are kept: `local` (only on this machine) or `shared` (committed with the sidestory). |
+| `sidestory.comments.authorName` | `""` | The name on your comments (empty: git's `user.name`); never an email address. |
+| `sidestory.comments.ranges` | `"steps"` | Where the editor's comment **+** appears: on lines a step covers, or `everywhere`. |
+| `sidestory.comments.stateDir` | `""` | Where Ask Claude's delivery records are kept, shared with the comments plugin (empty: the per-user default). |
+| `sidestory.claude.channelFlag` | `"dev"` | The flag the copied Claude command uses for Sidestory's channel: `dev` or `channels`. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 
 ## Requirements

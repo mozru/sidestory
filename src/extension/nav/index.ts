@@ -8,7 +8,7 @@ import { buildDetailGraph, MAX_GRAPH_EDGES, mergeGroups, PRIMARY_PATH_PREFIX, ty
 import { displayText, middleTruncate } from '../../core/display-text.ts';
 import { excludePatterns, globMatcher, joinGlobs } from '../../core/glob.ts';
 import { OutlineScanner, type OutlineStep } from '../../core/html-scan.ts';
-import { anchorIdSchema, anchorSpecSchema, parseManifest, type Anchor, type Quote } from '../../core/manifest.ts';
+import { anchorIdSchema, anchorParts, anchorSpecSchema, parseManifest, sideOf, type Anchor, type Quote } from '../../core/manifest.ts';
 import { quoteHash, quotePositions } from '../../core/quote-positions.ts';
 import type { ExplainerRef } from '../explainers.ts';
 import { MAX_TRAIL } from '../../shared/protocol.ts';
@@ -883,7 +883,9 @@ export class SidestoryIndex implements vscode.Disposable {
     e.qLen = new Int32Array(n);
     e.qHash = new Int32Array(n);
     anchors.forEach((a, i) => {
-      e.file[i] = this.intern(uriKey(vscode.Uri.joinPath(e.ref.root, a.file)));
+      // A base-side anchor's range is in the merge-base's version of the file, not in the file on disk: no file
+      // (−1), so CodeLens, This File, drift and comment ranges never place it on the working tree's lines.
+      e.file[i] = sideOf(anchorParts(a)[0]) === 'base' ? -1 : this.intern(uriKey(vscode.Uri.joinPath(e.ref.root, a.file)));
       e.start[i] = a.range.start;
       e.end[i] = a.range.end;
       if (a.quote) {
@@ -909,6 +911,7 @@ export class SidestoryIndex implements vscode.Disposable {
     }
     this.totals.anchors += n;
     for (const f of new Set(e.file)) {
+      if (f < 0) continue;
       let refs = this.fileRefs.get(f);
       if (!refs) this.fileRefs.set(f, (refs = new Set()));
       refs.add(e.key);

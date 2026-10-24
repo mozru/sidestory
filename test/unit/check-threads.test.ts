@@ -1,5 +1,5 @@
 // docs/COMMENTS-PLAN.md §10.2: `check.cjs threads`, labelled and escaped like list_threads.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -46,5 +46,16 @@ describe('check.cjs threads', () => {
     expect(all.out).toContain('Eve [repository]');
     expect(all.out).not.toContain('</channel>');
     expect((await run('--bogus')).code).toBe(2);
+  });
+
+  it.skipIf(process.platform === 'win32')('a state folder others can write gives no trust: every comment is "repository"', async () => {
+    const files = new ThreadFiles(root, new Ledger(state, repoKeyFor(root)));
+    await files.write({ tier: 'local', scope: { kind: 'sidestory', name: 'retry' } }, { v: 1, id: newId('e'), thread: newId('t'), type: 'open', at: 'now', by: { kind: 'human', name: 'Alex' }, anchor: { kind: 'step', step: 'delay' }, body: 'Mine' }, 'human');
+    expect((await run(root, '--all')).out).toContain('[local_user]');
+    chmodSync(join(state, 'authored'), 0o777);
+    const r = await run(root, '--all');
+    expect(r.out).not.toContain('[local_user]');
+    expect(r.out).toContain('[repository]');
+    expect(r.err).toContain('writable by other users');
   });
 });

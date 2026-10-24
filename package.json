@@ -1024,13 +1024,13 @@
         },
         {
           "command": "sidestory.commentOnSelection",
-          "when": "editorHasSelection && resourceScheme == file",
-          "group": "sidestory@5"
+          "when": "sidestory.available && editorHasSelection && resourceScheme == file",
+          "group": "sidestory_comments@1"
         },
         {
           "command": "sidestory.askClaudeAboutSelection",
-          "when": "editorHasSelection && resourceScheme == file",
-          "group": "sidestory@6"
+          "when": "sidestory.available && editorHasSelection && resourceScheme == file",
+          "group": "sidestory_comments@2"
         }
       ],
       "explorer/context": [
@@ -1381,6 +1381,11 @@
         "view": "sidestory.thisFile",
         "when": "sidestory.thisFile.state == noFile",
         "contents": "Open a file to see the steps that explain it."
+      },
+      {
+        "view": "sidestory.comments",
+        "when": "!sidestory.comments.any",
+        "contents": "No comments yet. Press C in a sidestory to comment on a step, or select code and run Comment on Selection.\n[How to Turn On Ask Claude](command:sidestory.comments.howTo)"
       }
     ]
   },

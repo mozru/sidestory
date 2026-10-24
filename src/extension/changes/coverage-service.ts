@@ -24,7 +24,7 @@ import { outlineHtml } from '../../core/html-scan.ts';
 import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, type ChangeBlock, type FileDiff, type MoveGroup } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isOwnedFileName, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
 import { pairUnstagedRenames } from '../../core/renames.ts';
 import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
@@ -302,7 +302,7 @@ export async function computeCoverage(
   for (const e of src.entries) {
     for (const p of [e.path, e.oldPath]) {
       const f = p !== undefined ? sidestoryFolderOf(p) : undefined;
-      if (f && (SIDESTORY_FILES as readonly string[]).includes(p!.slice(f.length + 1))) owned.add(f);
+      if (f && isOwnedFileName(p!.slice(f.length + 1))) owned.add(f);
     }
   }
   const completeness = new Map<string, Promise<{ head: boolean; mergeBase: boolean }>>();

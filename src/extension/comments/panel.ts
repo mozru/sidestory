@@ -102,7 +102,8 @@ export class CommentsPanels implements vscode.Disposable {
   }
 
   async refresh(s: CommentsSession): Promise<void> {
-    if (!this.sessions.has(s)) return;
+    // Threads are files on this machine: a remote or virtual root has none (and no local tier to check).
+    if (!this.sessions.has(s) || s.ref.root.scheme !== 'file') return;
     const list = await this.entriesFor(s);
     const steps = new Set(s.stepIds());
     const map = new Map<string, Entry>();

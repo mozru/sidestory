@@ -262,5 +262,5 @@ export function canonicalJson(v: unknown): string {
     .join(',')}}`;
 }
 
-/** The manifest's stable sidestory id (§3.1), when it has a valid one. */
+/** A sidestory folder name, as thread locations name it (§3.1). */
 export const sidestoryNameSchema = explainerNameSchema;

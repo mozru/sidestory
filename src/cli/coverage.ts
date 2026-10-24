@@ -8,8 +8,8 @@ import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCovera
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
 import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';
-import { FULL_SHA, isValidBase, parseBranchFields, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
+import { FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseBranchFields, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, isOwnedFileName, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
 import { resolveAnchor } from '../core/resolve.ts';
@@ -103,6 +103,8 @@ export interface BranchContext {
   held: Map<string, number[]>;
   /** The merge-base text of a path relative to the sidestory's root (the folder holding .sidestory/), for base-side pins. */
   baseText(file: string): Promise<string | undefined>;
+  /** The id the given sidestory's manifest had at the merge-base or HEAD: --pin puts it back rather than writing a new one. */
+  previousId?: string;
 }
 
 const ZERO = /^0+$/;
@@ -296,7 +298,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const e of sorted) {
     for (const p of [e.path, e.oldPath]) {
       const f = p !== undefined && isSafeRepoPath(p) ? sidestoryFolderOf(p) : undefined;
-      if (f && (SIDESTORY_FILES as readonly string[]).includes(p!.slice(f.length + 1))) ownedFolders.add(f);
+      if (f && isOwnedFileName(p!.slice(f.length + 1))) ownedFolders.add(f);
     }
   }
   for (const f of ownedFolders) {
@@ -346,7 +348,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   }
 
   // Stable ids (docs/COMMENTS-PLAN.md §3.1): local comment threads key off a sidestory's manifest `id`.
-  if (!opts.newId) await checkIds(git, sorted, { mode, mergeBase, headSha, add: (file, code, message, line) => add('error', abs(file), code, message, line) });
+  const previousIds = await checkIds(git, sorted, { mode, mergeBase, headSha, report: !opts.newId, add: (file, code, message, line) => add('error', abs(file), code, message, line) });
   let classified = sorted.map((original) => {
     let e = original;
     if (unsafe(e)) {
@@ -724,8 +726,10 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     for (const f of result.files) for (const c of f.changes) for (const n of c.needsLook ?? []) if (n.sidestory === given.folder) held.set(n.anchor, [...(held.get(n.anchor) ?? []), ...n.lines]);
     const prefix = given.prefix;
     const cache = new Map<string, Promise<string | undefined>>();
+    const previousId = opts.newId ? undefined : previousIds.get(`${given.folder}/manifest.json`);
     branch = {
       held,
+      ...(previousId ? { previousId } : {}),
       baseText: (file) => {
         const path = rel(prefix, file);
         let p = cache.get(path);
@@ -872,31 +876,36 @@ function readManifestId(bytes: Uint8Array | undefined): { id?: string; text: str
  * The ids of the sidestories this change edits, against the merge-base and, comparing the working tree, against HEAD
  * too (a sidestory added on the branch has no merge-base version, and an agent rewriting its manifest whole may drop
  * the id). Every manifest in the diff counts, not only the sidestories that belong: comments attach to landed ones too.
+ * A manifest renamed into a folder of another name isn't compared (local threads go by folder name, and git may pair
+ * two different small manifests as a rename). Returns each manifest's earlier id, so --pin can put back a dropped one.
  */
-async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working' | 'committed' | 'head'; mergeBase: string; headSha: string; add: (file: string, code: string, message: string, line?: number) => void }): Promise<void> {
+async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working' | 'committed' | 'head'; mergeBase: string; headSha: string; report: boolean; add: (file: string, code: string, message: string, line?: number) => void }): Promise<Map<string, string>> {
+  const previous = new Map<string, string>();
   const isManifest = (p: string | undefined) => p !== undefined && isSafeRepoPath(p) && p.endsWith('/manifest.json');
-  const blob = async (id: string) => (ZERO.test(id) ? undefined : (await git.blobs([id])).bytes.get(id));
+  // As much as the extension reads (MAX_MANIFEST_BYTES): a bigger manifest has no id there either.
+  const capped = (b: Uint8Array | undefined) => (b && b.byteLength <= MAX_MANIFEST_BYTES ? b : undefined);
+  const blob = async (id: string) => (ZERO.test(id) ? undefined : capped((await git.blobs([id])).bytes.get(id)));
   const newSide = async (e: Entry) => {
     if (o.mode !== 'working') return blob(e.newId);
     const disk = isSafeFsPath(e.path) ? await git.readWorkingFile(e.path) : undefined;
-    return disk && 'bytes' in disk ? disk.bytes : undefined;
+    return disk && 'bytes' in disk ? capped(disk.bytes) : undefined;
   };
-  // Ids that moved into the archive in this change.
+  const name = (p: string) => sidestoryOf(p)?.folder.split('/').pop();
+  // Ids that moved into the archive in this change (added or renamed there, not edits to older archives).
   const archived = new Set<string>();
   for (const e of entries) {
-    if (e.newMode === '000000' || !isManifest(e.path) || !isArchivePath(e.path)) continue;
+    if (e.newMode === '000000' || (e.status !== 'A' && e.status !== 'R') || !isManifest(e.path) || !isArchivePath(e.path)) continue;
     const id = readManifestId(await newSide(e))?.id;
     if (id) archived.add(id);
   }
   for (const e of entries) {
     if (e.newMode === '000000' || !isManifest(e.path) || sidestoryOf(e.path)?.rest !== 'manifest.json') continue;
+    if (e.status === 'R' && (!isManifest(e.oldPath) || name(e.oldPath!) !== name(e.path))) continue;
     const now = readManifestId(await newSide(e));
     if (!now) continue;
     // What it was: at the merge-base (edited or renamed there), then at HEAD (the working tree's own edits).
     const refs: { label: string; id: () => Promise<string | undefined> }[] = [];
-    if ((e.status === 'M' || e.status.startsWith('R')) && (e.oldPath === undefined || isManifest(e.oldPath))) {
-      refs.push({ label: `the merge-base (${o.mergeBase.slice(0, 7)})`, id: async () => readManifestId(await blob(e.oldId))?.id });
-    }
+    if (e.status === 'M' || e.status === 'R') refs.push({ label: `the merge-base (${o.mergeBase.slice(0, 7)})`, id: async () => readManifestId(await blob(e.oldId))?.id });
     if (o.mode === 'working' && !e.untracked && o.headSha !== o.mergeBase) {
       refs.push({ label: `HEAD (${o.headSha.slice(0, 7)})`, id: async () => {
         const t = (await git.lsTree(o.headSha, [e.path])).get(e.path);
@@ -905,20 +914,23 @@ async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working
     }
     for (const ref of refs) {
       const before = await ref.id();
+      if (before !== undefined && !previous.has(e.path)) previous.set(e.path, before);
       const problem = idProblem(before, now.id, archived);
       if (!problem) continue;
-      const why = 'local comment threads find their sidestory by it, so they would move to "Elsewhere"';
+      if (!o.report) break;
+      const why = 'local comment threads find their sidestory by it, and would otherwise move to "Elsewhere" in its panel';
       o.add(
         e.path,
         problem,
         problem === 'id-changed'
-          ? `"id" is "${now.id}", but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}". If this is a new sidestory replacing an archived or deleted one under the same folder name, run again with --new-id.`
-          : `"id" is gone (or isn't a valid id), but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}" (--pin would write a new one instead).`,
+          ? `"id" is "${now.id}", but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}". (Only if the user says this is a new sidestory replacing a deleted one under the same folder name, run again with --new-id.)`
+          : `"id" is missing or not a valid id, but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}"; --pin does so too, from this comparison.`,
         manifestLineOf(now.text, 'id'),
       );
       break;
     }
   }
+  return previous;
 }
 
 /** A sidestory's manifest and page: from the working tree, or from the head commit (falling back to disk when `diskToo`). */

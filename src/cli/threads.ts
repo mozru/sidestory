@@ -1,12 +1,12 @@
 // `node check.cjs threads [<root>] [--waiting] [--json]` (docs/COMMENTS-PLAN.md §10.2): the comment threads for
 // agents that only run shell commands, with the same trust labels and escaping as the MCP server's list_threads.
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { plainLine } from '../core/display-text.ts';
 import { safeJson } from '../core/threads/prompt.ts';
 import { Ledger } from '../comments/ledger.ts';
 import { allThreads, filterStatus, summary } from '../comments/query.ts';
-import { repoKeyFor, repoRootFor, resolveStateDir } from '../comments/state-dir.ts';
+import { checkPrivate, repoKeyFor, repoRootFor, resolveStateDir } from '../comments/state-dir.ts';
 import { ThreadFiles } from '../comments/storage.ts';
 
 export const THREADS_USAGE = 'usage: node check.cjs threads [<root>] [--waiting] [--all] [--json]';
@@ -29,7 +29,21 @@ export async function threadsMain(argv: string[], io: { out: (s: string) => void
     return 2;
   }
   const root = repoRootFor(start);
-  const files = new ThreadFiles(root, new Ledger(stateDir ?? (await resolveStateDir()), repoKeyFor(root)));
+  const state = stateDir ?? (await resolveStateDir());
+  const ledger = new Ledger(state, repoKeyFor(root));
+  // Trust labels come from the ledger: read it only from a private state folder, as the MCP server and the extension
+  // do (never created here). A missing one has no entries; an unsafe one labels everything "repository".
+  for (const dir of [state, join(state, 'authored')]) {
+    if (!existsSync(dir)) break;
+    try {
+      checkPrivate(dir);
+    } catch (e) {
+      ledger.disabled = true;
+      io.err(`check.cjs threads: ${(e as Error).message}; every comment is labelled "repository".`);
+      break;
+    }
+  }
+  const files = new ThreadFiles(root, ledger);
   const status = flags.has('--waiting') ? 'waiting_for_claude' : flags.has('--all') ? 'all' : 'open';
   const entries = filterStatus(await allThreads([files]), status);
   if (flags.has('--json')) {

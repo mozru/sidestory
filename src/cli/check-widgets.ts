@@ -530,8 +530,9 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
     patches.set(a.id, { range, quote });
     report.pinned.push({ anchor: a.id, file: a.file, range });
   }
-  // A stable id for a manifest that has none (docs/COMMENTS-PLAN.md §3.1); a bad one is reported, never replaced.
-  const id = what.all && manifest.raw.id === undefined ? (what.newId ?? newUlid)() : undefined;
+  // A stable id for a manifest that has none (docs/COMMENTS-PLAN.md §3.1); a bad one is reported, never replaced. One the
+  // manifest had at the merge-base or HEAD (an agent rewrote it whole) is put back, so its comment threads stay.
+  const id = what.all && manifest.raw.id === undefined ? (what.branch?.previousId ?? (what.newId ?? newUlid)()) : undefined;
   if (patches.size || id) await writeFileAtomic(ctx.manifestFile, patchManifest(manifestText, patches, { id }));
   if (id) report.id = id;
   return report;

@@ -146,6 +146,18 @@ describe('countedPath and sidestoryFolderOf', () => {
     expect(countedPath('.sidestory/-bad/manifest.json')).toBe(true);
     expect(countedPath('src/a.ts')).toBe(true);
   });
+  it('shared comment event files are the sidestory\'s own; anything else under threads/ counts', () => {
+    const t = 't_01JC0AANDED00000000000000A';
+    const e = 'e_01JC0REP4ACED0000000000000';
+    expect(countedPath(`.sidestory/retry/threads/${t}/${e}.json`)).toBe(false);
+    expect(countedPath(`pkg/.sidestory/retry/threads/${t}/${e}.json`)).toBe(false);
+    expect(countedPath(`.sidestory/half/threads/${t}/${e}.json`, (f) => f !== '.sidestory/half')).toBe(true);
+    expect(countedPath(`.sidestory/retry/threads/${t}/${e}.js`)).toBe(true);
+    expect(countedPath(`.sidestory/retry/threads/${t}/run.json`)).toBe(true);
+    expect(countedPath(`.sidestory/retry/threads/${t}/sub/${e}.json`)).toBe(true);
+    expect(countedPath(`.sidestory/archive/2026-x/threads/${t}/${e}.json`)).toBe(true);
+    expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: `.sidestory/retry/threads/${t}/${e}.json` })).toEqual({ counted: true, as: 'deletion' });
+  });
   it('a rename or copy counts when either path counts; into a sidestory\'s own file, the old side is a deletion', () => {
     expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: '.sidestory/notes/manifest.json' })).toEqual({ counted: true, as: 'deletion' });
     expect(countedChange({ status: 'R', oldPath: '.sidestory/notes/sidestory.html', path: 'src/page.js' })).toEqual({ counted: true, as: 'addition' });
