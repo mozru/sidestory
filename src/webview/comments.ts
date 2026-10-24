@@ -576,7 +576,8 @@ export class CommentsPane {
       intent.append(op);
     }
     intent.addEventListener('change', (e) => {
-      if (e.isTrusted) c.intent = intent.value === 'edit' ? 'edit' : 'answer';
+      void e;
+      c.intent = intent.value === 'edit' ? 'edit' : 'answer';
     });
     const send = el('button', 'cx-c-send');
     send.type = 'button';
@@ -611,6 +612,7 @@ export class CommentsPane {
       const body = c.text.value.trim();
       if (!body) return;
       const toClaude = c.mode === 'ask';
+      c.intent = intent.value === 'edit' ? 'edit' : 'answer'; // the select is host chrome; content can't reach it
       if (c.thread) this.hooks.post({ type: 'commentReply', thread: c.thread, body, toClaude, ...(toClaude ? { intent: c.intent } : {}) });
       else if (c.step) this.hooks.post({ type: 'commentCreate', step: c.step, body, toClaude, ...(toClaude ? { intent: c.intent } : {}) });
       delete this.drafts[c.key];
