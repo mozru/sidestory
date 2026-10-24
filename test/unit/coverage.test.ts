@@ -95,6 +95,24 @@ describe('§6.3: removed lines', () => {
   });
 });
 
+describe('blank lines', () => {
+  it('a blank line at the edge of an added block needs no cover (pinning trims it from the anchor)', () => {
+    const nu = [...old10.slice(0, 3), '', 'function f() {', '}', ...old10.slice(3)];
+    const c = one(file('src/a.ts', old10, nu), [T('s', 'head', 5, 6)]);
+    expect(c).toMatchObject({ state: 'explained', coveredLines: 2, changedLines: 2 });
+    expect(one(file('src/a.ts', old10, nu), [T('s', 'head', 5, 5)])).toMatchObject({ state: 'partly', uncovered: [{ side: 'head', range: { start: 6, end: 6 } }] });
+  });
+  it('removed blank lines need no cover when the old text is given', () => {
+    const old = [...old10.slice(0, 3), '', 'gone();', ...old10.slice(3)];
+    const f = { ...file('src/a.ts', old, old10), oldLine: (l: number) => old[l - 1] ?? '' };
+    expect(one(f, [T('o', 'base', 5, 5)]).state).toBe('explained');
+  });
+  it('a change of nothing but blank lines still needs cover', () => {
+    const nu = [...old10.slice(0, 3), '', '', ...old10.slice(3)];
+    expect(one(file('src/a.ts', old10, nu), [])).toMatchObject({ state: 'unexplained', changedLines: 2 });
+  });
+});
+
 describe('§6.3: trivial', () => {
   it('a trivialFiles file is trivial, counted apart from explained', () => {
     const match = globMatcher(['package-lock.json', '**/__snapshots__/**']);

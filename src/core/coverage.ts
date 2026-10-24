@@ -36,8 +36,10 @@ export interface FileInput {
   /** The merge-base path, when it differs (a rename). */
   oldPath?: string;
   changes: readonly ChangeBlock[];
-  /** The new side's text of a line (1-based), for "needs a look". */
+  /** The new side's text of a line (1-based), for "needs a look" and blank lines. */
   newLine(line: number): string;
+  /** The old side's text of a line, for blank removed lines; without it, every removed line needs cover. */
+  oldLine?(line: number): string;
   /** Matched by a belonging sidestory's `trivialFiles`. */
   trivialFile: boolean;
   /**
@@ -54,7 +56,7 @@ export interface ChangeCoverage {
   by: { sidestory: string; anchor: string }[];
   /** Changed lines nothing covers (for partly and unexplained changes). */
   uncovered: { side: 'head' | 'base'; range: LineRange }[];
-  /** "partly explained (4 of 9 lines)". */
+  /** "partly explained (4 of 9 lines)": changed lines that need cover (blank ones don't, unless all are blank). */
   coveredLines: number;
   changedLines: number;
   /** Added lines inside a pinned target that aren't in its pinned quote: written after the step was. */
@@ -214,8 +216,19 @@ function coverChange(f: FileInput, c: ChangeBlock, head: number[], base: number[
   let stale = false;
   const whys = new Set<string>();
 
+  // Blank (whitespace-only) lines need no cover, unless the change is nothing but blank lines: pinning trims them
+  // from an anchor's edges, so a blank line added next to a function could never be covered.
+  const blankNew = (l: number) => f.newLine(l).trim() === '';
+  const blankOld = (l: number) => (f.oldLine ? f.oldLine(l).trim() === '' : false);
+  let allBlank = true;
+  for (const r of c.addedRuns) for (let l = r.start; l <= r.end && allBlank; l++) if (!blankNew(l)) allBlank = false;
+  for (const r of c.removedRuns) for (let l = r.start; l <= r.end && allBlank; l++) if (!blankOld(l)) allBlank = false;
+  let changed = 0;
+
   for (const run of c.addedRuns) {
     for (let line = run.start; line <= run.end; line++) {
+      if (!allBlank && blankNew(line)) continue;
+      changed++;
       const cover: Cover = { explaining: false, trivial: false };
       let text: string | undefined;
       for (const i of headNear) {
@@ -240,6 +253,8 @@ function coverChange(f: FileInput, c: ChangeBlock, head: number[], base: number[
   }
   for (const run of c.removedRuns) {
     for (let line = run.start; line <= run.end; line++) {
+      if (!allBlank && blankOld(line)) continue;
+      changed++;
       const cover: Cover = { explaining: false, trivial: false };
       for (const i of baseNear) if (inside(targets[i]!.range!, line)) mark(i, cover);
       for (const i of removedByHead) mark(i, cover);
@@ -255,7 +270,6 @@ function coverChange(f: FileInput, c: ChangeBlock, head: number[], base: number[
     if (t.state === 'stale') stale = true;
     if (t.trivial && t.why) whys.add(t.why);
   }
-  const changed = c.added + c.removed;
   let state: ChangeState = covered === 0 ? 'unexplained' : covered < changed ? 'partly' : allExplaining ? 'explained' : 'trivial';
   if ((state === 'explained' || state === 'trivial') && needsLook.size) state = 'needsLook';
   const cov: ChangeCoverage = {

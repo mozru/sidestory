@@ -93,6 +93,18 @@ describe('changes', () => {
     expect(apply(old, nu, d).ok).toBe(true);
   });
 
+  it('slides an appended block down to where a reader sees it, as git does', () => {
+    // A test block appended after `  });` / `});` lines: the minimal diff could start at the first `  });`.
+    const old = ['describe(a, () => {', '  it(x, () => {', '  });', '});'];
+    const added = ['', 'describe(b, () => {', '  it(y, () => {', '  });', '});'];
+    const d = diffTexts('f', text(old), text([...old, ...added]));
+    expect(shape(d)).toEqual([{ old: null, new: { start: 5, end: 9 }, added: 5, removed: 0 }]);
+    // Deletions too: the last of the repeated blocks is the one removed.
+    const del = diffTexts('f', text([...old, ...added]), text(old));
+    expect(shape(del)).toEqual([{ old: { start: 5, end: 9 }, new: null, added: 0, removed: 5 }]);
+    expect(apply([...old, ...added], old, del).ok).toBe(true);
+  });
+
   it('added and deleted files', () => {
     expect(shape(diffTexts('f', '', L('a', 'b')))).toEqual([{ old: null, new: { start: 1, end: 2 }, added: 2, removed: 0 }]);
     expect(shape(diffTexts('f', L('a', 'b'), ''))).toEqual([{ old: { start: 1, end: 2 }, new: null, added: 0, removed: 2 }]);

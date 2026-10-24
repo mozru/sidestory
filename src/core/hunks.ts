@@ -321,6 +321,35 @@ class Myers {
   }
 }
 
+/**
+ * Slides each pure addition or deletion down as far as it goes, as git does: where the lines around a block repeat
+ * (a new function appended after `}` lines), several positions give the same minimal diff, and Myers may pick an
+ * early one, so an anchor on the new function would leave its first lines "uncovered". A block moves down one line
+ * while the unchanged line after it equals its first line; blocks that come to touch are joined. In place.
+ */
+function slideDown(raw: [number, number, number, number][], a: readonly string[], b: readonly string[]): void {
+  for (let k = 0; k < raw.length; k++) {
+    const r = raw[k]!;
+    const next = raw[k + 1];
+    const pureAdd = r[0] === r[1];
+    const pureDel = r[2] === r[3];
+    if (pureAdd === pureDel) continue;
+    // The unchanged pair after the block must exist and not be the next block's start.
+    while (r[1] < a.length && r[3] < b.length && !(next && next[0] === r[1] && next[2] === r[3])) {
+      if (pureAdd ? b[r[3]] !== b[r[2]] : a[r[1]] !== a[r[0]]) break;
+      // The unchanged pair after the block now pairs with the block's first line, which has the same text.
+      r[0]++, r[1]++, r[2]++, r[3]++;
+    }
+    if (next && next[0] === r[1] && next[2] === r[3]) {
+      // Touching now: one block.
+      next[0] = r[0];
+      next[2] = r[2];
+      raw.splice(k, 1);
+      k--;
+    }
+  }
+}
+
 /** Runs of removed and added lines, merged across at most `mergeGap` unchanged lines, with their keys. */
 function blocks(path: string, a: string[], b: string[], removed: Uint8Array, added: Uint8Array): ChangeBlock[] {
   // Raw blocks: maximal runs with no unchanged line, as [i0, i1) on the old side and [j0, j1) on the new.
@@ -345,6 +374,7 @@ function blocks(path: string, a: string[], b: string[], removed: Uint8Array, add
     }
     raw.push([i0, i, j0, j]);
   }
+  slideDown(raw, a, b);
   // Merge raw blocks separated by at most mergeGap unchanged lines (the gap is the same on both sides).
   const merged: [number, number, number, number][][] = [];
   for (const r of raw) {

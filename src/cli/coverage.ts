@@ -383,9 +383,11 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const sidestories: Sidestory[] = [];
   const notBelonging: string[] = [];
   for (const [folder, c] of [...candidates].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    const read = await readSidestory(git, folder, c.fromDisk ? undefined : headSha, given?.folder === folder);
+    // A review sidestory (--head) lives untracked beside the commit it describes; with --committed, a sidestory
+    // counts only once it is committed, as in CI.
+    const read = await readSidestory(git, folder, c.fromDisk ? undefined : headSha, mode === 'head' && given?.folder === folder);
     if (!read) {
-      if (given?.folder === folder) notBelonging.push(`${folder} (its manifest.json or sidestory.html can't be read${mode !== 'working' ? ' at the head commit' : ''})`);
+      if (given?.folder === folder) notBelonging.push(mode === 'committed' ? `${folder} (it isn't committed at HEAD: --committed reads sidestories at HEAD, as CI does; commit it, or leave out --committed)` : `${folder} (its manifest.json or sidestory.html can't be read${mode !== 'working' ? ' at the head commit' : ''})`);
       continue;
     }
     const parsed = parseManifest(read.manifestText);
@@ -480,11 +482,13 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
 
   const inputs: FileInput[] = counted.map((e) => {
     const newLines = e.newText !== undefined ? textLines(e.newText) : [];
+    const oldLines = e.oldText !== undefined ? textLines(e.oldText) : [];
     return {
       path: e.path,
       ...(e.oldPath !== undefined ? { oldPath: e.oldPath } : {}),
       changes: e.diff?.changes ?? [tooLargeChange(e.path)],
       newLine: (l) => newLines[l - 1] ?? '',
+      oldLine: (l) => oldLines[l - 1] ?? '',
       trivialFile: isTrivialFile(e.path),
       newLines: newLines.length,
     };
@@ -635,8 +639,8 @@ const compactLines = (lines: number[]) => {
   return out.join(', ');
 };
 
-/** A sidestory's manifest and page: from the working tree, or from the head commit (falling back to disk for the given one). */
-async function readSidestory(git: Git, folder: string, atCommit: string | undefined, isGiven: boolean): Promise<{ manifestText: string; html: string } | undefined> {
+/** A sidestory's manifest and page: from the working tree, or from the head commit (falling back to disk when `diskToo`). */
+async function readSidestory(git: Git, folder: string, atCommit: string | undefined, diskToo: boolean): Promise<{ manifestText: string; html: string } | undefined> {
   const files = [`${folder}/manifest.json`, `${folder}/sidestory.html`];
   const decode = (b: Uint8Array) => decodeUtf8(b) ?? decodeLatin1(b);
   if (atCommit) {
@@ -647,7 +651,7 @@ async function readSidestory(git: Git, folder: string, atCommit: string | undefi
       const [m, h] = ids.map((i) => b.bytes.get(i!.id));
       if (m && h) return { manifestText: decode(m), html: decode(h) };
     }
-    if (!isGiven) return undefined;
+    if (!diskToo) return undefined;
   }
   const [m, h] = await Promise.all(files.map((f) => git.readWorkingFile(f)));
   if (!('bytes' in m!) || !('bytes' in h!)) return undefined;

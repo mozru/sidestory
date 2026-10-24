@@ -150,6 +150,16 @@ describe('--coverage on the fixture', () => {
     expect(head.coverage.sidestories).toEqual([]);
   });
 
+  it('--committed counts a sidestory only once it is committed', async () => {
+    const dir = copy();
+    cpSync(join(dir, '.sidestory/retry-jitter'), join(dir, '.sidestory/extra'), { recursive: true });
+    const working = await json([join(dir, '.sidestory/extra'), '--coverage']);
+    expect(working.coverage.sidestories).toEqual(['.sidestory/extra', '.sidestory/retry-jitter']);
+    const committed = await json([join(dir, '.sidestory/extra'), '--coverage', '--committed']);
+    expect(committed.coverage.sidestories).toEqual(['.sidestory/retry-jitter']);
+    expect(committed.findings.find((f) => f.code === 'not-belonging')!.message).toMatch(/isn't committed at HEAD/);
+  });
+
   it('pairs an unstaged rename (a deleted tracked file and an untracked one)', async () => {
     const dir = copy();
     renameSync(join(dir, 'docs/notes.md'), join(dir, 'docs/renamed.md'));
