@@ -1,6 +1,6 @@
 // The workspace index (docs/NAVIGATION-PLAN.md §6, §12.1): discovery, watching, budgets, caps, quote slices.
 import { rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { code, manifestText, story, tempRoot, waitFor, write } from './nav-fixtures.ts';
 import { config, counts, events, findFilesCalls, Uri, watchers, workspace } from './vscode-stub.ts';
@@ -29,6 +29,17 @@ const fire = (kind: 'change' | 'create' | 'delete', path: string) => {
   else if (kind === 'create') w.fireCreate(Uri.file(path));
   else w.fireDelete(Uri.file(path));
 };
+
+/**
+ * Rewrites a file the index has read with text of the same size. The index's stamp is (mtime in ms, size), and a
+ * rewrite moments later may keep the mtime: within the same millisecond, or on NTFS, whose timestamps follow a clock
+ * that ticks every ~16 ms. A later mtime, as an edit by hand has, makes the change visible.
+ */
+function edit(path: string, text: string): void {
+  const before = statSync(path).mtimeMs / 1000;
+  write(path, text);
+  utimesSync(path, before + 5, before + 5);
+}
 
 async function start(): Promise<Index> {
   watcher = new SidestoryWatcher();
@@ -71,7 +82,7 @@ describe('discovery', () => {
     await start();
     expect(index.state).toBe('ready');
     expect(index.size).toBe(3);
-    expect(index.packages().map((p) => p.label).sort()).toEqual([root.split('/').at(-1), 'svc'].sort());
+    expect(index.packages().map((p) => p.label).sort()).toEqual([basename(root), 'svc'].sort());
     const d = entryOf('', 'detail')!;
     expect(d.title).toBe('Detail');
     expect(d.steps.map((s) => s.title)).toEqual(['Step two', 'Step three']);
@@ -98,10 +109,10 @@ describe('discovery', () => {
     };
     await start();
     expect(index.size).toBe(10);
-    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => d.split('/').at(-1)).sort());
+    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => basename(d)).sort());
     expect(index.discoveryCut).toEqual({ found: 30, atLeast: false });
     await index.refresh(); // another order, the same cut
-    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => d.split('/').at(-1)).sort());
+    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(all.slice(0, 10).map((d) => basename(d)).sort());
   });
 
   it('passes the merged exclusions to findFiles: true entries only, braces expanded, never nested', async () => {
@@ -147,7 +158,7 @@ describe('watching', () => {
     story(root, 'p3', 'c2', { title: 'C2' });
     story(root, 'p4', 'd', { title: 'D' });
     await start();
-    const graphOf = (p: string) => index.packages().find((x) => x.folder.fsPath === join(root, p, '.sidestory'))?.graph;
+    const graphOf = (p: string) => index.packages().find((x) => uriKey(x.folder) === key(join(root, p, '.sidestory')))?.graph;
     const before = { p3: graphOf('p3'), p4: graphOf('p4') };
     const fired: Set<string>[] = [];
     index.onDidChange((ev) => fired.push(new Set(ev.packages)));
@@ -251,7 +262,7 @@ describe('watching', () => {
     story(root, '', 's', { anchors: { x: { file: 'a.ts', range: [1, 2] } } });
     await start();
     expect(index.isAnchored(key(join(root, 'a.ts')))).toBe(true);
-    write(join(dirOf('', 's'), 'manifest.json'), manifestText({ anchors: { x: { file: 'b.ts', range: [1, 2] } } }));
+    edit(join(dirOf('', 's'), 'manifest.json'), manifestText({ anchors: { x: { file: 'b.ts', range: [1, 2] } } }));
     fire('change', join(dirOf('', 's'), 'manifest.json'));
     await waitFor(() => index.isAnchored(key(join(root, 'b.ts'))));
     expect(index.isAnchored(key(join(root, 'a.ts')))).toBe(false);
@@ -352,7 +363,7 @@ describe('budgets and caps', () => {
     story(root, '', 'a', { anchors: { x: { file: 'f.ts', range: [1, 2] } } });
     await start();
     expect(index.stats().files).toBe(1);
-    write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'g.ts', range: [1, 2] } } }));
+    edit(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'g.ts', range: [1, 2] } } }));
     fire('change', join(dirOf('', 'a'), 'manifest.json'));
     await waitFor(() => index.isAnchored(key(join(root, 'g.ts'))));
     expect(index.isAnchored(key(join(root, 'f.ts')))).toBe(false);
@@ -415,7 +426,7 @@ describe('budgets and caps', () => {
     expect(slots.map((s) => s.entry.ids[s.index])).toEqual(index.anchorsIn(f).map((s) => s.entry.ids[s.index])); // deterministic
     // A sidestory in use comes first (the table is rebuilt on the next change).
     index.priority = (k) => (k === entryOf('', 'small')!.key ? 0 : 1);
-    write(join(dirOf('', 'small'), 'manifest.json'), manifestText({ anchors: { s1: { file: 'f.ts', range: [1, 4] }, s2: { file: 'f.ts', range: [5, 6] } } }));
+    edit(join(dirOf('', 'small'), 'manifest.json'), manifestText({ anchors: { s1: { file: 'f.ts', range: [1, 4] }, s2: { file: 'f.ts', range: [5, 6] } } }));
     fire('change', join(dirOf('', 'small'), 'manifest.json'));
     await waitFor(() => index.anchorsIn(f)[0]?.entry.ref.name === 'small');
   });
