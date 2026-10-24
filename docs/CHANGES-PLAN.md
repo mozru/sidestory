@@ -1,6 +1,6 @@
 # Diff-first sidestories and the Changes view: plan
 
-> **Status: release 1a (the navigator) implemented** for 0.2.1, see §20 for what was built, the deviations and the answers to every *(verify)* that 1a depends on; 1b, 2 and 3 are still a plan (revision 4, 2026-10-23, after review round 3).
+> **Status: releases 1a and 1b implemented** for 0.2.1. **Decision of 2026-10-23 (§21.1): no Changes file tree of our own.** Branch-diff navigation is left to Git Tree Compare, GitLens and Source Control; coverage shows as file decorations; §9.2–§9.5 and §9.7–§9.9's view UI are superseded (the git plumbing under them stays). §20 is what 1a built; §21 is the decision and what 1b built. Releases 2 and 3 are still a plan, to be revisited in the light of §21.1 (revision 5).
 >
 > **Covers:**
 > - an optional `base` on any sidestory, which makes its steps open diff editors on the branch's merge diff;
@@ -1406,3 +1406,37 @@ Not needed by 1a and left open: §5.2 jsdiff, §7.5 `hideUnchangedRegions`, §10
 ### 20.4 Measured
 
 Desktop VS Code 1.143.1, macOS, the fixture plus 1,500 generated files: the list in 0.3 s after Show Changes (activation and the git extension's first status included), the first diff in 0.4 s, Next Changed File about 30 ms per file. Unit: 20,000 files build the tree in about 10 ms, filter in about 1 ms and sort by size in about 20 ms (§16.1's targets).
+
+---
+
+## 21. Release 1b: the decision, what was built, deviations
+
+### 21.1 No file tree of our own (decided, 2026-10-23)
+
+The user's direction: "we don't need to reinvent the wheel". Git Tree Compare, GitLens and VS Code's Source Control already navigate a branch's diff well, so 1a's Changes view (the tree, its title actions, welcome states, list/tree toggle, sort, filter and base picker) was removed before release. The docs recommend Git Tree Compare. What stays is what coverage and diff steps need:
+
+- **The plumbing:** the comparison (base, merge-base, file list, recompute on git state; `changes/service.ts`), the read-only `sidestory-git:` and `sidestory-empty:` providers, and opening merge diffs (`diffUris`, `openTarget`).
+- **Coverage as file decorations** (`FileDecorationProvider`) on the merge diff's `file:` URIs and on `sidestory-git:` diff sides, so the marks show in the Explorer, Source Control and Git Tree Compare: a badge (`✓` explained, `◐` partly, `○` not yet, `!` needs a look, `–` all trivial; VS Code allows two characters, so "2/3" lives in the tooltip), two theme colours (`sidestory.coverageDoneForeground`, `sidestory.coverageLeftForeground`) and a plain tooltip ("2 of 3 changes explained · 1 marked trivial · Step 3 of Retry with jitter"). Change events are debounced and only for URIs whose mark changed; nothing is computed in a workspace with no sidestory that has a `base`, unless a command asks.
+- **This branch** is the first group of the Sidestories view (§11.1): belonging sidestories with their coverage, and the Copy Prompt rows of §9.6 (Update the Sidestory, Explain This Branch with Don't Suggest).
+- **This File** (§9.10), plus a "Not explained yet" group with the file's open changes; Copy Prompt: Explain This Change, Mark as Trivial… and Re-pin This Step are there and in the editor context menu.
+- **Commands, not a tree:** Next/Previous Changed File and Next/Previous Unexplained Change (palette and §9.3's chords) start from the active editor (a diff side, VS Code's own `git:` diff sides, or a plain editor of a changed file); **Sidestory: Set Base…** replaces the picker (validated with §3.1's grammar, remembered per branch).
+- **The base:** a Set Base pick, else the `base` of a sidestory added on the branch, else §4.3's chain (`vscode-merge-base`, `sidestory.changes.defaultBase`, the remote's default branch, `main`, `master`).
+
+### 21.2 What was built
+
+- **Manifest** (`core/manifest.ts`): `base`, `head`, `trivialFiles`, anchor `side`, `trivial`, `why`, read leniently (§3.4); `version: 3` accepted, required by base-side anchors through the writer rule `max(current, required, 2)` in `patchManifest`; the stable `id` of COMMENTS-PLAN.md §3.1, written by the checker's `--pin` (hint `missing-id` for sidestories with a base).
+- **Core, shared by both tools:** `core/hunks.ts` (§5.2–5.3), `core/coverage.ts` (§6.2–6.3), `core/membership.ts` (§6.1, `countedPath`, `sidestoryFolderOf`, complete sidestories), `MAX_COMPARE_BYTES` and `tooLargeChange`, one safe repo-path rule.
+- **Checker:** `src/cli/git.ts` (§13.2) and `src/cli/coverage.ts`: `--coverage` with `--base`, `--committed`, `--head`, `--repo`, `--json`; exit 3; `--accept`; base-side `--pin`.
+- **Extension:** `changes/service.ts`, `coverage-service.ts`, `open.ts`, `targets.ts`, `prompts.ts`, `trivial.ts`, `order.ts`, `this-file.ts`; the session's one seam (`targetsAt`, `openTarget`); `GroupView`'s diff kind; no dimming on diff sides; Pin and Re-anchor by side.
+- **Skill:** branch mode by default (§14.1), with the slug rule `/` → `-`. **Docs:** GUIDE "Explaining a branch" and "Coverage in VS Code", the coverage CI recipe with an interim pinned-VSIX step; SECURITY.md's checker and git sections; README.
+
+### 21.3 Deviations from the plan
+
+- **Myers, not jsdiff.** Measured on 50,000 × 50,000-line worst cases with `maxEditLength: 5000`: jsdiff 7.0.0 took 0.8–0.9 s at 200–250 MB peak (its memory grows with D²); our linear-space middle-snake took ≤ 0.16 s at baseline memory. The plan's linear-memory and ~0.5 s rules decide it (§5.2's alternative, now answered).
+- **Blank lines need no cover** unless a change is only blank lines (pinning trims blank edges, so a blank separator could never be covered), and blank added lines never make a step "need a look". **Pure additions and deletions slide down** where lines repeat, as git does.
+- **`--json`:** `uncovered` holds new-side ranges and `uncoveredOld` removed ones. Extra finding codes: `not-belonging`, `coverage-incomplete`, `working-tree-refused`, `not-a-repository`, `accept`, `head`, `version`, `trivial-files`, `id`, `side`, `base-not-ancestor`.
+- **Membership in the checker** comes from the diff itself (a `manifest.json` added, renamed in or untracked), then each sidestory's own base is checked with `belongs()`.
+- **Git in the checker** is resolved to an absolute path in JS, outside the repository, and children get a PATH rebuilt from those entries (a committed `git.exe` or `git-lfs` never runs); `GIT_NO_REPLACE_OBJECTS=1`; `--ignore-submodules=all`; `info/attributes` from the common dir too.
+- **Not built in 1b:** the panel's trail-bar chip (§11.3), the "Not counted" group (no tree to hold it), Open All Changes, Fetch, Change Repository (the repository follows the active editor). `includeUncommitted` is a setting with no toggle.
+- **Tests:** unit (hunks with a property test and the budget, coverage per §6.3 row, membership, manifest, `check-coverage` and `check-git-hardening` on real git), e2e on the `--explained` fixture (decorations, This branch, Next Unexplained, diff steps both sides, left-side cursor-follow, This File), desktop stable (decorations on diff sides, `sidestory-git:` read-only, coverage equal to the checker's).
+- **Dogfood:** a sidestory with a base written by the skill's branch mode for a branch of this repository (`AnchorPart`, +60 −2) reached exit 0 on the first `--pin --coverage`; a review fix inside a step showed as `changed-since-pinned` until `--accept`. It found three problems, fixed: additions anchored on an appended function left its first lines uncovered (now sliding as git does), blank edge lines couldn't be covered, and `--committed` read an uncommitted sidestory from disk.
