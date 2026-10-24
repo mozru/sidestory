@@ -15,7 +15,7 @@ import { decodePair, moveFiles, moveLabel, oldToNew, textLines, type ChangeBlock
 import { trivialGlobFor } from '../../core/manifest.ts';
 import { isStoryBase, isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
 import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
-import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, isDone, WHOLE_WORDS, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
+import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, isDone, moveMarkNote, moveMarkTarget, WHOLE_WORDS, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
 import { CoverageService, isUnknownPath, type Belonging, type CoverageResult } from './coverage-service.ts';
 import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
@@ -1068,7 +1068,9 @@ export class ChangesService implements vscode.Disposable {
       // first), on its first non-blank line no change touches, so the mark explains nothing else.
       const g = one.b.move;
       const prompt = 'Copy Prompt: Explain This Change asks for one sentence on the move in a step';
-      const path = place && g.files.some((x) => x.path === place.entry.path) ? place.entry.path : one.path;
+      const preferred = place && g.files.some((x) => x.path === place.entry.path) ? place.entry.path : one.path;
+      // A file already covered isn't marked again: the first file still without cover is.
+      const { path, rest } = moveMarkTarget(preferred, g.files.map((x) => x.path), one.c.uncoveredFiles);
       const fr = r?.files.get(path);
       const touched = [...(fr?.blocks.values() ?? [])].flatMap((b) => (b.new ? [b.new] : []));
       const text = await this.sideText(s, { path, side: 'head' });
@@ -1079,8 +1081,7 @@ export class ChangesService implements vscode.Disposable {
       }
       target = { path, side: 'head', range: { start: line + 1, end: line + 1 } };
       // The other files of a group still need their own mark, or one step covers them all.
-      const rest = (one.c.uncoveredFiles ?? g.files.map((x) => x.path)).filter((p) => p !== path).length;
-      if (rest) groupNote = `${rest} more ${rest === 1 ? 'file' : 'files'} of the group still ${rest === 1 ? 'needs' : 'need'} a mark, or one step covers all.`;
+      groupNote = moveMarkNote(rest.map((p) => plainForMessage(p, 80)));
     } else if (one && !named && place && !place.editor.selection.isEmpty) {
       // A selection: those lines, on the side they are on.
       const sel = place.editor.selection;

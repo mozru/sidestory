@@ -75,8 +75,10 @@ export interface MoveGroup {
 /**
  * The transform an in-place rename applies to the file name, when it is one several files can share (§5.1): an
  * extension change with the stem unchanged (`Button.js → Button.ts`: `*.js → *.ts`), else a substitution at the end
- * (`auth.ts → auth.ts.disabled`: `* → *.disabled`) or at the start (`old_a.ts → new_a.ts`: `old* → new*`).
- * Undefined for anything else (`retry.ts → retry-policy.ts` changes the middle: a rename of its own).
+ * (`notes-draft → notes-final`: `*draft → *final`) or at the start (`old_a.ts → new_a.ts`: `old* → new*`), keeping
+ * at least 3 characters of the name itself. Undefined for anything
+ * else: the middle changed (`retry.ts → retry-policy.ts`), an inert suffix added (`auth.ts → auth.ts.disabled`,
+ * `.bak`, `.off`, `.orig`, `.old`, `~`), or code renamed to a non-code extension (`a.js → a.txt`).
  */
 export function renameTransform(oldName: string, name: string): string | undefined {
   const split = (n: string) => {
@@ -85,6 +87,9 @@ export function renameTransform(oldName: string, name: string): string | undefin
   };
   const a = split(oldName);
   const b = split(name);
+  // A rename that can switch a file off is never grouped: an inert suffix added, or code becoming something else.
+  if (INERT_SUFFIX.some((x) => name.endsWith(x) && !oldName.endsWith(x))) return undefined;
+  if (a.ext !== undefined && CODE_EXTENSIONS.has(a.ext.toLowerCase()) && (b.ext === undefined || !CODE_EXTENSIONS.has(b.ext.toLowerCase()))) return undefined;
   const ext = (e: string | undefined) => (e === undefined ? '*' : `*.${e}`);
   if (a.stem === b.stem && a.ext !== b.ext) return `${ext(a.ext)} → ${ext(b.ext)}`;
   let p = 0;
@@ -93,10 +98,19 @@ export function renameTransform(oldName: string, name: string): string | undefin
   while (q < oldName.length - p && q < name.length - p && oldName[oldName.length - 1 - q] === name[name.length - 1 - q]) q++;
   const from = oldName.slice(p, oldName.length - q);
   const to = name.slice(p, name.length - q);
-  if (q === 0 && p > 0) return `*${from} → *${to}`;
-  if (p === 0 && q > 0) return `${from}* → ${to}*`;
+  // At least 3 characters of the name itself kept (not just the extension): `a.js → b.js` is no pattern.
+  const shared = a.ext !== undefined && a.ext === b.ext ? a.ext.length + 1 : 0;
+  if (q === 0 && p >= MIN_KEPT && Math.min(p, a.stem.length) >= MIN_KEPT) return `*${from} → *${to}`;
+  if (p === 0 && q - shared >= MIN_KEPT) return `${from}* → ${to}*`;
   return undefined;
 }
+
+/** Suffixes that make a file inert (a backup, a disabled copy): such renames are never grouped (§5.1). */
+const INERT_SUFFIX = ['.disabled', '.bak', '.off', '.orig', '.old', '~'];
+/** The least of the name a prefix or suffix transform keeps, so a pattern means something. */
+const MIN_KEPT = 3;
+/** Extensions of code something may load or run: a change from one to anything else is never grouped. */
+const CODE_EXTENSIONS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'kts', 'scala', 'swift', 'c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'hh', 'm', 'mm', 'cs', 'fs', 'php', 'pl', 'pm', 'lua', 'sh', 'bash', 'zsh', 'ps1', 'ex', 'exs', 'erl', 'clj', 'dart', 'r', 'jl', 'sv', 'svh', 'v', 'vh', 'vhd', 'vhdl', 'sql', 'vue', 'svelte']);
 
 /** A path's parent folder, '' at the root. */
 export const parentFolder = (p: string): string => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');

@@ -364,12 +364,13 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     };
     git(dir, 'checkout', '-q', 'main');
     mkdirSync(join(dir, 'src/components'), { recursive: true });
-    for (const n of ['A', 'B', 'C', 'auth', 'retry']) writeFileSync(join(dir, `src/components/${n}.js`), `export const ${n} = '${n}';\n`);
+    for (const n of ['A', 'B', 'C', 'auth', 'pay', 'retry']) writeFileSync(join(dir, `src/components/${n}.js`), `export const ${n} = '${n}';\n`);
     commit('Components');
     git(dir, 'checkout', '-q', 'feature');
     git(dir, 'merge', '-q', '--no-edit', 'main');
     for (const n of ['A', 'B', 'C']) git(dir, 'mv', `src/components/${n}.js`, `src/components/${n}.ts`);
     git(dir, 'mv', 'src/components/auth.js', 'src/components/auth.js.disabled');
+    git(dir, 'mv', 'src/components/pay.js', 'src/components/pay.js.disabled'); // inert: never grouped with auth's
     git(dir, 'mv', 'src/components/retry.js', 'src/components/retry-policy.js');
     commit('Renames');
 
@@ -379,6 +380,7 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(labels.sort()).toEqual([
       '3 files renamed in src/components (*.js → *.ts)',
       'renamed src/components/auth.js → src/components/auth.js.disabled',
+      'renamed src/components/pay.js → src/components/pay.js.disabled',
       'renamed src/components/retry.js → src/components/retry-policy.js',
     ]);
     expect(extensionStates(r)).toEqual(checkerStates(c));

@@ -256,21 +256,38 @@ describe('moves (§5.1): one change per moved prefix', () => {
   });
   it('groups in-place renames of one folder that share a transform; keeps other renames apart', () => {
     expect(renameTransform('Button.js', 'Button.ts')).toBe('*.js → *.ts');
-    expect(renameTransform('Makefile', 'Makefile.old')).toBe('* → *.old');
-    expect(renameTransform('auth.ts', 'auth.ts.disabled')).toBe('* → *.disabled');
-    expect(renameTransform('old_a.ts', 'new_a.ts')).toBe('old* → new*');
+    expect(renameTransform('old_name.ts', 'new_name.ts')).toBe('old* → new*');
+    expect(renameTransform('notes-draft', 'notes-final')).toBe('*draft → *final');
     expect(renameTransform('retry.ts', 'retry-policy.ts')).toBeUndefined();
+    // Never grouped: an inert suffix added, code becoming non-code, or less than 3 characters of the name kept.
+    for (const [a, b] of [
+      ['auth.ts', 'auth.ts.disabled'],
+      ['auth.ts', 'auth.ts.bak'],
+      ['Makefile', 'Makefile.old'],
+      ['a.py', 'a.py.orig'],
+      ['run.sh', 'run.sh~'],
+      ['cfg.json', 'cfg.json.off'],
+      ['auth.js', 'auth.txt'],
+      ['auth.ts', 'auth'],
+      ['a.js', 'b.js'],
+      ['old_a.ts', 'new_a.ts'],
+      ['a-x', 'a-y'],
+    ]) expect(renameTransform(a!, b!), `${a} → ${b}`).toBeUndefined();
+    expect(renameTransform('apple.js', 'bpple.js')).toBe('a* → b*');
+    expect(renameTransform('notes.md', 'notes.txt')).toBe('*.md → *.txt'); // not code: may group
     const inPlace = [
       { status: 'R', oldPath: 'src/components/A.js', path: 'src/components/A.ts' },
       { status: 'R', oldPath: 'src/components/B.js', path: 'src/components/B.ts' },
       { status: 'R', oldPath: 'src/components/C.js', path: 'src/components/C.ts' },
       { status: 'R', oldPath: 'src/components/auth.ts', path: 'src/components/auth.ts.disabled' },
+      { status: 'R', oldPath: 'src/components/pay.ts', path: 'src/components/pay.ts.disabled' },
       { status: 'R', oldPath: 'src/components/retry.ts', path: 'src/components/retry-policy.ts' },
       { status: 'R', oldPath: 'src/other/D.js', path: 'src/other/D.ts' },
     ];
     expect(moveGroups(inPlace).map((g) => moveLabel(g))).toEqual([
       '3 files renamed in src/components (*.js → *.ts)',
       'renamed src/components/auth.ts → src/components/auth.ts.disabled',
+      'renamed src/components/pay.ts → src/components/pay.ts.disabled', // inert: each its own change
       'renamed src/components/retry.ts → src/components/retry-policy.ts',
       'renamed src/other/D.js → src/other/D.ts',
     ]);

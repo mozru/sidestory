@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChangeCoverage, FileCoverage } from '../../src/core/coverage.ts';
 import { diffTexts } from '../../src/core/hunks.ts';
 import { codeColumnFor } from '../../src/extension/columns.ts';
-import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, problemRow, stateWords, WHOLE_WORDS } from '../../src/extension/changes/coverage-labels.ts';
+import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, moveMarkNote, moveMarkTarget, problemRow, stateWords, WHOLE_WORDS } from '../../src/extension/changes/coverage-labels.ts';
 import { latchStep, sameBaseName, storyBasesOf, type StoryLatch } from '../../src/extension/changes/base.ts';
 import { changePrompt, explainBranchPrompt, explainFilePrompt, safePath, updatePrompt } from '../../src/extension/changes/prompts.ts';
 import { anchorAtSide, emptySideKey, gitSideKey, mapOldRange, vscodeGitSideKey, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
@@ -159,6 +159,22 @@ describe('the "This branch" group (§9.6)', () => {
     const rows = branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1 }), hasChanges: true, suggest: true, incomplete: true });
     expect(rows[0]!.description).toBe('vs main · 3 explained · 1 trivial · 0 left · incomplete');
     expect(rows[0]!.tooltip).toMatch(/\nIncomplete: /);
+  });
+});
+
+describe('Mark as Trivial on a move group', () => {
+  const files = ['src/b/four.js', 'src/b/one.js', 'src/b/three.js', 'src/b/two.js'];
+  it('marks the cursor\'s file while it lacks cover, else the first file that does', () => {
+    expect(moveMarkTarget('src/b/one.js', files, ['src/b/one.js', 'src/b/two.js'])).toEqual({ path: 'src/b/one.js', rest: ['src/b/two.js'] });
+    // The carrier row (four.js) is covered already: the first uncovered file is marked instead.
+    expect(moveMarkTarget('src/b/four.js', files, ['src/b/three.js', 'src/b/two.js'])).toEqual({ path: 'src/b/three.js', rest: ['src/b/two.js'] });
+    // No coverage known yet: the cursor's file, every other file left.
+    expect(moveMarkTarget('src/b/one.js', files, undefined)).toEqual({ path: 'src/b/one.js', rest: ['src/b/four.js', 'src/b/three.js', 'src/b/two.js'] });
+  });
+  it('names the files still without cover, capped', () => {
+    expect(moveMarkNote([])).toBeUndefined();
+    expect(moveMarkNote(['a.js'])).toBe('1 more file of the group still needs a mark (a.js), or one step covers all.');
+    expect(moveMarkNote(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 5)).toBe('7 more files of the group still need a mark (a, b, c, d, e, and 2 more), or one step covers all.');
   });
 });
 

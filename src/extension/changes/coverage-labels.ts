@@ -232,3 +232,21 @@ export function branchRows(i: BranchInputs): BranchRow[] {
   }
   return rows;
 }
+
+/**
+ * Which file of a move group Mark as Trivial marks (§5.1): the cursor's file while it still lacks cover, else the
+ * first file that does (so the group can finish from its carrier row); with no coverage known, the cursor's file.
+ * And the files still without cover after it, for the note.
+ */
+export function moveMarkTarget(preferred: string, files: readonly string[], uncovered: readonly string[] | undefined): { path: string; rest: string[] } {
+  const lacking = uncovered ?? files;
+  const path = !uncovered || lacking.includes(preferred) ? preferred : (lacking[0] ?? preferred);
+  return { path, rest: lacking.filter((p) => p !== path) };
+}
+
+/** "3 more files of the group still need a mark (a.ts, b.ts, c.ts), or one step covers all" (display-safe names). */
+export function moveMarkNote(rest: readonly string[], cap = 5): string | undefined {
+  if (!rest.length) return undefined;
+  const shown = rest.slice(0, cap).join(', ') + (rest.length > cap ? `, and ${rest.length - cap} more` : '');
+  return `${rest.length} more ${rest.length === 1 ? 'file' : 'files'} of the group still ${rest.length === 1 ? 'needs' : 'need'} a mark (${shown}), or one step covers all.`;
+}
