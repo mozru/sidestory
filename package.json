@@ -198,6 +198,144 @@
         "command": "sidestory.tree.copyPath",
         "title": "Copy Path",
         "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.showChanges",
+        "title": "Show Changes",
+        "category": "Sidestory",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "sidestory.changes.pickBase",
+        "title": "Change Base…",
+        "category": "Sidestory",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "sidestory.changes.viewAsList",
+        "title": "View as List",
+        "category": "Sidestory",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "sidestory.changes.viewAsTree",
+        "title": "View as Tree",
+        "category": "Sidestory",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "sidestory.changes.sort",
+        "title": "Sort Changed Files…",
+        "category": "Sidestory",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "sidestory.changes.filter",
+        "title": "Filter Changed Files…",
+        "category": "Sidestory",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sidestory.changes.clearFilter",
+        "title": "Clear Changes Filter",
+        "category": "Sidestory",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "sidestory.changes.includeUncommitted",
+        "title": "Include Uncommitted Changes",
+        "category": "Sidestory",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "sidestory.changes.committedOnly",
+        "title": "Committed Changes Only",
+        "category": "Sidestory",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "sidestory.changes.refresh",
+        "title": "Refresh Changes",
+        "category": "Sidestory",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sidestory.changes.nextFile",
+        "title": "Next Changed File",
+        "category": "Sidestory",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "sidestory.changes.prevFile",
+        "title": "Previous Changed File",
+        "category": "Sidestory",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "sidestory.changes.openAll",
+        "title": "Open All Changes",
+        "category": "Sidestory",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "sidestory.changes.collapseAll",
+        "title": "Collapse All Changed Folders",
+        "category": "Sidestory",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "sidestory.changes.open",
+        "title": "Open Diff",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.openDiff",
+        "title": "Open Diff",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.openDiffToSide",
+        "title": "Open Diff to the Side",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.openFile",
+        "title": "Open File",
+        "category": "Sidestory",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "sidestory.changes.openFileToSide",
+        "title": "Open File to the Side",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.revealInExplorer",
+        "title": "Reveal in Explorer View",
+        "category": "Sidestory",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "sidestory.changes.copyPath",
+        "title": "Copy Path",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.copyRelativePath",
+        "title": "Copy Relative Path",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.changes.pickRepository",
+        "title": "Change Repository…",
+        "category": "Sidestory",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "sidestory.changes.fetch",
+        "title": "Fetch",
+        "category": "Sidestory",
+        "icon": "$(cloud-download)"
       }
     ],
     "keybindings": [
@@ -210,6 +348,18 @@
         "command": "sidestory.prevStep",
         "key": "alt+[",
         "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
+      },
+      {
+        "command": "sidestory.changes.nextFile",
+        "key": "ctrl+alt+pagedown",
+        "mac": "ctrl+cmd+down",
+        "when": "sidestory.changes.active && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
+      },
+      {
+        "command": "sidestory.changes.prevFile",
+        "key": "ctrl+alt+pageup",
+        "mac": "ctrl+cmd+up",
+        "when": "sidestory.changes.active && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
       }
     ],
     "configuration": {
@@ -246,6 +396,21 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Select the sidestory a panel shows in the Sidestories view."
+        },
+        "sidestory.changes.defaultBase": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The branch, tag or commit the Changes view compares with when none was picked for the branch (for example `develop` or `origin/main`). Empty: the branch base the Git extension recorded, then the remote's default branch, then `main` or `master`."
+        },
+        "sidestory.changes.includeUncommitted": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include uncommitted changes (staged, unstaged and untracked files) in the Changes view of your own branch. The view's menu switches it per workspace."
+        },
+        "sidestory.changes.openOnSelect": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open a changed file's diff as you move the selection with the arrow keys in the Changes view (focus stays in the view)."
         }
       }
     },
@@ -398,6 +563,98 @@
         {
           "command": "sidestory.copyWidgetCheckCommand",
           "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "sidestory.changes.open",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.openDiff",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.openDiffToSide",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.openFile",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.openFileToSide",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.copyRelativePath",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.viewAsList",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.viewAsTree",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.collapseAll",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.clearFilter",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.pickRepository",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.changes.nextFile",
+          "when": "sidestory.changes.active"
+        },
+        {
+          "command": "sidestory.changes.prevFile",
+          "when": "sidestory.changes.active"
+        },
+        {
+          "command": "sidestory.changes.openAll",
+          "when": "sidestory.changes.active"
+        },
+        {
+          "command": "sidestory.changes.pickBase",
+          "when": "sidestory.changes.state"
+        },
+        {
+          "command": "sidestory.changes.sort",
+          "when": "sidestory.changes.state"
+        },
+        {
+          "command": "sidestory.changes.filter",
+          "when": "sidestory.changes.state"
+        },
+        {
+          "command": "sidestory.changes.refresh",
+          "when": "sidestory.changes.state"
+        },
+        {
+          "command": "sidestory.changes.fetch",
+          "when": "sidestory.changes.state"
+        },
+        {
+          "command": "sidestory.changes.includeUncommitted",
+          "when": "sidestory.changes.state && !sidestory.changes.includeUncommitted"
+        },
+        {
+          "command": "sidestory.changes.committedOnly",
+          "when": "sidestory.changes.state && sidestory.changes.includeUncommitted"
         }
       ],
       "editor/context": [
@@ -439,6 +696,71 @@
           "command": "sidestory.tree.refresh",
           "when": "view == sidestory.tree",
           "group": "navigation@4"
+        },
+        {
+          "command": "sidestory.changes.pickBase",
+          "when": "view == sidestory.changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sidestory.changes.filter",
+          "when": "view == sidestory.changes && !sidestory.changes.filtered",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sidestory.changes.clearFilter",
+          "when": "view == sidestory.changes && sidestory.changes.filtered",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sidestory.changes.viewAsList",
+          "when": "view == sidestory.changes && !sidestory.changes.listMode",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sidestory.changes.viewAsTree",
+          "when": "view == sidestory.changes && sidestory.changes.listMode",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sidestory.changes.refresh",
+          "when": "view == sidestory.changes",
+          "group": "navigation@4"
+        },
+        {
+          "command": "sidestory.changes.openAll",
+          "when": "view == sidestory.changes",
+          "group": "1_open@1"
+        },
+        {
+          "command": "sidestory.changes.nextFile",
+          "when": "view == sidestory.changes",
+          "group": "1_open@2"
+        },
+        {
+          "command": "sidestory.changes.prevFile",
+          "when": "view == sidestory.changes",
+          "group": "1_open@3"
+        },
+        {
+          "command": "sidestory.changes.sort",
+          "when": "view == sidestory.changes",
+          "group": "2_view@1"
+        },
+        {
+          "command": "sidestory.changes.committedOnly",
+          "when": "view == sidestory.changes && sidestory.changes.includeUncommitted",
+          "group": "2_view@2"
+        },
+        {
+          "command": "sidestory.changes.includeUncommitted",
+          "when": "view == sidestory.changes && !sidestory.changes.includeUncommitted",
+          "group": "2_view@2"
+        },
+        {
+          "command": "sidestory.changes.collapseAll",
+          "when": "view == sidestory.changes && !sidestory.changes.listMode",
+          "group": "2_view@3"
         }
       ],
       "view/item/context": [
@@ -486,6 +808,63 @@
           "command": "sidestory.tree.copyPath",
           "when": "view == sidestory.tree && viewItem =~ /^(top|detail|broken)$/",
           "group": "4_path@2"
+        },
+        {
+          "command": "sidestory.changes.openFile",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/ && !(viewItem =~ /:deleted/)",
+          "group": "inline@1"
+        },
+        {
+          "command": "sidestory.changes.revealInExplorer",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/ && viewItem =~ /:onDisk/",
+          "group": "inline@2"
+        },
+        {
+          "command": "sidestory.changes.pickRepository",
+          "when": "view == sidestory.changes && viewItem == repo",
+          "group": "inline@1"
+        },
+        {
+          "command": "sidestory.changes.openDiff",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "sidestory.changes.openDiffToSide",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "sidestory.changes.openFile",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/ && !(viewItem =~ /:deleted/)",
+          "group": "1_open@3"
+        },
+        {
+          "command": "sidestory.changes.openFileToSide",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/ && !(viewItem =~ /:deleted/)",
+          "group": "1_open@4"
+        },
+        {
+          "command": "sidestory.changes.revealInExplorer",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/ && viewItem =~ /:onDisk/",
+          "group": "2_reveal@1"
+        },
+        {
+          "command": "sidestory.changes.copyPath",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "sidestory.changes.copyRelativePath",
+          "when": "view == sidestory.changes && viewItem =~ /^file:/",
+          "group": "3_copy@2"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "sidestory.showChanges",
+          "when": "scmProvider == git",
+          "group": "navigation@90"
         }
       ]
     },
@@ -500,6 +879,14 @@
     },
     "views": {
       "sidestory": [
+        {
+          "id": "sidestory.changes",
+          "name": "Changes",
+          "when": "sidestory.available",
+          "icon": "media/sidestory.svg",
+          "contextualTitle": "Sidestory",
+          "visibility": "visible"
+        },
         {
           "id": "sidestory.tree",
           "name": "Sidestories",
@@ -524,6 +911,71 @@
         "view": "sidestory.tree",
         "when": "workbenchState != empty && sidestory.indexState != empty && sidestory.indexState != ready",
         "contents": "Looking for sidestories…"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == untrusted",
+        "contents": "Changes need git, which VS Code turns off in Restricted Mode.\n[Manage Workspace Trust](command:workbench.trust.manage)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == missing",
+        "contents": "Changes need VS Code's Git extension, which isn't available here."
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == disabled",
+        "contents": "Changes need VS Code's Git extension, which is turned off or can't find git.\n[Open Git Settings](command:workbench.action.openSettings?%5B%22git.enabled%22%5D)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == noRepo",
+        "contents": "This folder isn't in a git repository. The Changes view lists a branch's changes against its base."
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == loading",
+        "contents": "Comparing with the base…"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == noCommits",
+        "contents": "This repository has no commits yet."
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == noBase",
+        "contents": "Pick a branch to compare with.\n[Change Base…](command:sidestory.changes.pickBase)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == baseNotFound",
+        "contents": "[Fetch](command:sidestory.changes.fetch)\n[Change Base…](command:sidestory.changes.pickBase)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == noMergeBase",
+        "contents": "[Change Base…](command:sidestory.changes.pickBase)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == onBase",
+        "contents": "You're on the base branch: nothing to compare.\n[Change Base…](command:sidestory.changes.pickBase)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == noChanges",
+        "contents": "No changes between this branch and its base.\n[Change Base…](command:sidestory.changes.pickBase)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == filteredOut",
+        "contents": "No changed file matches the filter.\n[Clear Filter](command:sidestory.changes.clearFilter)"
+      },
+      {
+        "view": "sidestory.changes",
+        "when": "view == sidestory.changes && sidestory.changes.state == error",
+        "contents": "Couldn't compare with the base.\n[Refresh](command:sidestory.changes.refresh)"
       }
     ]
   },

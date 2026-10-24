@@ -12,9 +12,16 @@ const drive = /^\/[A-Za-z]:/;
 export class Uri {
   readonly scheme: string;
   readonly path: string;
-  constructor(scheme: string, path: string) {
+  readonly authority: string;
+  readonly query: string;
+  constructor(scheme: string, path: string, authority = '', query = '') {
     this.scheme = scheme;
     this.path = path;
+    this.authority = authority;
+    this.query = query;
+  }
+  static from(c: { scheme: string; authority?: string; path?: string; query?: string }): Uri {
+    return new Uri(c.scheme, c.path ?? '', c.authority ?? '', c.query ?? '');
   }
   static file(path: string): Uri {
     if (win) {
@@ -437,6 +444,8 @@ export class TreeItem {
   }
 }
 export class ThemeIcon {
+  static readonly File = new ThemeIcon('file');
+  static readonly Folder = new ThemeIcon('folder');
   readonly id: string;
   readonly color?: unknown;
   constructor(id: string, color?: unknown) {
@@ -457,3 +466,10 @@ export class Disposable {
   }
 }
 export const env = { openExternal: async () => true };
+export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
+export const FilePermission = { Readonly: 1 };
+export class FileSystemError extends Error {
+  static FileNotFound = (u?: unknown) => new FileSystemError(`not found: ${String(u)}`);
+  static NoPermissions = (u?: unknown) => new FileSystemError(`no permissions: ${String(u)}`);
+  static Unavailable = (u?: unknown) => new FileSystemError(`unavailable: ${String(u)}`);
+}

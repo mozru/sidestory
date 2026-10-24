@@ -42,11 +42,14 @@ afterEach(() => {
 const tick = () => new Promise((r) => setTimeout(r, 15));
 
 describe('bootstrap', () => {
-  it('imports nothing heavy: vscode, the glob helpers and its shared constants only', () => {
+  it('imports nothing heavy: vscode, the glob helpers, its shared constants and the branch probe only', () => {
     const src = readFileSync('src/extension/bootstrap.ts', 'utf8');
     const imports = [...src.matchAll(/^import (?!type )[^;]*? from '([^']+)'/gm)].map((m) => m[1]);
-    expect(imports.sort()).toEqual(['../core/glob.ts', './bootstrap-shared.ts', 'vscode'].sort());
+    expect(imports.sort()).toEqual(['../core/glob.ts', './bootstrap-shared.ts', './changes/probe.ts', 'vscode'].sort());
     for (const dep of ['src/core/glob.ts', 'src/extension/bootstrap-shared.ts']) expect(readFileSync(dep, 'utf8')).not.toMatch(/^import (?!type )/m);
+    // The probe (docs/CHANGES-PLAN.md §9.1) imports vscode and nothing else.
+    const probe = [...readFileSync('src/extension/changes/probe.ts', 'utf8').matchAll(/^import (?!type )[^;]*? from '([^']+)'/gm)].map((m) => m[1]);
+    expect(probe).toEqual(['vscode']);
   });
 
   it('in a workspace without sidestories: one watcher, nothing loaded, and fast', async () => {
@@ -60,6 +63,24 @@ describe('bootstrap', () => {
     expect(loads).toBe(0);
     console.log(`bootstrap activation: ${took.toFixed(2)} ms`);
     expect(took).toBeLessThan(5);
+  });
+
+  it('no sidestory, but a branch with commits of its own: the container shows and the full extension loads (CHANGES-PLAN §9.1)', async () => {
+    const boot = await fresh();
+    boot.probe.branchDiffers = async () => true;
+    boot.activate(context() as never);
+    await tick();
+    expect(loads).toBe(1);
+    expect(memory['sidestory.available']).toBe('shown');
+  });
+
+  it('no sidestory and no branch: nothing loads', async () => {
+    const boot = await fresh();
+    boot.probe.branchDiffers = async () => false;
+    boot.activate(context() as never);
+    await tick();
+    expect(loads).toBe(0);
+    expect(memory['sidestory.available']).toBeUndefined();
   });
 
   it('a manifest created in a sidestory folder wakes the full extension and remembers it', async () => {

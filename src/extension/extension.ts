@@ -28,6 +28,7 @@ import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
+import { ChangesView } from './changes/view.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -170,6 +171,9 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   };
 
   // ---- the sidebar ----
+  // The Changes view (docs/CHANGES-PLAN.md §9, release 1a): the merge diff as a file navigator, no sidestory needed.
+  const changes = new ChangesView(context);
+  context.subscriptions.push(changes);
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
   context.subscriptions.push(view);
@@ -182,7 +186,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     if (s === 'ready') {
       setAvailable(true);
       void context.workspaceState.update(AVAILABLE_KEY, true);
-    } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown') {
+    } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown' && !changes.relevant) {
       // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view.
       setAvailable(false);
       void context.workspaceState.update(AVAILABLE_KEY, undefined);
@@ -451,6 +455,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     },
     'sidestory.nextStep': () => target()?.navigate(1),
     'sidestory.prevStep': () => target()?.navigate(-1),
+    ...changes.commands,
   };
 
   // Hidden, for tests and the perf smoke (docs/NAVIGATION-PLAN.md §12.4): only in test runs.
@@ -460,6 +465,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         await index.ready;
         return { ...index.stats(), here: here.stats() };
       }),
+      vscode.commands.registerCommand('sidestory._changesStats', () => ({ ...changes.stats, description: changes.view.description, message: changes.view.message })),
     );
   }
 

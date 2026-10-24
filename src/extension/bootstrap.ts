@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import { excludePatterns, globMatcher, joinGlobs } from '../core/glob.ts';
 import { AVAILABLE_KEY, COMMANDS, PANEL_VIEW_TYPE } from './bootstrap-shared.ts';
+import { branchDiffersFromBase } from './changes/probe.ts';
 import type { FullApi } from './extension.ts';
 
 /** How full.cjs is loaded; tests replace it. */
@@ -43,6 +44,9 @@ async function loadWithProgress(context: vscode.ExtensionContext): Promise<FullA
   if (api) return api;
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Loading Sidestory…' }, () => load(context));
 }
+
+/** The branch probe (docs/CHANGES-PLAN.md §9.1); tests replace it. */
+export const probe = { branchDiffers: () => branchDiffersFromBase() };
 
 export function activate(context: vscode.ExtensionContext): void {
   for (const id of COMMANDS) {
@@ -89,8 +93,16 @@ export function activate(context: vscode.ExtensionContext): void {
     wake();
   });
   void Promise.resolve(vscode.workspace.findFiles('**/.sidestory/*/manifest.json', joinGlobs(patterns), 1)).then(
-    (found) => {
-      if (!full && found.some(looksLikeSidestory)) wake();
+    async (found) => {
+      if (full) return;
+      if (found.some(looksLikeSidestory)) return wake();
+      // No sidestory yet, but a branch with commits of its own: the Changes view navigates its merge diff
+      // (docs/CHANGES-PLAN.md §9.1).
+      if ((await probe.branchDiffers()) && !full) {
+        void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+        void vscode.commands.executeCommand('setContext', 'sidestory.available', true);
+        wake();
+      }
     },
     () => {},
   );
