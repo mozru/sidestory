@@ -31,6 +31,7 @@ import { anchorsRead } from '../extension/widgets/html.ts';
 import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-files.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
+import { threadsMain } from './threads.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 
@@ -644,10 +645,12 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
   return out.join('\n');
 }
 
-const USAGE = 'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]';
+const USAGE = 'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]\n       node check.cjs threads [<root>] [--waiting] [--all] [--json]';
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types')): Promise<number> {
+  // `check.cjs threads …`: comment threads for agents (docs/COMMENTS-PLAN.md §10.2), unless a folder is named "threads".
+  if (argv[0] === 'threads' && !(await stat('threads').then((s) => s.isDirectory(), () => false))) return threadsMain(argv.slice(1), io);
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
   const args = argv.filter((a) => !a.startsWith('--'));
   const known = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help']);
