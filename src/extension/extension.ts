@@ -30,6 +30,7 @@ import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
+import { isSafeFsPath } from '../core/repo-path.ts';
 import { ChangesService, CoverageDecorations } from './changes/service.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
@@ -222,7 +223,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     fileOf: (uri) => {
       const p = changes.pathOf(uri);
       const s = changes.snapshot;
-      return p && s ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
+      // Only a path the file system rule passes: This File reads the file it follows.
+      return p && s && isSafeFsPath(p) ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
     },
     baseOf: (dir) => changes.result()?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
     changesOf: (file) => changes.changesOf(file),

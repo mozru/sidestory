@@ -420,7 +420,7 @@ The checker splits the merge diff into **changes**: runs of added and removed li
 
 Some lines covered and some not is **partly explained**, which counts as not explained. A line added inside a pinned anchor that isn't in the anchor's pinned code was written after the step: it **needs a look** (`changed-since-pinned`) until you read the step, make the prose cover it, and accept it with `--accept <anchor>`. A broad anchor (over 40 lines and more than 5 times the changed lines it covers) still counts, with a warning.
 
-Binary files, submodules, symlinks, mode-only changes, Git LFS pointers and the sidestory's own files aren't counted; the report lists them.
+A file whose lines can't be compared counts as **one change**: a binary file, a symbolic link, a submodule, a type change (a file becoming a link, say), and a path Sidestory won't read (control characters, `..`, `.git` or a leading `:`, or, from the working tree, a name Windows reads differently, like `con`, `nul.txt` or `a.`). No anchor can cover such a change and Mark as Trivial can't either: only a `trivialFiles` match marks it, so put binary assets there (`"assets/**/*.png"`). Git LFS pointers, mode-only changes and the sidestory's own files aren't counted; the report lists them.
 
 ### Which sidestories count
 
@@ -434,7 +434,7 @@ Sidestory doesn't add a file tree of its own for the branch: use the one you alr
 - a **colour**: one for done, one for changes left;
 - a **tooltip** with the counts and the steps that explain the file ("2 of 3 changes explained · 1 marked trivial · Step 2 of Retry with jitter").
 
-Files that aren't counted (binary files, the sidestory's own files, line endings only) get no mark.
+A binary file, a link or a submodule is one change, marked like any other file (`○` until a `trivialFiles` match covers it). Files that aren't counted (Git LFS pointers, the sidestory's own files, line endings or mode only) get no mark.
 
 The mark is per file; for the changes inside one, open it:
 

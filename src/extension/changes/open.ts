@@ -15,11 +15,11 @@ import { mapOldRange } from './targets.ts';
 /** What opening and cursor-follow need from the comparison; built by the changes service. */
 export interface DiffContext {
   readonly snapshot: Snapshot;
-  /** The two sides of a file's merge diff and its title (the service's `diffUris`). */
-  diffUris(e: ChangeEntry): { left: vscode.Uri; right: vscode.Uri; title: string };
+  /** The two sides of a file's merge diff and its title (the service's `diffUris`); undefined for a path not read from disk. */
+  diffUris(e: ChangeEntry): { left: vscode.Uri; right: vscode.Uri; title: string } | undefined;
   /** An editor's document as (repo path, side): `file:` → head, `sidestory-git:` at the merge-base → base, at HEAD → head. */
   keyOf(uri: vscode.Uri): SideKey | undefined;
-  /** The document a side of a path is read from and shown in: the working file (or HEAD's blob), or the merge-base blob. */
+  /** The document a side of a path is read from and shown in: the working file (or HEAD's blob), or the merge-base blob; undefined for a path not read from disk. */
   uriFor(key: SideKey): vscode.Uri | undefined;
   /** The comparison's entry for a side of a path (a head path of an added, modified or renamed file; a base path of a deleted, modified or renamed one). */
   entryFor(key: SideKey): ChangeEntry | undefined;
@@ -110,8 +110,11 @@ function reveal(editor: vscode.TextEditor, r: LineRange, moveCursor: boolean): v
  */
 export async function openTarget(ctx: DiffContext | undefined, target: SideKey & { range: LineRange }, plain: vscode.Uri | undefined, o: OpenOptions): Promise<Opened | undefined> {
   const entry = ctx && o.mode === 'diff' ? ctx.entryFor(target) : undefined;
-  if (ctx && entry) {
-    const { left, right, title } = ctx.diffUris(entry);
+  const pair = ctx && entry ? ctx.diffUris(entry) : undefined;
+  // A changed file whose working tree path isn't read from disk (a Windows device name): nothing to open.
+  if (entry && !pair) return undefined;
+  if (ctx && entry && pair) {
+    const { left, right, title } = pair;
     const uri = target.side === 'base' ? left : right;
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { viewColumn: o.viewColumn, preview: true, preserveFocus: o.preserveFocus });
     const editor = await editorFor(uri, 1000, { left, right });

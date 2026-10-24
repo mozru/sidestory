@@ -11,7 +11,7 @@ import { defaultBaseCandidates, isValidBase, remoteDefault, resolveBase } from '
 import { EventEmitter, Uri } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
-const { Comparison, countCommits, isSafeRepoPath } = await import('../../src/extension/changes/comparison.ts');
+const { Comparison, countCommits, headSideReadable, isSafeRepoPath, toEntries } = await import('../../src/extension/changes/comparison.ts');
 const { GitFileSystem, RepoIds, gitUri, parseGitUri } = await import('../../src/extension/changes/git-fs.ts');
 type GitRepo = import('../../src/extension/changes/git-api.ts').GitRepo;
 
@@ -341,6 +341,26 @@ describe('the base a sidestory on the branch gives (§11.4)', () => {
   });
 });
 
+describe('paths Sidestory refuses (§4.5, §5.1)', () => {
+  const root = '/r';
+  const repo = { rootUri: Uri.file(root) } as unknown as GitRepo;
+  const ch = (status: number, path: string, old?: string) => ({ status, uri: Uri.file(`${root}/${path}`), originalUri: Uri.file(`${root}/${old ?? path}`), renameUri: Uri.file(`${root}/${path}`) }) as never;
+  it('are not dropped: listed as unsupported, each one change for coverage', () => {
+    const r = toEntries(repo, [ch(5, 'src/a.ts'), ch(1, 'x/.git/hooks/post'), ch(5, 'bad\u0007name.ts'), ch(3, 'ok.ts', 'a/../b.ts'), ch(5, 'con')]);
+    expect(r.entries.map((e) => e.path)).toEqual(['src/a.ts', 'con']); // `con` is an ordinary blob
+    expect(r.unsupported).toEqual([{ path: 'x/.git/hooks/post' }, { path: 'bad\u0007name.ts' }, { path: 'ok.ts', oldPath: 'a/../b.ts' }]);
+    expect(r.unsafe).toBe(0);
+  });
+  it('the working tree side is read from disk only for a path the file system rule passes', () => {
+    for (const p of ['con', 'src/nul.txt', 'docs/a.', 'a /b', 'a.ts:stream']) {
+      expect(headSideReadable('workingTree', { path: p, status: 'M' }), p).toBe(false);
+      expect(headSideReadable('committed', { path: p, status: 'M' }), p).toBe(true); // a blob, read by id
+      expect(headSideReadable('workingTree', { path: p, status: 'D' }), p).toBe(true); // the empty side
+    }
+    expect(headSideReadable('workingTree', { path: 'src/a.ts', status: 'M' })).toBe(true);
+  });
+});
+
 describe('the same comparison keeps its snapshot', () => {
   it('a recompute that changes nothing keeps the Snapshot object and fires no change; a real change does', async () => {
     const repo = cliRepo();
@@ -357,6 +377,7 @@ describe('the same comparison keeps its snapshot', () => {
     expect(c.snapshot).toBe(first);
     expect(changes).toBe(1);
     expect(rechecks).toBe(2);
+    expect(first.unsupported).toEqual([]);
     // Another base: another snapshot.
     const other = new Comparison(repo, opts({ setting: () => 'main' }));
     await other.refresh();

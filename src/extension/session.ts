@@ -1267,7 +1267,7 @@ export class ExplainerSession implements vscode.Disposable {
       const p = this.repoPath(a);
       const entry = p ? this.diff.entryFor({ path: p, side: 'base' }) : undefined;
       const map = entry ? this.diff.lineMap(entry.path) : undefined;
-      const right = entry && entry.status !== 'D' ? this.diff.diffUris(entry).right : undefined;
+      const right = entry && entry.status !== 'D' ? this.diff.diffUris(entry)?.right : undefined;
       if (map && right && visible(right)) {
         const at = mapOldRange(map, r.range).start;
         const n = r.range.end - r.range.start + 1;

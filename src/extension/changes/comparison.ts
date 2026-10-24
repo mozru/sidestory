@@ -4,7 +4,7 @@
 // HEAD or the base moved, and every result carries an epoch so a late answer never overwrites a newer one.
 import * as vscode from 'vscode';
 import type { BaseSource, DefaultBaseInputs, ResolvedBase } from './base.ts';
-import { isSafeRepoPath } from '../../core/repo-path.ts';
+import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { FULL_SHA, isValidBase, remoteDefault, resolveBase, resolveDefaultBase } from './base.ts';
 import type { GitApi, GitChange, GitDiffChange, GitRepo } from './git-api.ts';
 import { configValue, refReader, relPath } from './git-api.ts';
@@ -31,7 +31,12 @@ export interface Snapshot {
   readonly onBase: boolean;
   /** Working tree mode, and there are uncommitted edits (staged, unstaged, untracked or unsaved). */
   readonly uncommitted: boolean;
-  /** Changed files whose paths are unsafe to show or read (control characters, `..`, `.git`): not listed. */
+  /**
+   * Changed files whose paths Sidestory won't name or read (control characters, `..`, `.git`, a leading `:`): not
+   * in `entries`, but each counts as one change in coverage, as the checker counts it (§5.1).
+   */
+  readonly unsupported: readonly { readonly path: string; readonly oldPath?: string }[];
+  /** Changes the git API gave without a path under the repository root: dropped. */
   readonly unsafe: number;
 }
 
@@ -44,8 +49,15 @@ export type ComparisonState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; snapshot: Snapshot };
 
-// Paths Sidestory refuses to read or open (§4.5): one rule with the checker (src/core/repo-path.ts).
-export { isSafeRepoPath };
+// Paths Sidestory refuses to read or open (§4.5): the rules shared with the checker (src/core/repo-path.ts).
+export { isSafeFsPath, isSafeRepoPath };
+
+/**
+ * Whether a changed file's head side may be opened or read: in working tree mode it is the file on disk, so its path
+ * must pass the file system rule (`con`, `a.`, `a:b` would read a Windows device, another file or a stream). A
+ * deleted file's head side is empty; committed mode reads blobs by id.
+ */
+export const headSideReadable = (mode: Mode, e: { path: string; status: string }): boolean => mode !== 'workingTree' || e.status === 'D' || isSafeFsPath(e.path);
 
 /**
  * A repository's identity. The git API hands out a new wrapper object on every `repositories`, `getRepository` and
@@ -56,8 +68,17 @@ export const sameRepo = (a: { readonly rootUri: { toString(): string } } | undef
   !!a && !!b && repoKey(a) === repoKey(b);
 
 /** What makes two snapshots the same comparison for coverage: merge-base, head, mode, base and the files' identities. */
-export function snapshotIdentity(s: Pick<Snapshot, 'mergeBase' | 'mode' | 'entries'> & { base: { spec: string; sha: string; source: string }; head: { sha: string } }): string {
-  return JSON.stringify([s.mergeBase, s.head.sha, s.mode, s.base.spec, s.base.sha, s.base.source, s.entries.map((e) => [e.path, e.oldPath ?? null, e.status])]);
+export function snapshotIdentity(s: Pick<Snapshot, 'mergeBase' | 'mode' | 'entries'> & { unsupported?: Snapshot['unsupported'] } & { base: { spec: string; sha: string; source: string }; head: { sha: string } }): string {
+  return JSON.stringify([
+    s.mergeBase,
+    s.head.sha,
+    s.mode,
+    s.base.spec,
+    s.base.sha,
+    s.base.source,
+    s.entries.map((e) => [e.path, e.oldPath ?? null, e.status]),
+    (s.unsupported ?? []).map((u) => [u.path, u.oldPath ?? null]),
+  ]);
 }
 
 /** Everything else a snapshot says (counts, flags, ahead/behind, labels): a change of these repaints, coverage stays. */
@@ -66,9 +87,17 @@ function snapshotDetails(s: Snapshot): string {
   return JSON.stringify(rest);
 }
 
-/** The git API's changes as entries; `untracked` marks them all as untracked. Unsafe paths are dropped. */
-export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffChange)[], untracked = false): { entries: ChangeEntry[]; unsafe: number } {
+/**
+ * The git API's changes as entries; `untracked` marks them all as untracked. A path `isSafeRepoPath` refuses is
+ * `unsupported` (counted as one change, never read or shown as a file); a change with no path under the root is dropped.
+ */
+export function toEntries(
+  repo: GitRepo,
+  changes: readonly (GitChange | GitDiffChange)[],
+  untracked = false,
+): { entries: ChangeEntry[]; unsupported: { path: string; oldPath?: string }[]; unsafe: number } {
   const entries: ChangeEntry[] = [];
+  const unsupported: { path: string; oldPath?: string }[] = [];
   let unsafe = 0;
   for (const c of changes) {
     // Read each property once: the API's changes can be class instances with getters (never spread them).
@@ -77,8 +106,12 @@ export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffC
     const newPath = relPath(repo, c.renameUri ?? c.uri);
     const oldPath = relPath(repo, c.originalUri);
     const path = status === 'D' ? (oldPath ?? newPath) : newPath;
-    if (!path || !isSafeRepoPath(path) || ((status === 'R' || status === 'C') && (!oldPath || !isSafeRepoPath(oldPath)))) {
+    if (!path || ((status === 'R' || status === 'C') && !oldPath)) {
       unsafe++;
+      continue;
+    }
+    if (!isSafeRepoPath(path) || ((status === 'R' || status === 'C') && oldPath && !isSafeRepoPath(oldPath))) {
+      unsupported.push({ path, ...((status === 'R' || status === 'C') && oldPath && oldPath !== path ? { oldPath } : {}) });
       continue;
     }
     const e: ChangeEntry = { path, status, ...((status === 'R' || status === 'C') && oldPath !== path ? { oldPath } : {}), ...(untracked ? { untracked: true } : {}) };
@@ -89,7 +122,7 @@ export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffC
     }
     entries.push(e);
   }
-  return { entries, unsafe };
+  return { entries, unsupported, unsafe };
 }
 
 /** Commits merge-base → head, "1000+" past the cap (§9.2). `log`'s maxEntries is ignored with a range (1.95 and newer). */
@@ -408,11 +441,13 @@ export class Comparison implements vscode.Disposable {
     const listed = toEntries(repo, list);
     const entries = listed.entries;
     let unsafe = listed.unsafe;
+    const unsupported = listed.unsupported;
     if (mode === 'workingTree') {
       const seen = new Set(entries.map((e) => e.path));
       const untracked = [...(s.untrackedChanges ?? []), ...s.workingTreeChanges.filter((c) => c.status === 7)];
       const extra = toEntries(repo, untracked, true);
       unsafe += extra.unsafe;
+      for (const u of extra.unsupported) if (!unsupported.some((x) => x.path === u.path)) unsupported.push(u);
       for (const e of extra.entries) {
         if (!seen.has(e.path)) {
           seen.add(e.path);
@@ -476,6 +511,7 @@ export class Comparison implements vscode.Disposable {
         // HEAD is the base branch itself; a new branch at main's commit is a branch with no changes yet.
         onBase: !!base.branch && base.branch === head.name,
         uncommitted: mode === 'workingTree' && (s.workingTreeChanges.length > 0 || s.indexChanges.length > 0 || (s.untrackedChanges?.length ?? 0) > 0 || this.dirty.size > 0),
+        unsupported: unsupported.sort((a, b) => comparePaths(a.path, b.path)),
         unsafe,
       },
     });

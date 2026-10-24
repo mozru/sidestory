@@ -13,7 +13,7 @@ import { displayText, escapeIcons, plainForMessage } from '../../core/display-te
 import type { ChangeCoverage } from '../../core/coverage.ts';
 import { decodePair, oldToNew, type ChangeBlock } from '../../core/hunks.ts';
 import { isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
-import { chooseRepository, Comparison, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
+import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
 import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, fileDecoration, isDone, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
 import { CoverageService, type Belonging, type CoverageResult } from './coverage-service.ts';
 import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
@@ -468,12 +468,18 @@ export class ChangesService implements vscode.Disposable {
     return k.side === 'head' ? k.path : (this.entryFor(s, k)?.path ?? k.path);
   }
 
+  /** A working tree file, only for a path the file system rule passes (never a Windows device, `a.` or `a:b`). */
   private fileUri(s: Snapshot, path: string): vscode.Uri {
+    if (!isSafeFsPath(path)) throw new Error('a path Sidestory does not read from disk');
     return vscode.Uri.joinPath(s.repo.rootUri, ...path.split('/'));
   }
 
-  /** The two sides of a file's merge diff (§7.1): merge-base ↔ working tree file, or ↔ HEAD's blob. */
-  diffUris(s: Snapshot, e: ChangeEntry): { left: vscode.Uri; right: vscode.Uri; title: string } {
+  /**
+   * The two sides of a file's merge diff (§7.1): merge-base ↔ working tree file, or ↔ HEAD's blob. Undefined when
+   * the working tree side's path isn't one Sidestory reads from disk (it still counts, as one change).
+   */
+  diffUris(s: Snapshot, e: ChangeEntry): { left: vscode.Uri; right: vscode.Uri; title: string } | undefined {
+    if (!headSideReadable(s.mode, e)) return undefined;
     const left = e.status === 'A' ? emptyUri(e.path) : gitUri(this.ids, s.repo, s.mergeBase, e.oldPath ?? e.path);
     const right = e.status === 'D' ? emptyUri(e.path) : s.mode === 'workingTree' ? this.fileUri(s, e.path) : gitUri(this.ids, s.repo, s.head.sha, e.path);
     const what = s.mode === 'workingTree' ? 'working tree' : 'HEAD';
@@ -486,10 +492,10 @@ export class ChangesService implements vscode.Disposable {
     const out: vscode.Uri[] = [];
     try {
       // A deleted file too: Source Control lists deletions by their file URI.
-      out.push(this.fileUri(s, e.path));
-      const { left, right } = this.diffUris(s, e);
-      if (left.scheme === GIT_SCHEME) out.push(left);
-      if (right.scheme === GIT_SCHEME) out.push(right);
+      if (isSafeFsPath(e.path)) out.push(this.fileUri(s, e.path));
+      const pair = this.diffUris(s, e);
+      if (pair?.left.scheme === GIT_SCHEME) out.push(pair.left);
+      if (pair?.right.scheme === GIT_SCHEME) out.push(pair.right);
     } catch {
       // an unsafe path: nothing to decorate
     }
@@ -741,7 +747,8 @@ export class ChangesService implements vscode.Disposable {
       vscode.window.setStatusBarMessage('No comparison with a base here', 3000);
       return;
     }
-    const order = [...s.entries].sort((a, b) => comparePaths(a.path, b.path));
+    // Files whose working tree side Sidestory won't open (a Windows device name, `a.`) are skipped.
+    const order = s.entries.filter((e) => headSideReadable(s.mode, e)).sort((a, b) => comparePaths(a.path, b.path));
     if (!order.length) {
       vscode.window.setStatusBarMessage('No changed files', 3000);
       return;
@@ -751,7 +758,9 @@ export class ChangesService implements vscode.Disposable {
     const r = step(order.length, from ? order.findIndex((e) => e.path === from) : -1, dir);
     if (!r) return;
     if (r.wrapped && order.length > 1) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first changed file' : 'Back to the last changed file', 3000);
-    const { left, right, title } = this.diffUris(s, order[r.index]!);
+    const pair = this.diffUris(s, order[r.index]!);
+    if (!pair) return;
+    const { left, right, title } = pair;
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, ...(place?.editor.viewColumn ? { viewColumn: place.editor.viewColumn } : {}) });
   }
 
@@ -901,6 +910,11 @@ export class ChangesService implements vscode.Disposable {
       void vscode.window.showInformationMessage('Put the cursor in a change of this branch that isn’t explained yet (in its diff, or the changed file), or select its lines, then Mark as Trivial.');
       return;
     }
+    const entry = this.entryFor(s, target);
+    if (entry && !headSideReadable(s.mode, entry)) {
+      void vscode.window.showInformationMessage('This file’s path isn’t one Sidestory reads from disk (a Windows device name, or a name ending in a dot or a space): list it in trivialFiles instead.');
+      return;
+    }
     const text = await this.sideText(s, target);
     if (text === undefined) return;
     try {
@@ -917,8 +931,9 @@ export class ChangesService implements vscode.Disposable {
    */
   private async sideText(s: Snapshot, k: SideKey): Promise<string | undefined> {
     const e = this.entryFor(s, k);
-    if (!e) return undefined;
-    const { left, right } = this.diffUris(s, e);
+    const pair = e && this.diffUris(s, e);
+    if (!pair) return undefined;
+    const { left, right } = pair;
     const read = async (u: vscode.Uri) => (u.scheme === EMPTY_SCHEME ? undefined : vscode.workspace.fs.readFile(u));
     try {
       const [ob, nb] = await Promise.all([read(left), read(right)]);

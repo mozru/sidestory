@@ -653,8 +653,8 @@ export class CoverageService implements vscode.Disposable {
     return {
       mergeBase: s.mergeBase,
       entries: s.entries,
-      // The comparison's entries left out for their paths, once it passes them on (comparison.ts: `unsupported`).
-      unsupported: (s as Snapshot & { readonly unsupported?: readonly UnsupportedEntry[] }).unsupported,
+      // The comparison's entries left out for their paths (comparison.ts: `unsupported`): one change each.
+      unsupported: s.unsupported,
       candidates: () => this.candidates(s),
       presentAtMergeBase: (p) => {
         const key = `${s.mergeBase}\0${p}`;
