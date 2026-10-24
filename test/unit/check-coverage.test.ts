@@ -609,6 +609,29 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     expect(ids(await json(['--coverage', '--base', 'main', '--repo', dir])).map((f) => f.code)).toEqual(['id-removed']);
   });
 
+  it("--pin never puts back an archived sidestory's id, and prefers HEAD's id to the merge-base's", async () => {
+    // Archived x (id A) with a new x in its place, its id not written yet: --pin writes a new one.
+    const { dir, head } = withLanded();
+    mkdirSync(join(dir, '.sidestory/archive/2026-10-24-landed'), { recursive: true });
+    renameSync(join(dir, '.sidestory/landed/manifest.json'), join(dir, '.sidestory/archive/2026-10-24-landed/manifest.json'));
+    renameSync(join(dir, '.sidestory/landed/sidestory.html'), join(dir, '.sidestory/archive/2026-10-24-landed/sidestory.html'));
+    const fresh = JSON.parse(landed());
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), JSON.stringify({ ...fresh, version: 3, base: head }, null, 2));
+    writeFileSync(join(dir, '.sidestory/landed/sidestory.html'), page);
+    const r = await json([join(dir, '.sidestory/landed'), '--pin', '--coverage'], { newId: () => B });
+    expect(r.pin!.id).toBe(B);
+    // Committed with id B on the branch, then the id dropped in the working tree: --pin puts back B, not A.
+    const two = withLanded();
+    writeFileSync(join(two.dir, '.sidestory/landed/manifest.json'), JSON.stringify({ ...JSON.parse(landed(B)), version: 3, base: two.head }, null, 2));
+    git(two.dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Replace');
+    writeFileSync(join(two.dir, '.sidestory/landed/manifest.json'), JSON.stringify({ ...JSON.parse(landed()), version: 3, base: two.head }, null, 2));
+    const before = await json(['--coverage', '--base', two.head, '--repo', two.dir]);
+    expect(ids(before).map((f) => f.code)).toEqual(['id-removed']);
+    expect(ids(before)[0]!.message).toContain(`Put back "id": "${B}"`);
+    const p = await json([join(two.dir, '.sidestory/landed'), '--pin', '--coverage'], { newId: () => '01JC0000000000000000000ABC' });
+    expect(p.pin!.id).toBe(B);
+  });
+
   it('idProblem: an id against the one before, the archive excusing a moved one', () => {
     expect(idProblem(undefined, 'B', new Set())).toBeUndefined();
     expect(idProblem('A', 'A', new Set())).toBeUndefined();
@@ -624,11 +647,16 @@ describe('shared comment threads (docs/COMMENTS-PLAN.md §3.1)', () => {
     const dir = copy();
     const t = join(dir, '.sidestory/retry-jitter/threads/t_01JC0AANDED00000000000000A');
     mkdirSync(t, { recursive: true });
-    writeFileSync(join(t, 'e_01JC0REP4ACED0000000000000.json'), '{"v":1}\n');
+    const event = (id: string) => `${JSON.stringify({ v: 1, id, thread: 't_01JC0AANDED00000000000000A', type: 'open', at: '2026-10-24T10:00:00.000Z', by: { kind: 'human', name: 'Alex' }, anchor: { kind: 'step', step: 'jitter' }, body: 'Why?' })}\n`;
+    writeFileSync(join(t, 'e_01JC0REP4ACED0000000000000.json'), event('e_01JC0REP4ACED0000000000000'));
+    // Named like an event but not one (data some code might load), or naming another event: counted like code.
+    writeFileSync(join(t, 'e_01JC0REP4ACED0000000000001.json'), '{"retries": 99}\n');
+    writeFileSync(join(t, 'e_01JC0REP4ACED0000000000002.json'), event('e_01JC0REP4ACED0000000000000'));
     // Anything else there is code like any other.
     writeFileSync(join(t, 'run.js'), 'module.exports = 1;\n');
     const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
     const paths = r.coverage.files.map((f) => f.path);
-    expect(paths.filter((p) => p.includes('/threads/'))).toEqual(['.sidestory/retry-jitter/threads/t_01JC0AANDED00000000000000A/run.js']);
+    const base = '.sidestory/retry-jitter/threads/t_01JC0AANDED00000000000000A';
+    expect(paths.filter((p) => p.includes('/threads/'))).toEqual([`${base}/e_01JC0REP4ACED0000000000001.json`, `${base}/e_01JC0REP4ACED0000000000002.json`, `${base}/run.js`]);
   });
 });

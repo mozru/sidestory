@@ -24,7 +24,7 @@ import { outlineHtml } from '../../core/html-scan.ts';
 import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, type ChangeBlock, type FileDiff, type MoveGroup } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isOwnedFileName, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isOwnedFileName, isThreadEventBytes, SIDESTORY_FILES, sidestoryFolderOf, threadEventPath } from '../../core/membership.ts';
 import { pairUnstagedRenames } from '../../core/renames.ts';
 import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
@@ -325,6 +325,14 @@ export async function computeCoverage(
     if (file === 'manifest.json' ? !isArchivedManifest(ob, nb) : !sameBytes(ob, nb)) continue;
     moves.add(entry).add(from);
   }
+  // Shared comment event files are the sidestory's own only when they are one (as the checker decides).
+  const notEvents = new Set<ChangeEntry>();
+  for (const e of src.entries) {
+    const ids = e.status !== 'D' ? threadEventPath(e.path) : undefined;
+    if (!ids) continue;
+    const nb = await (src.newDiskBytes ?? src.newBytes)(e.path);
+    if (!isThreadEventBytes(ids, nb instanceof Uint8Array ? nb : undefined)) notEvents.add(e);
+  }
   if (!isCurrent()) return undefined;
   const counted: ChangeEntry[] = [];
   const archived: ChangeEntry[] = [];
@@ -334,7 +342,7 @@ export async function computeCoverage(
       archived.push(e);
       continue;
     }
-    const c = countedChange(e, (f) => complete.has(f));
+    const c = notEvents.has(e) ? { counted: true as const } : countedChange(e, (f) => complete.has(f));
     if (!c.counted) continue;
     if (c.as === 'deletion') counted.push({ path: e.oldPath!, status: 'D' });
     else if (c.as === 'addition') counted.push({ path: e.path, status: 'A', ...(e.untracked ? { untracked: true } : {}), ...(e.unsaved ? { unsaved: true } : {}) });

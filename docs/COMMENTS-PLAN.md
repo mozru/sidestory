@@ -384,7 +384,7 @@ The parser has a fuzz test (§13.1): any input yields only the allowed node type
 ### 8.1 Your own branch
 
 - Comments on a sidestory with a `base` are the same threads; code threads on diff editors record `side` and attach to the right column (CHANGES-PLAN.md §7.3's target URIs per side).
-- **Shared threads travel with the branch**: committed under the sidestory's folder, so a teammate who checks out the branch sees them and can reply. They don't affect coverage: `ownedBySidestory` (src/core/membership.ts) leaves out a complete sidestory's `threads/t_<ULID>/e_<ULID>.json` files, as it does its manifest and page; any other file under `threads/` counts like code.
+- **Shared threads travel with the branch**: committed under the sidestory's folder, so a teammate who checks out the branch sees them and can reply. They don't affect coverage: `ownedBySidestory` (src/core/membership.ts) leaves out a complete sidestory's `threads/t_<ULID>/e_<ULID>.json` files when they hold a valid event with those ids (`isThreadEventBytes`), as it does its manifest and page; anything else under `threads/` counts like code.
 - **In the PR on GitHub**, thread files would fill "Files changed"; the `.gitattributes` entry offered on first Share (§3.5) marks them `linguist-generated`, which collapses them there.
 - **The Changes view** adds a comment count to file rows (`+23 −11 · ◐ 2/3 · 2 comments`) and change items, and "Show Comments" in its `…` menu (the Comments view filtered to the comparison).
 - **Archiving** (CHANGES-PLAN.md §12) moves the folder, shared threads included; the checker's `--archive` warns about open threads. Local threads of an archived or renamed sidestory are listed under "Elsewhere" (§11.1).

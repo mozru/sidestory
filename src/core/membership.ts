@@ -1,6 +1,7 @@
 // Which sidestories count toward a comparison's coverage (docs/CHANGES-PLAN.md §6.1). Pure: the extension and the
 // checker look the facts up their own way (the git API, hardened git) and apply this same test.
 import { decodeUtf8 } from './hunks.ts';
+import { CAPS, parseEvent } from './threads/schema.ts';
 import { explainerNameSchema, FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseManifest } from './manifest.ts';
 
 /**
@@ -50,6 +51,27 @@ export function sidestoryFolderOf(path: string): string | undefined {
 
 /** A shared comment's event file, relative to its sidestory folder (docs/COMMENTS-PLAN.md §3.1): JSON data, never code. */
 const THREAD_EVENT_FILE = /^threads\/t_[0-9A-HJKMNP-TV-Z]{26}\/e_[0-9A-HJKMNP-TV-Z]{26}\.json$/;
+
+/**
+ * Whether a changed path is a shared comment's event file by name (`<sidestory>/threads/t_<ULID>/e_<ULID>.json`), with
+ * its file and thread ids. It is owned only when its new side really is one (`isThreadEventBytes`): the checker and
+ * the extension count it as a change otherwise, so a branch can't keep code or data there out of review.
+ */
+export function threadEventPath(path: string): { thread: string; event: string } | undefined {
+  if (isArchivePath(path)) return undefined;
+  const folder = sidestoryFolderOf(path);
+  const rest = folder ? path.slice(folder.length + 1) : '';
+  if (!folder || !THREAD_EVENT_FILE.test(rest)) return undefined;
+  const [, thread, file] = rest.split('/');
+  return { thread: thread!, event: file!.slice(0, -'.json'.length) };
+}
+
+/** The bytes of a regular file at a `threadEventPath`: a valid event naming that file and thread (at most 32 KB). */
+export function isThreadEventBytes(ids: { thread: string; event: string }, bytes: Uint8Array | undefined): boolean {
+  if (!bytes || bytes.byteLength > CAPS.eventBytes) return false;
+  const text = decodeUtf8(bytes);
+  return text !== undefined && parseEvent(text, ids.event, ids.thread).ok;
+}
 
 /** A path, relative to its sidestory folder, that the sidestory owns: its two files, or a shared comment's event file. */
 export function isOwnedFileName(rest: string): boolean {

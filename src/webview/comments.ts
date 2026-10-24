@@ -666,7 +666,8 @@ export class CommentsPane {
     send.addEventListener('click', (e) => {
       if (e.isTrusted) doSend();
     });
-    c.text.addEventListener('keydown', (e) => {
+    // On the whole composer, so Ctrl/Cmd+Enter also sends from the intent picker or the mode buttons.
+    root.addEventListener('keydown', (e) => {
       if (!e.isTrusted) return;
       e.stopPropagation(); // the panel's J/K/C/A keys don't apply while typing
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {

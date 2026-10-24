@@ -1,6 +1,6 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
-import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, countedPath, isArchivePath, isCompleteSidestory, isThreadEventBytes, ownedBySidestory, sidestoryFolderOf, threadEventPath } from '../../src/core/membership.ts';
 import { isSafeFsPath, isSafeRepoPath, pathProblem } from '../../src/core/repo-path.ts';
 
 describe('isSafeRepoPath and isSafeFsPath (src/core/repo-path.ts)', () => {
@@ -157,6 +157,21 @@ describe('countedPath and sidestoryFolderOf', () => {
     expect(countedPath(`.sidestory/retry/threads/${t}/sub/${e}.json`)).toBe(true);
     expect(countedPath(`.sidestory/archive/2026-x/threads/${t}/${e}.json`)).toBe(true);
     expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: `.sidestory/retry/threads/${t}/${e}.json` })).toEqual({ counted: true, as: 'deletion' });
+  });
+  it('an event file is owned only when it holds a valid event naming that file and thread', () => {
+    const t = 't_01JC0AANDED00000000000000A';
+    const e = 'e_01JC0REP4ACED0000000000000';
+    const ids = threadEventPath(`.sidestory/retry/threads/${t}/${e}.json`)!;
+    expect(ids).toEqual({ thread: t, event: e });
+    expect(threadEventPath(`.sidestory/retry/threads/${t}/run.js`)).toBeUndefined();
+    expect(threadEventPath(`.sidestory/archive/2026-x/threads/${t}/${e}.json`)).toBeUndefined();
+    const bytes = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+    const ok = { v: 1, id: e, thread: t, type: 'open', at: '2026-10-24T10:00:00.000Z', by: { kind: 'human', name: 'A' }, anchor: { kind: 'step', step: 's' }, body: 'Why?' };
+    expect(isThreadEventBytes(ids, bytes(ok))).toBe(true);
+    expect(isThreadEventBytes(ids, bytes({ ...ok, id: 'e_01JC0REP4ACED0000000000001' }))).toBe(false);
+    expect(isThreadEventBytes(ids, bytes({ retries: 99 }))).toBe(false);
+    expect(isThreadEventBytes(ids, bytes({ ...ok, body: 'x'.repeat(40_000) }))).toBe(false);
+    expect(isThreadEventBytes(ids, undefined)).toBe(false);
   });
   it('a rename or copy counts when either path counts; into a sidestory\'s own file, the old side is a deletion', () => {
     expect(countedChange({ status: 'R', oldPath: 'src/auth.js', path: '.sidestory/notes/manifest.json' })).toEqual({ counted: true, as: 'deletion' });

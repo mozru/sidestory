@@ -33,7 +33,7 @@ export async function threadsMain(argv: string[], io: { out: (s: string) => void
   const ledger = new Ledger(state, repoKeyFor(root));
   // Trust labels come from the ledger: read it only from a private state folder, as the MCP server and the extension
   // do (never created here). A missing one has no entries; an unsafe one labels everything "repository".
-  for (const dir of [state, join(state, 'authored')]) {
+  for (const dir of [state, join(state, 'authored'), join(state, 'authored', repoKeyFor(root))]) {
     if (!existsSync(dir)) break;
     try {
       checkPrivate(dir);

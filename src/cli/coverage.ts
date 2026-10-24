@@ -9,7 +9,7 @@ import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
 import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseBranchFields, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, isOwnedFileName, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, isOwnedFileName, isThreadEventBytes, SIDESTORY_FILES, sidestoryFolderOf, threadEventPath } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
 import { resolveAnchor } from '../core/resolve.ts';
@@ -349,6 +349,20 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
 
   // Stable ids (docs/COMMENTS-PLAN.md §3.1): local comment threads key off a sidestory's manifest `id`.
   const previousIds = await checkIds(git, sorted, { mode, mergeBase, headSha, report: !opts.newId, add: (file, code, message, line) => add('error', abs(file), code, message, line) });
+  // Shared comment event files are the sidestory's own only when they are one: a regular file holding a valid event.
+  const notEvents = new Set<Entry>();
+  for (const e of sorted) {
+    const ids = e.newMode !== '000000' ? threadEventPath(e.path) : undefined;
+    if (!ids || unsafe(e)) continue;
+    let bytes: Uint8Array | undefined;
+    if (e.newMode === '100644') {
+      if (mode === 'working') {
+        const disk = isSafeFsPath(e.path) ? await git.readWorkingFile(e.path) : undefined;
+        bytes = disk && 'bytes' in disk ? disk.bytes : undefined;
+      } else if (!ZERO.test(e.newId)) bytes = (await git.blobs([e.newId])).bytes.get(e.newId);
+    }
+    if (!isThreadEventBytes(ids, bytes)) notEvents.add(e);
+  }
   let classified = sorted.map((original) => {
     let e = original;
     if (unsafe(e)) {
@@ -364,7 +378,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       e.kind = 'archive';
       return e;
     }
-    const c = countedChange(e, isComplete);
+    const c = notEvents.has(e) ? { counted: true as const } : countedChange(e, isComplete);
     if (!c.counted) {
       e.kind = 'sidestory';
       return e;
@@ -903,21 +917,22 @@ async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working
     if (e.status === 'R' && (!isManifest(e.oldPath) || name(e.oldPath!) !== name(e.path))) continue;
     const now = readManifestId(await newSide(e));
     if (!now) continue;
-    // What it was: at the merge-base (edited or renamed there), then at HEAD (the working tree's own edits).
+    // What it was: at HEAD (the working tree's own edits: the newest id), then at the merge-base (edited or renamed there).
     const refs: { label: string; id: () => Promise<string | undefined> }[] = [];
-    if (e.status === 'M' || e.status === 'R') refs.push({ label: `the merge-base (${o.mergeBase.slice(0, 7)})`, id: async () => readManifestId(await blob(e.oldId))?.id });
     if (o.mode === 'working' && !e.untracked && o.headSha !== o.mergeBase) {
       refs.push({ label: `HEAD (${o.headSha.slice(0, 7)})`, id: async () => {
         const t = (await git.lsTree(o.headSha, [e.path])).get(e.path);
         return t && REGULAR.has(t.mode) && t.id !== e.oldId ? readManifestId(await blob(t.id))?.id : undefined;
       } });
     }
+    if (e.status === 'M' || e.status === 'R') refs.push({ label: `the merge-base (${o.mergeBase.slice(0, 7)})`, id: async () => readManifestId(await blob(e.oldId))?.id });
     for (const ref of refs) {
       const before = await ref.id();
-      if (before !== undefined && !previous.has(e.path)) previous.set(e.path, before);
+      // HEAD's id wins over the merge-base's; an archived sidestory's id is never reused.
+      if (before !== undefined && !archived.has(before) && !previous.has(e.path)) previous.set(e.path, before);
       const problem = idProblem(before, now.id, archived);
       if (!problem) continue;
-      if (!o.report) break;
+      if (!o.report) continue;
       const why = 'local comment threads find their sidestory by it, and would otherwise move to "Elsewhere" in its panel';
       o.add(
         e.path,

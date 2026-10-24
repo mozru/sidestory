@@ -93,6 +93,8 @@ test('composer: C comments, A asks Claude with the intent; Ctrl/Cmd+Enter sends 
   await page.locator('.cx-scroll').focus();
   await page.keyboard.press('a');
   await expect(page.locator('.cx-c-composer textarea')).toHaveValue('What does valid mean here?');
+  // The composer takes focus on the next frame: wait for it, as a reader's next key would.
+  await expect(page.locator('.cx-c-composer textarea')).toBeFocused();
   await page.locator('.cx-c-intent').selectOption('edit');
   await clearPosted(page);
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
