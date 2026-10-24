@@ -5,9 +5,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symli
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { main } from '../../src/cli/check-widgets.ts';
 import { idProblem, type CoverageJson } from '../../src/cli/coverage.ts';
+
+// Every test runs several git commands; on Windows runners that alone can pass vitest's 5 s default.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 let base = '';

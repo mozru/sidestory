@@ -163,9 +163,10 @@ describe('hostile input stays linear (docs/NAVIGATION-PLAN.md §12.1)', () => {
       // Timings for the record (docs/NAVIGATION-PLAN.md §11.1: under 1 s total, 20 ms per slice).
       console.log(`outline ${name}: ${(html.length / MB).toFixed(1)} MB, ${total.toFixed(0)} ms total, worst slice ${worst.toFixed(1)} ms`);
       expect(total).toBeLessThan(1000);
-      // Loose (3× and more), so a busy CI machine doesn't flake: the clock is checked between tags, and one
-      // 5 MB tag (repeated `<a "`) is a single step of about 30 ms on a laptop.
-      expect(worst).toBeLessThan(150);
+      // Loose (10× and more), so a busy CI machine doesn't flake: the clock is checked between tags, one
+      // 5 MB tag (repeated `<a "`) is a single step of about 30 ms on a laptop, and Windows runners have
+      // measured 170–180 ms. This guards against a slice that never yields, not the 20 ms target.
+      expect(worst).toBeLessThan(400);
     });
 
     it(`the checker's scanHtml handles ${name} in under 1 s`, () => {
