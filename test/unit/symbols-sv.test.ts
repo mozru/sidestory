@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultDriverName, findSvSymbol, isResetName, scanSv, scanSvSliced, type SymbolTable } from '../../src/core/symbols/sv.ts';
+import { defaultDriverName, findSvSymbol, isResetName, isSvPath, scanSv, scanSvSliced, type SymbolTable } from '../../src/core/symbols/sv.ts';
 
 const FIXTURES = 'test/unit/fixtures/sv';
 const STREAM_DMA = 'examples/stream-dma/rtl';
@@ -318,5 +318,67 @@ describe('cost on hostile input (§4.3, §4.9)', () => {
     const t = scanSv(text);
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(t.partial).toBe(true);
+  });
+});
+
+describe('review round 1', () => {
+  const timed = (text: string) => {
+    const t0 = Date.now();
+    const t = scanSv(text);
+    return { t, ms: Date.now() - t0 };
+  };
+  it('enum without braces, or braces that never close, is linear', () => {
+    expect(timed(`module m; ${'enum '.repeat(100_000)}; endmodule`).ms).toBeLessThan(2000);
+    expect(timed(`module m; ${'enum { '.repeat(60_000)}; endmodule`).ms).toBeLessThan(2000);
+  });
+  it('many declarations under a long comment block: the comment walk is done once', () => {
+    const decls = Array.from({ length: 100_000 }, (_, i) => `a${i}`).join(',');
+    const r = timed(`${'//\n'.repeat(100_000)}module m; logic ${decls}; endmodule`);
+    expect(r.ms).toBeLessThan(3000);
+    expect(findSvSymbol(r.t, 'a5').ok).toBe(true);
+  });
+  it('deep concatenation targets and long reset chains never overflow the stack', () => {
+    for (const text of [
+      `module m; always_comb ${'{'.repeat(8000)}a${'}'.repeat(8000)} = 1; endmodule`,
+      `module m; assign ${'{'.repeat(8000)}a${'}'.repeat(8000)} = 1; endmodule`,
+      `module m; always_ff @(posedge clk) ${'if (rst) x = 1; else '.repeat(5000)} x = 2; endmodule`,
+    ]) {
+      expect(scanSv(text).partial).toBe(true);
+    }
+  });
+  it('500 lookups in a hostile table stay fast (indexed, capped candidate lists)', () => {
+    const t = scanSv(`module m; always_comb case (s) ${'A: x = 1; '.repeat(200_000)} endcase\n${'assign y = 1;\n'.repeat(50_000)} endmodule`);
+    const t0 = Date.now();
+    for (let i = 0; i < 500; i++) {
+      findSvSymbol(t, 'driver(x).case(A)');
+      findSvSymbol(t, 'driver(y)');
+      findSvSymbol(t, 'driver(nothing)');
+    }
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+  it('interface ports have no direction; property names are recorded', () => {
+    const t = scanSv('module m (input logic clk, axi_if.mst bus, output logic q); property p_hand; @(posedge clk) q; endproperty endmodule');
+    expect(t.symbols.find((s) => s.name === 'bus')!.dir).toBeUndefined();
+    expect(t.symbols.find((s) => s.name === 'q')!.dir).toBe('output');
+    expect(findSvSymbol(t, 'p_hand').ok).toBe(true);
+  });
+  it('hints: members, labelled blocks, assigns, the case selector slip, macros, names only used in a later arm', () => {
+    const msg = (text: string, q: string) => {
+      const r = findSvSymbol(scanSv(text), q);
+      return r.ok ? '' : r.message;
+    };
+    expect(msg('module m; assign o.data = 1; assign o.valid = 1; endmodule', 'driver(o)')).toMatch(/driver\(o\.data\)/);
+    expect(msg('module m; if (W) begin : g_wide assign w = 1; end else begin : g_narrow assign w = 0; end endmodule', 'driver(w)')).toMatch(/g_wide\.driver\(w\)/);
+    expect(msg('module m; assign a = 1; assign a = 2; endmodule', 'driver(a)')).toMatch(/link one by its lines, as #L1/);
+    const fsm = 'module m; always_comb begin state_d = state_q; case (state_q) IDLE: state_d = RUN; endcase end\nalways_ff @(posedge clk) state_q <= state_d; endmodule';
+    expect(msg(fsm, 'driver(state_q).case(IDLE)')).toMatch(/driver\(state_d\)\.case\(IDLE\)/);
+    expect(msg('module m;\n`FF(state_q, state_d, IDLE)\nendmodule', 'driver(state_q)')).toMatch(/argument of `FF on line 2.*#L2/);
+    expect(msg('module m (input logic a);\n`ifdef X\nassign b = a;\n`else\nassign b = 0;\n`endif\nendmodule', 'driver(a)')).not.toMatch(/ifdef/);
+  });
+  it('a .v file in another language (Coq) is not Verilog', () => {
+    expect(isSvPath('a.v', 'coq')).toBe(false);
+    expect(isSvPath('a.v', 'verilog')).toBe(true);
+    expect(isSvPath('a.v')).toBe(true);
+    expect(isSvPath('a.txt', 'systemverilog')).toBe(true);
   });
 });

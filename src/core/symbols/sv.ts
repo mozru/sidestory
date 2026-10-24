@@ -99,6 +99,8 @@ export interface SymbolTable {
   units: Set<string>;
   /** Identifiers seen only in later `ifdef arms (names only: no scopes). */
   skipped: Set<string>;
+  /** Names passed to macro calls used as statements or items (`` `FF(state_q, …) ``), with the first call's line. */
+  macroUses: Map<string, { macro: string; line: number }>;
   /** The file didn't scan cleanly (ends that don't balance, too deep, or over budget). */
   partial: boolean;
   /** Why it's partial, for messages. */
@@ -161,6 +163,8 @@ const UNITS: Record<string, { end: string; kind: SvKind }> = {
 };
 /** Bodies skipped whole, to their end keyword. */
 const SKIPPED: Record<string, string> = { specify: 'endspecify', covergroup: 'endgroup', property: 'endproperty', sequence: 'endsequence', primitive: 'endprimitive', config: 'endconfig', table: 'endtable', randsequence: 'endsequence' };
+/** Skipped bodies whose name is still recorded (`property p_hand; … endproperty`). */
+const NAMED_BODIES: Record<string, SvKind> = { property: 'assertion', sequence: 'assertion', covergroup: 'block', clocking: 'clocking' };
 /** Keywords that start a module item: a statement scan stops at them (a missing `;` or `end`). */
 /** `assign` too: a procedural continuous assignment is rare, and a missing `end` before an `assign` is common mid-edit. */
 const ITEM_STARTS = new Set(['module', 'macromodule', 'program', 'package', 'class', 'always', 'always_ff', 'always_comb', 'always_latch', 'initial', 'final', 'function', 'task', 'generate', 'endgenerate', 'assign']);
@@ -254,7 +258,10 @@ function* lex(src: string, budget: number): Generator<void, Lexed> {
       return;
     }
     if (skip > 0) {
-      if (k === ID && skipped.size < SV_LIMITS.skippedNames) skipped.add(src.slice(s, e));
+      if (k === ID && skipped.size < SV_LIMITS.skippedNames) {
+        const name = src.slice(s, e);
+        if (!KEYWORDS.has(name)) skipped.add(name);
+      }
       markTo(s, e, CODE);
       return;
     }
@@ -500,7 +507,9 @@ interface Collect {
   /** Where in the block: the reset branch, the functional branch, or neither. */
   branch: 'reset' | 'functional' | 'body';
   functional: string[];
+  inFunctional: Set<string>;
   bodyOrder: string[];
+  inBody: Set<string>;
   /** Variables declared inside the block: not drivers of anything outside it. */
   locals: Set<string>;
   /** Non-clock edge signals of the sensitivity list (resets). */
@@ -529,6 +538,7 @@ class Parser {
   readonly drivers: SvDriver[] = [];
   readonly connections: SvConnection[] = [];
   readonly units = new Set<string>();
+  readonly macroUses = new Map<string, { macro: string; line: number }>();
   /** Counts unlabelled blocks, so each gets its own scope name. */
   private anon = 0;
 
@@ -556,6 +566,20 @@ class Parser {
   private isName(i: number): boolean {
     return this.isId(i) && !KEYWORDS.has(this.t(i));
   }
+  /** The names a macro call passes (`` `FF(state_q, state_d, '0) ``), for the "macros aren't followed" hint. */
+  private noteMacro(i: number): void {
+    if (this.macroUses.size >= SV_LIMITS.skippedNames) return;
+    const text = this.src.slice(this.start[i], Math.min(this.end[i]!, this.start[i]! + 2000));
+    const open = text.indexOf('(');
+    if (open < 0) return;
+    const macro = text.slice(1, open).trim();
+    const line = this.lineAt(i);
+    for (const m of text.slice(open).matchAll(/[A-Za-z_][A-Za-z0-9_$]*/g)) if (!KEYWORDS.has(m[0]) && !this.macroUses.has(m[0])) this.macroUses.set(m[0], { macro, line });
+  }
+  /** An interface known from this file (`axi_if bus` in a port list is an interface port). */
+  private unitNamed(name: string): boolean {
+    return this.units.has(name);
+  }
   private isEndKw(i: number): boolean {
     return i < this.n && this.kind[i] === ID && END_KWS.has(this.t(i));
   }
@@ -576,10 +600,20 @@ class Parser {
   private endLineAt(i: number): number {
     return this.lineOf(Math.max(0, (this.end[Math.min(i, this.n - 1)] ?? 1) - 1));
   }
+  /** Per line, the first line of the comment block directly above it (itself when there is none): one pass. */
+  private commentTop: Int32Array | undefined;
   /** The extent from token `a` to token `b` (inclusive), with the comment block directly above. */
   private extent(a: number, b: number, comments = true): LineRange {
     let s = this.lineAt(a);
-    if (comments) while (s > 1 && this.flags[s - 1] === COMMENT) s--;
+    if (comments) {
+      if (!this.commentTop) {
+        const f = this.flags;
+        const top = new Int32Array(f.length);
+        for (let l = 1; l < f.length; l++) top[l] = l > 1 && f[l - 1] === COMMENT ? (l > 2 && f[l - 2] === COMMENT ? top[l - 1]! : l - 1) : l;
+        this.commentTop = top;
+      }
+      s = this.commentTop[s] ?? s;
+    }
     return { start: s, end: Math.max(s, this.endLineAt(Math.max(a, b))) };
   }
   private tick(): boolean {
@@ -589,12 +623,18 @@ class Parser {
     this.partial = true;
     this.reason ??= reason;
   }
-  private record<T>(list: T[], x: T): void {
-    if (this.symbols.length + this.drivers.length + this.connections.length >= SV_LIMITS.records) {
+  /** Case items, targets and pending connections: they count toward the records cap too. */
+  private extraRecords = 0;
+  /** Whether there's room for `n` more records; marks the table partial when there isn't. */
+  private room(n = 1): boolean {
+    if (this.symbols.length + this.drivers.length + this.connections.length + this.extraRecords + n > SV_LIMITS.records) {
       this.markPartial('records');
-      return;
+      return false;
     }
-    list.push(x);
+    return true;
+  }
+  private record<T>(list: T[], x: T): void {
+    if (this.room()) list.push(x);
   }
   private push(kw: string): void {
     this.expect.set(kw, (this.expect.get(kw) ?? 0) + 1);
@@ -717,6 +757,7 @@ class Parser {
       return;
     }
     if (k === MACRO) {
+      this.noteMacro(p);
       this.pos++;
       if (this.is(this.pos, ';')) this.pos++;
       return;
@@ -799,7 +840,7 @@ class Parser {
     }
     const body = SKIPPED[w];
     if (body) {
-      yield* this.skipBody(scope, undefined, body, from);
+      yield* this.skipBody(scope, NAMED_BODIES[w], body, from);
       return;
     }
     if (w === 'assert' || w === 'assume' || w === 'cover' || w === 'restrict' || w === 'expect') {
@@ -935,7 +976,10 @@ class Parser {
     const ansi = kind === 'param' || segments.some(([a, b]) => b > a || DIRECTIONS.has(this.t(a)) || DATA_START.has(this.t(a)));
     if (!ansi) return;
     for (const [a, b] of segments) {
+      if (this.tick()) yield;
       if (DIRECTIONS.has(this.t(a))) dir = this.t(a);
+      // an interface port (`axi_if.mst bus`, `axi_if bus`) has no direction, and resets the one inherited
+      else if (this.isName(a) && (this.is(a + 1, '.') || this.isName(a + 1)) && !DATA_START.has(this.t(a))) dir = this.is(a + 1, '.') || this.unitNamed(this.t(a)) ? undefined : dir;
       let name = '';
       let nameAt = -1;
       let d = 0;
@@ -972,19 +1016,25 @@ class Parser {
       let name = '';
       let d = 0;
       for (let j = a + 1; j <= end; j++) {
+        if (this.tick()) yield;
         if (d === 0 && this.isName(j)) name = this.t(j);
         d += this.delta(j);
       }
       if (name) this.addSymbol(name, scope, 'typedef', from, b);
     }
     // enum members, anywhere in the statement: `enum … { A, B = 2, C }`
+    // One pass: every token is looked at once (an `enum` with no `{`, or braces that never close, ends the scan).
     for (let j = a; j <= end; j++) {
+      if (this.tick()) yield;
       if (!this.is(j, 'enum')) continue;
       let k = j + 1;
       while (k <= end && !this.is(k, '{')) k++;
+      if (k > end) break;
       let d = 0;
       let expectName = true;
-      for (let m = k; m <= end; m++) {
+      let m = k;
+      for (; m <= end; m++) {
+        if (this.tick()) yield;
         const dd = this.delta(m);
         if (d === 1 && expectName && this.isName(m)) {
           this.addSymbol(this.t(m), scope, 'enum-member', from, b);
@@ -992,11 +1042,9 @@ class Parser {
         }
         if (d === 1 && this.is(m, ',')) expectName = true;
         d += dd;
-        if (d === 0 && m > k) {
-          j = m;
-          break;
-        }
+        if (d === 0 && m > k) break;
       }
+      j = m;
     }
     if (kind === 'typedef') return;
     // names: per comma-separated declarator at depth 0, the last identifier before `=`
@@ -1012,6 +1060,7 @@ class Parser {
       assigned = false;
     };
     for (let j = a; j <= end; j++) {
+      if (this.tick()) yield;
       if (d === 0 && this.is(j, ',')) {
         flush();
         continue;
@@ -1030,13 +1079,14 @@ class Parser {
     const semi = yield* this.toSemicolon(false);
     let d = 0;
     for (let j = a + 1; j < semi; j++) {
+      if (this.tick()) yield;
       if (d === 0 && this.isName(j) && this.is(j + 1, '(')) this.addSymbol(this.t(j), scope, 'modport', from, semi);
       d += this.delta(j);
     }
   }
 
   /** `clocking cb @(…); … endclocking`, `specify … endspecify` and the like: skipped, the name recorded. */
-  private *skipBody(scope: string[], recordAs: 'clocking' | undefined, endKw: string, from: number): Generator<void, void> {
+  private *skipBody(scope: string[], recordAs: SvKind | undefined, endKw: string, from: number): Generator<void, void> {
     this.pos++;
     const nameAt = this.pos;
     while (this.pos < this.n) {
@@ -1152,11 +1202,13 @@ class Parser {
       this.pos++;
     }
     for (const [a, b] of segments) {
+      if (this.tick()) yield;
       if (!this.is(a, '.') || !this.isId(a + 1)) continue;
       const port = this.t(a + 1);
       const idents: string[] = [];
       if (b === a + 1) idents.push(port);
       else for (let j = a + 2; j <= b; j++) if (this.isName(j) && idents.length < 32) idents.push(this.t(j));
+      if (!this.room(out.length + 1)) break;
       out.push({ scope, instance, port, idents, a, b });
     }
   }
@@ -1322,6 +1374,7 @@ class Parser {
     let segStart = a;
     let seenEq = false;
     for (let j = a; j <= end + 1; j++) {
+      if (this.tick()) yield;
       const atEnd = j > end || (d === 0 && this.is(j, ','));
       if (atEnd) {
         segStart = j + 1;
@@ -1356,7 +1409,7 @@ class Parser {
     }
     let blockLabel = label?.name;
     if (!blockLabel && this.is(this.pos, 'begin') && this.is(this.pos + 1, ':') && this.isId(this.pos + 2)) blockLabel = this.t(this.pos + 2);
-    const c: Collect = { targets: [], keys: new Set(), cases: [], caseDepth: 0, branch: 'body', functional: [], bodyOrder: [], locals: new Set(), resetEdges };
+    const c: Collect = { targets: [], keys: new Set(), cases: [], caseDepth: 0, branch: 'body', functional: [], inFunctional: new Set(), bodyOrder: [], inBody: new Set(), locals: new Set(), resetEdges };
     yield* this.blockBody(c);
     const targets = c.targets.filter((t) => !c.locals.has(t.base));
     const order = (c.functional.length ? c.functional : c.bodyOrder).filter((x) => !c.locals.has(x));
@@ -1422,9 +1475,17 @@ class Parser {
     yield* this.statement(c);
     if (this.is(this.pos, 'else')) {
       this.pos++;
-      // `else if (srst)`: a chain of resets; the functional branch is the last else
+      // `else if (srst)`: a chain of resets; the functional branch is the last else. The chain counts as nesting.
       c.branch = 'functional';
-      yield* this.topStatement(c);
+      this.depth++;
+      try {
+        if (this.depth > SV_LIMITS.depth) {
+          this.markPartial('depth');
+          yield* this.flatSkip();
+        } else yield* this.topStatement(c);
+      } finally {
+        this.depth--;
+      }
     }
     c.branch = outer;
   }
@@ -1472,6 +1533,7 @@ class Parser {
         return;
       }
       if (k === MACRO) {
+        this.noteMacro(p);
         this.pos++;
         if (this.is(this.pos, ';')) this.pos++;
         return;
@@ -1661,7 +1723,10 @@ class Parser {
       const before = this.pos;
       yield* this.statement(c);
       if (this.pos === before && !this.is(this.pos, 'endcase')) this.pos++;
-      if (rec) rec.items.push({ labels, extent: this.extent(itemAt, this.pos - 1, false) });
+      if (rec && this.room()) {
+        this.extraRecords++;
+        rec.items.push({ labels, extent: this.extent(itemAt, this.pos - 1) });
+      }
     }
     this.pop('endcase');
     if (c) c.caseDepth--;
@@ -1724,25 +1789,37 @@ class Parser {
     this.targetsOf(lhsA, lhsB, found, c.locals);
     for (const t of found) {
       const key = targetKey(t);
-      if (!c.keys.has(key)) {
+      if (!c.keys.has(key) && this.room()) {
+        this.extraRecords++;
         c.keys.add(key);
         c.targets.push(t);
       }
-      if (c.branch === 'functional') c.functional.push(t.base);
-      if (c.branch !== 'reset') c.bodyOrder.push(t.base);
+      // the order of first assignments: each name once
+      if (c.branch === 'functional' && !c.inFunctional.has(t.base)) {
+        c.inFunctional.add(t.base);
+        c.functional.push(t.base);
+      }
+      if (c.branch !== 'reset' && !c.inBody.has(t.base)) {
+        c.inBody.add(t.base);
+        c.bodyOrder.push(t.base);
+      }
     }
   }
 
   /** The targets of an assignment's left side a..b: a name with selects and members, or a concatenation. */
-  private targetsOf(a: number, b: number, out: SvTarget[], locals: Set<string> | undefined): void {
+  private targetsOf(a: number, b: number, out: SvTarget[], locals: Set<string> | undefined, depth = 0): void {
     if (b < a) return;
+    if (depth > 16) {
+      this.markPartial('depth'); // concatenations nested this deep aren't real assignment targets
+      return;
+    }
     if (this.is(a, '{') || this.is(a, "'{")) {
       let d = 0;
       let segStart = a + 1;
       for (let j = a; j <= b; j++) {
         const dd = this.delta(j);
         if (d === 1 && (this.is(j, ',') || (dd < 0 && j === b))) {
-          this.targetsOf(segStart, j - 1, out, locals);
+          this.targetsOf(segStart, j - 1, out, locals, depth + 1);
           segStart = j + 1;
         }
         d += dd;
@@ -1798,7 +1875,13 @@ function dedupe(ts: SvTarget[]): SvTarget[] {
 function* scanGen(text: string, opts: ScanOptions = {}): Generator<void, SymbolTable> {
   const lexed = yield* lex(text, opts.budget ?? SV_LIMITS.tokens);
   const p = new Parser(text, lexed);
-  yield* p.file();
+  try {
+    yield* p.file();
+  } catch {
+    // A bug or an input the caps missed (a stack overflow): keep what was found, as a partial table.
+    p.partial = true;
+    p.reason ??= 'depth';
+  }
   const partial = p.partial || lexed.partial || lexed.overBudget;
   const reason = lexed.overBudget ? 'budget' : p.reason ?? (lexed.partial ? 'syntax' : undefined);
   return {
@@ -1807,6 +1890,7 @@ function* scanGen(text: string, opts: ScanOptions = {}): Generator<void, SymbolT
     connections: p.connections,
     units: p.units,
     skipped: lexed.skipped,
+    macroUses: p.macroUses,
     partial,
     partialReason: partial ? reason ?? 'syntax' : undefined,
     lineCount: lexed.lineStarts.length,
@@ -1842,7 +1926,9 @@ export async function scanSvSliced(text: string, opts: ScanOptions & { sliceMs: 
 
 /** Whether a file is SystemVerilog or Verilog, by its language (in VS Code) or its extension. */
 export function isSvPath(path: string, languageId?: string): boolean {
-  return languageId === 'systemverilog' || languageId === 'verilog' || /\.(sv|svh|svi|v|vh)$/i.test(path);
+  if (languageId === 'systemverilog' || languageId === 'verilog') return true;
+  // `.v` is also Coq: the extension decides only when the language isn't known
+  return (languageId === undefined || languageId === 'plaintext') && /\.(sv|svh|svi|v|vh)$/i.test(path);
 }
 
 // ---- the reset heuristic (§4.2) ----
@@ -1997,10 +2083,63 @@ function scopeMatches(table: SymbolTable, scope: readonly string[], prefix: read
 
 const shown = (path: string) => `\`${path}\``;
 
+/** Lookups by name, built once per table, so many links into one file stay cheap whatever the file holds. */
+interface TableIndex {
+  symbols: Map<string, SvSymbol[]>;
+  drivers: Map<string, SvDriver[]>;
+  connections: Map<string, SvConnection[]>;
+  connectedIdents: Map<string, SvConnection[]>;
+  /** Case labels → the drivers whose outermost case has them. */
+  caseLabels: Map<string, SvDriver[]>;
+}
+const indexes = new WeakMap<SymbolTable, TableIndex>();
+const caseIndexes = new WeakMap<SvDriver, Map<string, { item: SvCaseItem; depth: number }[]>>();
+/** Per name, at most this many entries are kept in an index list: enough to tell one from several. */
+const INDEX_CAP = 64;
+
+function addTo<K, V>(m: Map<K, V[]>, k: K, v: V): void {
+  const l = m.get(k);
+  if (!l) m.set(k, [v]);
+  else if (l.length < INDEX_CAP) l.push(v);
+}
+
+function indexOf(table: SymbolTable): TableIndex {
+  let ix = indexes.get(table);
+  if (ix) return ix;
+  ix = { symbols: new Map(), drivers: new Map(), connections: new Map(), connectedIdents: new Map(), caseLabels: new Map() };
+  for (const s of table.symbols) addTo(ix.symbols, s.name, s);
+  for (const d of table.drivers) {
+    for (const b of new Set(d.targets.map((t) => t.base))) addTo(ix.drivers, b, d);
+    for (const c of d.cases) if (c.depth === 0) for (const it of c.items) for (const l of it.labels) {
+      const list = ix.caseLabels.get(l);
+      if (!list?.includes(d)) addTo(ix.caseLabels, l, d);
+    }
+  }
+  for (const c of table.connections) {
+    addTo(ix.connections, `${c.instance}\0${c.port}`, c);
+    for (const i of c.idents) addTo(ix.connectedIdents, i, c);
+  }
+  indexes.set(table, ix);
+  return ix;
+}
+
+function caseIndexOf(d: SvDriver): Map<string, { item: SvCaseItem; depth: number }[]> {
+  let m = caseIndexes.get(d);
+  if (m) return m;
+  m = new Map();
+  for (const c of d.cases) for (const item of c.items) for (const l of item.labels) addTo(m, l, { item, depth: c.depth });
+  caseIndexes.set(d, m);
+  return m;
+}
+
+const lines = (r: LineRange) => (r.start === r.end ? `${r.start}` : `${r.start}–${r.end}`);
+const named = (scope: readonly string[]) => scope.filter((s) => !s.startsWith('\0'));
+
 /** Finds what a symbol path names in a scanned file. */
 export function findSvSymbol(table: SymbolTable, path: string): SvFound | SvNotFound {
   const segs = parseSvPath(path);
   if (!segs) return { ok: false, reason: 'syntax', message: `${shown(path)} isn't a symbol path (a name, driver(x), driver(x).case(LABEL) or u_inst(.port), optionally after the module).` };
+  const ix = indexOf(table);
   const prefix = segs.flatMap((s, i) => (s.kind === 'name' && i < segs.length - 1 ? [s.name] : []));
   const last = segs.at(-1)!;
   const partial = table.partial || undefined;
@@ -2014,39 +2153,58 @@ export function findSvSymbol(table: SymbolTable, path: string): SvFound | SvNotF
     ok: false,
     reason: 'ambiguous',
     partial,
-    candidates: cands,
-    message: `${what} is ambiguous (lines ${cands.slice(0, 5).map((c) => `${c.start}–${c.end}`).join(', ')}): ${hint}.`,
+    candidates: cands.slice(0, 5),
+    message: `${what} is ambiguous (lines ${cands.slice(0, 5).map(lines).join(', ')}${cands.length > 5 ? ' …' : ''}): ${hint}.`,
   });
   const instanceHint = () => {
     for (let i = 0; i < prefix.length; i++) {
-      const inst = table.symbols.find((s) => s.kind === 'instance' && s.name === prefix[i]);
+      const inst = ix.symbols.get(prefix[i]!)?.find((s) => s.kind === 'instance');
       if (inst?.type) {
         const rest = path.slice(path.indexOf(prefix[i]!) + prefix[i]!.length + 1);
-        return `paths are by module, not instance: ${inst.name} is a ${inst.type}, so link ${inst.type}'s file with ${shown(`#${rest}`)}`;
+        return `paths are by module, not instance: ${inst.name} is a ${inst.type}, so link the file that defines ${inst.type} with ${shown(`#${rest}`)}`;
       }
     }
     return undefined;
   };
-  const skippedHint = (name: string) => (table.skipped.has(name) ? 'it is in a later `ifdef arm, which is not scanned yet' : undefined);
+  const otherHints = (name: string) => {
+    const hints: string[] = [];
+    // only for names the scanned arms don't declare: a name merely used in a later arm says nothing
+    if (table.skipped.has(name) && !ix.symbols.has(name)) hints.push('it is in a later `ifdef arm, which is not scanned yet');
+    const macro = table.macroUses.get(name);
+    if (macro) hints.push(`it is an argument of \`${macro.macro} on line ${macro.line}, and macros aren't followed yet: link ${shown(`#L${macro.line}`)}`);
+    return hints;
+  };
+  /** Up to 6 matches: enough to tell one from several, and to list a few. */
+  const pick = <T>(list: readonly T[] | undefined, ok: (x: T) => boolean): T[] => {
+    const out: T[] = [];
+    for (const x of list ?? []) if (ok(x) && out.push(x) >= 6) break;
+    return out;
+  };
 
   if (last.kind === 'name') {
-    const cands = table.symbols.filter((s) => s.name === last.name && scopeMatches(table, s.scope, prefix));
+    const cands = pick(ix.symbols.get(last.name), (s) => scopeMatches(table, s.scope, prefix));
     if (cands.length === 1) return { ok: true, extent: cands[0]!.extent, kind: cands[0]!.kind };
     if (cands.length > 1) {
       // A non-ANSI port and its type declaration (`output q; reg q;`) are one name.
       const ports = cands.filter((s) => s.kind === 'port');
       const sameScope = cands.every((s) => s.scope.join('.') === cands[0]!.scope.join('.'));
       if (sameScope && ports.length === 1 && cands.every((s) => s.kind === 'port' || s.kind === 'signal')) return { ok: true, extent: ports[0]!.extent, kind: 'port' };
-      return ambiguous(shown(path), cands.map((s) => s.extent), 'it is declared more than once; prefix the module or the block label');
+      const scopes = [...new Set(cands.map((s) => named(s.scope.slice(1)).join('.')).filter(Boolean))];
+      return ambiguous(shown(path), cands.map((s) => s.extent), scopes.length > 1 ? `name its block, as ${shown(`${scopes[0]}.${last.name}`)}` : 'it is declared more than once; prefix the module or the block label');
     }
-    return miss(shown(path), skippedHint(last.name) ?? instanceHint());
+    const inner = pick(ix.symbols.get(last.name), () => true).filter((s) => named(s.scope.slice(1)).length);
+    const hints = otherHints(last.name);
+    if (inner.length && prefix.length) hints.push(`there is one inside a block: ${shown(`${[...named(inner[0]!.scope), last.name].join('.')}`)}`);
+    const inst = instanceHint();
+    if (inst) hints.push(inst);
+    return miss(shown(path), hints.join('; ') || undefined);
   }
   if (last.kind === 'conn') {
-    const cands = table.connections.filter((c) => c.instance === last.instance && c.port === last.port && scopeMatches(table, c.scope, prefix));
+    const cands = pick(ix.connections.get(`${last.instance}\0${last.port}`), (c) => scopeMatches(table, c.scope, prefix));
     if (cands.length === 1) return { ok: true, extent: cands[0]!.extent, kind: 'connection' };
     if (cands.length > 1) return ambiguous(shown(path), cands.map((c) => c.extent), 'more than one instance has that name; prefix the module or the generate block label');
-    const inst = table.symbols.some((s) => s.kind === 'instance' && s.name === last.instance);
-    return miss(shown(path), inst ? `${last.instance} has no named connection .${last.port}(…) (positional and .* connections can't be linked)` : skippedHint(last.instance) ?? `there is no instance ${last.instance}`);
+    const inst = ix.symbols.get(last.instance)?.some((s) => s.kind === 'instance');
+    return miss(shown(path), inst ? `${last.instance} has no named connection .${last.port}(…) (positional and .* connections can't be linked)` : otherHints(last.instance)[0] ?? `there is no instance ${last.instance}`);
   }
   // driver(x), always_ff(x) …, optionally .case(LABEL)
   const fnSeg = (last.kind === 'case' ? segs.at(-2) : last) as Extract<Seg, { kind: 'fn' }>;
@@ -2054,7 +2212,7 @@ export function findSvSymbol(table: SymbolTable, path: string): SvFound | SvNotF
   const label = prefix.length ? prefix.at(-1) : undefined;
   const targetMatches = (d: SvDriver) => d.targets.some((t) => t.base === q.base && q.chain.every((c, i) => t.chain[i] === c) && (q.slice === undefined || t.slice === q.slice));
   const inScope = (d: SvDriver) => scopeMatches(table, d.scope, prefix) || (label !== undefined && d.label === label && scopeMatches(table, [...d.scope, d.label], prefix));
-  const all = table.drivers.filter((d) => inScope(d) && targetMatches(d));
+  const all = pick(ix.drivers.get(q.base), (d) => inScope(d) && targetMatches(d));
   let cands = fnSeg.fn === 'driver' ? all : all.filter((d) => d.kind === fnSeg.fn);
   let note: string | undefined;
   if (!cands.length && all.length && fnSeg.fn !== 'driver') {
@@ -2064,34 +2222,43 @@ export function findSvSymbol(table: SymbolTable, path: string): SvFound | SvNotF
   const what = shown(path);
   if (cands.length === 0) {
     const hints: string[] = [];
-    const port = table.symbols.find((s) => s.kind === 'port' && s.name === q.base && scopeMatches(table, s.scope, prefix));
+    const port = ix.symbols.get(q.base)?.find((s) => s.kind === 'port' && scopeMatches(table, s.scope, prefix));
     if (port && port.dir === 'input') hints.push(`${q.base} is an input port: link ${shown(`#${q.base}`)}`);
-    const conns = table.connections.filter((c) => c.idents.includes(q.base) && scopeMatches(table, c.scope, prefix));
+    const conns = pick(ix.connectedIdents.get(q.base), (c) => scopeMatches(table, c.scope, prefix));
     if (conns.length) {
       const list = conns.slice(0, 3).map((c) => shown(`#${c.instance}(.${c.port})`)).join(', ');
       hints.push(`${q.base} is connected at ${list}${conns.length > 3 ? ' …' : ''}, and driver() doesn't follow instance ports: link the connection, or the driver in the child module's file`);
     }
-    const skipped = skippedHint(q.base);
-    if (skipped) hints.push(skipped);
+    hints.push(...otherHints(q.base));
     const inst = instanceHint();
     if (inst) hints.push(inst);
-    if (!hints.length && !table.symbols.some((s) => s.name === q.base)) hints.push(`nothing in the file declares ${q.base}`);
+    if (!hints.length && !ix.symbols.has(q.base)) hints.push(`nothing in the file declares ${q.base}`);
     return miss(`What drives ${q.base} (${what})`, hints.join('; ') || undefined);
   }
   if (cands.length > 1) {
-    const slices = cands.flatMap((d) => d.targets.filter((t) => t.base === q.base && t.slice !== undefined).map((t) => t.slice!));
-    const hint = q.slice === undefined && slices.length >= cands.length ? `blocks drive different slices; name one, as driver(${q.base}[${slices[0]}])` : 'more than one block drives it; add a label (`begin : seq`) and prefix it, as seq.driver(x)';
+    const mine = cands.map((d) => d.targets.filter((t) => t.base === q.base));
+    const slices = mine.flatMap((ts) => ts.filter((t) => t.slice !== undefined).map((t) => t.slice!));
+    const members = mine.map((ts) => ts.find((t) => t.chain.length > q.chain.length)?.chain[q.chain.length]);
+    const scopes = cands.map((d) => d.label ?? named(d.scope.slice(1)).at(-1));
+    let hint: string;
+    if (q.slice === undefined && slices.length >= cands.length) hint = `blocks drive different slices; name one, as driver(${q.base}[${slices[0]}])`;
+    else if (members.every((m) => m !== undefined) && new Set(members).size === members.length) hint = `blocks drive different members; name one, as driver(${[q.base, ...q.chain, members[0]].join('.')})`;
+    else if (scopes.every((x) => x !== undefined) && new Set(scopes).size === scopes.length) hint = `name the block, as ${scopes[0]}.driver(${q.base})`;
+    else if (cands.every((d) => d.kind === 'assign' || d.kind === 'net')) hint = `more than one assign drives it; link one by its lines, as #L${lines(cands[0]!.extent).replace('–', '-L')}`;
+    else hint = 'more than one block drives it; add a label (`begin : seq`) and prefix it, as seq.driver(x)';
     return ambiguous(`What drives ${q.base} (${what})`, cands.map((d) => d.extent), hint);
   }
   const d = cands[0]!;
   if (last.kind !== 'case') return { ok: true, extent: d.extent, kind: d.kind, note };
-  const has = (items: SvCaseItem[]) => items.filter((it) => it.labels.includes(last.key));
-  const outer = d.cases.filter((c) => c.depth === 0).flatMap((c) => has(c.items));
-  if (outer.length === 1) return { ok: true, extent: outer[0]!.extent, kind: 'case-item', note };
-  if (outer.length > 1) return ambiguous(what, outer.map((i) => i.extent), 'the label is in more than one outermost case; link the lines instead, or label the block');
-  const nested = d.cases.filter((c) => c.depth > 0).flatMap((c) => has(c.items));
-  if (nested.length) return ambiguous(what, nested.map((i) => i.extent), 'the label is only in a nested case; link the lines instead');
-  return miss(what, `no item of the block's outermost case has the label ${last.key}`);
+  const found = caseIndexOf(d).get(last.key) ?? [];
+  const outer = found.filter((f) => f.depth === 0);
+  if (outer.length === 1) return { ok: true, extent: outer[0]!.item.extent, kind: 'case-item', note };
+  if (outer.length > 1) return ambiguous(what, outer.map((f) => f.item.extent), 'the label is in more than one outermost case of the block; link the lines instead');
+  if (found.length) return ambiguous(what, found.map((f) => f.item.extent), 'the label is only in a nested case; link the lines instead');
+  // A common slip: naming the case's selector (state_q) rather than what the arms assign (state_d).
+  const elsewhere = (ix.caseLabels.get(last.key) ?? []).find((o) => o !== d);
+  const other = elsewhere && defaultDriverName(elsewhere);
+  return miss(what, other ? `the block that drives ${q.base} has no case item ${last.key}, but the one that drives ${other} has: ${shown(`driver(${other}).case(${last.key})`)}` : `no item of the block's outermost case has the label ${last.key}`);
 }
 
 /**

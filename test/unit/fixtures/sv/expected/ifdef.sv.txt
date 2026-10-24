@@ -7,4 +7,4 @@ S signal ifdef_flop.dbg_seen 18-18
 S module ifdef_flop 2-31
 D always_ff ifdef_flop 9-15 drives=q functional=q
 D assign ifdef_flop 19-19 drives=dbg_seen functional=dbg_seen
-skipped arms: always_ff assign begin clk d dbg_seen logic posedge trace_only
+skipped arms: clk d dbg_seen trace_only
