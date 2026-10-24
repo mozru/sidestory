@@ -4,6 +4,7 @@
 // HEAD or the base moved, and every result carries an epoch so a late answer never overwrites a newer one.
 import * as vscode from 'vscode';
 import type { BaseSource, DefaultBaseInputs, ResolvedBase } from './base.ts';
+import { isSafeRepoPath } from '../../core/repo-path.ts';
 import { FULL_SHA, isValidBase, remoteDefault, resolveBase, resolveDefaultBase } from './base.ts';
 import type { GitApi, GitChange, GitDiffChange, GitRepo } from './git-api.ts';
 import { configValue, refReader, relPath } from './git-api.ts';
@@ -43,14 +44,8 @@ export type ComparisonState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; snapshot: Snapshot };
 
-/**
- * Paths the view refuses to read or open (§4.5): control characters, `..`, `.git`, backslashes, and a leading `:`
- * (git reads `:(literal)x` and `:/x` as pathspec magic).
- */
-export function isSafeRepoPath(p: string): boolean {
-  if (!p || p.length > 4096 || p.startsWith(':') || /[\x00-\x1f\x7f\\]/.test(p)) return false;
-  return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && s.toLowerCase() !== '.git');
-}
+// Paths Sidestory refuses to read or open (§4.5): one rule with the checker (src/core/repo-path.ts).
+export { isSafeRepoPath };
 
 /** The git API's changes as entries; `untracked` marks them all as untracked. Unsafe paths are dropped. */
 export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffChange)[], untracked = false): { entries: ChangeEntry[]; unsafe: number } {
@@ -98,6 +93,8 @@ export interface ComparisonOptions {
   mode(): Mode;
   /** The `sidestory.changes.defaultBase` setting. */
   setting(): string | undefined;
+  /** The `base` of a sidestory added on this branch: before the default chain, after an explicit pick. */
+  sidestoryBase?(): string | undefined;
   /** Throttle for re-reading the base's commit on status refreshes. */
   baseTtlMs?: number;
 }
@@ -164,10 +161,6 @@ export class Comparison implements vscode.Disposable {
     this.schedule();
   }
 
-  /** Remembers a count found later for this merge-base and head (the view's per-file counting). */
-  remember(path: string, c: { added?: number; removed?: number; noText?: boolean }): void {
-    this.counts.set(path, c);
-  }
 
   get state(): ComparisonState {
     return this.current;
@@ -300,13 +293,20 @@ export class Comparison implements vscode.Disposable {
     // The base: re-read at most every few seconds on status refreshes (§4.4), at once when the inputs changed.
     const pick = this.opts.pick(branch ?? 'HEAD');
     const setting = this.opts.setting();
-    const baseKey = `${pick}\n${setting}\n${branch}`;
+    const own = pick ? undefined : this.opts.sidestoryBase?.();
+    const baseKey = `${pick}\n${own}\n${setting}\n${branch}`;
     const ttl = this.opts.baseTtlMs ?? 5000;
     let baseEntry = this.base;
     if (!baseEntry || baseEntry.key !== baseKey || Date.now() - baseEntry.at > ttl) {
       // An explicit pick that no longer resolves is said, not silently replaced by a default.
       const picked = pick ? await resolveBase(reader, pick) : undefined;
-      const value = pick ? (picked && { ...picked, source: 'pick' as const }) : await resolveDefaultBase(reader, await this.inputs(branch));
+      // A sidestory's base that doesn't resolve here (not fetched) falls back to the default chain.
+      const fromStory = own ? await resolveBase(reader, own) : undefined;
+      const value = pick
+        ? picked && { ...picked, source: 'pick' as const }
+        : fromStory
+          ? { ...fromStory, source: 'sidestory' as const }
+          : await resolveDefaultBase(reader, await this.inputs(branch));
       if (epoch !== this.epoch) return;
       if (pick && !value) {
         this.base = undefined;

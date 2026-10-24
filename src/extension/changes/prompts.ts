@@ -28,11 +28,11 @@ export function safeTitle(t: string | undefined): string | undefined {
 }
 
 const DESCRIBE: Record<Value['kind'], string> = {
-  path: 'a path with unusual characters; see the Changes view',
-  branch: 'a branch with an unusual name; see the Changes view',
+  path: 'a path with unusual characters; see the diff',
+  branch: 'a branch with an unusual name; see the diff',
   title: 'a title with unusual characters; see the sidestory',
-  lines: 'see the Changes view',
-  word: 'see the Changes view',
+  lines: 'see the diff',
+  word: 'see the diff',
 };
 
 function check(v: Value): string {

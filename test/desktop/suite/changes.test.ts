@@ -37,8 +37,8 @@ export function changesTests(): void {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     });
 
-    it('compares nothing while nothing asks, and offers to explain the branch', async () => {
-      // No sidestory with a base here: no comparison until a command runs (§4.6); the probe still sees the branch.
+    it('computes no coverage while nothing asks, and offers to explain the branch', async () => {
+      // No sidestory with a base here: the file list (for the onboarding commands) but no coverage (§4.6).
       const s = await until(
         'the This branch group',
         async () => {
@@ -47,8 +47,8 @@ export function changesTests(): void {
         },
         60_000,
       );
-      assert.equal(s.mergeBase, undefined);
       assert.deepEqual(s.branch.rows.map((r) => r.label), ['Copy Prompt: Explain This Branch']);
+      assert.equal(await vscode.commands.executeCommand('sidestory._coverage'), undefined);
     });
 
     it('Next Changed File opens the merge diff: the old side read-only from git, in the file’s language', async function () {

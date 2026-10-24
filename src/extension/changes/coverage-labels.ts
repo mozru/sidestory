@@ -35,10 +35,12 @@ export function fileDecoration(f: FileCoverage, steps: readonly string[] = []): 
     badge = f.explained ? '✓' : '–';
     color = 'done';
   } else badge = f.explained + f.trivial ? '◐' : '○';
-  const parts = [`${f.explained} of ${n} ${n === 1 ? 'change' : 'changes'} explained`];
-  if (f.trivial) parts.push(`${f.trivial} marked trivial`);
+  const allTrivial = f.trivial === n;
+  const parts = [allTrivial ? `${n} of ${n} ${n === 1 ? 'change' : 'changes'} marked trivial` : `${f.explained} of ${n} ${n === 1 ? 'change' : 'changes'} explained`];
+  if (f.trivial && !allTrivial) parts.push(`${f.trivial} marked trivial`);
   if (f.needsLook) parts.push(`${f.needsLook} changed since ${f.needsLook === 1 ? 'its step was' : 'their steps were'} written`);
   if (steps.length) parts.push(steps.length > 2 ? `${steps.slice(0, 2).join(', ')} and ${steps.length - 2} more` : steps.join(', '));
+  parts.push('Details in This File');
   return { badge, color, tooltip: parts.join(' · ') };
 }
 
@@ -116,6 +118,8 @@ export interface BranchInputs {
   hasChanges: boolean;
   /** "Copy Prompt: Explain This Branch" is wanted: the setting is on and it wasn't dismissed for this branch. */
   suggest: boolean;
+  /** A sidestory added on the branch that compares with another base than the one in use. */
+  otherBase?: { title: string; base: string };
 }
 
 /**
@@ -126,11 +130,13 @@ export interface BranchInputs {
 export function branchRows(i: BranchInputs): BranchRow[] {
   const rows: BranchRow[] = [];
   const t = i.totals;
+  // "left" is branch-wide (a change no one explains has no sidestory): said so when several sidestories share it.
+  const leftWords = i.belonging.length > 1 ? ' on the branch' : '';
   for (const b of i.belonging) {
     rows.push({
       id: `b:${b.folder}`,
       label: b.title || b.folder,
-      description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}`,
+      description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}${leftWords}`,
       tooltip: `${b.title}\n${b.folder} · vs ${b.base}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${t?.left ?? 0} left on the branch\nClick to open`,
       icon: 'book',
       command: { command: 'sidestory.openAt', title: 'Open Sidestory', arguments: [{ dir: b.dir, source: 'tree' }] },
@@ -156,6 +162,17 @@ export function branchRows(i: BranchInputs): BranchRow[] {
       icon: 'sparkle',
       command: { command: 'sidestory.changes.copyExplainPrompt', title: 'Copy Prompt: Explain This Branch' },
       contextValue: 'explainPrompt',
+    });
+  }
+  if (i.otherBase) {
+    const o = i.otherBase;
+    rows.push({
+      id: 'b:base',
+      label: `${o.title} compares with ${o.base} · Use ${o.base}`,
+      tooltip: `This branch is compared with another base now. Set Base… to ${o.base}, as that sidestory's manifest says.`,
+      icon: 'git-compare',
+      command: { command: 'sidestory.changes.setBase', title: 'Set Base…', arguments: [o.base] },
+      contextValue: 'otherBase',
     });
   }
   return rows;

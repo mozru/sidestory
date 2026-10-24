@@ -52,3 +52,23 @@ export function mapOldRange(diff: FileDiff, r: LineRange): LineRange {
   const end = Math.max(start, oldToNew(diff, r.end));
   return { start, end };
 }
+
+/** The empty side of an added or deleted file's diff (`sidestory-empty:/<path>`) as the file's other side. */
+export function emptySideKey(path: string, entries: readonly { path: string; oldPath?: string; status: string }[]): SideKey | undefined {
+  const e = entries.find((x) => x.path === path);
+  return e?.status === 'D' ? { path: e.oldPath ?? e.path, side: 'base' } : e?.status === 'A' ? { path: e.path, side: 'head' } : undefined;
+}
+
+/**
+ * VS Code's own `git:` documents (the left side of Source Control and Git Tree Compare diffs): the query is JSON with
+ * the file's `path` and a `ref`; the merge-base's ref is the base side, any other the head side.
+ */
+export function vscodeGitSideKey(query: string, rel: (fsPath: string) => string | undefined, mergeBase: string): SideKey | undefined {
+  try {
+    const q = JSON.parse(query) as { path?: unknown; ref?: unknown };
+    const p = typeof q.path === 'string' ? rel(q.path) : undefined;
+    return p ? { path: p, side: q.ref === mergeBase ? 'base' : 'head' } : undefined;
+  } catch {
+    return undefined;
+  }
+}

@@ -358,7 +358,7 @@
         "sidestory.changes.defaultBase": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The branch, tag or commit a branch is compared with when no sidestory gives a `base` and none was set with **Sidestory: Set Base…** (for example `develop` or `origin/main`). Empty: the branch base the Git extension recorded, then the remote's default branch, then `main` or `master`."
+          "markdownDescription": "The branch, tag or commit a branch is compared with when none was set with **Sidestory: Set Base…** and no sidestory added on the branch gives a `base` (for example `develop` or `origin/main`). Empty: the branch base the Git extension recorded, then the remote's default branch, then `main` or `master`."
         },
         "sidestory.changes.includeUncommitted": {
           "type": "boolean",
@@ -590,11 +590,11 @@
         },
         {
           "command": "sidestory.changes.nextUnexplained",
-          "when": "sidestory.changes.repo"
+          "when": "sidestory.changes.layer"
         },
         {
           "command": "sidestory.changes.prevUnexplained",
-          "when": "sidestory.changes.repo"
+          "when": "sidestory.changes.layer"
         },
         {
           "command": "sidestory.changes.openChange",
@@ -602,7 +602,7 @@
         },
         {
           "command": "sidestory.changes.copyExplainPrompt",
-          "when": "sidestory.changes.repo"
+          "when": "sidestory.changes.repo && !sidestory.changes.layer"
         },
         {
           "command": "sidestory.changes.dismissExplain",
@@ -770,6 +770,16 @@
           "command": "sidestory.changes.repinStep",
           "when": "view == sidestory.thisFile && (viewItem == thisFileStep:needsLook || viewItem == thisFileChange:needsLook) && !sidestory.readOnly",
           "group": "1_explain@3"
+        },
+        {
+          "command": "sidestory.changes.nextUnexplained",
+          "when": "view == sidestory.tree && (viewItem == branchSidestory || viewItem == updatePrompt)",
+          "group": "inline@1"
+        },
+        {
+          "command": "sidestory.changes.setBase",
+          "when": "view == sidestory.tree && viewItem == branch",
+          "group": "inline@1"
         }
       ],
       "editor/title/context": [

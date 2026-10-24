@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChangeEntry } from '../../src/extension/changes/model.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
-const { computeCoverage, belongingSidestories } = await import('../../src/extension/changes/coverage-service.ts');
+const { computeCoverage, belongingSidestories, CoverageService } = await import('../../src/extension/changes/coverage-service.ts');
 type Source = import('../../src/extension/changes/coverage-service.ts').CoverageSource;
 const vscode = await import('./vscode-stub.ts');
 
@@ -138,5 +138,22 @@ describe('coverage in the extension (computeCoverage)', () => {
     expect(r.belonging).toEqual([]);
     expect(r.files.size).toBe(0);
     expect(reads).toEqual([]);
+  });
+});
+
+describe('the coverage service', () => {
+  it('drops its result, and says so, when the last one wanting it goes', () => {
+    const svc = new CoverageService({ snapshot: () => undefined, order: () => [], sidestoryDirs: () => [] });
+    let fired = 0;
+    svc.onDidChange(() => fired++);
+    svc.want('workspace', true);
+    svc.result = { mergeBase: 'x' } as never;
+    svc.want('session:a', true);
+    svc.want('workspace', false);
+    expect(svc.result).toBeDefined();
+    svc.want('session:a', false);
+    expect(svc.result).toBeUndefined();
+    expect(fired).toBe(1);
+    svc.dispose();
   });
 });

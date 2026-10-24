@@ -253,7 +253,9 @@ export async function repinAnchor(ref: ExplainerRef, anchorId: string, liveHint:
   }
   const doc = snap.files.get(fileKey(a));
   const r = doc ? resolveAnchor(doc, a, { hint: liveHint(a.id) }) : undefined;
-  const pin = doc && r?.range && !r.ambiguous ? pinAt(doc.lines, r.range, a.quote?.norm) : null;
+  // Found with confidence where it is: never an out-of-date (stale) or lost resolution.
+  const found = !!r?.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || r.state === 'changed');
+  const pin = doc && found ? pinAt(doc.lines, r!.range!, a.quote?.norm) : null;
   if (!pin) {
     void vscode.window.showWarningMessage(`Can't re-pin “${anchorId}”: its code isn't found with confidence. Re-anchor it to a selection instead.`);
     return;

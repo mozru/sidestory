@@ -311,18 +311,22 @@ describe('documents and counts', () => {
     vi.useRealTimers();
     c.dispose();
   });
+});
 
-  it('counts found later are kept across recomputes of the same merge-base and head', async () => {
-    const repo = cliRepo();
-    delete (repo as Partial<GitRepo>).diffBetweenWithStats;
-    const c = new Comparison(repo, opts());
-    await c.refresh();
-    c.remember('src/retry/retry.ts', { added: 4, removed: 1 });
-    await c.refresh();
-    expect(c.snapshot!.entries.find((e) => e.path === 'src/retry/retry.ts')).toMatchObject({ added: 4, removed: 1 });
-    await c.refresh(true); // Refresh forgets them
-    expect(c.snapshot!.entries.find((e) => e.path === 'src/retry/retry.ts')!.added).toBeUndefined();
-    c.dispose();
+describe('the base a sidestory on the branch gives (§11.4)', () => {
+  it('comes after an explicit pick and before the default chain; one that does not resolve falls back', async () => {
+    const story = new Comparison(cliRepo(), opts({ sidestoryBase: () => 'main', setting: () => 'nope' }));
+    await story.refresh();
+    expect(story.snapshot!.base).toMatchObject({ spec: 'main', source: 'sidestory' });
+    story.dispose();
+    const missing = new Comparison(cliRepo(), opts({ sidestoryBase: () => 'not-fetched' }));
+    await missing.refresh();
+    expect(missing.snapshot!.base.source).not.toBe('sidestory');
+    missing.dispose();
+    const picked = new Comparison(cliRepo(), opts({ pick: () => 'main', sidestoryBase: () => 'other' }));
+    await picked.refresh();
+    expect(picked.snapshot!.base.source).toBe('pick');
+    picked.dispose();
   });
 });
 
@@ -362,6 +366,9 @@ describe('the sidestory-git: provider (§4.5)', () => {
     expect(isSafeRepoPath('pages/[id].tsx')).toBe(true);
     expect(isSafeRepoPath('a/\u0007b')).toBe(false);
     expect(isSafeRepoPath(':(literal)x')).toBe(false);
+    // The checker's rule: Windows device names and segments ending in a dot or a space.
+    for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b']) expect(isSafeRepoPath(bad), bad).toBe(false);
+    expect(isSafeRepoPath('console/x.ts')).toBe(true);
   });
   it('the same repository gets the same id across reloads (the salt is kept)', () => {
     const m = memento();

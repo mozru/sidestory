@@ -312,6 +312,8 @@ export class CoverageService implements vscode.Disposable {
   private again = false;
   private wanted = new Set<string>();
   result: CoverageResult | undefined;
+  /** The snapshot the result was computed for, once the run drained its queue (skipped files included). */
+  resultFor: Snapshot | undefined;
 
   constructor(host: CoverageHost) {
     this.host = host;
@@ -332,6 +334,30 @@ export class CoverageService implements vscode.Disposable {
     if (on) this.wanted.add(who);
     else this.wanted.delete(who);
     if (!before && this.wanted.size > 0) this.schedule(0);
+    // The last one gone (the last sidestory with a base deleted, its panel closed): no stale marks, rows or keys.
+    if (before && this.wanted.size === 0) this.clear();
+  }
+
+  /** Drops the result (and any run in flight), and says so. */
+  clear(): void {
+    clearTimeout(this.timer);
+    this.seq++;
+    const had = !!this.result;
+    this.result = undefined;
+    this.resultFor = undefined;
+    if (had) this.emitter.fire();
+  }
+
+  /**
+   * One file's change blocks, for a branch no sidestory explains yet (Explain This Change, Mark as Trivial): the
+   * same reads and diff as coverage. Undefined when unreadable, binary or too large.
+   */
+  async diffOne(s: Snapshot, e: ChangeEntry): Promise<FileDiff | undefined> {
+    const src = this.source(s);
+    const [ob, nb] = await Promise.all([e.status === 'A' ? undefined : src.oldBytes(e.oldPath ?? e.path), e.status === 'D' ? undefined : src.newBytes(e.path)]);
+    if (ob === 'tooLarge' || nb === 'tooLarge' || (e.status !== 'A' && !ob) || (e.status !== 'D' && !nb) || isBinary(ob) || isBinary(nb)) return undefined;
+    const d = decodePair(ob, nb);
+    return diffTexts(e.path, d.old, d.new);
   }
 
   get active(): boolean {
@@ -483,6 +509,7 @@ export class CoverageService implements vscode.Disposable {
       const r = await computeCoverage(this.source(s), { order: this.host.order(), cache: this.cache, isCurrent: live });
       if (r && live()) {
         this.result = r;
+        this.resultFor = s;
         this.emitter.fire();
       }
     } catch (e) {

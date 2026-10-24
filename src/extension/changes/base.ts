@@ -68,7 +68,7 @@ export async function resolveBase(reader: RefReader, spec: string): Promise<Reso
 }
 
 /** Where a default base came from, for the base picker's first item. */
-export type BaseSource = 'pick' | 'git-config' | 'setting' | 'remote-default' | 'fallback';
+export type BaseSource = 'pick' | 'sidestory' | 'git-config' | 'setting' | 'remote-default' | 'fallback';
 
 export interface DefaultBaseInputs {
   /** The user's explicit pick for this branch. */

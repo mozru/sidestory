@@ -159,6 +159,22 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     this.rebuild();
   }
 
+  /**
+   * Opens the collapsed view without taking focus (a sidestory explains the branch for the first time here): reveals
+   * its first row. False when there was nothing to reveal yet.
+   */
+  async revealQuietly(): Promise<boolean> {
+    if (!this.top.length) this.rebuild(true);
+    const first = this.top[0];
+    if (!first) return false;
+    try {
+      await this.view.reveal(first, { select: false, focus: false, expand: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Rebuilds (a sidestory's base became known). */
   refresh(): void {
     this.later('rebuild', () => this.rebuild());
@@ -193,7 +209,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     return { ...foldSteps(inputs), entries };
   }
 
-  private rebuild(): void {
+  private rebuild(force = false): void {
     this.top = [];
     this.byStep.clear();
     const f = this.file;
@@ -205,7 +221,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     }
     const name = displayText(f.path.split('/').pop() ?? '', 60);
     this.view.description = name;
-    if (!this.view.visible) {
+    if (!this.view.visible && !force) {
       // Nothing computed for a collapsed view (§9.1); the welcome state still needs the answer.
       void vscode.commands.executeCommand('setContext', 'sidestory.thisFile.state', this.index.isAnchored(uriKey(f)) ? 'ready' : 'empty');
       this.emitter.fire();
@@ -313,10 +329,10 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     if (node.kind === 'change') {
       const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
       item.id = node.id;
-      item.description = stateWords(node.c);
+      item.description = displayText(stateWords(node.c), 120);
       const icon = changeIcon(node.c);
       item.iconPath = new vscode.ThemeIcon(icon.id, icon.colored ? new vscode.ThemeColor('sidestory.unexplainedForeground') : undefined);
-      item.tooltip = `${node.label}: ${stateWords(node.c)}\nClick to open the diff at this change`;
+      item.tooltip = `${node.label}: ${displayText(stateWords(node.c), 300)}\nClick to open the diff at this change`;
       item.command = { command: 'sidestory.changes.openChange', title: 'Open Change', arguments: [{ path: node.path, key: node.key }] };
       item.contextValue = `thisFileChange:${node.c.state}`;
       return item;

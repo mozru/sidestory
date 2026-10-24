@@ -185,6 +185,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   // Source Control browse the branch); coverage shows as decorations on the files, the "This branch" group and This File.
   const changes = new ChangesService(context, {
     sidestoryDirs: () => [...index.all()].map((e) => e.ref.dir),
+    sidestoryBases: () => [...index.all()].flatMap((e) => (e.base !== undefined ? [{ dir: e.ref.dir, title: e.title, base: e.base }] : [])),
     repin: async (dir, anchor) => {
       const ref = await explainerFor(dir.toString());
       if (!ref) return;
@@ -224,7 +225,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       const s = changes.snapshot;
       return p && s ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
     },
-    baseOf: (dir) => changes.coverage.result?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
+    baseOf: (dir) => changes.result()?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
     changesOf: (file) => changes.changesOf(file),
   });
   context.subscriptions.push(thisFile, changes.coverage.onDidChange(() => thisFile.refresh()));
@@ -241,6 +242,17 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   );
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
+  // This File starts collapsed; the first time a sidestory explains the branch here, it opens once (no focus taken),
+  // so its "Not explained yet" list is found. Never again after that: the user's layout wins.
+  const THIS_FILE_OPENED = 'sidestory.thisFile.openedForBranch';
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      if (context.workspaceState.get(THIS_FILE_OPENED) || !view.visible || !changes.result()?.belonging.length) return;
+      void thisFile.revealQuietly().then((done) => {
+        if (done) void context.workspaceState.update(THIS_FILE_OPENED, true);
+      });
+    }),
+  );
   context.subscriptions.push(view);
   void vscode.commands.executeCommand('setContext', 'sidestory.treeFiltered', !!tree.filter);
   const setAvailable = (on: boolean) => {

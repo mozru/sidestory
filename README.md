@@ -114,7 +114,7 @@ Any other agent: point it at the guides. **Sidestory: Copy a Prompt for Your Age
 The checker ships with the extension; **Sidestory: Copy Widget Check Command** copies the exact command for your machine. It looks like:
 
 ```bash
-node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .sidestory/dma-ctrl
+node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | sort -V | tail -n 1)" .sidestory/dma-ctrl
 ```
 
 Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-readable report.
@@ -129,7 +129,7 @@ A sidestory with a `"base"` in its manifest explains a branch: its steps cover t
 - **This File** lists every step, in any sidestory, that covers the file you're in, and for a changed file the changes not explained yet.
 - **One change at a time:** with the cursor in a change (in its diff or the changed file), the editor's context menu has **Copy Prompt: Explain This Change**, **Mark as Trivial…** (asks why, and writes it into the sidestory), and **Re-pin This Step** for a step whose code grew, once you've updated its prose.
 
-The base is the sidestory's `"base"`. Without a sidestory, a branch is compared with the merge-base of `main` (or the `sidestory.changes.defaultBase` setting); **Sidestory: Set Base…** picks another for the branch.
+The base: **Sidestory: Set Base…** when you picked one for the branch, else the `"base"` of a sidestory added on the branch, else the branch base Git recorded, the `sidestory.changes.defaultBase` setting, or the merge-base with `main`. When sidestories on the branch name different bases, **This branch** offers to switch.
 
 Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
 
@@ -171,7 +171,7 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
 | `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
 | `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under **This branch** when no sidestory explains the branch. |
-| `sidestory.changes.defaultBase` | `""` | The branch to compare with when no sidestory gives a base and none was set (empty: the recorded branch base, the remote's default branch, then `main` or `master`). |
+| `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…** and no sidestory on the branch gives one (empty: the recorded branch base, the remote's default branch, then `main` or `master`). |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |
 | `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |

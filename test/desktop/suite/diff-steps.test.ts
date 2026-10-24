@@ -65,7 +65,7 @@ export function diffStepsTests(): void {
         'src/retry/retry.ts': '✓',
         'test/retry.test.ts': '○',
       });
-      assert.match(c.marks['src/retry/retry.ts']!.tooltip, /^1 of 1 change explained · Step \d of Retry with jitter$/);
+      assert.match(c.marks['src/retry/retry.ts']!.tooltip, /^1 of 1 change explained · Step \d of Retry with jitter · Details in This File$/);
       assert.deepEqual(c.branch.rows.map((r) => [r.label, r.description]), [
         ['Retry with jitter', 'vs main · 3 explained · 1 trivial · 1 left'],
         ['Copy Prompt: Update the Sidestory for New Changes', undefined],
