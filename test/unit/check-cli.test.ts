@@ -262,7 +262,8 @@ describe('checkExplainer', () => {
     });
     const r = await check(dir);
     expect(r.errors).toBe(0);
-    expect(codes(r).sort()).toEqual(['highlight-no-anchor', 'no-fallback', 'no-title', 'not-a-step']);
+    // `other` is in the manifest but nothing uses it
+    expect(codes(r).sort()).toEqual(['highlight-no-anchor', 'no-fallback', 'no-title', 'not-a-step', 'unused-anchor']);
   });
 
   it('reports useAnchorCode on secret-looking files and on code that changed since it was pinned', async () => {
@@ -369,6 +370,118 @@ describe('outline, groups and detail links (docs/NAVIGATION-PLAN.md §5.3)', () 
     expect(r.details).toEqual(['nope', '../x', 'demo', 'there']);
   });
 });
+
+describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () => {
+  const RTL = [
+    'module ctrl (input logic clk, input logic go, output logic busy);',
+    '  logic state_q;',
+    '  // the flop',
+    '  always_ff @(posedge clk) begin',
+    '    state_q <= go;',
+    '  end',
+    '  assign busy = state_q;',
+    'endmodule',
+    '',
+  ].join('\n');
+  const find = (r: CheckReport, code: string) => r.findings.filter((f) => f.code === code);
+
+  it('every page id is in the manifest and every manifest anchor is used, even without widgets', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest({ ...ANCHORS, spare: { file: 'src/a.ts', range: [1, 1] } }),
+      '.sidestory/demo/sidestory.html': page([
+        section('refill', '<a data-explain-ref="other">x</a> <a data-explain-ref="ghost">y</a>'),
+        section('missing', '<p>no anchor for this section</p>'),
+        '<svg data-explain-diagram role="group" aria-label="d"><g data-explain-on="other phantom"><text>a</text></g></svg>',
+      ].join('\n')),
+    });
+    const r = await check(dir);
+    const unknown = find(r, 'unknown-anchor').map((f) => f.message);
+    expect(unknown).toHaveLength(3);
+    expect(unknown.join('\n')).toMatch(/data-explain-ref="ghost"/);
+    expect(unknown.join('\n')).toMatch(/data-explain-anchor="missing"/);
+    expect(unknown.join('\n')).toMatch(/data-explain-on: no anchor "phantom"/);
+    expect(find(r, 'never-on')).toMatchObject([{ severity: 'warning', message: expect.stringMatching(/"other" never becomes the current step/) }]);
+    expect(find(r, 'unused-anchor')).toMatchObject([{ severity: 'warning', file: join(dir, 'manifest.json'), line: expect.any(Number), message: expect.stringMatching(/"spare"/) }]);
+    expect(formatReport(r)).toMatch(/No widgets checked: 0 error\(s\), \d+ warning\(s\)\.$/);
+  });
+
+  it('anchors a widget reads count as used; a computed id means unused anchors can\'t be told', async () => {
+    const w = (body: string) => `import { reveal, useAnchorCode } from 'explainer';\nexport default function W() { ${body} return <p>x</p>; }\n`;
+    const files = (code: string) => ({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', widgetEl('w.tsx'))),
+      '.sidestory/demo/w.tsx': code,
+    });
+    expect(find(await check(repoWith(files(w("useAnchorCode('other');")))), 'unused-anchor')).toHaveLength(0);
+    expect(find(await check(repoWith(files(w('const id = String(Math.random()); reveal(id);')))), 'unused-anchor')).toHaveLength(0);
+    expect(find(await check(repoWith(files(w('')))), 'unused-anchor').map((f) => f.message)).toEqual([expect.stringMatching(/"other"/)]);
+  });
+
+  it('links inside role="img" (once per image), unnamed links, links on controls and in widget fallbacks, ref and code together, empty diagrams', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', [
+        '<svg role="img" aria-label="x"><g data-explain-ref="other"><text>a</text></g><g data-explain-ref="refill"><text>b</text></g></svg>',
+        '<svg role="group" aria-label="y"><rect data-explain-ref="other"/><g data-explain-ref="other"><title>Named</title></g></svg>',
+        '<button data-explain-ref="other">b</button>',
+        '<span data-explain-ref="other" data-explain-code="src/a.ts">both</span>',
+        '<figure data-explain-diagram><svg role="group" aria-label="z"><g data-explain-ref="other"><text>c</text></g></svg></figure>',
+        '<p data-explain-on="other">alone</p>',
+        widgetEl('w.tsx').replace('<p>Fallback text.</p>', '<p><a data-explain-ref="other">in fallback</a></p>'),
+      ].join('\n'))),
+      '.sidestory/demo/w.tsx': 'export default function W() { return <p>x</p>; }\n',
+    });
+    const r = await check(dir);
+    expect(find(r, 'links-in-img')).toMatchObject([{ severity: 'warning', message: expect.stringMatching(/holds 2 links/) }]);
+    expect(find(r, 'ref-no-name')).toMatchObject([{ severity: 'info', message: expect.stringMatching(/data-explain-ref="other" has no text/) }]);
+    expect(find(r, 'link-on-control')).toHaveLength(1);
+    expect(find(r, 'ref-and-code')).toMatchObject([{ severity: 'error' }]);
+    expect(find(r, 'empty-diagram')).toHaveLength(1);
+    expect(find(r, 'on-no-scope')).toMatchObject([{ severity: 'info' }]);
+    expect(find(r, 'link-in-widget')).toMatchObject([{ severity: 'info', message: expect.stringMatching(/holds 1 link/) }]);
+  });
+
+  it('data-explain-code: syntax, files, SV symbols and line ranges, with the inherited file', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      'rtl/ctrl.sv': RTL,
+      'config/secrets.json': '{}',
+      '.sidestory/demo/manifest.json': manifest({ refill: ANCHORS.refill }),
+      '.sidestory/demo/sidestory.html': page(section('refill', [
+        '<figure data-explain-code-file="rtl/ctrl.sv">',
+        '<a data-explain-code="#driver(state_q)">ok</a>',
+        '<a data-explain-code="#state_q">ok</a>',
+        '<a data-explain-code="#driver(nothing)">missing</a>',
+        '<a data-explain-code="#driver(go)">an input</a>',
+        '<a data-explain-code="#L4-L6">lines</a>',
+        '<a data-explain-code="#L80">past the end</a>',
+        '<a data-explain-code="#L0">bad</a>',
+        '</figure>',
+        '<a data-explain-code="#u_x">no file</a>',
+        '<a data-explain-code="../outside.sv">outside</a>',
+        '<a data-explain-code="rtl/nope.sv">missing file</a>',
+        '<a data-explain-code="src/a.ts#refill">ts symbol</a>',
+        '<a data-explain-code="config/secrets.json">secret</a>',
+      ].join('\n'))),
+    });
+    const r = await check(dir);
+    const msgs = (code: string) => find(r, code).map((f) => f.message);
+    expect(msgs('code-link-syntax')).toHaveLength(3);
+    expect(msgs('code-link-syntax').join('\n')).toMatch(/"#u_x" names no file/);
+    expect(msgs('code-link-file')).toEqual([expect.stringMatching(/rtl\/nope.sv.*isn't a file inside the repository/)]);
+    expect(msgs('code-link-symbol')).toHaveLength(2);
+    expect(msgs('code-link-symbol').join('\n')).toMatch(/go is an input port: link `#go`/);
+    expect(msgs('code-link-range')).toEqual([expect.stringMatching(/9 lines/)]);
+    expect(msgs('code-link-lines')).toEqual([expect.stringMatching(/#driver\(state_q\) follows the code/)]);
+    expect(msgs('symbol-unchecked')).toHaveLength(1);
+    expect(msgs('code-link-secret')).toHaveLength(1);
+    expect(r.errors).toBe(4);
+  });
+});
+
 
 describe('--pin', () => {
   const files = (widget: string, anchors: Record<string, unknown> = { ...ANCHORS, env: { file: 'src/.env', range: [1, 1] } }) => ({
