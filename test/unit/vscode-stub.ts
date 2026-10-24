@@ -91,6 +91,7 @@ export const events = {
   visibleEditorsChanged: new EventEmitter<unknown>(),
   configurationChanged: new EventEmitter<unknown>(),
   trustGranted: new EventEmitter<void>(),
+  extensionsChanged: new EventEmitter<void>(),
   documentClosed: new EventEmitter<unknown>(),
   documentSaved: new EventEmitter<unknown>(),
   filesDeleted: new EventEmitter<{ files: Uri[] }>(),
@@ -159,6 +160,7 @@ export const languages = {
 export const extensions = {
   git: undefined as unknown,
   getExtension: (id: string) => (id === 'vscode.git' && extensions.git ? { isActive: true, exports: { getAPI: () => extensions.git } } : undefined),
+  onDidChange: events.extensionsChanged.event,
 };
 /** What modal questions answer (the button to "click"), set by the test; and the questions asked. */
 /** Every non-modal information message, with its buttons. */

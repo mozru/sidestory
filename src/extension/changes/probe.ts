@@ -174,30 +174,46 @@ export async function watchBranches(onChange: () => void, debounceMs = 1000): Pr
     );
     if (opened) fire();
   };
-  try {
-    const api = await probeApi();
-    if (api) {
-      api.repositories.forEach((r) => watch(r, false));
-      outer.push(api.onDidOpenRepository((r) => watch(r, true)));
-      if (api.onDidCloseRepository) {
-        outer.push(
-          api.onDidCloseRepository((r) => {
-            const root = r.rootUri.toString();
-            subs.get(root)?.dispose();
-            subs.delete(root);
-            sigs.delete(root);
-          }),
-        );
-      }
+  let attached = false;
+  let waiting: vscode.Disposable[] = [];
+  const attach = async (late: boolean): Promise<void> => {
+    let api: ProbeApi | undefined;
+    try {
+      api = await probeApi();
+    } catch {
+      // no git extension: nothing to watch (yet)
     }
-  } catch {
-    // no git extension: nothing to watch
+    if (!api || attached || disposed) return;
+    attached = true;
+    waiting.forEach((d) => d.dispose());
+    waiting = [];
+    api.repositories.forEach((r) => watch(r, late));
+    outer.push(api.onDidOpenRepository((r) => watch(r, true)));
+    if (api.onDidCloseRepository) {
+      outer.push(
+        api.onDidCloseRepository((r) => {
+          const root = r.rootUri.toString();
+          subs.get(root)?.dispose();
+          subs.delete(root);
+          sigs.delete(root);
+        }),
+      );
+    }
+    // Found only now: the caller's earlier probe had no git to ask, so it asks again.
+    if (late) fire();
+  };
+  await attach(false);
+  if (!attached) {
+    // No git API yet: the git extension doesn't run in Restricted Mode, and after trust is granted it is enabled
+    // a moment later (the trust event can come first). Attach when it appears.
+    waiting = [vscode.extensions.onDidChange(() => void attach(true)), vscode.workspace.onDidGrantWorkspaceTrust(() => void attach(true))];
   }
   return new vscode.Disposable(() => {
     disposed = true;
     clearTimeout(timer);
     for (const d of subs.values()) d?.dispose();
     outer.forEach((d) => d.dispose());
+    waiting.forEach((d) => d.dispose());
   });
 }
 

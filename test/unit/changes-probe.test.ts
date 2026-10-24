@@ -96,4 +96,35 @@ describe('the branch probe', () => {
     stub.extensions.git = saved;
     vi.useRealTimers();
   });
+
+  it('no git extension yet (Restricted Mode, trust just granted): it attaches when the extension appears, and says so', async () => {
+    vi.useFakeTimers();
+    const stub = await import('./vscode-stub.ts');
+    const changed = new EventEmitter<void>();
+    const r1 = repo({ changed });
+    const saved = stub.extensions.git;
+    const getExtension = stub.extensions.getExtension;
+    let present = false;
+    (stub.extensions as { getExtension: unknown }).getExtension = (id: string) => (id === 'vscode.git' && present ? { isActive: true, exports: { enabled: true, getAPI: () => api(r1) } } : undefined);
+    let calls = 0;
+    const d = await watchBranches(() => calls++, 100);
+    stub.events.trustGranted.fire(); // the trust event first: the extension isn't there yet
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls).toBe(0);
+    present = true;
+    stub.events.extensionsChanged.fire();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls).toBe(1); // the caller probes again, now that git can answer
+    (r1.state as { workingTreeChanges: unknown[] }).workingTreeChanges = [change];
+    changed.fire();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls).toBe(2);
+    stub.events.extensionsChanged.fire(); // attached once
+    await vi.advanceTimersByTimeAsync(200);
+    expect(calls).toBe(2);
+    d.dispose();
+    (stub.extensions as { getExtension: unknown }).getExtension = getExtension;
+    stub.extensions.git = saved;
+    vi.useRealTimers();
+  });
 });

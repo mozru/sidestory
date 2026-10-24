@@ -176,3 +176,23 @@ test('This File lists the steps covering a diff side, marks the one at the curso
   await expect.poll(() => desc(row(tf, 'L11–40'))).toBe('not explained');
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/1b-this-file.png` });
 });
+
+test('trust granted after the window opened: "This branch" still comes, once the git extension starts', async ({ page }) => {
+  // A folder never trusted before. In Restricted Mode the git extension doesn't run; trusting the folder starts it a
+  // moment after the trust event, which the comparison and the probe must wait for (CI saw this order at random).
+  const repo = `/home/workspace/chg-late-${Date.now()}`;
+  inContainer(`rm -rf /home/workspace/chg-late-* && cp -r /home/workspace/.chg-explained ${repo}`);
+  await page.goto(`/?folder=${repo}`);
+  await page.locator('.monaco-workbench').waitFor({ timeout: 60_000 });
+  const no = page.getByRole('button', { name: "No, I don't trust the authors" });
+  await no.waitFor({ timeout: 15_000 }).then(() => no.click(), () => {});
+  const icon = page.locator('.activitybar .action-item a[aria-label^="Sidestory"]').first();
+  await expect(icon).toBeVisible({ timeout: 60_000 });
+  if (!(await sidestories(page).isVisible())) await icon.click();
+  await expect(row(sidestories(page), 'Retry with jitter')).toBeVisible({ timeout: 30_000 });
+  await expect(row(sidestories(page), 'This branch')).toBeHidden();
+  await command(page, 'Workspaces: Manage Workspace Trust');
+  await page.getByRole('button', { name: /^Trust$/ }).first().click();
+  await expect(row(sidestories(page), 'This branch')).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => desc(row(sidestories(page), 'Retry with jitter')), { timeout: 30_000 }).toBe('vs main · 3 explained · 2 trivial · 1 left');
+});

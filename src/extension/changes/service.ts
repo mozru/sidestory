@@ -75,6 +75,8 @@ export class ChangesService implements vscode.Disposable {
   private comparison: Comparison | undefined;
   private comparisonSubs: vscode.Disposable[] = [];
   private apiSubs: vscode.Disposable[] = [];
+  /** Bumped by each init: an older one that finishes later leaves the newer answer alone. */
+  private initSeq = 0;
   /** The probe's answer (§9.1): the branch has commits its default base doesn't, before any comparison ran. */
   private probed: boolean | undefined;
   private probeSeq = 0;
@@ -320,13 +322,25 @@ export class ChangesService implements vscode.Disposable {
   // ---- the git API and the repository ----
 
   private async init(): Promise<void> {
+    const mine = ++this.initSeq;
     this.apiSubs.forEach((d) => d.dispose());
     this.apiSubs = [];
     const s = await gitApi();
+    // A newer init (trust granted, the git extension appeared) started meanwhile: its answer counts.
+    if (mine !== this.initSeq || this.disposed) return;
     if (s.kind !== 'ok') {
       this.api = undefined;
       this.useRepo(undefined);
       if (s.kind === 'disabled' && s.ext) this.apiSubs.push(s.ext.onDidChangeEnablement(() => (this.initializing = this.init())));
+      // The git extension doesn't run in Restricted Mode: after trust is granted it is enabled a moment later, and
+      // the trust event can come first (the extension still missing then). Try again when it appears.
+      if (s.kind === 'missing' || s.kind === 'untrusted') {
+        this.apiSubs.push(
+          vscode.extensions.onDidChange(() => {
+            if (vscode.workspace.isTrusted && vscode.extensions.getExtension('vscode.git')) this.initializing = this.init();
+          }),
+        );
+      }
       return;
     }
     this.api = s.api;
