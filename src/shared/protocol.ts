@@ -7,6 +7,7 @@ import { isCodeLink, MAX_CODE_LINKS, parseCodeTarget } from './code-link.ts';
 import { HIGHLIGHT_LANGS, type HighlightLang, type HighlightStyle, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
 import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
 import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
+import { commentsFromWebviewSchemas, type CommentsFromWebview, type CommentsToWebview } from './comments-protocol.ts';
 
 export interface AnchorView {
   id: string;
@@ -122,7 +123,9 @@ export type ToWebview =
    */
   | { type: 'here'; ref?: string; link?: string }
   /** A preview panel (docs/NAVIGATION-PLAN.md §7.5): the next sidestory opened from code or a list replaces it. */
-  | { type: 'preview'; on: boolean };
+  | { type: 'preview'; on: boolean }
+  /** Comment threads (docs/COMMENTS-PLAN.md §6.6). */
+  | CommentsToWebview;
 
 export type FromWebview =
   | { type: 'ready' }
@@ -194,7 +197,9 @@ export type FromWebview =
    */
   | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] }
   /** Keep Open on a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
-  | { type: 'keepOpen' };
+  | { type: 'keepOpen' }
+  /** Comment threads (docs/COMMENTS-PLAN.md §6.6), posted only from the panel's handlers for trusted input. */
+  | CommentsFromWebview;
 
 /** `charts.purple` → `--vscode-charts-purple`. Input is validated by the manifest schema. */
 export function themeColorVar(colorId: string): string {
@@ -250,6 +255,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
   z.object({ type: z.literal('focusTheft') }),
   z.object({ type: z.literal('keepOpen') }),
+  ...commentsFromWebviewSchemas,
   z.object({
     type: z.literal('highlight'),
     blocks: z
