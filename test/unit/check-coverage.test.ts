@@ -56,6 +56,11 @@ describe('--coverage on the fixture', () => {
     expect(r.out).toMatch(/test\/retry\.test\.ts:11: warning unexplained: lines 11–40 \(\+30\) aren't explained by a sidestory of this branch\./);
     expect(r.out).toContain('3 explained · 1 trivial · 1 left, in 5 files.');
     expect(r.out).not.toContain('unused-anchor');
+    // One summary line, last; no widget line when there are no widgets.
+    expect(r.out.split('\n').at(-1)).toMatch(/^3 explained · 1 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
+    const withDir = await run([join(fixture, '.sidestory/retry-jitter'), '--coverage']);
+    expect(withDir.out).not.toContain('No widgets checked');
+    expect(withDir.out.split('\n').at(-1)).toMatch(/^3 explained · 1 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
   });
 
   it('--json: the checklist, change by change', async () => {
@@ -148,6 +153,24 @@ describe('--coverage on the fixture', () => {
     const head = await json(['--coverage', '--base', 'main', '--head', git(dir, 'rev-parse', 'HEAD~1'), '--repo', dir]);
     // Before the sidestory's commit: nothing belongs.
     expect(head.coverage.sidestories).toEqual([]);
+  });
+
+  it('--head with a full commit id as the base: that commit is the merge-base once it is an ancestor; base-not-ancestor otherwise', async () => {
+    const dir = copy();
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '--no-verify', '--allow-empty', '-m', 'review head');
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const parent = git(dir, 'rev-parse', 'HEAD~1');
+    const r = await json(['--coverage', '--base', parent, '--head', head, '--repo', dir]);
+    expect(r.coverage.mergeBase).toBe(parent);
+    expect(r.coverage.head).toBe(head);
+    expect(r.coverage.files).toEqual([]);
+    // A commit outside the head's history (same tree, no parent).
+    const stranger = git(dir, 'commit-tree', `${head}^{tree}`, '-m', 'stranger');
+    const bad = await json(['--coverage', '--base', stranger, '--head', head, '--repo', dir]);
+    expect(bad.code).toBe(1);
+    expect(bad.findings.find((f) => f.code === 'base-not-ancestor')!.message).toContain(`isn't an ancestor of ${head.slice(0, 12)}`);
+    expect(bad.coverage.mergeBase).toBeNull();
   });
 
   it('--committed counts a sidestory only once it is committed', async () => {

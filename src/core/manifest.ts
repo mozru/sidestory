@@ -200,7 +200,8 @@ export function requiredVersion(raw: { anchors?: unknown }): 2 | 3 {
   }
   return 2;
 }
-const RESERVED_SEGMENT = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
+/** Windows device names, which no path segment may be (with or without an extension). */
+export const RESERVED_SEGMENT = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
 /** True for a canonical repo-relative POSIX path that can't escape the repo on any OS. */
 export function isSafeRelativePath(p: string): boolean {

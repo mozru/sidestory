@@ -206,8 +206,16 @@ function coverChange(f: FileInput, c: ChangeBlock, head: number[], base: number[
     if (c.new) {
       removedByHead = headNear.filter((i) => targets[i]!.range!.start <= c.new!.start && targets[i]!.range!.end >= c.new!.end);
     } else if (c.removed <= COVERAGE_LIMITS.pureDeletionContext) {
-      const around = [c.newAt - 1, c.newAt].filter((l) => l >= 1 && l <= (f.newLines ?? Infinity));
-      if (around.length) removedByHead = head.filter((i) => around.every((l) => inside(targets[i]!.range!, l)));
+      // Every deletion in the change needs the lines around it: a change merged from two deletions (across one
+      // unchanged line) sits at two places on the new side.
+      const around = new Set<number>();
+      let removedBefore = 0;
+      for (const r of c.removedRuns) {
+        const at = c.newAt + (r.start - c.oldAt - removedBefore);
+        for (const l of [at - 1, at]) if (l >= 1 && l <= (f.newLines ?? Infinity)) around.add(l);
+        removedBefore += r.end - r.start + 1;
+      }
+      if (around.size) removedByHead = head.filter((i) => [...around].every((l) => inside(targets[i]!.range!, l)));
     }
   }
 

@@ -2,13 +2,13 @@
 // arguments, environment, working directory and input before handing it to the real git; planted repositories,
 // configs and filters that would write a marker file must never run.
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../../src/cli/check-widgets.ts';
-import { findRepository, gitEnv } from '../../src/cli/git.ts';
+import { findRepository, gitEnv, isSafeRepoPath, resolveGit } from '../../src/cli/git.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 let base = '';
@@ -100,7 +100,7 @@ describe('every git call', () => {
       const config = c.argv.flatMap((a, k) => (c.argv[k - 1] === '-c' ? [a] : []));
       expect(config).toEqual(expect.arrayContaining(['core.fsmonitor=false', 'safe.bareRepository=explicit', 'protocol.allow=never', 'log.showSignature=false', 'diff.renameLimit=1000']));
       expect(config.find((x) => x.startsWith('core.hooksPath='))).toMatch(/sidestory-git-/);
-      expect(c.env).toEqual({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_CEILING_DIRECTORIES: base });
+      expect(c.env).toEqual({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: base });
     }
     expect(existsSync(join(base, 'PAGER-MARKER'))).toBe(false);
   });
@@ -114,7 +114,46 @@ describe('every git call', () => {
   });
 
   it('the environment helper drops every GIT_ variable, whatever its case', () => {
-    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: 'p', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C' });
+    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: 'p', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C', NoDefaultCurrentDirectoryInExePath: '1' });
+  });
+
+  it('a git planted in the repository never runs: relative, empty and in-repository PATH entries are skipped', async () => {
+    const dir = copy();
+    const marker = join(base, `PLANTED-MARKER-${n++}`);
+    for (const d of [dir, join(dir, 'bin')]) {
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'git'), `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
+      chmodSync(join(d, 'git'), 0o755);
+    }
+    const PATH = ['.', '', 'bin', dir, join(dir, 'bin'), fakeDir, process.env.PATH ?? ''].join(delimiter);
+    expect(await resolveGit(dir, { PATH })).toBe(join(fakeDir, 'git'));
+    const r = await run(['--coverage', '--base', 'main', '--repo', dir], { PATH });
+    expect(r.code).toBe(3);
+    expect(r.calls.length).toBeGreaterThan(3);
+    expect(existsSync(marker)).toBe(false);
+    // Nothing usable on PATH: an error, not a search of the working directory.
+    expect(await resolveGit(dir, { PATH: ['.', dir].join(delimiter) })).toBeUndefined();
+    const none = await run(['--coverage', '--base', 'main', '--repo', dir], { PATH: ['.', dir].join(delimiter) });
+    expect(none.code).toBe(1);
+    expect(none.out).toContain("git wasn't found");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('on Windows only git.exe or git.com, from absolute entries', async () => {
+    const dir = join(base, `win${n++}`);
+    mkdirSync(join(dir, 'tools'), { recursive: true });
+    writeFileSync(join(dir, 'tools', 'git.cmd'), '');
+    expect(await resolveGit(join(base, 'elsewhere'), { Path: `.;${join(dir, 'tools')}` }, 'win32')).toBeUndefined();
+  });
+
+  it('working tree diffs ignore submodules (git never looks inside them)', async () => {
+    const r = await run(['--coverage', '--base', 'main', '--repo', copy()]);
+    expect(r.calls.find((c) => c.argv.includes('diff'))!.argv).toContain('--ignore-submodules=all');
+  });
+
+  it('paths Windows would read differently are unsafe', () => {
+    for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'a./b', 'a /b', 'src/x.']) expect(isSafeRepoPath(bad), bad).toBe(false);
+    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c']) expect(isSafeRepoPath(ok), ok).toBe(true);
   });
 });
 
@@ -165,7 +204,28 @@ describe('the repository is found in JS', () => {
     writeFileSync(join(dir, '.git'), `gitdir: ${join(base, 'real-gitdir')}\n`);
     expect(await findRepository(join(dir, 'sub'))).toEqual({ root: dir, gitDir: join(base, 'real-gitdir') });
     writeFileSync(join(dir, '.git'), 'gitdir: /does/not/exist\n');
-    expect((await findRepository(join(dir, 'sub')))?.root).not.toBe(dir);
+    expect(await findRepository(join(dir, 'sub'))).toBeUndefined();
+  });
+
+  it('the first .git of any kind decides: a broken one never hands over an outer repository', async () => {
+    const outer = copy();
+    const inner = join(outer, 'vendor/inner');
+    mkdirSync(join(inner, 'sub'), { recursive: true });
+    writeFileSync(join(inner, '.git'), 'not a gitdir line\n');
+    expect(await findRepository(join(inner, 'sub'))).toBeUndefined();
+    rmSync(join(inner, '.git'));
+    symlinkSync(join(base, 'missing-target'), join(inner, '.git'));
+    expect(await findRepository(join(inner, 'sub'))).toBeUndefined();
+    rmSync(join(inner, '.git'));
+    writeFileSync(join(base, `a-file-${n}`), '');
+    symlinkSync(join(base, `a-file-${n++}`), join(inner, '.git'));
+    expect(await findRepository(join(inner, 'sub'))).toBeUndefined();
+    // A link to a real git directory is followed to its real path.
+    rmSync(join(inner, '.git'));
+    symlinkSync(join(outer, '.git'), join(inner, '.git'));
+    expect(await findRepository(join(inner, 'sub'))).toEqual({ root: inner, gitDir: join(outer, '.git') });
+    rmSync(join(inner, '.git'));
+    expect((await findRepository(join(inner, 'sub')))?.root).toBe(outer);
   });
 });
 
@@ -228,5 +288,17 @@ describe('clean filters', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('working-tree-refused');
     expect((await run(['--coverage', '--base', 'main', '--committed', '--repo', dir])).code).toBe(3);
+  });
+
+  it("a linked worktree: the common dir's info/attributes counts too", async () => {
+    const dir = copy();
+    const wt = join(base, `wt${n++}`);
+    git(dir, 'worktree', 'add', '-q', wt, 'HEAD');
+    expect((await run(['--coverage', '--base', 'main', '--repo', wt])).code).toBe(3);
+    mkdirSync(join(dir, '.git/info'), { recursive: true });
+    writeFileSync(join(dir, '.git/info/attributes'), '* filter=x\n');
+    const r = await run(['--coverage', '--base', 'main', '--repo', wt]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('working-tree-refused');
   });
 });

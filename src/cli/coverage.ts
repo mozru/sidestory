@@ -440,8 +440,18 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       return r !== undefined && match(r);
     });
 
-  const byNew = new Map(counted.map((e) => [e.path, e]));
-  const byOld = new Map(counted.map((e) => [e.oldPath ?? e.path, e]));
+  // One entry per path on each side, whatever order git listed them in: a file's own entry (modified, renamed or
+  // deleted) wins over a copy made from it, then the first by new path (`counted` is sorted).
+  const byNew = new Map<string, Entry>();
+  const byOld = new Map<string, Entry>();
+  for (const e of counted) if (!byNew.has(e.path)) byNew.set(e.path, e);
+  for (const pass of [false, true]) {
+    for (const e of counted) {
+      if ((e.status === 'C') !== pass || e.oldMode === '000000') continue; // added: no merge-base side
+      const k = e.oldPath ?? e.path;
+      if (!byOld.has(k)) byOld.set(k, e);
+    }
+  }
   const targets: Target[] = [];
   const stepTitles = new Map<string, Map<string, string>>();
   for (const s of sidestories) {

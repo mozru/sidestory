@@ -704,7 +704,11 @@ export function formatFindings(findings: readonly Finding[], cwd = process.cwd()
   return sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${plainLine(f.message)}`);
 }
 
-export function formatReport(report: CheckReport, cwd = process.cwd()): string {
+/**
+ * The text report. `coverage`: it comes before the coverage section, whose totals line ends the output, so the
+ * widget line gives the count only, and is left out when there are no widgets.
+ */
+export function formatReport(report: CheckReport, cwd = process.cwd(), coverage = false): string {
   const out = formatFindings(report.findings, cwd);
   const p = report.pin;
   if (p) {
@@ -717,7 +721,9 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
     }
   }
   const n = report.widgets.length;
-  out.push(`${n === 0 ? 'No widgets' : `${n} widget${n === 1 ? '' : 's'}`} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
+  if (coverage) {
+    if (n) out.push(`${n} widget${n === 1 ? '' : 's'} checked.`);
+  } else out.push(`${n === 0 ? 'No widgets' : `${n} widget${n === 1 ? '' : 's'}`} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
   return out.join('\n');
 }
 
@@ -840,8 +846,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     const base = report ? { ...report, findings: all, errors, warnings } : { findings: all, errors, warnings };
     io.out(JSON.stringify({ ...base, coverage: cov!.coverage }, null, 2));
   } else {
-    const head = report ? formatReport({ ...report, findings, errors: findings.filter((f) => f.severity === 'error').length, warnings: findings.filter((f) => f.severity === 'warning').length }) : formatFindings(findings).join('\n');
-    const lines = [head, cov!.header, ...formatFindings(covFindings, process.cwd(), 'place'), cov!.summary].filter((l) => l !== '');
+    const head = report ? formatReport({ ...report, findings, errors: findings.filter((f) => f.severity === 'error').length, warnings: findings.filter((f) => f.severity === 'warning').length }, process.cwd(), true) : formatFindings(findings).join('\n');
+    // One summary line, last: the coverage totals and every finding's count.
+    const summary = `${cov!.summary} ${errors} error(s), ${warnings} warning(s).`;
+    const lines = [head, cov!.header, ...formatFindings(covFindings, process.cwd(), 'place'), summary].filter((l) => l !== '');
     io.out(lines.join('\n'));
   }
   if (errors > 0) return 1;

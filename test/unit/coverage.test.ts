@@ -73,6 +73,14 @@ describe('§6.3: removed lines', () => {
     expect(one(file('src/a.ts', old10, del), [T('s', 'head', 1, 3)]).state).toBe('unexplained');
     expect(one(file('src/a.ts', old10, del), [T('s', 'head', 4, 6)]).state).toBe('unexplained');
   });
+  it('two deletions merged into one change: the lines around each must be covered', () => {
+    // line 3 and line 5 deleted, line 4 kept between them: one change, at new 3 and new 4.
+    const del = [old10[0]!, old10[1]!, old10[3]!, ...old10.slice(5)];
+    const f = file('src/a.ts', old10, del);
+    expect(f.changes).toHaveLength(1);
+    expect(one(f, [T('s', 'head', 2, 3)]).state).toBe('unexplained');
+    expect(one(f, [T('s', 'head', 2, 4)]).state).toBe('explained');
+  });
   it('a pure deletion at the end of the file: the line before it is enough', () => {
     expect(one(file('src/a.ts', old10, old10.slice(0, 7)), [T('s', 'head', 6, 7)]).state).toBe('explained');
     // At the start: the line after it.

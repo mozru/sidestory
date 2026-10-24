@@ -5,17 +5,19 @@
 // - the repository is found here, in JS (a `.git` directory, or a `.git` file whose `gitdir:` is a directory), and
 //   git always gets it explicitly (`--git-dir`, `--work-tree`, `cwd` the root): a bare repository planted inside
 //   the tree is never discovered and its config never read;
+// - git is found in JS (`resolveGit`): an absolute PATH entry outside the repository, never the working directory
+//   (Windows searches the current directory first, and a committed git.exe would run), and spawned by that path;
 // - git runs through execFile/spawn, never a shell, with every `GIT_*` variable removed and a fixed set added;
 // - every call turns off the pager, fsmonitor, hooks, signatures and the network;
 // - refs pass §3.1's grammar and are resolved to full ids through fully qualified candidates; paths follow `--`
 //   with literal pathspecs; only hex ids are written to `cat-file --batch`.
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 import { MAX_COMPARE_BYTES } from '../core/hunks.ts';
-import { FULL_SHA, isValidBase } from '../core/manifest.ts';
+import { FULL_SHA, isValidBase, RESERVED_SEGMENT } from '../core/manifest.ts';
 import type { RefReader } from '../extension/changes/base.ts';
 
 export const GIT_LIMITS = {
@@ -46,12 +48,13 @@ export class GitError extends Error {
 
 /**
  * Paths read or shown from git output (§4.5): no control characters, `..`, `.git` segments, backslashes or a
- * leading `:` (pathspec magic). The same rule as the Changes view's `isSafeRepoPath` (src/extension/changes/
- * comparison.ts, which imports vscode and so can't be shared with the checker).
+ * leading `:` (pathspec magic), and, as `isSafeRelativePath`, no Windows device names (`con`, `nul.txt`) or
+ * segments ending in a dot or a space (Windows drops those, so `a.` would read `a`). The same rule as the Changes
+ * view's `isSafeRepoPath` (src/extension/changes/comparison.ts, which imports vscode and so can't be shared).
  */
 export function isSafeRepoPath(p: string): boolean {
   if (!p || p.length > 4096 || p.startsWith(':') || /[\x00-\x1f\x7f\\]/.test(p)) return false;
-  return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && s.toLowerCase() !== '.git');
+  return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && s.toLowerCase() !== '.git' && !/[. ]$/.test(s) && !RESERVED_SEGMENT.test(s));
 }
 
 export interface RepoLocation {
@@ -62,22 +65,30 @@ export interface RepoLocation {
 }
 
 /**
- * The nearest ancestor of `start` (itself included) holding a `.git` directory, or a `.git` file whose `gitdir:`
- * names a directory. Git is never asked, so nothing inside the tree (a planted bare repository) is ever used.
+ * The nearest ancestor of `start` (itself included) with a `.git` entry, as git finds it: the first `.git` of any
+ * kind decides. A directory, a link whose real path is a directory, or a file whose `gitdir:` names a directory is
+ * the repository; anything else there (a broken link, a file without a valid `gitdir:`, a FIFO) means no repository,
+ * never a search further up, so a stray `.git` can't hand the checker an outer repository. Git is never asked, so
+ * nothing inside the tree (a planted bare repository) is ever used.
  */
 export async function findRepository(start: string): Promise<RepoLocation | undefined> {
   let dir = await realpath(resolve(start)).catch(() => resolve(start));
   for (;;) {
     const dotGit = join(dir, '.git');
     const st = await lstat(dotGit).catch(() => undefined);
-    if (st?.isDirectory()) return { root: dir, gitDir: dotGit };
-    if (st?.isFile() && st.size < 4096) {
+    if (st) {
+      if (st.isDirectory()) return { root: dir, gitDir: dotGit };
+      if (st.isSymbolicLink()) {
+        const real = await realpath(dotGit).catch(() => undefined);
+        return real && (await stat(real).catch(() => undefined))?.isDirectory() ? { root: dir, gitDir: real } : undefined;
+      }
+      if (!st.isFile() || st.size >= 4096) return undefined;
       const text = await readFile(dotGit, 'utf8').catch(() => '');
       const m = /^gitdir: (.+?)\r?\n?$/.exec(text);
-      if (m) {
-        const target = isAbsolute(m[1]!) ? m[1]! : resolve(dir, m[1]!);
-        if ((await stat(target).catch(() => undefined))?.isDirectory()) return { root: dir, gitDir: await realpath(target).catch(() => target) };
-      }
+      if (!m) return undefined;
+      const target = isAbsolute(m[1]!) ? m[1]! : resolve(dir, m[1]!);
+      if (!(await stat(target).catch(() => undefined))?.isDirectory()) return undefined;
+      return { root: dir, gitDir: await realpath(target).catch(() => target) };
     }
     const up = dirname(dir);
     if (up === dir) return undefined;
@@ -92,9 +103,46 @@ export function gitEnv(root: string, base: NodeJS.ProcessEnv = process.env): Nod
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_OPTIONAL_LOCKS = '0';
   env.GIT_NO_LAZY_FETCH = '1';
+  // A repository's refs/replace/ could make a commit or blob read as another one.
+  env.GIT_NO_REPLACE_OBJECTS = '1';
   env.GIT_CEILING_DIRECTORIES = dirname(root);
   env.LC_ALL = 'C';
+  // Windows: programs git itself starts (a credential helper, an ssh) never come from the current directory.
+  env.NoDefaultCurrentDirectoryInExePath = '1';
   return env;
+}
+
+/**
+ * The git to run, found in JS rather than by spawn: the first `git` (on Windows `git.exe` or `git.com`, never a
+ * `.bat` or `.cmd`) in an absolute PATH entry that isn't the repository or inside it. Relative and empty entries
+ * (`.`, `::`) are skipped, as is the working directory itself: on Windows a bare `git` would be looked up in the
+ * current directory (the repository's root) first, so a committed git.exe would run. Undefined when none is found.
+ */
+export async function resolveGit(root: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
+  const windows = platform === 'win32';
+  const p = windows ? win32 : posix;
+  const pathVar = Object.entries(env).find(([k]) => (windows ? k.toUpperCase() === 'PATH' : k === 'PATH'))?.[1] ?? '';
+  const fold = (s: string) => (windows || platform === 'darwin' ? s.toLowerCase() : s);
+  const rootReal = fold(await realpath(root).catch(() => root));
+  const insideRoot = (d: string) => {
+    const f = fold(d);
+    return f === rootReal || f.startsWith(rootReal.endsWith(p.sep) ? rootReal : rootReal + p.sep);
+  };
+  const names = windows ? ['git.exe', 'git.com'] : ['git'];
+  for (let entry of pathVar.split(p.delimiter)) {
+    if (windows) entry = entry.replace(/^"(.*)"$/, '$1');
+    if (!entry || !p.isAbsolute(entry)) continue;
+    const dir = await realpath(entry).catch(() => undefined);
+    if (!dir || insideRoot(dir) || insideRoot(p.resolve(entry))) continue;
+    for (const name of names) {
+      const file = p.join(dir, name);
+      const st = await stat(file).catch(() => undefined);
+      if (!st?.isFile()) continue;
+      if (!windows && !(await access(file, constants.X_OK).then(() => true, () => false))) continue;
+      return file;
+    }
+  }
+  return undefined;
 }
 
 /** One raw diff record (`--raw -z`). */
@@ -119,7 +167,9 @@ export class Git {
   readonly root: string;
   readonly gitDir: string;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly gitPath: string;
+  private readonly gitPath: string | undefined;
+  private resolvedGit: Promise<string | undefined> | undefined;
+  private readonly baseEnv: NodeJS.ProcessEnv;
   private hooksDir: string | undefined;
   private emptyFile: string | undefined;
   private versionCache: [number, number] | undefined;
@@ -130,7 +180,17 @@ export class Git {
     this.root = loc.root;
     this.gitDir = loc.gitDir;
     this.env = gitEnv(loc.root, opts.env);
-    this.gitPath = opts.gitPath ?? 'git';
+    this.baseEnv = opts.env ?? process.env;
+    this.gitPath = opts.gitPath;
+  }
+
+  /** The git executable: `opts.gitPath` (tests), else `resolveGit` over the caller's PATH. */
+  private async executable(): Promise<string> {
+    if (this.gitPath) return this.gitPath;
+    this.resolvedGit ??= resolveGit(this.root, this.baseEnv);
+    const exe = await this.resolvedGit;
+    if (!exe) throw new GitError("git wasn't found: no absolute folder on PATH outside the repository holds it. Install git, or put its folder on PATH.", null, '');
+    return exe;
   }
 
   /** Removes the temporary hooks folder. */
@@ -164,8 +224,9 @@ export class Git {
   /** Runs git with the hardened prefix; resolves with its output, rejects with GitError on a failure exit unless `ok` allows the code. */
   async run(args: readonly string[], opts: { input?: string; ok?: readonly number[]; maxBytes?: number; extra?: readonly string[] } = {}): Promise<{ code: number; stdout: Buffer; stderr: string }> {
     const argv = [...(await this.prefix()), ...(opts.extra ?? []), ...args];
+    const exe = await this.executable();
     return new Promise((resolvePromise, reject) => {
-      const child = spawn(this.gitPath, argv, { cwd: this.root, env: this.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawn(exe, argv, { cwd: this.root, env: this.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       const out: Buffer[] = [];
       let size = 0;
       let err = '';
@@ -281,14 +342,20 @@ export class Git {
   async diffWorkingTree(mergeBase: string): Promise<RawEntry[]> {
     assertSha(mergeBase);
     const extra = await this.filterGuard();
-    return parseRaw((await this.run(['diff', '--raw', '-z', '--no-abbrev', '-M', '--no-ext-diff', '--no-textconv', '--end-of-options', mergeBase, '--'], { extra })).stdout);
+    // --ignore-submodules=all: git would otherwise look inside each submodule's working tree (its config, its
+    // fsmonitor) to see whether it is dirty. Committed mode still lists submodule pointer changes (not counted).
+    return parseRaw((await this.run(['diff', '--raw', '-z', '--no-abbrev', '-M', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--end-of-options', mergeBase, '--'], { extra })).stdout);
   }
 
   /** The global options for working tree reads, or throws WorkingTreeRefused. */
   async filterGuard(): Promise<string[]> {
     const [major, minor] = await this.version();
-    const info = await readFile(join(this.gitDir, 'info', 'attributes'), 'utf8').catch(() => '');
-    if (/filter/i.test(info)) throw new WorkingTreeRefused(`${join(this.gitDir, 'info', 'attributes')} selects a filter, which reading the working tree could run. Use --committed, or remove it.`);
+    // A linked worktree's gitDir is .git/worktrees/<name>; git reads info/attributes from the common dir.
+    for (const dir of await this.attributeDirs()) {
+      const file = join(dir, 'info', 'attributes');
+      const info = await readFile(file, 'utf8').catch(() => '');
+      if (/filter/i.test(info)) throw new WorkingTreeRefused(`${file} selects a filter, which reading the working tree could run. Use --committed, or remove it.`);
+    }
     if (major > 2 || (major === 2 && minor >= 40)) {
       await this.prefix();
       return [`--attr-source=${await this.emptyTree()}`, '-c', `core.attributesFile=${this.emptyFile!}`];
@@ -303,6 +370,17 @@ export class Git {
       throw new WorkingTreeRefused(`git ${major}.${minor} can't keep the filter "${key.replace(/^filter\.|\.(clean|process|smudge)$/g, '')}" (${key}) from running while reading the working tree. Use --committed, or git 2.40 or newer.`);
     }
     return ['-c', `core.attributesFile=${this.emptyFile!}`];
+  }
+
+  /** The git directory and, for a linked worktree, its common dir (`<gitDir>/commondir`). */
+  private async attributeDirs(): Promise<string[]> {
+    const dirs = [this.gitDir];
+    const common = (await readFile(join(this.gitDir, 'commondir'), 'utf8').catch(() => '')).trim();
+    if (common && common.length < 4096) {
+      const dir = isAbsolute(common) ? common : resolve(this.gitDir, common);
+      if (dir !== this.gitDir) dirs.push(dir);
+    }
+    return dirs;
   }
 
   /** Untracked files that aren't ignored, as `git status` lists them. */
