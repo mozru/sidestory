@@ -317,13 +317,13 @@ export function parseWhy(v: unknown): { value?: string; error?: string } {
   return { value };
 }
 
+/** The most bytes a manifest is read with (the extension and the checker). */
+export const MAX_MANIFEST_BYTES = 1_000_000;
+
 /**
  * Parses a manifest. A broken anchor becomes a diagnostic and the rest still load;
  * only a broken top level (or an unknown future version) fails the whole manifest.
  */
-/** The most bytes a manifest is read with (the extension and the checker). */
-export const MAX_MANIFEST_BYTES = 1_000_000;
-
 export function parseManifest(json: string): ParseResult {
   if (json.length > LIMITS.manifestChars) return { ok: false, code: 'too-large', error: `manifest.json is longer than ${LIMITS.manifestChars} characters` };
   let raw: unknown;

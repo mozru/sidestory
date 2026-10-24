@@ -57,22 +57,67 @@ export function tooLargeChange(path: string, oldLines: number, newLines: number)
   };
 }
 
+/** Files moved from one folder to another (§5.1), counted as one change: the folders, and each file's paths. */
+export interface MoveGroup {
+  /** The old parent folder ('' for the root). */
+  readonly from: string;
+  /** The new parent folder. */
+  readonly to: string;
+  /** By new path. */
+  readonly files: readonly { readonly path: string; readonly oldPath: string; readonly copy?: boolean }[];
+}
+
+/** A path's parent folder, '' at the root. */
+export const parentFolder = (p: string): string => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+
 /**
- * The change a counted rename or copy is when no line changed (§5.1): moving `src/auth.js` to `src/disabled/auth.js`
- * can switch a module off, so the move itself needs a mention. Its key comes from both paths.
+ * The moves of a comparison (§5.1): every counted rename or copy whose path changed, grouped by (old parent folder →
+ * new parent folder), pure moves and moved-and-edited files alike. Moving `src/auth.js` to `src/disabled/auth.js`
+ * can switch a module off, so each group needs a mention; a refactor moving 50 files from `src/a` to `src/b` is one
+ * group, not 50 changes. Groups are sorted by their first file's new path. Shared by the checker and the extension.
  */
-export function renameChange(oldPath: string, path: string): ChangeBlock {
-  return { key: `rename-${contentHash(path, [oldPath], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, renamedFrom: oldPath };
+export function moveGroups(entries: readonly { readonly status: string; readonly path: string; readonly oldPath?: string }[]): MoveGroup[] {
+  const groups = new Map<string, { from: string; to: string; files: { path: string; oldPath: string; copy?: boolean }[] }>();
+  for (const e of entries) {
+    if ((e.status !== 'R' && e.status !== 'C') || e.oldPath === undefined || e.oldPath === e.path) continue;
+    const from = parentFolder(e.oldPath);
+    const to = parentFolder(e.path);
+    const k = `${from}\0${to}`;
+    let g = groups.get(k);
+    if (!g) groups.set(k, (g = { from, to, files: [] }));
+    g.files.push({ path: e.path, oldPath: e.oldPath, ...(e.status === 'C' ? { copy: true } : {}) });
+  }
+  const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  for (const g of groups.values()) g.files.sort((a, b) => byPath(a.path, b.path));
+  return [...groups.values()].sort((a, b) => byPath(a.files[0]!.path, b.files[0]!.path));
 }
 
 /**
- * A file's diff with the rename change added when its path changed and its text didn't (no change, or line endings
- * only); any other diff as it is. The same rule in the checker and the extension.
+ * A move group's one change, carried by the group's first file (the caller picks it): no lines, key from the two
+ * folders. Covered by any head-side anchor that resolves in a file of the group, or a trivial mark there; by
+ * trivialFiles only when it matches every file of the group (`coverage`).
  */
-export function withRenameChange(diff: FileDiff, e: { readonly status: string; readonly path: string; readonly oldPath?: string }): FileDiff {
-  const moved = (e.status === 'R' || e.status === 'C') && e.oldPath !== undefined && e.oldPath !== e.path;
-  if (!moved || diff.tooLarge || diff.changes.length) return diff;
-  return { ...diff, changes: [renameChange(e.oldPath!, e.path)], lineEndingsOnly: false };
+export function moveChange(g: MoveGroup): ChangeBlock {
+  return { key: `move-${contentHash(g.to, [g.from], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, move: g };
+}
+
+/**
+ * Which file carries each group's change: its first file by new path that the caller compares (`has`); a group none
+ * of whose files is compared carries nothing. Both tools put the change first among that file's changes.
+ */
+export function moveCarriers(groups: readonly MoveGroup[], has: (path: string) => boolean): Map<string, ChangeBlock> {
+  const out = new Map<string, ChangeBlock>();
+  for (const g of groups) {
+    const carrier = g.files.find((f) => has(f.path));
+    if (carrier) out.set(carrier.path, moveChange(g));
+  }
+  return out;
+}
+
+/** "renamed from src/auth.js" for one file, "3 files moved src/a → src/b" for more (raw paths: display them safely). */
+export function moveLabel(g: MoveGroup): string {
+  if (g.files.length === 1) return `${g.files[0]!.copy ? 'copied' : 'renamed'} from ${g.files[0]!.oldPath}`;
+  return `${g.files.length} files moved ${g.from || '.'} → ${g.to || '.'}`;
 }
 
 // ---- what a side holds (§5.1) ----
@@ -209,10 +254,10 @@ export interface ChangeBlock {
   oldLen: number;
   newLen: number;
   /**
-   * A rename (or copy) that changed no line: the path it came from. It has no lines, and counts as one change that any
-   * head-side anchor or trivial mark in the file covers (§5.1), or a trivialFiles match.
+   * A move group's change (`moveChange`): the files moved from one folder to another. It has no lines, and counts as
+   * one change for the whole group (§5.1).
    */
-  renamedFrom?: string;
+  move?: MoveGroup;
 }
 
 export interface FileDiff {

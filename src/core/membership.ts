@@ -1,7 +1,7 @@
 // Which sidestories count toward a comparison's coverage (docs/CHANGES-PLAN.md §6.1). Pure: the extension and the
 // checker look the facts up their own way (the git API, hardened git) and apply this same test.
 import { decodeUtf8 } from './hunks.ts';
-import { explainerNameSchema, MAX_MANIFEST_BYTES, parseManifest } from './manifest.ts';
+import { explainerNameSchema, FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseManifest } from './manifest.ts';
 
 /**
  * Does a sidestory belong to a comparison (merge-base M → head)?
@@ -133,19 +133,51 @@ export function isArchivedManifest(oldBytes: Uint8Array, newBytes: Uint8Array): 
   if (newBytes.byteLength > MAX_MANIFEST_BYTES || oldBytes.byteLength > MAX_MANIFEST_BYTES) return false;
   const [oldText, newText] = [decodeUtf8(oldBytes), decodeUtf8(newBytes)];
   if (oldText === undefined || newText === undefined || !parseManifest(newText).ok) return false;
-  const rest = (text: string): string | undefined => {
+  const object = (text: string): Record<string, unknown> | undefined => {
     try {
       const v: unknown = JSON.parse(text.replace(/^\ufeff/, ''));
-      if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
-      const o = { ...(v as Record<string, unknown>) };
-      for (const k of ARCHIVE_FIELDS) delete o[k];
-      return canonical(o);
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
     } catch {
       return undefined;
     }
   };
-  const a = rest(oldText);
-  return a !== undefined && a === rest(newText);
+  const [was, now] = [object(oldText), object(newText)];
+  if (!was || !now) return false;
+  const rest = (o: Record<string, unknown>) => {
+    const r = { ...o };
+    for (const k of ARCHIVE_FIELDS) delete r[k];
+    return canonical(r);
+  };
+  return rest(was) === rest(now) && archiveFieldsValid(was, now);
+}
+
+/**
+ * The archive job's small schema for `landed` (§12.3): the branch, the ISO date, the PR's https URL, and the landing
+ * commits (`base`, `head`) as full ids when it records them there.
+ */
+const LANDED_KEYS = new Set(['branch', 'at', 'pr', 'base', 'head']);
+const ISO_DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const PR_URL = /^https:\/\/[A-Za-z0-9.-]{1,100}\/[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}\/pull\/[1-9]\d{0,8}$/;
+
+/**
+ * `base`, `head` and `landed` as the archive job writes them, and nothing riding in them: `base` is the old base or a
+ * full commit id, `head` a full commit id, `landed` at most `{ branch, at, pr, base, head }` with a branch name, an
+ * ISO date, a pull request URL and full commit ids, under 512 bytes.
+ */
+function archiveFieldsValid(was: Record<string, unknown>, now: Record<string, unknown>): boolean {
+  const base = now.base;
+  if (base === undefined ? was.base !== undefined : typeof base !== 'string' || !(FULL_SHA.test(base) || (isValidBase(base) && base === was.base))) return false;
+  if (now.head !== undefined && (typeof now.head !== 'string' || !FULL_SHA.test(now.head))) return false;
+  const landed = now.landed;
+  if (landed === undefined) return true;
+  if (!landed || typeof landed !== 'object' || Array.isArray(landed) || JSON.stringify(landed).length > 512) return false;
+  const l = landed as Record<string, unknown>;
+  if (!Object.keys(l).every((k) => LANDED_KEYS.has(k))) return false;
+  if (l.branch !== undefined && (typeof l.branch !== 'string' || !isValidBase(l.branch) || FULL_SHA.test(l.branch))) return false;
+  if (l.at !== undefined && (typeof l.at !== 'string' || !ISO_DATE.test(l.at))) return false;
+  if (l.pr !== undefined && (typeof l.pr !== 'string' || !PR_URL.test(l.pr))) return false;
+  for (const k of ['base', 'head'] as const) if (l[k] !== undefined && (typeof l[k] !== 'string' || !FULL_SHA.test(l[k]))) return false;
+  return true;
 }
 
 /** JSON with object keys sorted, so layout and key order don't matter. */

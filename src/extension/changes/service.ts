@@ -11,7 +11,7 @@
 import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import type { ChangeCoverage } from '../../core/coverage.ts';
-import { decodePair, oldToNew, type ChangeBlock } from '../../core/hunks.ts';
+import { decodePair, moveLabel, oldToNew, textLines, type ChangeBlock } from '../../core/hunks.ts';
 import { trivialGlobFor } from '../../core/manifest.ts';
 import { isStoryBase, isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
 import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
@@ -39,7 +39,7 @@ const MAX_RECENT = 10;
 const COMMAND_WAIT_MS = 30_000;
 
 /** A file whose change has no lines: counted whole (binary, LFS, link…), or moved without a line changed. */
-const lineless = (f: { whole?: unknown; diff: { changes: readonly { renamedFrom?: string }[] } }) => !!f.whole || f.diff.changes.some((c) => c.renamedFrom !== undefined);
+const lineless = (f: { whole?: unknown; move?: unknown; movedWith?: string; diff: { changes: readonly unknown[] } }) => !!f.whole || ((!!f.move || !!f.movedWith) && !f.diff.changes.length);
 
 const setContext = (key: string, value: unknown) => void vscode.commands.executeCommand('setContext', key, value);
 const name = (s: string, max = 60) => displayText(s, max);
@@ -509,7 +509,12 @@ export class ChangesService implements vscode.Disposable {
 
   /** Where a document is, for commands: `keyOf`, and the empty side of an added or deleted file as its other side. */
   locate(s: Snapshot, uri: vscode.Uri): SideKey | undefined {
-    if (uri.scheme === EMPTY_SCHEME) return emptySideKey(uri.path.slice(1), s.entries);
+    if (uri.scheme === EMPTY_SCHEME) {
+      const p = uri.path.slice(1);
+      // Else coverage's own entry: the right side of a code-renamed-onto-a-sidestory's-file deletion has no snapshot entry.
+      const own = this.result(s)?.files.get(p)?.entry;
+      return emptySideKey(p, s.entries) ?? (own ? emptySideKey(p, [own]) : undefined);
+    }
     return this.keyOf(s, uri);
   }
 
@@ -742,13 +747,20 @@ export class ChangesService implements vscode.Disposable {
     if (!at) return undefined;
     // A whole-file change (a file too large to compare, say): the cursor anywhere in it is in it.
     const whole = r?.files.get(at.entry.path);
-    if (whole && lineless(whole)) {
+    if (whole?.whole) {
       const c = whole.coverage?.changes.find((x) => !isDone(x.state));
       const b = c && whole.blocks.get(c.key);
       return c && b ? { path: at.entry.path, entry: whole.entry, c, b } : undefined;
     }
+    // In a moved file, the cursor off any line change is in its group's move (carried by the group's first file).
+    const moveHere = (): Found | undefined => {
+      const carrier = whole?.move ? whole : whole?.movedWith ? r?.files.get(whole.movedWith) : undefined;
+      const c = carrier?.coverage?.changes.find((x) => carrier.blocks.get(x.key)?.move && !isDone(x.state));
+      const b = c && carrier!.blocks.get(c.key);
+      return c && b ? { path: carrier!.entry.path, entry: carrier!.entry, c, b } : undefined;
+    };
     const f = await this.fileChanges(s, r, at.entry);
-    if (!f) return undefined;
+    if (!f) return moveHere();
     const sel = at.editor.selection;
     const start = sel.start.line + 1;
     const end = sel.isEmpty ? start : sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line : sel.end.line + 1;
@@ -756,11 +768,12 @@ export class ChangesService implements vscode.Disposable {
     const c = f.changes.find((x) => {
       const b = f.blocks.get(x.key);
       if (!b || isDone(x.state)) return false;
+      if (b.move) return false;
       const span = at.key.side === 'head' ? (b.new ?? { start: b.newAt, end: b.newAt }) : (b.old ?? { start: b.oldAt, end: b.oldAt });
       return span.start <= end && start <= span.end;
     });
     const b = c && f.blocks.get(c.key);
-    return c && b ? { path: at.entry.path, entry: at.entry, c, b } : undefined;
+    return c && b ? { path: at.entry.path, entry: at.entry, c, b } : moveHere();
   }
 
   /** A change named by `{ path, key }` (This File's rows), else the one at the active editor's cursor. */
@@ -785,10 +798,11 @@ export class ChangesService implements vscode.Disposable {
     const b = f?.blocks.get(key);
     const ctx = this.diffContext();
     if (!f || !b || !ctx) return;
-    if (f.whole || b.renamedFrom !== undefined) {
+    if (f.whole || b.move) {
+      // No range: a whole file, or a move group (its first file's diff).
       const pair = this.diffUris(s, f.entry);
       if (!pair) {
-        void vscode.window.showInformationMessage(`${name(path, 100)} (${f.whole ? WHOLE_WORDS[f.whole] : 'moved'}) counts as one change; its path isn't read from disk. Cover it with a trivialFiles glob.`);
+        void vscode.window.showInformationMessage(`${name(path, 100)} (${b.move ? 'moved' : WHOLE_WORDS[f.whole!]}) counts as one change; its path isn't read from disk. Cover it with a trivialFiles glob.`);
         return;
       }
       await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, pair.title, { preview: true, viewColumn: column });
@@ -856,7 +870,7 @@ export class ChangesService implements vscode.Disposable {
     } else if (place) {
       const line = place.editor.selection.active.line + 1;
       const f = r.files.get(place.entry.path);
-      at = { path: place.entry.path, pos: f?.whole ? 1 : place.key.side === 'base' && f?.diff ? oldToNew(f.diff, line) : line };
+      at = { path: place.entry.path, pos: f && lineless(f) ? 1 : place.key.side === 'base' && f?.diff ? oldToNew(f.diff, line) : line };
     }
     const next = nextChange(list, rank, at, dir);
     if (!next) return;
@@ -995,7 +1009,7 @@ export class ChangesService implements vscode.Disposable {
     for (const c of f.coverage.changes) {
       const b = f.blocks.get(c.key);
       // A whole-file change is named by its kind ("binary file"), not by lines it doesn't have.
-      const label = f.whole ? WHOLE_WORDS[f.whole] : b?.renamedFrom !== undefined ? `renamed from ${displayText(b.renamedFrom, 80)}` : b && changeLabel(b);
+      const label = b?.move ? displayText(moveLabel(b.move), 120) : f.whole ? WHOLE_WORDS[f.whole] : b && changeLabel(b);
       if (b && label && !isDone(c.state)) open.push({ key: c.key, label, state: c.state, c, ...(f.whole ? { whole: true } : {}) });
       for (const n of c.needsLook ?? []) {
         const dir = r.belonging.find((x) => x.folder === n.sidestory)?.dir;
@@ -1031,19 +1045,22 @@ export class ChangesService implements vscode.Disposable {
     const named = arg && typeof arg === 'object' && typeof (arg as { key?: unknown }).key === 'string';
     // A change not done yet: named, at the cursor, or one the selection touches.
     const one = await this.changeFrom(s, r, arg);
-    const whole = one ? r?.files.get(one.path)?.whole : undefined;
+    const whole = one && !one.b.move ? r?.files.get(one.path)?.whole : undefined;
     if (whole) {
       void vscode.window.showInformationMessage(`${name(one!.path, 100)} counts as one change as a whole (${WHOLE_WORDS[whole]}): a trivial mark can't cover it. Add a narrow trivialFiles glob for it to the sidestory's manifest.`);
       return;
     }
-    if (one?.b.renamedFrom !== undefined) {
-      // A move that changed no line: a trivial mark anywhere in the file covers it; on its first line, then.
-      const lines = r?.files.get(one.path)?.diff.newLines ?? 0;
-      target = lines > 0 ? { path: one.path, side: 'head', range: { start: 1, end: 1 } } : undefined;
-      if (!target) {
-        void vscode.window.showInformationMessage(`${name(one.path, 100)} is empty: a trivial mark needs a line. Add a narrow trivialFiles glob for it instead.`);
+    if (one?.b.move) {
+      // A move: a trivial mark in any file of the group covers it. On the first non-blank line of the cursor's file
+      // when it is in the group, else of the group's first file.
+      const inGroup = place && one.b.move.files.some((x) => x.path === place.entry.path) ? place.entry.path : one.path;
+      const text = await this.sideText(s, { path: inGroup, side: 'head' });
+      const line = text === undefined ? -1 : textLines(text).findIndex((l) => l.trim() !== '');
+      if (line < 0) {
+        void vscode.window.showInformationMessage(`${name(inGroup, 100)} has no line to put a trivial mark on. Mention the move in a step anchored in another file of the group, or add a trivialFiles glob that matches every moved file.`);
         return;
       }
+      target = { path: inGroup, side: 'head', range: { start: line + 1, end: line + 1 } };
     } else if (one && !named && place && !place.editor.selection.isEmpty) {
       // A selection: those lines, on the side they are on.
       const sel = place.editor.selection;
@@ -1163,6 +1180,8 @@ export class ChangesService implements vscode.Disposable {
         return;
       }
       await this.setPick(repo, branch, spec);
+      // A new pick (or none): the sidestory base may be latched again from scratch, with its one refresh.
+      this.latchRefreshedFor = undefined;
       await c.refresh(true);
     };
     // From the This branch row "Use develop": that base, no picker.
@@ -1263,23 +1282,32 @@ export class ChangesService implements vscode.Disposable {
       }
       const b = got.r.belonging.length ? await this.pickBelonging(got.r, 'Explain It in Which Sidestory?') : undefined;
       if (got.r.belonging.length && !b) return;
-      const whole = got.r.files.get(c.path)?.whole;
-      const moved = c.b.renamedFrom !== undefined;
-      const file = c.b.new || whole || moved ? c.path : (c.entry.oldPath ?? c.path);
-      const kind = whole || moved ? (c.entry.status === 'A' ? 'added' : c.entry.status === 'D' ? 'removed' : 'replaced') : changeKind(c.b);
-      const lines = whole ? `whole file, ${WHOLE_WORDS[whole]}` : moved ? 'moved, no line changed' : changeLabel(c.b);
-      await this.copy(changePrompt({ sidestory: b?.folder, base: b?.manifest.base ?? got.s.base.spec, file, lines, kind, ...(whole ? { whole: true } : {}), ...(moved ? { movedFrom: c.b.renamedFrom } : {}) }));
+      const move = c.b.move;
+      const whole = move ? undefined : got.r.files.get(c.path)?.whole;
+      const file = c.b.new || whole || move ? c.path : (c.entry.oldPath ?? c.path);
+      const kind = whole || move ? (c.entry.status === 'A' ? 'added' : c.entry.status === 'D' ? 'removed' : 'replaced') : changeKind(c.b);
+      const lines = whole ? `whole file, ${WHOLE_WORDS[whole]}` : move ? (move.files.length === 1 ? 'moved' : `moved (${move.files.length} files)`) : changeLabel(c.b);
+      const moved = move && (move.files.length === 1 ? { from: move.files[0]!.oldPath, to: move.files[0]!.path } : { from: move.from || '.', to: move.to || '.' });
+      await this.copy(changePrompt({ sidestory: b?.folder, base: b?.manifest.base ?? got.s.base.spec, file, lines, kind, ...(whole ? { whole: true } : {}), ...(moved ? { moved } : {}) }));
     },
     'sidestory.changes.copyUnsupported': async () => {
       const r = this.result();
       const paths = r?.unsupportedLeft ?? [];
       if (!paths.length) return;
       // One valid trivialFiles glob per path (`?` for each character a glob refuses), as JSON strings to paste.
-      const globs = paths.map(trivialGlobFor).filter((g): g is string => g !== undefined);
+      // Relative to the folder holding .sidestory/ when exactly one sidestory belongs (its trivialFiles are).
+      const prefix = r?.belonging.length === 1 ? r.belonging[0]!.prefix : '';
+      const rel = (p: string) => (!prefix ? p : p.startsWith(`${prefix}/`) ? p.slice(prefix.length + 1) : undefined);
+      const globs = paths
+        .map((p) => {
+          const x = rel(p);
+          return x === undefined ? undefined : trivialGlobFor(x);
+        })
+        .filter((g): g is string => g !== undefined);
       const none = paths.length - globs.length;
       if (globs.length) await vscode.env.clipboard.writeText(JSON.stringify(globs, null, 2));
       void vscode.window.showInformationMessage(
-        `${globs.length ? `Copied ${globs.length} trivialFiles ${globs.length === 1 ? 'glob' : 'globs'} (relative to the repository root; for a sidestory in a subfolder, relative to that folder).` : ''}${none ? ` ${none} ${none === 1 ? 'path has' : 'paths have'} no trivialFiles glob that can match ${none === 1 ? 'it' : 'them'}: rename ${none === 1 ? 'it' : 'them'}.` : ''}`.trim(),
+        `${globs.length ? `Copied ${globs.length} trivialFiles ${globs.length === 1 ? 'glob' : 'globs'} (relative to ${prefix ? `${name(prefix, 60)}/, where the sidestory is` : r && r.belonging.length > 1 ? 'the repository root; for a sidestory in a subfolder, make them relative to that folder' : 'the repository root'}).` : ''}${none ? ` ${none} ${none === 1 ? 'path has' : 'paths have'} no trivialFiles glob that can match ${none === 1 ? 'it' : 'them'}: rename ${none === 1 ? 'it' : 'them'}.` : ''}`.trim(),
       );
     },
     'sidestory.changes.markTrivial': (arg?: unknown) => this.markTrivialCmd(arg),
@@ -1349,12 +1377,14 @@ export class CoverageDecorations implements vscode.FileDecorationProvider, vscod
 
   private apply(): void {
     const s = this.svc.snapshot;
-    const next = CoverageDecorations.marksOf(this.svc.result(s));
+    const r = this.svc.result(s);
+    const next = CoverageDecorations.marksOf(r);
     const changed: vscode.Uri[] = [];
     const nextUris = new Map<string, vscode.Uri[]>();
     for (const [path, m] of next) {
-      // The entry the walk uses: a paired unstaged rename's R entry, so its diff's left side is decorated too.
-      const e = s && (this.svc.entryFor(s, { path, side: 'head' }) ?? s.entries.find((x) => x.path === path));
+      // The entry coverage counted (marks come from its files): a paired unstaged rename's R entry, so its diff's left
+      // side is decorated too. One lookup per path.
+      const e = r?.files.get(path)?.entry;
       const uris = s && e ? this.svc.urisOf(s, e) : [];
       nextUris.set(path, uris);
       const was = this.marks.get(path);

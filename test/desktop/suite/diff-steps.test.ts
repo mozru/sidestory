@@ -43,10 +43,10 @@ export function diffStepsTests(): void {
 
     it('computes the branch coverage the checker computes', async () => {
       const c = await vscode.commands.executeCommand<{ totals: Record<string, number>; files: [string, string[]][] }>('sidestory._coverage');
-      assert.deepEqual({ explained: c.totals.explained, trivial: c.totals.trivial, left: c.totals.left }, { explained: 3, trivial: 1, left: 1 });
+      assert.deepEqual({ explained: c.totals.explained, trivial: c.totals.trivial, left: c.totals.left }, { explained: 3, trivial: 2, left: 1 });
       assert.deepEqual(Object.fromEntries(c.files), {
         'legacy/sleep.ts': ['explained'],
-        'src/retry/backoff.ts': ['trivial'],
+        'src/retry/backoff.ts': ['trivial', 'trivial'], // its move from old/ too, covered by its trivial mark
         'src/retry/jitter.ts': ['explained'],
         'src/retry/retry.ts': ['explained'],
         'test/retry.test.ts': ['unexplained'],
@@ -67,7 +67,7 @@ export function diffStepsTests(): void {
       });
       assert.match(c.marks['src/retry/retry.ts']!.tooltip, /^1 of 1 change explained · Step \d of Retry with jitter · Details in This File$/);
       assert.deepEqual(c.branch.rows.map((r) => [r.label, r.description]), [
-        ['Retry with jitter', 'vs main · 3 explained · 1 trivial · 1 left'],
+        ['Retry with jitter', 'vs main · 3 explained · 2 trivial · 1 left'],
         ['Copy Prompt: Update the Sidestory for New Changes', undefined],
       ]);
     });

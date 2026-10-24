@@ -1,7 +1,7 @@
 // Coverage (src/core/coverage.ts): every row of docs/CHANGES-PLAN.md §6.3, and which anchors a page uses (§6.2).
 import { describe, expect, it } from 'vitest';
 import { coverage, COVERAGE_LIMITS, normLine, usedAnchorIds, type FileInput, type Target } from '../../src/core/coverage.ts';
-import { diffTexts, withRenameChange } from '../../src/core/hunks.ts';
+import { diffTexts, moveCarriers, moveGroups, moveLabel, textLines } from '../../src/core/hunks.ts';
 import { globMatcher } from '../../src/core/glob.ts';
 
 const text = (lines: string[]) => (lines.length ? `${lines.join('\n')}\n` : '');
@@ -219,34 +219,52 @@ describe('usedAnchorIds (§6.2)', () => {
   });
 });
 
-describe('a move that changes no line (§5.1)', () => {
+describe('moves (§5.1): one change per old folder → new folder', () => {
   const same = text(range(5));
-  const moved = (extra: Partial<FileInput> = {}): FileInput => ({
-    path: 'src/disabled/auth.js',
-    oldPath: 'src/auth.js',
-    changes: withRenameChange(diffTexts('src/disabled/auth.js', same, same), { status: 'R', path: 'src/disabled/auth.js', oldPath: 'src/auth.js' }).changes,
-    newLine: (l) => range(5)[l - 1] ?? '',
-    trivialFile: false,
-    newLines: 5,
-    ...extra,
+  const edited = text([...range(4), 'changed']);
+  const entries = [
+    { status: 'R', oldPath: 'src/a/one.js', path: 'src/b/one.js' },
+    { status: 'R', oldPath: 'src/a/two.js', path: 'src/b/two.js' },
+    { status: 'R', oldPath: 'src/a/three.js', path: 'src/b/three.js' },
+    { status: 'R', oldPath: 'src/auth.js', path: 'src/disabled/auth.js' },
+    { status: 'M', path: 'src/x.js' },
+    { status: 'R', oldPath: 'same.js', path: 'same.js' },
+  ];
+  const input = (path: string, newText: string, extra: Partial<FileInput> = {}): FileInput => {
+    const d = diffTexts(path, same, newText);
+    return { path, changes: d.changes, newLine: (l) => textLines(newText)[l - 1] ?? '', trivialFile: false, newLines: d.newLines, ...extra };
+  };
+  const build = (trivial: (p: string) => boolean = () => false) => {
+    const files = [input('src/b/one.js', same), input('src/b/three.js', edited), input('src/b/two.js', same), input('src/disabled/auth.js', same)].map((f) => ({ ...f, trivialFile: trivial(f.path) }));
+    const carried = moveCarriers(moveGroups(entries), (p) => files.some((f) => f.path === p));
+    for (const f of files) if (carried.has(f.path)) f.changes = [carried.get(f.path)!, ...f.changes];
+    return files;
+  };
+  it('groups by folder pair, edited files included; one file is "renamed from"', () => {
+    const groups = moveGroups(entries);
+    expect(groups.map((g) => [g.from, g.to, g.files.length, moveLabel(g)])).toEqual([
+      ['src/a', 'src/b', 3, '3 files moved src/a → src/b'],
+      ['src', 'src/disabled', 1, 'renamed from src/auth.js'],
+    ]);
   });
-  it('is one change, unexplained until something in the renamed file mentions it', () => {
-    const r = coverage([moved()], []);
-    expect(r.files[0]!.changes).toMatchObject([{ state: 'unexplained', changedLines: 1 }]);
-    expect(r.totals).toMatchObject({ changes: 1, left: 1 });
+  it('is one change per group on its first file; the edited file keeps its line change too', () => {
+    const r = coverage(build(), []);
+    const st = Object.fromEntries(r.files.map((f) => [f.path, f.changes.map((c) => c.state)]));
+    expect(st).toEqual({ 'src/b/one.js': ['unexplained'], 'src/b/three.js': ['unexplained'], 'src/b/two.js': [], 'src/disabled/auth.js': ['unexplained'] });
+    expect(r.totals).toMatchObject({ changes: 3, left: 3 });
   });
-  it('any head-side anchor in the file explains it; a trivial mark makes it trivial; trivialFiles too', () => {
-    expect(coverage([moved()], [T('a', 'head', 4, 4, { path: 'src/disabled/auth.js' })]).files[0]!.changes[0]!.state).toBe('explained');
-    expect(coverage([moved()], [T('t', 'head', 1, 1, { path: 'src/disabled/auth.js', trivial: true, why: 'moved with its folder' })]).files[0]!.changes[0]).toMatchObject({ state: 'trivial', why: ['moved with its folder'] });
-    expect(coverage([moved({ trivialFile: true })], []).files[0]!.changes[0]!.state).toBe('trivial');
-    // An anchor on the old path's base side doesn't: the move is about where the file is now.
-    expect(coverage([moved()], [T('b', 'base', 1, 1, { path: 'src/auth.js' })]).files[0]!.changes[0]!.state).toBe('unexplained');
+  it('a resolving head-side anchor in ANY file of the group covers it; a lost one or a base-side one does not', () => {
+    const head = (path: string, extra: Partial<Target> = {}) => T('a', 'head', 2, 2, { path, ...extra });
+    expect(coverage(build(), [head('src/b/two.js')]).files[0]!.changes[0]!.state).toBe('explained');
+    expect(coverage(build(), [head('src/b/two.js', { trivial: true, why: 'moved with its package' })]).files[0]!.changes[0]).toMatchObject({ state: 'trivial', why: ['moved with its package'] });
+    expect(coverage(build(), [head('src/b/two.js', { state: 'lost', range: null })]).files[0]!.changes[0]!.state).toBe('unexplained');
+    expect(coverage(build(), [T('b', 'base', 1, 1, { path: 'src/a/two.js' })]).files[0]!.changes[0]!.state).toBe('unexplained');
   });
-  it('a rename that changes text keeps its line changes and gets no extra change; an unmoved file none', () => {
-    const edited = withRenameChange(diffTexts('b.js', same, text([...range(4), 'changed'])), { status: 'R', path: 'b.js', oldPath: 'a.js' });
-    expect(edited.changes.map((c) => c.renamedFrom)).toEqual([undefined]);
-    expect(withRenameChange(diffTexts('a.js', same, same), { status: 'M', path: 'a.js' }).changes).toEqual([]);
-    expect(withRenameChange(diffTexts('a.js', same, same), { status: 'C', path: 'b.js', oldPath: 'a.js' }).changes[0]!.renamedFrom).toBe('a.js');
+  it('trivialFiles covers the move only when it matches every file of the group', () => {
+    const some = build((p) => p === 'src/b/one.js' || p === 'src/b/two.js');
+    expect(coverage(some, []).files[0]!.changes[0]!.state).toBe('unexplained');
+    const all = build((p) => p.startsWith('src/b/'));
+    expect(coverage(all, []).files[0]!.changes[0]!.state).toBe('trivial');
   });
 });
 

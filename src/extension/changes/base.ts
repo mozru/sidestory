@@ -177,13 +177,15 @@ export function latchStep(
   found: { dir: string; title: string; base: string } | undefined,
   ctx: { pick: string | undefined; setting: string | undefined; stillValid: boolean },
 ): { latch: StoryLatch | undefined; refreshedFor: string | undefined; refresh: boolean } {
+  // Whenever the latch goes, or is replaced under a pick, the refresh guard goes with it: coming back to the same
+  // latch (Set Base, then Use the Default Base; the index dropping the sidestory for a moment) refreshes again.
   if (s.source === 'sidestory') {
-    if (prev && !ctx.stillValid) return { latch: undefined, refreshedFor, refresh: true };
+    if (prev && !ctx.stillValid) return { latch: undefined, refreshedFor: undefined, refresh: true };
     return { latch: prev, refreshedFor, refresh: false };
   }
   const next: StoryLatch | undefined = found ? { dir: found.dir, title: found.title, base: found.base, branch: s.branch, pick: ctx.pick, setting: ctx.setting } : undefined;
   if (JSON.stringify(next) === JSON.stringify(prev)) return { latch: prev, refreshedFor, refresh: false };
-  if (!next || s.source === 'pick') return { latch: next, refreshedFor, refresh: false };
+  if (!next || s.source === 'pick') return { latch: next, refreshedFor: undefined, refresh: false };
   const key = JSON.stringify([next.branch, next.pick, next.setting, next.dir, next.base]);
   if (key === refreshedFor) return { latch: next, refreshedFor, refresh: false };
   return { latch: next, refreshedFor: key, refresh: true };

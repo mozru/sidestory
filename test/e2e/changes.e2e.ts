@@ -88,7 +88,7 @@ test('"This branch" lists the sidestory with its coverage and the update prompt'
   const labels = await s.locator('.monaco-list-row .label-name').allTextContents();
   expect(labels.slice(0, 3)).toEqual(['This branch', 'Retry with jitter', 'Copy Prompt: Update the Sidestory for New Changes']);
   await expect.poll(() => desc(row(s, 'This branch'))).toMatch(/^feature vs main/);
-  await expect.poll(() => desc(row(s, 'Retry with jitter'))).toBe('vs main · 3 explained · 1 trivial · 1 left');
+  await expect.poll(() => desc(row(s, 'Retry with jitter'))).toBe('vs main · 3 explained · 2 trivial · 1 left');
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/1b-this-branch.png` });
 });
 

@@ -256,7 +256,8 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     git(dir, 'mv', 'docs/notes.md', '.sidestory/notes/notes.md');
     // Archived as the job writes it (base, head, landed added), and one with a payload field.
     mkdirSync(join(dir, '.sidestory/archive'), { recursive: true });
-    for (const [name, extra] of [['landed', {}], ['landed2', { payload: 'require("x")' }]] as const) {
+    // The payload rides inside `landed`, which the archive job's schema doesn't allow.
+    for (const [name, extra] of [['landed', {}], ['landed2', { landed: { branch: 'feature', at: '2026-01-02', payload: 'require("x")' } }]] as const) {
       const to = `.sidestory/archive/2026-01-02-${name}`;
       git(dir, 'mv', `.sidestory/${name}`, to);
       writeFileSync(join(dir, to, 'manifest.json'), JSON.stringify({ ...manifest(name), base: mb, head: mb, landed: { branch: 'feature', at: '2026-01-02' }, ...extra }, null, 2));
@@ -273,6 +274,42 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(Object.keys(cs).filter((p) => p.includes('landed') && !p.endsWith('landed2/manifest.json'))).toEqual([]);
     expect(extensionStates(r)).toEqual(cs);
     expect(pick(r.totals)).toEqual(pick(c.totals));
-    expect(r.files.get('src/disabled/README.md')!.diff.changes[0]!.renamedFrom).toBe('README.md');
+    expect(r.files.get('src/disabled/README.md')!.move!.files).toEqual([{ path: 'src/disabled/README.md', oldPath: 'README.md' }]);
+  });
+
+  it('a folder moved as a whole is one change; an edited file keeps its line change; a partial trivialFiles glob does not cover the move', async () => {
+    const dir = copy();
+    const commit = (msg: string) => {
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+    };
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, 'src/a'), { recursive: true });
+    for (const n of ['one', 'two', 'three', 'four']) writeFileSync(join(dir, `src/a/${n}.js`), Array.from({ length: 12 }, (_, i) => `export const ${n}${i} = ${i};`).join('\n') + '\n');
+    commit('A package');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    git(dir, 'mv', 'src/a', 'src/b');
+    writeFileSync(join(dir, 'src/b/three.js'), readFileSync(join(dir, 'src/b/three.js'), 'utf8').replace('three5 = 5', 'three5 = 50'));
+    // A glob that matches some of the moved files only.
+    const mf = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(mf, 'utf8'));
+    m.trivialFiles = [...(m.trivialFiles ?? []), 'src/b/one.js', 'src/b/two.js'];
+    writeFileSync(mf, JSON.stringify(m, null, 2));
+    commit('Move the package');
+
+    const c = await checker(dir, true);
+    const r = await extension(dir, false);
+    const cs = checkerStates(c);
+    // The group's change on its first file (four.js), the edit on three.js; one.js and two.js have nothing of their own.
+    expect(cs['src/b/four.js']).toBe('unexplained');
+    expect(cs['src/b/three.js']).toBe('unexplained');
+    expect(cs['src/b/one.js']).toBeUndefined();
+    expect(cs['src/b/two.js']).toBeUndefined();
+    expect(c.files.filter((f) => f.path.startsWith('src/b/')).map((f) => f.kind).sort()).toEqual(['rename', 'rename', 'rename', 'text']);
+    expect(extensionStates(r)).toEqual(cs);
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+    expect(r.files.get('src/b/four.js')!.move!.files.map((f) => f.path)).toEqual(['src/b/four.js', 'src/b/one.js', 'src/b/three.js', 'src/b/two.js']);
+    expect(r.files.get('src/b/one.js')!.movedWith).toBe('src/b/four.js');
   });
 });

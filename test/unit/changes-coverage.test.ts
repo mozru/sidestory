@@ -97,12 +97,13 @@ describe('coverage in the extension (computeCoverage)', () => {
   it('explains by head-side, base-side and trivial anchors and leaves the test file unexplained', async () => {
     const r = (await computeCoverage(source()))!;
     expect(r.belonging.map((b) => [b.folder, b.manifest.title, b.steps.length])).toEqual([['.sidestory/retry-jitter', 'Retry with jitter', 3]]);
-    expect(r.totals).toMatchObject({ explained: 3, trivial: 1, left: 1, needsLook: 0, files: 5 });
+    // backoff.ts moved from old/ as well as changed: its move is one more change, which its trivial mark covers.
+    expect(r.totals).toMatchObject({ explained: 3, trivial: 2, left: 1, needsLook: 0, files: 5 });
     const state = (p: string) => r.files.get(p)?.coverage?.changes.map((c) => c.state);
     expect(state('src/retry/retry.ts')).toEqual(['explained']);
     expect(state('src/retry/jitter.ts')).toEqual(['explained']);
     expect(state('legacy/sleep.ts')).toEqual(['explained']);
-    expect(state('src/retry/backoff.ts')).toEqual(['trivial']);
+    expect(state('src/retry/backoff.ts')).toEqual(['trivial', 'trivial']);
     expect(state('test/retry.test.ts')).toEqual(['unexplained']);
     // The base-side target is on the merge-base path of the deleted file.
     expect(r.targets.find((t) => t.anchor === 'old-sleep')).toMatchObject({ side: 'base', path: 'legacy/sleep.ts', range: { start: 1, end: 24 } });
@@ -112,7 +113,7 @@ describe('coverage in the extension (computeCoverage)', () => {
     expect(r.files.get('src/retry/backoff.ts')!.entry).toMatchObject({ added: 2, removed: 2 });
     expect(r.files.get('src/retry/retry.ts')!.entry).toMatchObject({ added: 4, removed: 1 });
     // The sidestory's own totals: what it explains or marks.
-    expect(r.belonging[0]!.totals).toMatchObject({ explained: 3, trivial: 1, files: 4 });
+    expect(r.belonging[0]!.totals).toMatchObject({ explained: 3, trivial: 2, files: 4 });
     expect(r.belonging[0]!.stepOf.get('retry-loop')).toBe('retry-loop');
   });
 
@@ -164,7 +165,7 @@ describe('the checker\'s rules in the extension', () => {
     expect(r.unsupportedLeft).toEqual(['weird\u0001name']);
     expect(r.files.has('weird\u0001name')).toBe(false);
     // The fixture's 1 left, plus 6.
-    expect(r.totals).toMatchObject({ explained: 3, trivial: 1, left: 7 });
+    expect(r.totals).toMatchObject({ explained: 3, trivial: 2, left: 7 });
   });
 
   it('trivialFiles covers a file counted as one change, an unsupported path included', async () => {
@@ -183,7 +184,7 @@ describe('the checker\'s rules in the extension', () => {
     const r = (await computeCoverage(s))!;
     expect(r.files.get('img/logo.png')!.coverage!.changes[0]!.state).toBe('trivial');
     expect(r.unsupportedLeft).toEqual([]); // covered by `weird*`
-    expect(r.totals).toMatchObject({ trivial: 3, left: 1 });
+    expect(r.totals).toMatchObject({ trivial: 4, left: 1 });
   });
 
   it('pairs an unstaged rename as the checker does: the untracked file becomes the rename, the deletion goes', async () => {
@@ -201,8 +202,9 @@ describe('the checker\'s rules in the extension', () => {
     expect(r.files.has('docs/old.md')).toBe(false);
     // The pair is exposed, so the extension maps the deleted and the untracked entry to this one.
     expect([...r.paired]).toEqual([['docs/old.md', 'docs/new.md']]);
-    // A move that changed no line: one change (§5.1), which any head-side anchor in the file would cover.
-    expect(r.files.get('docs/new.md')!.diff.changes.map((c) => c.renamedFrom)).toEqual(['docs/old.md']);
+    // A move (§5.1): its folder's move group's one change, carried by this file, not in its line diff.
+    expect(r.files.get('docs/new.md')!.diff.changes).toEqual([]);
+    expect(r.files.get('docs/new.md')!.move).toMatchObject({ from: 'docs', to: 'docs', files: [{ path: 'docs/new.md', oldPath: 'docs/old.md' }] });
     expect(r.files.get('docs/new.md')!.coverage!.changes.map((c) => c.state)).toEqual(['unexplained']);
     // The comparison's own untracked entry shows the counts.
     expect(s.entries.find((e) => e.path === 'docs/new.md')).toMatchObject({ added: 0, removed: 0 });
@@ -219,8 +221,9 @@ describe('the checker\'s rules in the extension', () => {
     };
     const r = (await computeCoverage(s))!;
     expect(r.targets.find((t) => t.anchor === 'old-sleep')).toMatchObject({ side: 'base', path: 'legacy/sleep.ts', range: { start: 1, end: 24 } });
-    // Its removed lines are covered by the base-side step (the added "moved" line isn't): partly, not unexplained.
-    expect(r.files.get('a/sleep.ts')!.coverage!.changes.map((c) => c.state)).toEqual(['partly']);
+    // Its removed lines are covered by the base-side step (the added "moved" line isn't): partly, not unexplained. Its
+    // move (legacy → a) is one more change, which no head-side anchor in a/sleep.ts covers.
+    expect(r.files.get('a/sleep.ts')!.coverage!.changes.map((c) => c.state)).toEqual(['unexplained', 'partly']);
   });
 
   it('a page over the read cap still makes the sidestory belong, with the result incomplete', async () => {
@@ -231,7 +234,7 @@ describe('the checker\'s rules in the extension', () => {
     expect(r.belonging.map((b) => b.folder)).toEqual(['.sidestory/retry-jitter']);
     expect(r.incomplete).toBe(true);
     // Its anchors can't be read: only the trivial mark (used by definition) still covers.
-    expect(r.totals).toMatchObject({ explained: 0, trivial: 1 });
+    expect(r.totals).toMatchObject({ explained: 0, trivial: 2 });
   });
 
   it('working tree mode keeps one cached diff per path, replaced when the content changes', async () => {

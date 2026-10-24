@@ -93,6 +93,25 @@ describe('isArchivedManifest', () => {
     expect(isArchivedManifest(enc(m), enc([1, 2]))).toBe(false);
     expect(isArchivedManifest(enc(m), new Uint8Array(1_000_001).fill(0x20))).toBe(false);
   });
+  it('checks base, head and landed strictly: nothing rides in them', () => {
+    const ok = { ...m, base: sha, head: sha, landed: { branch: 'feature/retry', at: '2026-01-02', pr: 'https://github.com/acme/app/pull/412' } };
+    expect(isArchivedManifest(enc(m), enc(ok))).toBe(true);
+    expect(isArchivedManifest(enc(m), enc({ ...m, head: sha }))).toBe(true); // base unchanged
+    for (const bad of [
+      { ...ok, base: 'develop' }, // another symbolic base
+      { ...ok, base: { run: 'x' } },
+      { ...ok, head: 'main' },
+      { ...ok, landed: { ...ok.landed, payload: 'require("x")' } },
+      { ...ok, landed: { ...ok.landed, at: 'yesterday' } },
+      { ...ok, landed: { ...ok.landed, pr: 'javascript:alert(1)' } },
+      { ...ok, landed: { ...ok.landed, branch: 'x'.repeat(600) } },
+      { ...ok, landed: 'a string' },
+    ]) {
+      expect(isArchivedManifest(enc(m), enc(bad)), JSON.stringify(bad).slice(0, 120)).toBe(false);
+    }
+    const { base: _b, ...noBase } = m;
+    expect(isArchivedManifest(enc(m), enc(noBase))).toBe(false);
+  });
 });
 
 describe('isArchivePath', () => {

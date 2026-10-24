@@ -8,7 +8,7 @@
 // within byte budgets. The rules shared with the checker (src/cli/coverage.ts): which entries count (`countedChange`,
 // archive moves by `archiveMoveCandidates` and `isArchivedManifest`), a sidestory needs both its files (a page past
 // the read cap still makes it one, incomplete), unstaged renames are paired by content (`pairUnstagedRenames`), a
-// rename that changed no line is one change (`withRenameChange`), and each of these counts as ONE change that only
+// move group is one change (`moveGroups`, per old folder → new folder), and each of these counts as ONE change that only
 // trivialFiles can cover (`tooLargeChange`): a side past MAX_COMPARE_BYTES, a binary file, a Git LFS file, a symlink,
 // a submodule, a type change, an unsupported path, a file under an archive. An unreadable side makes the result
 // incomplete.
@@ -21,7 +21,7 @@ import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, withRenameChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
+import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, type ChangeBlock, type FileDiff, type MoveGroup } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
 import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
@@ -126,6 +126,10 @@ export interface FileResult {
   blocks: Map<string, ChangeBlock>;
   /** Counted as one change without a line diff, and why. */
   whole?: WholeKind;
+  /** This file carries its move group's one change (first in `coverage.changes`, in `blocks`; not in `diff`). */
+  move?: MoveGroup;
+  /** Moved with a group another file carries: that file's path. */
+  movedWith?: string;
 }
 
 export interface CoverageResult {
@@ -412,7 +416,7 @@ export async function computeCoverage(
     const key = src.diffKey?.(e);
     const hit = key ? cache.get(key) : undefined;
     if (hit) {
-      texts.set(e.path, { entry: e, diff: withRenameChange(hit.diff, e), texts: hit.texts });
+      texts.set(e.path, { entry: e, diff: hit.diff, texts: hit.texts });
       return;
     }
     if (!pre.has(e) && bytes > COVERAGE_WORK.bytesPerRecompute) {
@@ -442,8 +446,7 @@ export async function computeCoverage(
       diff = diffTexts(e.path, d.old, d.new);
       cache.set(slot, { diff, texts: t, ...(content !== undefined ? { content } : {}) });
     }
-    // A rename or copy that changed no line is one change (§5.1), as the checker counts it.
-    texts.set(e.path, { entry: e, diff: withRenameChange(diff, e), texts: t });
+    texts.set(e.path, { entry: e, diff, texts: t });
   });
   if (!isCurrent()) return undefined;
   // Under a sidestory archive and not an unchanged archive move: one change each, unread.
@@ -518,13 +521,21 @@ export async function computeCoverage(
       });
     }
   }
+  // Moves (§5.1), as the checker counts them: one change per (old folder → new folder), on the group's first file.
+  const groups = moveGroups(done.map((d) => d.entry));
+  const carried = moveCarriers(groups, (p) => texts.has(p));
+  const movedWith = new Map<string, string>();
+  for (const g of groups) {
+    const carrier = g.files.find((f) => carried.has(f.path))?.path;
+    if (carrier) for (const f of g.files) if (f.path !== carrier) movedWith.set(f.path, carrier);
+  }
   const inputs: FileInput[] = done.map(({ entry, diff, texts: t }) => {
     const newLines = t.new !== undefined ? textLines(t.new) : [];
     const oldLines = t.old !== undefined ? textLines(t.old) : [];
     return {
       path: entry.path,
       ...(entry.oldPath !== undefined ? { oldPath: entry.oldPath } : {}),
-      changes: diff.changes,
+      changes: carried.has(entry.path) ? [carried.get(entry.path)!, ...diff.changes] : diff.changes,
       newLine: (l: number) => newLines[l - 1] ?? '',
       oldLine: (l: number) => oldLines[l - 1] ?? '',
       trivialFile: isTrivialFile(entry.path),
@@ -540,7 +551,10 @@ export async function computeCoverage(
   const files = new Map<string, FileResult>();
   const covByPath = new Map(result.files.map((f) => [f.path, f]));
   for (const { entry, diff, whole } of done) {
-    files.set(entry.path, { entry, diff, coverage: covByPath.get(entry.path), blocks: new Map(diff.changes.map((c) => [c.key, c])), ...(whole ? { whole } : {}) });
+    const move = carried.get(entry.path);
+    const blocks = new Map([...(move ? [move] : []), ...diff.changes].map((c) => [c.key, c]));
+    const withWhom = movedWith.get(entry.path);
+    files.set(entry.path, { entry, diff, coverage: covByPath.get(entry.path), blocks, ...(whole ? { whole } : {}), ...(move?.move ? { move: move.move } : {}), ...(withWhom ? { movedWith: withWhom } : {}) });
   }
   // Per sidestory: the changes it explains or marks (a change several explain counts for each).
   for (const b of belonging) {

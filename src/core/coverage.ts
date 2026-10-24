@@ -3,7 +3,7 @@
 //
 // A change is a ChangeBlock of src/core/hunks.ts; a target is a resolved, used anchor of a belonging sidestory on
 // one side of the diff. Only changed lines need cover: an unchanged line merged into a change never does.
-import type { ChangeBlock } from './hunks.ts';
+import type { ChangeBlock, MoveGroup } from './hunks.ts';
 import { HtmlTokenizer, TreeBuilder, type Frame } from './html-scan.ts';
 import type { LineRange } from './manifest.ts';
 import type { AnchorState } from './resolve.ts';
@@ -137,13 +137,14 @@ export function coverage(files: readonly FileInput[], targets: readonly Target[]
     else bySide.set(k, [i]);
   });
   const explains = new Array<number>(targets.length).fill(0);
+  const trivialByPath = new Map(files.map((f) => [f.path, f.trivialFile]));
   const perChange: { file: number; change: number; users: Set<number>; cov: ChangeCoverage }[] = [];
 
   const out: FileCoverage[] = files.map((f, fi) => {
     const head = bySide.get(`head\u0000${f.path}`) ?? [];
     const base = bySide.get(`base\u0000${f.oldPath ?? f.path}`) ?? [];
     const changes = f.changes.map((c, ci) => {
-      const cov = f.trivialFile ? trivialFileChange(c) : c.renamedFrom !== undefined ? coverRename(c, head, targets) : coverChange(f, c, head, base, targets, explains);
+      const cov = c.move ? coverMove(c, c.move, bySide, trivialByPath, targets) : f.trivialFile ? trivialFileChange(c) : coverChange(f, c, head, base, targets, explains);
       perChange.push({ file: fi, change: ci, users: cov.users, cov: cov.cov });
       return cov.cov;
     });
@@ -180,9 +181,16 @@ function isBroad(lines: number, explains: number): boolean {
 }
 
 /**
- * A rename that changed no line (§5.1): one change, covered by any head-side target in the renamed file (a step
- * that mentions the move, or a trivial mark). It doesn't count toward a target's `explains`.
+ * A move group's one change (§5.1): covered by any head-side target that resolves in a file of the group (a step
+ * that mentions the move, or a trivial mark there), or by trivialFiles only when they match every file of the group
+ * (a glob over the new folder would otherwise wave through the edits too). It doesn't count toward `explains`.
  */
+function coverMove(c: ChangeBlock, g: MoveGroup, bySide: ReadonlyMap<string, number[]>, trivialByPath: ReadonlyMap<string, boolean>, targets: readonly Target[]): { cov: ChangeCoverage; users: Set<number> } {
+  if (g.files.every((f) => trivialByPath.get(f.path) === true)) return trivialFileChange(c);
+  const head = [...new Set(g.files.flatMap((f) => bySide.get(`head\u0000${f.path}`) ?? []))].sort((a, b) => a - b);
+  return coverRename(c, head, targets);
+}
+
 function coverRename(c: ChangeBlock, head: number[], targets: readonly Target[]): { cov: ChangeCoverage; users: Set<number> } {
   const users = new Set(head);
   const explaining = head.some((i) => !targets[i]!.trivial);
@@ -202,7 +210,7 @@ function coverRename(c: ChangeBlock, head: number[], targets: readonly Target[])
 }
 
 function trivialFileChange(c: ChangeBlock): { cov: ChangeCoverage; users: Set<number> } {
-  const changed = c.renamedFrom !== undefined ? 1 : c.added + c.removed;
+  const changed = c.move ? 1 : c.added + c.removed;
   return { cov: { key: c.key, state: 'trivial', by: [], uncovered: [], coveredLines: changed, changedLines: changed }, users: new Set() };
 }
 

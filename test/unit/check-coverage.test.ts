@@ -54,13 +54,13 @@ describe('--coverage on the fixture', () => {
     expect(r.code).toBe(3);
     expect(r.out).toMatch(/Coverage: base main, merge-base [0-9a-f]{7}, head: working tree; counting \.sidestory\/retry-jitter/);
     expect(r.out).toMatch(/test\/retry\.test\.ts:11: warning unexplained: lines 11–40 \(\+30\) aren't explained by a sidestory of this branch\./);
-    expect(r.out).toContain('3 explained · 1 trivial · 1 left, in 5 files.');
+    expect(r.out).toContain('3 explained · 2 trivial · 1 left, in 5 files.');
     expect(r.out).not.toContain('unused-anchor');
     // One summary line, last; no widget line when there are no widgets.
-    expect(r.out.split('\n').at(-1)).toMatch(/^3 explained · 1 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
+    expect(r.out.split('\n').at(-1)).toMatch(/^3 explained · 2 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
     const withDir = await run([join(fixture, '.sidestory/retry-jitter'), '--coverage']);
     expect(withDir.out).not.toContain('No widgets checked');
-    expect(withDir.out.split('\n').at(-1)).toMatch(/^3 explained · 1 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
+    expect(withDir.out.split('\n').at(-1)).toMatch(/^3 explained · 2 trivial · 1 left, in 5 files\. 0 error\(s\), \d+ warning\(s\)\.$/);
   });
 
   it('--json: the checklist, change by change', async () => {
@@ -69,7 +69,7 @@ describe('--coverage on the fixture', () => {
     expect(r.coverage.sidestories).toEqual(['.sidestory/retry-jitter']);
     expect(status(r.coverage)).toEqual({
       'legacy/sleep.ts': 'explained',
-      'src/retry/backoff.ts': 'trivial',
+      'src/retry/backoff.ts': 'trivial,trivial', // its move from old/ too, covered by its trivial mark
       'src/retry/jitter.ts': 'explained',
       'src/retry/retry.ts': 'explained',
       'test/retry.test.ts': 'unexplained',
@@ -79,7 +79,7 @@ describe('--coverage on the fixture', () => {
     expect(retry.key).toMatch(/^[0-9a-f]{16}-0$/);
     expect(r.coverage.files.find((f) => f.path === 'src/retry/backoff.ts')).toMatchObject({ oldPath: 'old/backoff.ts', status: 'R' });
     expect(r.coverage.files.find((f) => f.path === 'test/retry.test.ts')!.changes[0]!.uncovered).toEqual([[11, 40]]);
-    expect(r.coverage.totals).toMatchObject({ changes: 5, explained: 3, trivial: 1, left: 1, files: 5 });
+    expect(r.coverage.totals).toMatchObject({ changes: 6, explained: 3, trivial: 2, left: 1, files: 5 });
   });
 
   it('with the sidestory folder: the same comparison from its own base', async () => {
@@ -96,7 +96,7 @@ describe('--coverage on the fixture', () => {
     const html = readFileSync(join(dir, '.sidestory/retry-jitter/sidestory.html'), 'utf8').replace('</body>', '<section data-explain-anchor="tests"><h2>Tests</h2><p>Jitter stays below the ceiling.</p></section>\n</body>');
     writeFileSync(join(dir, '.sidestory/retry-jitter/sidestory.html'), html);
     const r = await run(['--coverage', '--base', 'main', '--repo', dir]);
-    expect(r.out).toContain('4 explained · 1 trivial · 0 left, in 5 files.');
+    expect(r.out).toContain('4 explained · 2 trivial · 0 left, in 5 files.');
     expect(r.code).toBe(0);
   });
 
@@ -190,7 +190,7 @@ describe('--coverage on the fixture', () => {
     const f = r.coverage.files.find((x) => x.path === 'docs/renamed.md')!;
     // Paired, and as a move that changed no line, one change (§5.1).
     expect(f).toMatchObject({ oldPath: 'docs/notes.md', status: 'R', kind: 'rename', changes: [{ status: 'unexplained' }] });
-    expect(r.findings.some((x) => x.code === 'unexplained' && /renamed from docs\/notes\.md with no line changed/.test(x.message))).toBe(true);
+    expect(r.findings.some((x) => x.code === 'unexplained' && /^renamed from docs\/notes\.md \(docs\/notes\.md → docs\/renamed\.md\): a move can switch code off/.test(x.message))).toBe(true);
     expect(r.coverage.files.find((x) => x.path === 'docs/notes.md')).toBeUndefined();
   });
 
@@ -211,6 +211,32 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '--no-verify', '-m', msg);
   };
+
+  it('a glob over binary assets is not broad: binary and LFS files are left out of trivial-broad', async () => {
+    const dir = copy();
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    for (let i = 0; i < 12; i++) writeFileSync(join(dir, `assets/icon${i}.png`), new Uint8Array([0x89, 0x50, 0, i]));
+    const mf = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(mf, 'utf8'));
+    m.trivialFiles = ['assets/*.png'];
+    writeFileSync(mf, JSON.stringify(m, null, 2));
+    commitAll(dir, 'icons');
+    const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    expect(status(r.coverage)['assets/icon0.png']).toBe('trivial');
+    expect(r.findings.filter((f) => f.code === 'trivial-broad')).toEqual([]);
+  });
+
+  it('a folder moved as a whole is one finding listing the files', async () => {
+    const dir = copy();
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    git(dir, 'mv', 'README.md', 'lib/README.md');
+    git(dir, 'mv', 'docs/notes.md', 'lib/notes.md');
+    commitAll(dir, 'move');
+    const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    // Two folders moved from ('' and docs): two groups, one finding each.
+    const moves = r.findings.filter((f) => f.code === 'unexplained' && /moved|renamed from/.test(f.message));
+    expect(moves.map((f) => f.message.split(' (')[0])).toEqual(['renamed from README.md', 'renamed from docs/notes.md']);
+  });
 
   it.skipIf(process.platform === 'win32')('a type change (file to link) is one change, with its own finding', async () => {
     const dir = copy();

@@ -8,7 +8,7 @@ import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, withRenameChange, type ChangeBlock } from '../core/hunks.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, moveLabel, type ChangeBlock } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
 import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
@@ -25,9 +25,9 @@ export type FileKind = 'text' | 'rename' | 'binary' | 'lfs' | 'submodule' | 'lin
  * Kinds whose lines can't be compared but which still count, each as ONE change that only a trivialFiles match can
  * cover (`tooLargeChange`, §5.1): so nothing a branch changes can slip past the gate by being binary, in Git LFS, a
  * link, a submodule, a type change, a path Sidestory won't read, or under `.sidestory/archive/` (archives are written
- * by the archive job on the default branch, never in a branch). A pure move ('rename') counts too, as one change any
- * head-side anchor in the file covers (`withRenameChange`). Only mode-only and line-ending-only changes stay "not
- * counted".
+ * by the archive job on the default branch, never in a branch). Moves count too: one change per (old folder → new
+ * folder) group (`moveGroups`), carried by its first file; a pure move is kind 'rename'. Only mode-only and
+ * line-ending-only changes stay "not counted".
  */
 export const ONE_CHANGE_KINDS: ReadonlySet<FileKind> = new Set<FileKind>(['too-large', 'binary', 'lfs', 'link', 'submodule', 'type-change', 'unsupported', 'archive']);
 
@@ -475,13 +475,17 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const e of classified) {
     if (e.kind !== 'text') continue;
     const d = decodePair(oldBytes.get(e), newBytes.get(e));
-    // A rename or copy that changed no line is one change (§5.1): moving a file can switch it off.
-    const diff = withRenameChange(diffTexts(e.path, d.old, d.new), e);
+    const diff = diffTexts(e.path, d.old, d.new);
     if (diff.lineEndingsOnly || !diff.changes.length) {
-      e.kind = 'line-endings';
+      // A pure move still counts, in its folder's move group (§5.1); its text stays readable for the anchors.
+      if (e.oldPath !== undefined && e.oldPath !== e.path) {
+        e.kind = 'rename';
+        e.diff = { changes: [], newLines: diff.newLines };
+        e.newText = d.new;
+        e.oldText = d.old;
+      } else e.kind = 'line-endings';
       continue;
     }
-    if (diff.changes[0]?.renamedFrom !== undefined) e.kind = 'rename';
     e.diff = { changes: diff.changes, newLines: diff.newLines };
     e.newText = d.new;
     e.oldText = d.old;
@@ -563,12 +567,14 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const { s, patterns } of matchers) {
     for (const p of patterns) {
       const one = globMatcher([p]);
-      const n = counted.filter((e) => {
+      // Binary and LFS files are what such globs are for: they don't make a pattern broad.
+      const lined = counted.filter((e) => e.kind !== 'binary' && e.kind !== 'lfs');
+      const n = lined.filter((e) => {
         const r = underPrefix(s.prefix, e.path);
         return r !== undefined && one(r);
       }).length;
-      if (p === '**' || p === '*' || (counted.length > 1 && n > counted.length / 2)) {
-        add('warning', abs(`${s.folder}/manifest.json`), 'trivial-broad', `trivialFiles pattern "${p}" marks ${p === '**' || p === '*' ? 'every file' : `${n} of the ${counted.length} changed files`} as needing no explanation; name the files (package-lock.json, **/__snapshots__/**) so reviewers can trust the mark.`, manifestLineOf(s.manifestText, 'trivialFiles'));
+      if (p === '**' || p === '*' || (lined.length > 1 && n > lined.length / 2)) {
+        add('warning', abs(`${s.folder}/manifest.json`), 'trivial-broad', `trivialFiles pattern "${p}" marks ${p === '**' || p === '*' ? 'every file' : `${n} of the ${lined.length} changed files`} as needing no explanation; name the files (package-lock.json, **/__snapshots__/**) so reviewers can trust the mark.`, manifestLineOf(s.manifestText, 'trivialFiles'));
       }
     }
   }
@@ -642,6 +648,12 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       newLines: newLines.length,
     };
   });
+  // Moves (§5.1): one change per (old folder → new folder), carried by the group's first file.
+  const carried = moveCarriers(moveGroups(counted), (p) => inputs.some((f) => f.path === p));
+  for (const f of inputs) {
+    const move = carried.get(f.path);
+    if (move) f.changes = [move, ...f.changes];
+  }
   const result = computeCoverage(inputs, targets);
 
   // Findings per change, and per target.
@@ -658,8 +670,13 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const block = inputs[fi]!.changes[ci]!;
       const at = block.new ? block.new.start : e.newMode === '000000' ? (block.old?.start ?? 1) : Math.max(1, Math.min(block.newAt, e.diff?.newLines ?? 1));
       const where = block.new ? `lines ${span(block.new)}`.replace(/^lines (\d+)$/, 'line $1') : e.newMode === '000000' ? 'deleted file' : `deleted at line ${at}`;
-      if (block.renamedFrom !== undefined) {
-        if (c.state === 'unexplained') add('warning', file, 'unexplained', `${e.status === 'C' ? 'copied' : 'renamed'} from ${block.renamedFrom} with no line changed: a move can switch code off, so it needs a mention. Anchor a step (or a trivial mark) in the file, or list it in trivialFiles.`, 1);
+      if (block.move) {
+        if (c.state === 'unexplained') {
+          const g = block.move;
+          const shown = g.files.slice(0, 10).map((x) => `${x.oldPath} → ${x.path}`);
+          const more = g.files.length > shown.length ? `, and ${g.files.length - shown.length} more` : '';
+          add('warning', file, 'unexplained', `${moveLabel(g)} (${shown.join(', ')}${more}): a move can switch code off, so it needs a mention. One step (or trivial mark) anchored in any of these files covers the move; a trivialFiles glob only when it matches all of them.`, 1);
+        }
         return;
       }
       if (ONE_CHANGE_KINDS.has(e.kind)) {

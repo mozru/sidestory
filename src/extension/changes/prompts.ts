@@ -40,7 +40,7 @@ function check(v: Value): string {
     v.kind === 'path' ? safePath(v.value)
     : v.kind === 'branch' ? safeBranch(v.value)
     : v.kind === 'title' ? safeTitle(v.value)
-    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path|archived sidestory file|Git LFS file)|moved, no line changed)$/.test(v.value) ? v.value : undefined)
+    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path|archived sidestory file|Git LFS file)|moved( \(\d{1,6} files\))?)$/.test(v.value) ? v.value : undefined)
     : v.value !== undefined && /^[a-z]{1,20}$/.test(v.value) ? v.value : undefined;
   return ok ?? `(${DESCRIBE[v.kind]})`;
 }
@@ -71,17 +71,17 @@ export function updatePrompt(sidestory: string, base: string): string {
   );
 }
 
-export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced'; whole?: boolean; movedFrom?: string }): string {
+export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced'; whole?: boolean; moved?: { from: string; to: string } }): string {
   const data: [string, Value][] = [];
   if (c.sidestory) data.push(['sidestory', path(c.sidestory)]);
   data.push(['base', branch(c.base)], ['file', path(c.file)], ['lines', { kind: 'lines', value: c.lines }], ['kind', { kind: 'word', value: c.kind }]);
-  // A move that changed no line (§5.1): moving a file can switch it off, so the move needs a mention.
-  if (c.movedFrom !== undefined) {
-    data.push(['moved from', path(c.movedFrom)]);
+  // A move (§5.1): one change for the folder's moved files, whatever else changed in them; a move can switch code off.
+  if (c.moved) {
+    data.push(['moved from', path(c.moved.from)], ['moved to', path(c.moved.to)]);
     return prompt(
       c.sidestory
-        ? 'The file below was moved (or copied) without a line changing; a move can switch code off. Mention the move in a step of the sidestory below anchored in the file (or add a trivial mark there, with why), then re-run --coverage.'
-        : 'The file below was moved (or copied) without a line changing; a move can switch code off. Start a sidestory for this branch (with the base below) with a step anchored in the file that says why it moved, then run --coverage.',
+        ? 'Files were moved (or copied) as below; a move can switch code off. Add one sentence on why they moved to a step of the sidestory below anchored in one of the moved files (or a trivial mark there, with why), then re-run --coverage.'
+        : 'Files were moved (or copied) as below; a move can switch code off. Start a sidestory for this branch (with the base below) with a step anchored in one of the moved files that says in one sentence why they moved, then run --coverage.',
       data,
     );
   }
