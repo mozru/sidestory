@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The first release on the Marketplace.
+
+### New in this release
+
 - **Code links that work, and diagrams lit from the cursor.** `data-explain-code` links open their target: `#L10-L20`, or in SystemVerilog and Verilog a name (`#state_q`, `#u_fifo`), what drives a signal (`#driver(state_q)`), one arm of its `case` (`#driver(state_d).case(IDLE)`) or one port connection (`#u_ctrl(.start)`), found by a built-in scanner; other languages use VS Code's outline. With the editor cursor in a box's code, the box gets a ring, the tightest one winning; steps follow the cursor only through sections now, so an anchor used only by links no longer takes the step. New setting `sidestory.followCursorInDiagrams`.
 - The checker reports page ids missing from the manifest and manifest anchors nothing uses, links inside `role="img"`, unnamed links, empty diagrams, and every code link it can't resolve, with what to link instead.
 - On macOS, Next Step and Previous Step are <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd>: <kbd>Option</kbd>+<kbd>]</kbd> and <kbd>Option</kbd>+<kbd>[</kbd> type ‘ and “, which the old keys swallowed while a panel was open.
@@ -17,9 +21,7 @@
 - A Claude Code plugin with a skill that writes sidestories: `/plugin marketplace add mozru/sidestory`, then `/plugin install sidestory@sidestory`.
 - Fixes: a sidestory copied into a workspace where widgets were once allowed asks before running its widgets; Next Step pressed while a sidestory is still rendering is applied once it has; restored editor state no longer snaps the panel back to an earlier step; a resize keeps the step you chose in view.
 
-## 0.1.0 (unreleased)
-
-First release.
+### The basics
 
 - Free-form HTML sidestories beside the editor, linked to the code both ways: move through the sidestory and the editor shows and highlights the code; move the cursor and the sidestory follows.
 - Big systems: an overview sidestory can point to detail sidestories, which readers skip, peek at in place, or dive into and come back from, with a trail showing where they are.
