@@ -33,7 +33,11 @@ export class OpenCodeGate {
   }
 }
 
-export type PathCheck = { ok: true; real: string; secret: boolean } | { ok: false; why: string };
+/**
+ * `direct`: no symlink between the repository root and the file, so the workspace path names the same file (open
+ * that, so it's the document the reader and the anchors already use). `size` in bytes.
+ */
+export type PathCheck = { ok: true; real: string; secret: boolean; direct: boolean; size: number } | { ok: false; why: string };
 
 /**
  * Where a link's path really is: inside `root` once links are followed, with no `.git` segment in the real path
@@ -50,13 +54,17 @@ export async function checkCodePath(root: string, path: string): Promise<PathChe
   }
   const real = await realPathInside(`${root}${sep}${segments.join(sep)}`, root);
   if (!real) return { ok: false, why: "it isn't a file inside the repository" };
-  if (relative(realRoot, real).split(sep).some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git' };
+  const rel = relative(realRoot, real);
+  if (rel.split(sep).some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git' };
+  let size: number;
   try {
-    if (!(await stat(real)).isFile()) return { ok: false, why: "it isn't a file" };
+    const st = await stat(real);
+    if (!st.isFile()) return { ok: false, why: "it isn't a file" };
+    size = st.size;
   } catch {
     return { ok: false, why: "it can't be read" };
   }
-  return { ok: true, real, secret: isSecretFileName(basename(path)) || isSecretFileName(basename(real)) };
+  return { ok: true, real, secret: isSecretFileName(basename(path)) || isSecretFileName(basename(real)), direct: rel === segments.join(sep), size };
 }
 
 /** A symbol from a document symbol provider: the chain of names, and its lines. */

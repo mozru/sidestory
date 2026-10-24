@@ -239,6 +239,40 @@ describe('the first step at open', () => {
   });
 });
 
+describe('review round 1', () => {
+  it('a document closed and opened again (version 1 again, other text) gets a new table, not the old one', async () => {
+    const tables = new SymbolTables();
+    const uri = Uri.file(`${root}/rtl/x.sv`);
+    const before = fakeDocument(uri, 'module a; logic one; endmodule\n');
+    expect(await resolveLink(before as never, { path: 'rtl/x.sv', target: 'one' }, tables, false)).toMatchObject({ ok: true });
+    events.documentClosed.fire(before);
+    const after = fakeDocument(uri, '\n\nmodule a; logic two; endmodule\n');
+    expect(await resolveLink(after as never, { path: 'rtl/x.sv', target: 'one' }, tables, false)).toMatchObject({ ok: false });
+    expect(await resolveLink(after as never, { path: 'rtl/x.sv', target: 'two' }, tables, false)).toEqual({ ok: true, range: { start: 3, end: 3 } });
+    // a new document object with the same version (no close event seen) isn't trusted either
+    const again = fakeDocument(uri, 'module a; logic three; endmodule\n');
+    expect(await resolveLink(again as never, { path: 'rtl/x.sv', target: 'three' }, tables, false)).toMatchObject({ ok: true });
+    tables.dispose();
+  });
+
+  it('codeTargets from the page of the sidestory shown before are ignored while the next one loads', async () => {
+    const { posted, send, session } = await ready('bit-reader');
+    void session.show([refFromDir(Uri.file(`${root}/.sidestory/overview`) as never)!]);
+    send({ type: 'codeTargets', sections: [], refs: ['consume'], links: [] }); // the old page, mid-switch
+    await vi.waitFor(() => expect(posted.filter((m) => m.type === 'init').at(-1)).toMatchObject({ dir: expect.stringMatching(/overview$/) }));
+    // Until the new page reports, every anchor counts for cursor-follow (no sections list from the old page).
+    expect((session as unknown as { targets: unknown }).targets).toBeUndefined();
+  });
+
+  it('a link to a file over 10 MB opens nothing', async () => {
+    writeFileSync(join(root, 'rtl/huge.sv'), Buffer.alloc(10_000_001, 0x20));
+    const { send } = await ready('bit-reader');
+    send({ type: 'openCode', path: 'rtl/huge.sv' });
+    await vi.waitFor(() => expect(statusMessages).toEqual(["Can't open huge.sv: it is larger than 10 MB."]));
+    expect(shown).toHaveLength(0);
+  });
+});
+
 describe('code-links helpers', () => {
   it('OpenCodeGate: dedupe and the per-second cap', () => {
     const g = new OpenCodeGate();
@@ -250,7 +284,9 @@ describe('code-links helpers', () => {
     expect(g.allow('c', 1500)).toBe(true);
   });
   it('checkCodePath', async () => {
-    expect(await checkCodePath(root, 'rtl/bit_reader.sv')).toEqual({ ok: true, real: join(root, 'rtl/bit_reader.sv'), secret: false });
+    expect(await checkCodePath(root, 'rtl/bit_reader.sv')).toMatchObject({ ok: true, real: join(root, 'rtl/bit_reader.sv'), secret: false, direct: true });
+    // a symlink inside the repository to another file in it: allowed, but opened by its real path
+    expect(await checkCodePath(root, 'config/notes.txt')).toMatchObject({ ok: true, real: join(root, '.env'), direct: false });
     expect((await checkCodePath(root, 'rtl')).ok).toBe(false);
     expect((await checkCodePath(root, 'rtl/missing.sv')).ok).toBe(false);
     expect(await checkCodePath(root, 'config/notes.txt')).toMatchObject({ ok: true, secret: true });

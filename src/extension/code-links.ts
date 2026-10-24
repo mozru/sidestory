@@ -22,35 +22,68 @@ export const PROVIDER_TIMEOUT_MS = 2000;
 /** SV files larger than this are scanned only after they've been left alone for IDLE_MS. */
 export const LARGE_FILE_CHARS = 1_000_000;
 export const IDLE_MS = 1000;
+/** Text behind the cached tables, at most: a few hostile files can't pin gigabytes in the extension host. */
+const MAX_CACHED_CHARS = 30_000_000;
 const SLICE_MS = 15;
 const pause = () => new Promise<void>((r) => setImmediate(r));
 
 /** Symbol tables for open SV documents, one per (document, version), shared by lighting and clicks. */
 export class SymbolTables implements vscode.Disposable {
-  private readonly cache = new Map<string, { version: number; table: Promise<SymbolTable | undefined> }>();
+  /**
+   * Per document: the TextDocument object itself (a document closed and opened again starts at version 1 again,
+   * with a new object, maybe new text), its version, its size, and the table or the provider's symbols.
+   */
+  private readonly cache = new Map<string, { doc: vscode.TextDocument; version: number; chars: number; table?: Promise<SymbolTable | undefined>; symbols?: Promise<ProviderSymbol[] | undefined> }>();
   private readonly editedAt = new Map<string, number>();
-  private readonly sub: vscode.Disposable;
+  private readonly subs: vscode.Disposable[];
   private disposed = false;
   private readonly max: number;
 
   constructor(max = 8) {
     this.max = max;
-    this.sub = vscode.workspace.onDidChangeTextDocument((e) => {
-      const key = e.document.uri.toString();
-      // Only documents we've scanned: one map lookup per edit anywhere.
-      if (this.cache.has(key)) this.editedAt.set(key, Date.now());
-    });
+    this.subs = [
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        const key = e.document.uri.toString();
+        // Only documents we've scanned: one map lookup per edit anywhere.
+        if (this.cache.has(key)) this.editedAt.set(key, Date.now());
+      }),
+      vscode.workspace.onDidCloseTextDocument((d) => {
+        const key = d.uri.toString();
+        this.cache.delete(key);
+        this.editedAt.delete(key);
+      }),
+    ];
+  }
+
+  /** The cache entry for this version of this document object, made fresh (and most recent) when needed. */
+  private entry(doc: vscode.TextDocument) {
+    const key = doc.uri.toString();
+    let e = this.cache.get(key);
+    if (!e || e.doc !== doc || e.version !== doc.version) e = { doc, version: doc.version, chars: 0 };
+    this.cache.delete(key);
+    this.cache.set(key, e);
+    // At most `max` documents, and at most MAX_CACHED_CHARS of scanned text behind them: drop the oldest.
+    let total = 0;
+    for (const x of this.cache.values()) total += x.chars;
+    for (const [k, x] of this.cache) {
+      if (this.cache.size <= this.max && total <= MAX_CACHED_CHARS) break;
+      if (x === e) continue;
+      total -= x.chars;
+      this.cache.delete(k);
+    }
+    return e;
   }
 
   /** The table for this version of the document; undefined when it's too large, or a newer version took over. */
   get(doc: vscode.TextDocument): Promise<SymbolTable | undefined> {
+    const e = this.entry(doc);
+    if (e.table) return e.table;
     const key = doc.uri.toString();
-    const hit = this.cache.get(key);
-    if (hit && hit.version === doc.version) return hit.table;
     const version = doc.version;
     const stale = () => this.disposed || doc.isClosed || doc.version !== version;
-    const table = (async () => {
-      const text = doc.getText();
+    const text = doc.getText();
+    e.chars = text.length;
+    e.table = (async () => {
       if (text.length > MAX_CODE_BYTES) return undefined;
       // A large file being edited is scanned once the edits stop (§4.3).
       if (text.length > LARGE_FILE_CHARS) {
@@ -62,17 +95,26 @@ export class SymbolTables implements vscode.Disposable {
         }
       }
       return scanSvSliced(text, { sliceMs: SLICE_MS, stop: stale, pause });
-    })();
-    this.cache.delete(key);
-    this.cache.set(key, { version, table });
-    while (this.cache.size > this.max) this.cache.delete(this.cache.keys().next().value!);
-    return table;
+    })().catch(() => undefined);
+    // A scan given up for a newer version isn't kept: the next version scans again.
+    void e.table.then((t) => {
+      if (!t && this.cache.get(key) === e) this.cache.delete(key);
+    });
+    return e.table;
+  }
+
+  /** The language's symbols for this version of an open document, asked once per version. */
+  symbols(doc: vscode.TextDocument): Promise<ProviderSymbol[] | undefined> {
+    const e = this.entry(doc);
+    e.symbols ??= providerSymbols(doc.uri).catch(() => undefined);
+    return e.symbols;
   }
 
   dispose(): void {
     this.disposed = true;
-    this.sub.dispose();
+    for (const s of this.subs) s.dispose();
     this.cache.clear();
+    this.editedAt.clear();
   }
 }
 
@@ -126,7 +168,7 @@ export async function resolveLink(doc: vscode.TextDocument, link: CodeLink, tabl
     return r.ok ? { ok: true, range: r.extent } : { ok: false, message: r.message.replace(/\.$/, '') };
   }
   if (!provider) return { ok: false, message: 'symbols in this language are found when the link is clicked', unavailable: true };
-  const symbols = await providerSymbols(doc.uri);
+  const symbols = await tables.symbols(doc);
   if (!symbols) return { ok: false, message: `no symbols for ${basename(doc.uri.path)} (no language support for it, or it took too long)`, unavailable: true };
   return matchProviderSymbol(symbols, t.path);
 }

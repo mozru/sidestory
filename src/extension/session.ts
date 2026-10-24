@@ -169,7 +169,7 @@ export class ExplainerSession implements vscode.Disposable {
   /** Bumped per lighting request, so a slower, older one gives way. */
   private hereSeq = 0;
   /** Each linked file's link extents, for one document version. */
-  private readonly linkExtents = new Map<string, { version: number; extents: Promise<Map<string, LineRange>> }>();
+  private readonly linkExtents = new Map<string, { doc: vscode.TextDocument; version: number; extents: Promise<Map<string, LineRange> | undefined> }>();
   private readonly openGate = new OpenCodeGate();
   /** `openCode` requests opening now: the selection changes they cause aren't the reader's. */
   private opening = 0;
@@ -656,9 +656,14 @@ export class ExplainerSession implements vscode.Disposable {
     }
     if (changed && publish) this.publishAnchors();
     const waiting = this.revealWhenResolved;
-    if (waiting && this.resolutions.get(waiting)?.range) {
+    const r = waiting ? this.resolutions.get(waiting) : undefined;
+    if (waiting && r) {
+      // Once only, whether it was found or not; and not over an editor the reader opened meanwhile.
       this.revealWhenResolved = undefined;
-      if (this.active === waiting) this.requestReveal(waiting, false);
+      if (r.range && this.active === waiting) {
+        if (this.editorOpen()) this.decorateActive(false);
+        else this.requestReveal(waiting, false);
+      }
     }
     this.resolveEmitter.fire(uri);
     if (changed && this.active && this.anchorsIn(uri).some((a) => a.id === this.active)) this.decorateActive(this.decorations.isDimmed());
@@ -739,7 +744,7 @@ export class ExplainerSession implements vscode.Disposable {
     // The reader moved in the code: stop fading the rest of the file.
     if (ids.size && this.decorations.isDimmed()) this.decorateActive(false);
     this.debounce('cursor', CURSOR_DELAY, () => {
-      void this.lightAt(doc, line);
+      this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
       // The shared cursor helper (cursor.ts). Only sections steer the step (docs/AUTHORING-PLAN.md §0, §8.2): an
       // anchor used only by `data-explain-ref` lights its boxes instead. Until the page has said which ids are
       // sections (first render, hidden panel), every anchor counts, as before.
@@ -802,10 +807,12 @@ export class ExplainerSession implements vscode.Disposable {
           this.showInitial(m.anchorId);
           return;
         }
+        this.revealWhenResolved = undefined; // the reader chose a section: the page's own choice is moot
         this.requestReveal(m.anchorId, false);
         break;
       case 'codeTargets':
-        this.setTargets(m);
+        // From the page of the sidestory shown before, still answering while this one loads: not ours.
+        if (this.initGeneration === this.generation) this.setTargets(m);
         break;
       case 'openCode':
         void this.openCode(m.path, m.target);
@@ -845,13 +852,17 @@ export class ExplainerSession implements vscode.Disposable {
    * editor the reader was using.
    */
   private showInitial(id: string): void {
-    const editorOpen = vscode.window.visibleTextEditors.some((e) => e.viewColumn !== undefined);
-    if (editorOpen) {
+    if (this.editorOpen()) {
       this.decorateActive(false);
       return;
     }
     if (this.resolutions.get(id)?.range) this.requestReveal(id, false);
     else this.revealWhenResolved = id; // still resolving: resolveFile reveals it
+  }
+
+  /** A code editor is open (an output pane isn't one). */
+  private editorOpen(): boolean {
+    return vscode.window.visibleTextEditors.some((e) => e.viewColumn !== undefined);
   }
 
   // ---- code links (docs/AUTHORING-PLAN.md §8.1) and cursor lighting (§8.2) ----
@@ -882,7 +893,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.linkExtents.clear();
     // Light what the cursor is in now, without waiting for it to move.
     const ed = vscode.window.activeTextEditor;
-    if (ed) void this.lightAt(ed.document, ed.selection.active.line + 1);
+    if (ed) this.lightAt(ed.document, ed.selection.active.line + 1).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
   }
 
   private postHere(h: { ref?: string; link?: string }): void {
@@ -912,7 +923,7 @@ export class ExplainerSession implements vscode.Disposable {
     const key = uriKey(uri);
     if (targets.files.has(key)) {
       const extents = await this.extentsFor(doc, key, targets);
-      if (seq !== this.hereSeq || this.disposed || targets !== this.targets) return;
+      if (seq !== this.hereSeq || this.disposed || targets !== this.targets || !extents) return;
       for (const [link, range] of extents) if (line >= range.start && line <= range.end) found.push({ link, range, stale: false });
     }
     // The tightest wins, as for sections: trustworthy before stale, then the shortest, then the first, refs first.
@@ -922,21 +933,32 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   /** The extents of every link into this document version, resolved once per version (lazily, on first need). */
-  private extentsFor(doc: vscode.TextDocument, key: string, targets: CodeTargets): Promise<Map<string, LineRange>> {
+  private extentsFor(doc: vscode.TextDocument, key: string, targets: CodeTargets): Promise<Map<string, LineRange> | undefined> {
     const hit = this.linkExtents.get(key);
-    if (hit && hit.version === doc.version) return hit.extents;
-    const extents = (async () => {
+    // The document object too: one closed and opened again starts at version 1 with maybe other text.
+    if (hit && hit.doc === doc && hit.version === doc.version) return hit.extents;
+    const version = doc.version;
+    const entry = { doc, version, extents: Promise.resolve<Map<string, LineRange> | undefined>(undefined) };
+    const stale = () => this.disposed || targets !== this.targets || doc.isClosed || doc.version !== version || this.linkExtents.get(key) !== entry;
+    entry.extents = (async () => {
       const out = new Map<string, LineRange>();
+      let sliceStart = Date.now();
       for (const l of targets.links) {
         if (l.key !== key) continue;
         // The document is open (the cursor is in it), so asking its language for symbols wakes nothing new.
         const r = await resolveLink(doc, l.link, this.symbols, true);
         if (r.ok) out.set(l.text, r.range);
+        // Give the extension host back between slices, and stop for a newer version or other targets.
+        if (Date.now() - sliceStart > SLICE_MS) {
+          await new Promise((r) => setImmediate(r));
+          if (stale()) return undefined;
+          sliceStart = Date.now();
+        }
       }
       return out;
-    })();
-    this.linkExtents.set(key, { version: doc.version, extents });
-    return extents;
+    })().catch(() => undefined);
+    this.linkExtents.set(key, entry);
+    return entry.extents;
   }
 
   /**
@@ -960,14 +982,24 @@ export class ExplainerSession implements vscode.Disposable {
       log.warn(`${this.ref.name}: data-explain-code="${plainForMessage(path, 200)}" not opened: ${checked.why}.`);
       return;
     }
+    if (checked.size > MAX_CODE_BYTES) {
+      say(`Can't open ${name}: it is larger than ${MAX_CODE_BYTES / 1e6} MB.`);
+      return;
+    }
+    let file = checked;
     if (checked.secret) {
       const open = 'Open';
       const choice = await ourModal(() => vscode.window.showWarningMessage(`This sidestory links to ${name}. Open it?`, { modal: true, detail: 'Its name looks like it holds secrets (keys, tokens, passwords).' }, open));
       if (choice !== open || this.disposed || generation !== this.generation) return;
+      // The dialog may have stayed up a long time (a checkout meanwhile): check the path again.
+      const again = await checkCodePath(root.fsPath, path);
+      if (!again.ok || again.size > MAX_CODE_BYTES || this.disposed || generation !== this.generation) return;
+      file = again;
     }
     this.opening++;
     try {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(checked.real));
+      // With no symlink on the way, the workspace path is the same file: the document the anchors and the reader use.
+      const doc = await vscode.workspace.openTextDocument(file.direct ? vscode.Uri.joinPath(root, path) : vscode.Uri.file(file.real));
       if (this.disposed || generation !== this.generation) return;
       const r = await resolveLink(doc, link, this.symbols, true);
       if (this.disposed || generation !== this.generation) return;
@@ -984,7 +1016,7 @@ export class ExplainerSession implements vscode.Disposable {
       editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
       this.decorations.flash(editor, range);
       // The cursor is now in the link's code: ring what links there (the box just clicked, or a tighter one).
-      void this.lightAt(editor.document, r.range.start);
+      this.lightAt(editor.document, r.range.start).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
     } catch (e) {
       say(`Can't open ${name}.`);
       log.warn(`${this.ref.name}: can't open ${plainForMessage(path, 200)}: ${(e as Error).message}`);
