@@ -2,7 +2,7 @@
 // the sidestory a panel shows, and carries out what the panel's host-chrome controls ask for, after checking it.
 import * as vscode from 'vscode';
 import { authorLabel } from '../../core/threads/reduce.ts';
-import { manifestId, type ThreadAnchor } from '../../core/threads/schema.ts';
+import type { ThreadAnchor } from '../../core/threads/schema.ts';
 import type { Location } from '../../comments/storage.ts';
 import type { CommentsContext, CommentsFromWebview, CommentsToWebview, CommentItemView, ThreadView } from '../../shared/comments-protocol.ts';
 import type { ExplainerRef } from '../explainers.ts';
@@ -18,7 +18,7 @@ export interface CommentsSession {
   /** Where each anchor's code is now (for placing code threads under steps). */
   anchorSpans(): { id: string; file: string; range: { start: number; end: number } | null }[];
   /** The manifest as parsed (raw), for the stable sidestory id. */
-  manifestRaw(): Record<string, unknown> | undefined;
+  manifestId(): string | undefined;
   readonly panel: vscode.WebviewPanel;
 }
 
@@ -84,7 +84,7 @@ export class CommentsPanels implements vscode.Disposable {
 
   /** Threads that belong in this panel: the sidestory's own (local and shared) and `_code` threads its steps cover. */
   async entriesFor(s: CommentsSession): Promise<{ entry: Entry; step?: string }[]> {
-    const id = manifestId(s.manifestRaw());
+    const id = s.manifestId();
     const spans = s.anchorSpans();
     const out: { entry: Entry; step?: string }[] = [];
     for (const e of await this.service.entries(s.ref.root)) {
@@ -200,7 +200,7 @@ export class CommentsPanels implements vscode.Disposable {
         const tier = vscode.workspace.getConfiguration('sidestory.comments').get<string>('defaultLocation') === 'shared' ? 'shared' : 'local';
         const location: Location = { tier, scope: { kind: 'sidestory', name: s.ref.name } };
         if (m.toClaude && tier === 'shared' && !(await svc.warnSharedAsk(`new:${s.ref.name}`))) return;
-        const { thread, event } = await svc.createThread(s.ref.root, location, { kind: 'step', step: m.step }, m.body, { toClaude: m.toClaude, sidestoryId: manifestId(s.manifestRaw()) });
+        const { thread, event } = await svc.createThread(s.ref.root, location, { kind: 'step', step: m.step }, m.body, { toClaude: m.toClaude, sidestoryId: s.manifestId() });
         if (m.toClaude) {
           const e = await svc.findEntry(s.ref.root, thread);
           if (e) await svc.ask(e, event, m.body, m.intent ?? 'answer');

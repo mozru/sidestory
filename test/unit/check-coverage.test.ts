@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../../src/cli/check-widgets.ts';
-import type { CoverageJson } from '../../src/cli/coverage.ts';
+import { idProblem, type CoverageJson } from '../../src/cli/coverage.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 let base = '';
@@ -486,5 +486,107 @@ describe('--pin and --accept with a branch', () => {
     const r = await run([sd]);
     expect(r.out).toMatch(/info missing-id: No "id"/);
     expect(r.code).toBe(0);
+  });
+});
+
+describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', () => {
+  const A = '01JC0AANDED00000000000000A';
+  const B = '01JC0REP4ACED0000000000000';
+  const RETRY = '01JC0RETRYJ1TTER000000000A';
+  const page = '<!doctype html><html><body><h1>Landed</h1><section data-explain-anchor="x"><h2>X</h2><p>p</p></section></body></html>\n';
+  const landed = (id?: string) => `${JSON.stringify({ version: 2, ...(id ? { id } : {}), title: 'Landed', anchors: { x: { file: 'src/retry/jitter.ts', range: [1, 2] } } }, null, 2)}\n`;
+  /** A copy with a landed sidestory committed at HEAD; HEAD is the comparison's merge-base (--base <HEAD>). */
+  function withLanded(id: string | null = A): { dir: string; head: string } {
+    const dir = copy();
+    mkdirSync(join(dir, '.sidestory/landed'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(id ?? undefined));
+    writeFileSync(join(dir, '.sidestory/landed/sidestory.html'), page);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '--no-verify', '-m', 'Landed');
+    return { dir, head: git(dir, 'rev-parse', 'HEAD') };
+  }
+  const ids = (r: { findings: { code: string; message: string; severity: string; file: string; line?: number }[] }) => r.findings.filter((f) => f.code.startsWith('id-'));
+
+  it('a changed id is an error, against the merge-base, with the line and the id to put back; exit 1', async () => {
+    const { dir, head } = withLanded();
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
+    const r = await json(['--coverage', '--base', head, '--repo', dir]);
+    expect(ids(r)).toEqual([expect.objectContaining({ code: 'id-changed', severity: 'error', line: 3, file: expect.stringMatching(/\/copy\d+\/\.sidestory\/landed\/manifest\.json$/) })]);
+    expect(ids(r)[0]!.message).toContain(`it was "${A}" at the merge-base (${head.slice(0, 7)})`);
+    expect(ids(r)[0]!.message).toContain(`Put back "id": "${A}"`);
+    expect(r.code).toBe(1);
+    const text = await run(['--coverage', '--base', head, '--repo', dir]);
+    expect(text.out).toMatch(/\.sidestory\/landed\/manifest\.json:3: error id-changed:/);
+  });
+
+  it('a removed or invalid id is id-removed', async () => {
+    const { dir, head } = withLanded();
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed());
+    expect(ids(await json(['--coverage', '--base', head, '--repo', dir])).map((f) => f.code)).toEqual(['id-removed']);
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed().replace('"version": 2,', '"version": 2,\n  "id": "not-a-ulid",'));
+    expect(ids(await json(['--coverage', '--base', head, '--repo', dir])).map((f) => f.code)).toEqual(['id-removed']);
+  });
+
+  it('committed changes count too (--committed), and a renamed folder keeps its id', async () => {
+    const { dir, head } = withLanded();
+    git(dir, 'mv', '.sidestory/landed', '.sidestory/moved');
+    writeFileSync(join(dir, '.sidestory/moved/manifest.json'), landed(B));
+    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Rename and rewrite');
+    const r = await json(['--coverage', '--base', head, '--committed', '--repo', dir]);
+    expect(ids(r).map((f) => [f.code, f.file.slice(-'.sidestory/moved/manifest.json'.length)])).toEqual([['id-changed', '.sidestory/moved/manifest.json']]);
+  });
+
+  it('nothing when the id is kept, the old manifest had none, or the sidestory is new', async () => {
+    const { dir, head } = withLanded();
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(A).replace('"Landed"', '"Landed, retitled"'));
+    expect(ids(await json(['--coverage', '--base', head, '--repo', dir]))).toEqual([]);
+    const none = withLanded(null);
+    writeFileSync(join(none.dir, '.sidestory/landed/manifest.json'), landed(B));
+    expect(ids(await json(['--coverage', '--base', none.head, '--repo', none.dir]))).toEqual([]);
+    // The fixture's own sidestory is added on the branch: no merge-base version, and the working tree equals HEAD.
+    expect(ids(await json(['--coverage', '--base', 'main', '--repo', fixture]))).toEqual([]);
+  });
+
+  it('archived, with a new sidestory under the old name: the old id lives in the archive, so the new id is fine', async () => {
+    const { dir, head } = withLanded();
+    mkdirSync(join(dir, '.sidestory/archive/2026-10-24-landed'), { recursive: true });
+    renameSync(join(dir, '.sidestory/landed/manifest.json'), join(dir, '.sidestory/archive/2026-10-24-landed/manifest.json'));
+    renameSync(join(dir, '.sidestory/landed/sidestory.html'), join(dir, '.sidestory/archive/2026-10-24-landed/sidestory.html'));
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
+    writeFileSync(join(dir, '.sidestory/landed/sidestory.html'), page);
+    expect(ids(await json(['--coverage', '--base', head, '--repo', dir]))).toEqual([]);
+  });
+
+  it('--new-id: a deliberate replacement under the same name; it goes with --coverage', async () => {
+    const { dir, head } = withLanded();
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
+    expect(ids(await json(['--coverage', '--base', head, '--new-id', '--repo', dir]))).toEqual([]);
+    const r = await run([join(dir, '.sidestory/landed'), '--new-id']);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('--new-id go with --coverage');
+  });
+
+  it('the working tree against HEAD: a sidestory added on the branch keeps the id it was committed with', async () => {
+    const dir = copy();
+    const file = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ ...m, id: B }, null, 2));
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(ids(r).map((f) => f.code)).toEqual(['id-changed']);
+    expect(ids(r)[0]!.message).toMatch(new RegExp(`it was "${RETRY}" at HEAD \\([0-9a-f]{7}\\)`));
+    // --committed reads HEAD, where nothing changed.
+    expect(ids(await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]))).toEqual([]);
+    delete m.id;
+    writeFileSync(file, JSON.stringify(m, null, 2));
+    expect(ids(await json(['--coverage', '--base', 'main', '--repo', dir])).map((f) => f.code)).toEqual(['id-removed']);
+  });
+
+  it('idProblem: an id against the one before, the archive excusing a moved one', () => {
+    expect(idProblem(undefined, 'B', new Set())).toBeUndefined();
+    expect(idProblem('A', 'A', new Set())).toBeUndefined();
+    expect(idProblem('A', 'B', new Set())).toBe('id-changed');
+    expect(idProblem('A', undefined, new Set())).toBe('id-removed');
+    expect(idProblem('A', 'B', new Set(['A']))).toBeUndefined();
+    expect(idProblem('A', undefined, new Set(['A']))).toBeUndefined();
   });
 });

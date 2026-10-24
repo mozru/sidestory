@@ -67,6 +67,7 @@ If none is found, the extension isn't installed here: tell the user to install `
    - `partly-explained`: widen the anchor, or give the uncovered lines their own step.
    - `changed-since-pinned`: read that step, make its prose cover the new lines, then `node "$CHECK" .sidestory/<branch-slug> --accept <anchor> --coverage`. **Only after updating the prose.**
    - `anchor-broad`: narrow the anchor to the code the step is about.
+   - `id-changed` / `id-removed`: a manifest's `id` differs from, or is missing compared with, the one it had at the merge-base (or at HEAD): put back the `id` the message names. Comment threads find their sidestory by it.
    - Errors and other warnings as in file mode (step 5 below), including the rule on `--yes-widgets-may-read`.
 6. **Tell the user** the sidestory's name and the checker's last line (`9 explained · 2 trivial · 0 left, in 6 files.`), that they open it with **Sidestory: Open Sidestory**, and that they should **commit `.sidestory/<branch-slug>/` with the branch** so reviewers get it with the PR. Don't commit unless they ask.
 

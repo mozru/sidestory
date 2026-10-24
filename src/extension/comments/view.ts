@@ -3,7 +3,7 @@
 import * as vscode from 'vscode';
 import { displayText, escapeIcons } from '../../core/display-text.ts';
 import { authorLabel } from '../../core/threads/reduce.ts';
-import { manifestId, type CodeAnchor } from '../../core/threads/schema.ts';
+import type { CodeAnchor } from '../../core/threads/schema.ts';
 import type { SidestoryIndex } from '../nav/index.ts';
 import { codeAnchorLabel, type CommentService, type Entry } from './service.ts';
 
@@ -58,7 +58,7 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
   async rebuild(): Promise<void> {
     const entries = await this.service.allEntries(this.roots());
     const known = new Map<string, { title: string; id?: string }>();
-    for (const e of this.index.all()) known.set(`${e.ref.root.toString()}|${e.ref.name}`, { title: e.title, id: manifestId(undefined, e as unknown as { id?: unknown }) });
+    for (const e of this.index.all()) known.set(`${e.ref.root.toString()}|${e.ref.name}`, { title: e.title, id: e.id });
     const groups = new Map<Group, CommentNode[]>(GROUPS.map((g) => [g.id, []]));
     const f = this.filter.toLowerCase();
     for (const e of entries) {

@@ -43,7 +43,8 @@ import { describeProblem, parseCss, placementProblems, type ParsedCss } from './
 import { threadsMain } from './threads.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
-import { manifestDiagnosticFindings, newUlid, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
+import { newUlid } from '../comments/fsx.ts';
+import { manifestDiagnosticFindings, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -731,8 +732,8 @@ export function formatReport(report: CheckReport, cwd = process.cwd(), coverage 
 
 const USAGE = [
   'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]] [--accept <anchor>[,…]]',
-  '                      [--coverage [--base <ref>] [--committed | --head <sha>]]',
-  '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--json]',
+  '                      [--coverage [--base <ref>] [--committed | --head <sha>] [--new-id]]',
+  '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--new-id] [--json]',
   '       node check.cjs threads [<root>] [--waiting] [--all] [--json]',
   'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial',
 ].join('\n');
@@ -740,7 +741,7 @@ const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
 /** Flags that take a value (`--base main` or `--base=main`). */
 const VALUED = new Set(['--base', '--head', '--repo', '--accept']);
-const SWITCHES = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help', '--coverage', '--committed']);
+const SWITCHES = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help', '--coverage', '--committed', '--new-id']);
 
 export interface MainHooks {
   /** Tests: the git to run and the environment it inherits; the stable id --pin writes. */
@@ -787,7 +788,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   if (unknown.length) return usage(`unknown option ${unknown.join(', ')}`);
   if (args.length > 1 || (args.length === 0 && !coverage)) return usage();
   if (flags.has('--yes-widgets-may-read') && !flags.has('--pin')) return usage('--yes-widgets-may-read only goes with --pin');
-  if (!coverage && ['--base', '--committed', '--head', '--repo'].some((f) => flags.has(f))) return usage('--base, --committed, --head and --repo go with --coverage');
+  if (!coverage && ['--base', '--committed', '--head', '--repo', '--new-id'].some((f) => flags.has(f))) return usage('--base, --committed, --head, --repo and --new-id go with --coverage');
   if (flags.has('--committed') && flags.has('--head')) return usage('--committed and --head are two different heads: give one');
   if (args.length === 0 && !flags.has('--base')) return usage('--coverage without a sidestory needs --base <branch>');
   if (args.length === 0 && (flags.has('--pin') || flags.has('--accept') || flags.has('--types'))) return usage('--pin, --accept and --types need a sidestory folder');
@@ -811,7 +812,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     io.err(`Wrote ${written.length} files to ${explain} (tsconfig.json, .types/). Typecheck the widgets with: ${TYPECHECK_COMMAND}`);
   }
 
-  const covOpts = { base: values.get('--base'), committed: flags.has('--committed'), head: values.get('--head'), gitPath: hooks.gitPath, env: hooks.env };
+  const covOpts = { base: values.get('--base'), committed: flags.has('--committed'), head: values.get('--head'), newId: flags.has('--new-id'), gitPath: hooks.gitPath, env: hooks.env };
   // The comparison is needed for --coverage, and for pinning a sidestory with a base (base-side anchors read the
   // merge-base; anchors with code added since they were pinned are left for --accept).
   let cov: CoverageResult | undefined;

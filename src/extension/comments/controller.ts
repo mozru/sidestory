@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pinQuote, trimBlankLines } from '../../core/pin.ts';
 import { toEditorMarkdown } from '../../core/threads/markdown.ts';
 import { authorLabel } from '../../core/threads/reduce.ts';
-import { isPlainPath, manifestId, type CodeAnchor } from '../../core/threads/schema.ts';
+import { isPlainPath, type CodeAnchor } from '../../core/threads/schema.ts';
 import { splitLines } from '../../core/text.ts';
 import { resolveCode } from '../../comments/query.ts';
 import type { Location } from '../../comments/storage.ts';
@@ -272,15 +272,7 @@ export class CommentsController implements vscode.Disposable {
     const tier = vscode.workspace.getConfiguration('sidestory.comments').get<string>('defaultLocation') === 'shared' && covering ? 'shared' : 'local';
     if (toClaude && tier === 'shared' && !(await this.service.warnSharedAsk(`new:${covering!.entry.ref.name}`))) return undefined;
     const location: Location = covering ? { tier, scope: { kind: 'sidestory', name: covering.entry.ref.name } } : { tier: 'local', scope: { kind: 'code' } };
-    let sidestoryId: string | undefined;
-    if (covering) {
-      try {
-        const raw = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.joinPath(covering.entry.ref.dir, 'manifest.json')))) as Record<string, unknown>;
-        sidestoryId = manifestId(raw);
-      } catch {
-        /* no id */
-      }
-    }
+    const sidestoryId = covering?.entry.id;
     const created = await this.service.createThread(root, location, anchor, text, { toClaude, ...(sidestoryId ? { sidestoryId } : {}) });
     return { root, ...created };
   }

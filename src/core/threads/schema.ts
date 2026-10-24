@@ -2,11 +2,12 @@
 // everything is validated and size-limited here, and nothing from a file is ever used as a path.
 import { z } from 'zod';
 import { displayText } from '../display-text.ts';
-import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../manifest.ts';
+import { anchorIdSchema, explainerNameSchema, isSafeRelativePath, ULID as MANIFEST_ULID } from '../manifest.ts';
 
 /** Crockford base32, 26 characters: 48 bits of milliseconds, then 80 random bits. */
 const ULID = '[0-9A-HJKMNP-TV-Z]{26}';
-export const ULID_RE = new RegExp(`^${ULID}$`);
+// The manifest's `id` grammar: a thread's `origin.sidestory` is a manifest id.
+export const ULID_RE = MANIFEST_ULID;
 export const THREAD_ID_RE = new RegExp(`^t_${ULID}$`);
 export const EVENT_ID_RE = new RegExp(`^e_${ULID}$`);
 export const SEND_ID_RE = new RegExp(`^s_${ULID}$`);
@@ -262,10 +263,4 @@ export function canonicalJson(v: unknown): string {
 }
 
 /** The manifest's stable sidestory id (§3.1), when it has a valid one. */
-export function manifestId(raw: Record<string, unknown> | undefined, parsed?: { id?: unknown }): string | undefined {
-  // Read through the manifest parser's `id` once Changes 1b adds it; until then, from the raw manifest (a shim).
-  const v = parsed?.id ?? raw?.id;
-  return typeof v === 'string' && ULID_RE.test(v) ? v : undefined;
-}
-
 export const sidestoryNameSchema = explainerNameSchema;

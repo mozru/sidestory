@@ -3,7 +3,6 @@
 // with the base and a title from the branch name). Head side for added or replaced lines; base side (version 3) for a
 // pure deletion. Never through a symbolic link: `.sidestory` and the folder are checked with lstat, and the folder and
 // manifest written must resolve inside the repository.
-import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEdits, modify, parse } from 'jsonc-parser';
@@ -13,26 +12,11 @@ import type { LineRange, Side } from '../../core/manifest.ts';
 import { parseWhy } from '../../core/manifest.ts';
 import { pinQuote } from '../../core/pin.ts';
 import { splitLines } from '../../core/text.ts';
+import { newUlid } from '../../comments/fsx.ts';
 import { localPath } from '../local-path.ts';
 import { realPathInside, writeFileAtomic } from '../paths.ts';
 import type { Belonging } from './coverage-service.ts';
 import type { Snapshot } from './comparison.ts';
-
-const ULID_CHARS = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-
-/** A ULID (time, then randomness), for a new sidestory's `id`. */
-export function ulid(now = Date.now()): string {
-  let t = now;
-  let time = '';
-  for (let i = 0; i < 10; i++) {
-    time = ULID_CHARS[t % 32]! + time;
-    t = Math.floor(t / 32);
-  }
-  const rnd = randomBytes(16);
-  let rest = '';
-  for (let i = 0; i < 16; i++) rest += ULID_CHARS[rnd[i]! % 32]!;
-  return time + rest;
-}
 
 /**
  * A folder name from a branch, as the skill makes it: `/` turned into `-` (`alice/retry-jitter` → `alice-retry-jitter`);
@@ -147,7 +131,7 @@ export async function markTrivial(s: Snapshot, belonging: readonly Belonging[], 
   const title = displayText((s.head.name ?? slug).split('/').at(-1)!.replace(/[-_]+/g, ' '), 60) || 'This branch';
   const manifest = {
     version: t.side === 'base' ? 3 : 2,
-    id: ulid(),
+    id: newUlid(),
     title: title.charAt(0).toUpperCase() + title.slice(1),
     base: s.base.spec,
     anchors: { 'trivial-1': { file: t.path, ...(t.side === 'base' ? { side: 'base' } : {}), range: [t.range.start, t.range.end], quote, trivial: true, why: reason } },

@@ -409,7 +409,7 @@ A sidestory can explain a change instead of a piece of code: what a branch or pu
 | `side` | Anchor: `"base"` anchors **removed** code, in the merge-base's version of the file (the old path, for a renamed file). It needs a `base` and `"version": 3`. Absent means the code as it is now. |
 | `trivial`, `why` | Anchor: `"trivial": true` marks a mechanical change (formatting, import order, a rename, generated code) that needs no explanation; `why` (1–200 characters) is required, and reviewers see it. A trivial mark isn't a step: don't give it a section. Name them `trivial-1`, `trivial-2`, …. A trivial mark on a pure deletion goes on the base side. |
 | `trivialFiles` | Top level: globs (`*`, `**`, `?`) of whole files whose changes need no explanation, relative to the folder holding `.sidestory/`. Name them narrowly: `**`, `*`, or a pattern that matches more than half of the changed files is flagged. |
-| `id` | Top level: a stable id (a ULID). `--pin` writes it when there is none; never change or remove it. |
+| `id` | Top level: a stable id (a ULID). `--pin` writes it when there is none; never change or remove it: local comment threads find their sidestory by it, and `--coverage` reports `id-changed` or `id-removed` (errors) for a manifest whose `id` differs from, or is missing compared with, its version at the merge-base (or, for the working tree, at HEAD). A new sidestory replacing an archived one under the same folder name may have an id of its own; for one replacing a deleted one, pass `--new-id`. |
 
 Trivial is never the same as explained: the count says "9 explained · 3 trivial · 0 left", and a reviewer sees which changes were waved through and why.
 
@@ -458,6 +458,7 @@ node "$CHECK" .sidestory/retry-jitter --pin --coverage
 - The working tree is compared by default, untracked files included (ignored ones aren't), and a deleted file paired with a similar untracked one counts as a rename. `--committed` compares `HEAD` instead (what CI sees); `--head <commit>` compares that commit.
 - `--json` adds `coverage`: every file and change with its lines, status (`explained`, `partly`, `unexplained`, `trivial`, `needsLook`) and the anchors that explain it.
 - `--pin` pins base-side anchors against the merge-base, never the working tree, and never re-pins an anchor with lines added since it was pinned; `--accept <anchor>[,…]` does, once you've updated the step.
+- Every manifest the branch edits keeps its `id` (`id-changed`, `id-removed`); `--new-id` accepts a new sidestory that replaces a deleted one under the same folder name.
 - Exit codes: **0** clean, **1** errors, **2** bad arguments, **3** no errors but some change isn't explained or marked trivial.
 
 The checker runs git itself (the extension doesn't), carefully: see [SECURITY.md](../SECURITY.md#the-checker-and-git).

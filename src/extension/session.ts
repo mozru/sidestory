@@ -528,9 +528,9 @@ export class ExplainerSession implements vscode.Disposable {
     return [...(this.manifest?.anchors.values() ?? [])].map((a) => ({ id: a.id, file: a.file, range: this.resolutions.get(a.id)?.range ?? a.range }));
   }
 
-  /** The manifest as written (for its stable `id`). */
-  manifestRaw(): Record<string, unknown> | undefined {
-    return this.manifest?.raw;
+  /** The manifest's stable `id` (docs/COMMENTS-PLAN.md §3.1), as the manifest parser read it. */
+  manifestId(): string | undefined {
+    return this.manifest?.id;
   }
 
   /** Where live tracking last saw an anchor's code (only trusted positions are kept). */
