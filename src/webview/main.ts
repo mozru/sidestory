@@ -1087,16 +1087,16 @@ function followEditor(id: string): void {
     if (!(top >= view.top && top <= view.bottom - 40)) showPill(id, el);
     return;
   }
-  hidePill();
-  setActive(id);
   const visible = top >= view.top && top <= view.top + view.height * 0.6;
-  if (visible) return;
-  // A box the cursor rings is on screen (a diagram elsewhere in the page, §8.2): stay with it, and offer the step.
-  if (ringOnScreen(view)) {
+  // A box the cursor rings is on screen (a diagram elsewhere in the page, §8.2): stay with it and offer the step, as
+  // when the reader leads; making the step current here would let a small scroll send the editor elsewhere.
+  if (!visible && ringOnScreen(view)) {
     showPill(id, el);
     return;
   }
-  scrollToSection(id);
+  hidePill();
+  setActive(id);
+  if (!visible) scrollToSection(id);
 }
 
 /** Whether an element the editor cursor rings (cx-here) is visible in the panel now. */

@@ -31,6 +31,8 @@ import { ourModal } from './widgets/watchdog.ts';
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
 const CURSOR_DELAY = 100;
+/** How long cursor-follow waits for the ring to be worked out first (§8.2). */
+const LIGHT_WAIT_MS = 100;
 /** Give the extension host back control after this much resolving. */
 const SLICE_MS = 15;
 const MAX_ASSETS_IN_FLIGHT = 4;
@@ -739,6 +741,7 @@ export class ExplainerSession implements vscode.Disposable {
       clearTimeout(this.timers.get('cursor'));
       this.timers.delete('cursor');
       this.hereSeq++;
+      this.cursorSeq++; // a follow still waiting for its ring is for code the cursor left
       this.postHere({}); // nothing the page links to is in this file
       return;
     }
@@ -754,8 +757,14 @@ export class ExplainerSession implements vscode.Disposable {
    */
   private async followCursor(doc: vscode.TextDocument, line: number, ids: Set<string>, detail: [string, { title: string }] | undefined): Promise<void> {
     const mine = ++this.cursorSeq;
-    await this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
-    if (mine !== this.cursorSeq || this.disposed) return; // a newer cursor move, or the panel's own reveal
+    const generation = this.generation;
+    const light = this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+    // The step waits for the ring only briefly: a scan or a language's symbols mustn't hold up cursor-follow.
+    await Promise.race([light, new Promise((r) => setTimeout(r, LIGHT_WAIT_MS))]);
+    // A newer cursor move, a click, the panel's own reveal, another sidestory, or the cursor already elsewhere.
+    if (mine !== this.cursorSeq || this.disposed || generation !== this.generation) return;
+    const now = vscode.window.activeTextEditor?.document;
+    if (now && now !== doc) return;
     {
       // The shared cursor helper (cursor.ts). Only sections steer the step (docs/AUTHORING-PLAN.md §0, §8.2): an
       // anchor used only by `data-explain-ref` lights its boxes instead. Until the page has said which ids are
@@ -888,6 +897,7 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   private forgetTargets(): void {
+    this.cursorSeq++; // a follow still waiting belongs to the page (or sidestory) before
     this.targets = undefined;
     this.hereSent = '';
     this.hereSeq++;
@@ -981,6 +991,7 @@ export class ExplainerSession implements vscode.Disposable {
    */
   private async openCode(path: string, target: string | undefined): Promise<void> {
     if (!this.openGate.allow(`${path}#${target ?? ''}`)) return;
+    this.cursorSeq++; // the reader clicked a box: a cursor follow still waiting is moot
     const link = parseCodeLink(target === undefined ? path : `${path}#${target}`);
     if (!link || link.path !== path) return;
     const root = this.ref.root;

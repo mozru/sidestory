@@ -401,3 +401,17 @@ describe('review round 2', () => {
     expect(t.drivers[0]!.cases[0]!.items[0]!.labels.length).toBeLessThanOrEqual(64);
   });
 });
+
+describe('review round 3', () => {
+  it('macro calls full of escaped quotes scan linearly', () => {
+    const line = `\`M("${'\\"'.repeat(1000)}\n)\n`;
+    const t0 = Date.now();
+    scanSv(line.repeat(4000));
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+  it('names inside a macro call\'s strings aren\'t its arguments', () => {
+    const t = scanSv('module m;\n`uvm_info("ghost_q", fmt)\n`FF(real_q, d, 0)\nendmodule');
+    expect(t.macroUses.has('ghost_q')).toBe(false);
+    expect(t.macroUses.get('real_q')).toMatchObject({ macro: 'FF', line: 3 });
+  });
+});

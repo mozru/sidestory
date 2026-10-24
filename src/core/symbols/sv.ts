@@ -579,8 +579,19 @@ class Parser {
     const line = this.lineAt(i);
     const first = /^\(\s*([A-Za-z_][A-Za-z0-9_$]*)/.exec(text.slice(open))?.[1];
     const flop = /^(FF|DFF|REG|FLOP)/i.test(macro);
-    // names outside strings (`uvm_info("…")`)
-    for (const m of text.slice(open).replace(/"(?:[^"\\]|\\.)*"/g, '""').matchAll(/[A-Za-z_][A-Za-z0-9_$]*/g)) {
+    // names outside strings (`uvm_info("…")`): one forward pass, as the lexer skips strings (never a backtracking regex)
+    let args = '';
+    for (let j = open; j < text.length; j++) {
+      const ch = text.charCodeAt(j);
+      if (ch !== 34) {
+        args += text[j];
+        continue;
+      }
+      j++;
+      while (j < text.length && text.charCodeAt(j) !== 34 && text.charCodeAt(j) !== 10) j += text.charCodeAt(j) === 92 ? 2 : 1;
+      args += ' ';
+    }
+    for (const m of args.matchAll(/[A-Za-z_][A-Za-z0-9_$]*/g)) {
       if (KEYWORDS.has(m[0])) continue;
       // How likely this call assigns the name: its first argument in a flop macro, then any flop macro, then a mention.
       const score = (flop ? 2 : 0) + (m[0] === first ? 1 : 0);

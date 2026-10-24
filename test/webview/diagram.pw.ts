@@ -371,10 +371,13 @@ test.describe('linked elements', () => {
     await send(page, { type: 'here', link: 'rtl/bit_reader.sv#L36' });
     await expect(el(page, 'box')).toHaveClass(/cx-here/);
     await send(page, { type: 'syncTo', anchorId: 'refill' });
-    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
     await expect(page.locator('.cx-pill')).toBeVisible();
     await expect(page.locator('.cx-pill')).toContainText('Refill');
+    // the step the reader is looking at stays current until they take the pill
+    await expect(page.locator('.cx-position')).toHaveText('Step 1 of 2');
     expect(await scrollTop()).toBeLessThan(50);
+    await page.locator('.cx-pill button').first().click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
     // With nothing lit, the panel follows the step as before.
     await send(page, { type: 'here' });
     await send(page, { type: 'syncTo', anchorId: 'interface' });

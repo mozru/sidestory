@@ -78,10 +78,11 @@ export class SymbolTables implements vscode.Disposable {
   get(doc: vscode.TextDocument): Promise<SymbolTable | undefined> {
     let text: string | undefined;
     // The size counts toward the cache cap before anything is evicted for it; the text is read once per version.
-    const e = this.entry(doc, () => (text = doc.getText()).length);
+    // (a document too large to scan keeps only its verdict: it holds no text, so it counts for nothing)
+    const e = this.entry(doc, () => ((text = doc.getText()).length > MAX_CODE_BYTES ? 0 : text.length));
     if (e.table) return e.table;
     text ??= doc.getText();
-    e.chars = text.length;
+    e.chars = text.length > MAX_CODE_BYTES ? 0 : text.length;
     const key = doc.uri.toString();
     const version = doc.version;
     const stale = () => this.disposed || doc.isClosed || doc.version !== version || this.cache.get(key) !== e;

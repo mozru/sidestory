@@ -79,8 +79,11 @@ test('a box opens its symbol; the cursor rings the tightest box and leaves the s
   await expect(activeTab(page, 'dma_fifo.sv')).toBeVisible();
   await expect(b('full')).toHaveClass(/cx-here/);
   await goToLine(page, 45);
-  await expect(panel.locator('.cx-position')).toHaveText('Step 2 of 2');
+  // The ring is on screen, so the panel stays with the diagram and the pill offers the section (not the tighter ref).
   await expect(b('fifo-ctrl')).toHaveClass(/cx-here/);
+  await expect(panel.locator('.cx-pill')).toContainText('FIFO');
+  await panel.locator('.cx-pill button').first().click();
+  await expect(panel.locator('.cx-position')).toHaveText('Step 2 of 2');
   await expect(b('full')).not.toHaveClass(/cx-here/);
   await expect(dia.locator('.cx-here')).toHaveCount(1);
 
