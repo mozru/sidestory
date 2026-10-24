@@ -129,7 +129,12 @@ export function activateComments(context: vscode.ExtensionContext, deps: Comment
     'sidestory.comments.chooseSession': (t?: unknown) => controller.chooseSession(t as vscode.CommentThread),
     'sidestory.comments.showInSidestory': async (t?: unknown) => {
       const at = await controller.sidestoryOf(t as vscode.CommentThread);
-      if (at) await deps.openAt({ ...at, source: 'comments' });
+      if (at) {
+        await deps.openAt({ ...at, source: 'comments' });
+        const s = sessionFor(at.dir);
+        const id = (t as { entryId?: string } | undefined)?.entryId;
+        if (s) panels.show(s, { type: 'commentsShow', ...(at.anchor ? { step: at.anchor } : {}), ...(id ? { thread: id } : {}) });
+      }
       else void vscode.window.showInformationMessage('No sidestory covers these lines.');
     },
     'sidestory.comments.deleteThread': (t?: unknown) => controller.threadCommand(t as vscode.CommentThread, 'delete', deps),

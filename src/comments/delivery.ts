@@ -86,7 +86,7 @@ export class StateStore {
 
   async writeSend(s: Send): Promise<void> {
     checkPrivate(this.dir);
-    checkPrivate(join(this.dir, "sends"));
+    checkPrivate(join(this.dir, 'sends'));
     sendSchema.parse(s);
     if (!(await writeNoReplace(join(this.dir, 'sends'), `${s.send}.json`, JSON.stringify(s), 0o600))) throw new Error('send exists');
   }
@@ -106,7 +106,7 @@ export class StateStore {
    */
   async claim(sendId: string, record: Pushed): Promise<boolean> {
     if (!SEND_ID_RE.test(sendId)) return false;
-    checkPrivate(join(this.dir, "pushed"));
+    checkPrivate(join(this.dir, 'pushed'));
     return writeNoReplace(join(this.dir, 'pushed'), `${sendId}.json`, JSON.stringify(record), 0o600);
   }
 

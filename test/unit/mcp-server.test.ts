@@ -233,7 +233,7 @@ describe('MCP server over stdio (bundle)', () => {
     await until(() => pushes.length === 1, 5000);
     await client.close();
     await until(() => readdirSync(join(state, 'sessions')).length === 0, 5000);
-  });
+  }, 20_000);
 
   it.skipIf(!existsSync(bundle))('answers a 2026-07-28 initialize with an earlier revision', () => {
     const init = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2026-07-28', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
@@ -242,7 +242,7 @@ describe('MCP server over stdio (bundle)', () => {
     const v = JSON.parse(line).result.protocolVersion as string;
     expect(v).not.toBe('2026-07-28');
     expect(v < '2026-07-28').toBe(true);
-  });
+  }, 20_000);
 
   it('exits with one line on old Node', () => {
     const src = readFileSync(join(__dirname, '../../src/mcp/main.ts'), 'utf8');

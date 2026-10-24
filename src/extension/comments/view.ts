@@ -82,7 +82,13 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
       else if (e.thread.state === 'resolved') {
         if (this.showResolved) groups.get('resolved')!.push(node('resolved'));
       } else {
-        if (this.service.isWaiting(e)) groups.get('waiting')!.push(node('waiting'));
+        if (this.service.isWaiting(e)) {
+          const n = node('waiting') as Extract<CommentNode, { kind: 'thread' }>;
+          const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
+          const d = ask ? await this.service.delivery(e, ask.id) : undefined;
+          if (d) n.description = escapeIcons(d.text);
+          groups.get('waiting')!.push(n);
+        }
         else if ((this.service.tookPart(e) && this.service.isUnread(e)) || e.thread.claudeSuggestsResolve) groups.get('forYou')!.push(node('forYou'));
         else groups.get('open')!.push(node('open'));
       }

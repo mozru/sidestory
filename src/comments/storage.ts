@@ -216,6 +216,8 @@ export class ThreadFiles {
     const toPrefix = `${threadsSegments(to).join('/')}/${threadId}/`;
     const moved = await this.ledger.prepareMove(fromPrefix, toPrefix);
     try {
+      // Windows can't rename onto an existing folder: there the exclusive mkdir is only the existence check.
+      if (process.platform === 'win32') await fs.rmdir(dst);
       await retrying(() => fs.rename(src, dst), 8);
     } catch (e) {
       await fs.rmdir(dst).catch(() => undefined);

@@ -183,6 +183,12 @@ export function authorLabel(c: Pick<CommentView, 'by' | 'trust'>): string {
   if (c.by.kind === 'claude') return c.trust === 'claude' ? `Claude${c.by.via ? ` (via ${c.by.via})` : ''}` : 'Claude (from the repository)';
   if (c.by.kind === 'agent') return c.trust === 'agent' ? `${name}${c.by.via ? ` (via ${c.by.via})` : ''}` : `${name} (from the repository)`;
   // A name that could pass for the reader or for Claude is marked, so a planted comment can't look like theirs.
-  if (/^(you|me)$/i.test(name) || /claude|anthropic/i.test(name)) return `${name} (from the repository)`;
+  if (/^(you|me)$|claude|anthropic/.test(foldLookalikes(name))) return `${name} (from the repository)`;
   return name;
+}
+
+/** Lowercased, NFKC, with common Cyrillic and Greek lookalikes folded to Latin, for the label guard above. */
+function foldLookalikes(s: string): string {
+  const map: Record<string, string> = { а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ј: 'j', ӏ: 'l', ɩ: 'l', α: 'a', ο: 'o', υ: 'u', ε: 'e', ι: 'i', ν: 'v', κ: 'k', τ: 't', ρ: 'p', 'ⅼ': 'l' };
+  return [...s.normalize('NFKC').toLowerCase()].map((c) => map[c] ?? c).join('').replace(/[^a-z]/g, (c) => (c === ' ' ? ' ' : ''));
 }

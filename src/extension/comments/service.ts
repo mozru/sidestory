@@ -65,6 +65,7 @@ export class CommentService implements vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[] = [];
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private changeTimer: ReturnType<typeof setTimeout> | undefined;
+  private againTimer: ReturnType<typeof setTimeout> | undefined;
   private dirtyRoots = new Set<string>();
   /** The state directory failed its checks: every trust is `repository` and nothing is sent (fails closed). */
   private unusable = false;
@@ -90,6 +91,7 @@ export class CommentService implements vscode.Disposable {
   dispose(): void {
     clearInterval(this.pollTimer);
     clearTimeout(this.changeTimer);
+    clearTimeout(this.againTimer);
     for (const d of this.subscriptions) d.dispose();
   }
 
@@ -159,7 +161,8 @@ export class CommentService implements vscode.Disposable {
     // showing repository trust.
     if (again && this.dirtyRoots.size) {
       const roots = [...this.dirtyRoots];
-      setTimeout(() => {
+      clearTimeout(this.againTimer);
+      this.againTimer = setTimeout(() => {
         for (const r of roots) this.cache.delete(r);
         this.emitter.fire();
       }, 1500);
@@ -378,7 +381,7 @@ export class CommentService implements vscode.Disposable {
    * ledger entry are already written. Returns the delivery record for the event.
    */
   async ask(e: Entry, eventId: string, text: string, intent: Intent, chosen?: Presence): Promise<void> {
-    await this.init();
+    await this.init().catch(() => undefined);
     if (this.unusable) throw new Error(`the folder for Ask Claude's records (${this.stateDir}) failed its safety checks; see Output › Sidestory`);
     let route = chosen;
     let dismissed = false;
@@ -506,7 +509,7 @@ export class CommentService implements vscode.Disposable {
     const c = e.thread.comments.find((x) => x.id === eventId);
     const rec = this.record(eventId);
     const finish = () => {
-      if (rec && rec.send && !rec.done) void this.putRecord(eventId, { ...rec, done: true });
+      if (rec && rec.send && !rec.done) void this.putRecord(eventId, { ...rec, done: true }).catch(() => undefined);
       return undefined;
     };
     if (!c || c.trust !== 'local_user' || c.to !== 'claude' || isAnswered(e.thread, eventId) || !this.isWaiting(e)) return finish();
@@ -582,7 +585,9 @@ export class CommentService implements vscode.Disposable {
     let changed = false;
     for (const e of entries) {
       // The largest id seen, so a comment dated in the future (ordered as now) can't keep the thread unread.
-      const newest = e.thread.comments.reduce<string | undefined>((m, c) => (!m || c.id > m ? c.id : m), undefined);
+      // Ids dated more than a day ahead are left out, so a planted one can't silence later comments either.
+      const limit = this.now() + 86_400_000;
+      const newest = e.thread.comments.reduce<string | undefined>((m, c) => (ulidTime(c.id) <= limit && (!m || c.id > m) ? c.id : m), undefined);
       if (newest && all[e.thread.id] !== newest) {
         all[e.thread.id] = newest;
         changed = true;

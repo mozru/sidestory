@@ -122,8 +122,7 @@ export class CommentsPanels implements vscode.Disposable {
     // Skip a post that would change nothing (the backstop polls while a send is in flight).
     const json = JSON.stringify({ threads, context });
     if (this.lastSent.get(s) === json) return;
-    this.lastSent.set(s, json);
-    s.postMessage({ type: 'threads', dir: s.ref.dir.toString(), threads, context });
+    if (s.postMessage({ type: 'threads', dir: s.ref.dir.toString(), threads, context })) this.lastSent.set(s, json);
   }
 
   private async view(e: Entry, step: string | undefined, steps: Set<string>): Promise<ThreadView> {

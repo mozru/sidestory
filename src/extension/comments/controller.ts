@@ -324,6 +324,7 @@ export class CommentsController implements vscode.Disposable {
         c.mode = vscode.CommentMode.Preview;
         c.body = editorMarkdown(c.raw);
         c.thread.comments = [...c.thread.comments];
+        void this.refresh(); // changes that arrived while editing
         break;
       case 'save': {
         const text = typeof c.body === 'string' ? c.body : c.body.value;

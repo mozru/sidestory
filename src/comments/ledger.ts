@@ -51,6 +51,7 @@ export class Ledger {
     if (this.disabled) throw new Error("the state directory failed its safety checks");
     checkPrivate(this.state);
     const dir = await mkdirsNoFollow(this.state, ['authored', this.repoKey], 0o700);
+    checkPrivate(dir);
     await writeReplace(dir, `${keyOf(e.path, e.id)}.json`, JSON.stringify(e));
   }
 

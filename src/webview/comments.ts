@@ -149,6 +149,8 @@ export class CommentsPane {
   private readTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly seen = new Set<string>();
   private readonly observer: IntersectionObserver;
+  private composing = false;
+  private renderAfterComposition = false;
 
   constructor(pane: HTMLElement, layer: HTMLElement, hooks: CommentsHooks) {
     this.pane = pane;
@@ -159,6 +161,14 @@ export class CommentsPane {
     this.height = saved?.height ?? 260;
     this.all = !!saved?.all;
     this.observer = new IntersectionObserver((entries) => this.onVisible(entries), { threshold: 0.6 });
+    pane.addEventListener('compositionstart', () => (this.composing = true));
+    pane.addEventListener('compositionend', () => {
+      this.composing = false;
+      if (this.renderAfterComposition) {
+        this.renderAfterComposition = false;
+        this.render();
+      }
+    });
   }
 
   /** Messages from the host; true when handled. */
@@ -374,6 +384,11 @@ export class CommentsPane {
 
   render(): void {
     if (!this.open) return;
+    // Never while an IME is composing in one of our boxes: moving the textarea would cancel the composition.
+    if (this.composing) {
+      this.renderAfterComposition = true;
+      return;
+    }
     const step = this.shownStep();
     const visible = this.visibleThreads();
     const openN = visible.filter((t) => t.state === 'open').length;

@@ -315,7 +315,7 @@
       },
       {
         "command": "sidestory.comments.replyAskEdit",
-        "title": "Ask Claude and Let It Edit…",
+        "title": "Ask Claude and Let It Edit",
         "category": "Sidestory"
       },
       {
@@ -379,7 +379,7 @@
       },
       {
         "command": "sidestory.comments.chooseSession",
-        "title": "Ask Claude in Session…",
+        "title": "Choose a Session…",
         "category": "Sidestory"
       },
       {
@@ -974,7 +974,7 @@
         {
           "command": "sidestory.comments.chooseSession",
           "group": "more@5",
-          "when": "commentController == sidestory && commentThread =~ /asked/"
+          "when": "commentController == sidestory && commentThread =~ /waiting/"
         },
         {
           "command": "sidestory.comments.showInSidestory",

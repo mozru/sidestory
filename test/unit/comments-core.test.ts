@@ -105,6 +105,8 @@ describe('reducer', () => {
     expect(isAnswered(t, open.id)).toBe(true);
     expect(authorLabel(t.comments[1]!)).toBe('Claude (via Alex)');
     expect(authorLabel(t.comments[0]!)).toBe('you');
+    for (const name of ['you', 'Сlaude (via Alex)', 'yоu', 'CLAUDE']) expect(authorLabel({ by: { kind: 'human', name }, trust: 'repository' })).toContain('(from the repository)');
+    expect(authorLabel({ by: { kind: 'human', name: 'Sam' }, trust: 'repository' })).toBe('Sam');
   });
   it('resolve and reopen record who and with what trust', () => {
     const r = ev(eid(-1000), 'resolve', { by: { kind: 'human', name: 'Sam' } });
