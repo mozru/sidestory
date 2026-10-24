@@ -2,7 +2,7 @@
 
 **Rich sidestories beside your code: diagrams, live widgets and prose that walk through the code with you, and that you or your AI agent can write.**
 
-![Stepping through the stream DMA overview: each step scrolls and highlights the code beside it, and a cycle-accurate simulation lights up the FSM line it is in](media/marketplace/hero.gif)
+![Stepping through the stream DMA overview: each step lights its part of the block diagram, fades the rest, and highlights its code in the editor beside it](media/marketplace/hero.gif)
 
 A sidestory is an HTML page in your repository (`.sidestory/<name>/`) whose sections are pinned to the code they describe. Sidestory opens it beside the editor and keeps the two in step: diagrams, tables, block diagrams and interactive React widgets on one side, the real code, highlighted, on the other. Great for onboarding, design reviews, hardware (RTL) walkthroughs and anything too big for comments.
 
@@ -10,41 +10,60 @@ A sidestory is an HTML page in your repository (`.sidestory/<name>/`) whose sect
 
 ## Linked both ways
 
-Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere; <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory jumps to the section about it, and the boxes that point at that code light up. Links in the text, and boxes or wires in a diagram, show their code when clicked; a box can link straight to a SystemVerilog symbol (`data-explain-code="#driver(state_q)"`, `#driver(state_d).case(IDLE)`, `#u_ctrl(.start)`) without a manifest entry. Block diagrams can light up the parts each step is about and fade the rest (`data-explain-on`).
+Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere; <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory follows: the boxes that point at that code light up, and the step moves to the section about it.
 
-![Clicking lines in bit_reader.sv: the sidestory beside it follows to the Refill, Handshakes, Consume and State sections](media/marketplace/cursor-follow.gif)
+![Clicking lines in dma_ctrl.sv: the IDLE, READ_BURST and WAIT_DATA states light up in the overview's diagram, then a line in the error override takes the sidestory to its Errors step](media/marketplace/cursor-follow.gif)
 
-## Diagrams and live widgets
+## Diagrams that follow the code
 
-Sidestories are free-form HTML and CSS, so they can hold anything a page can: inline SVG block diagrams, tables, tabs, steppers and quizzes, all in your VS Code theme. For what CSS can't do, add **widgets**: React components written the way Claude writes artifacts (Tailwind, shadcn/ui-style components, Recharts, D3, Motion), each in its own sandboxed frame. A widget knows the current step, can read the code its sidestory points at, and highlights lines in the editor as it runs.
+Block diagrams are plain inline SVG, and two attributes make them live:
 
-![A cycle-accurate simulation of the DMA engine: beats move along the data path, the FIFO fills, and the editor highlights the FSM state the controller is in](media/marketplace/widget-sim.gif)
+- **Lighting per step.** Tag boxes and wires with `data-explain-on="datapath backpressure"` and they light up while the reader is on those steps; with `data-explain-diagram="step dim-rest"`, everything else fades.
+- **Clickable boxes.** A box with `data-explain-ref` or `data-explain-code` opens its code when clicked, and rings while the editor cursor is in that code. For SystemVerilog, `data-explain-code` names a symbol instead of lines: `#driver(state_q)`, `#driver(state_d).case(IDLE)`, `#u_ctrl(.start)`.
 
 ![The block diagram of a stream DMA engine in the sidestory, dark theme](media/marketplace/block-diagram-dark.png)
 
+## Live widgets
+
+Sidestories are free-form HTML and CSS, so they can hold anything a page can: tables, tabs, steppers and quizzes, all in your VS Code theme. For what CSS can't do, add **widgets**: React components written the way Claude writes artifacts (Tailwind, shadcn/ui-style components, Recharts, D3, Motion), each in its own sandboxed frame. A widget knows the current step, can read the code its sidestory points at, and highlights lines in the editor as it runs.
+
+![A cycle-accurate simulation of the DMA engine: beats move along the data path, the FIFO fills, and the editor highlights the FSM state the controller is in](media/marketplace/widget-sim.gif)
+
 ## Big systems: an overview, then the details
 
-Write one sidestory per piece and an overview that ties them together. The **Sidestories** view in the activity bar lists them by package and group, with each overview's details under it; a **CodeLens** above explained code names the sidestory and step, and **Go to Step** finds any step by name. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
+Write one sidestory per piece and an overview that ties them together. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
 
 ![From the DMA overview, peek at dma_ctrl, dive into its sidestory and its state graph widget, then return through the trail](media/marketplace/dive.gif)
+
+## Find your way
+
+- **The Sidestories view.** The Sidestory icon in the activity bar lists every sidestory by package, overviews first (**Start here**) with their details under them, in page order. Click one to open it; filter by title or summary.
+- **Explained here.** A CodeLens above explained code names the sidestory and step (*Overview › Detail · step 3: Credit*); click it to open the sidestory at that step. The status bar names it too.
+- **Go to Step.** **Sidestory: Go to Step…** finds any step by its title or blurb, in this package or all of them.
+
+![The Sidestories view expands the DMA overview's details; a CodeLens in dma_ctrl.sv opens its sidestory at the Credit step; Go to Step finds "backpressure"](media/marketplace/navigation.gif)
+
+## Any language: a Python example
+
+Code blocks in the page are syntax-highlighted in your editor's theme (mark them `class="language-python"`, as in Markdown), and anchors work in any language. [`examples/tiny-lsm`](examples/tiny-lsm) is a small log-structured merge-tree key-value store in Python, with an overview, a sidestory per component and simulations of its write, compaction, read and scan paths.
+
+![tiny-lsm's overview: the "A put" step shows a highlighted Python code block, then the write-path simulation steps through db.py in the editor](media/marketplace/python.gif)
 
 ## Stays in sync with the code
 
 Sections are anchored to the code they describe, not just to line numbers. Insert lines above, move a function, or edit the code (saved or not) and the section follows it as you type. When the code itself changes, the section says so: **Code changed**, **Out of date** when it changed a lot, or **Code not found**. **Sidestory: Pin Anchors to the Current Code** records each anchor's code; **Re-anchor Section to Selection** points a section at new code. Edits to the sidestory show up live too, keeping your place.
 
-![Typing two comment lines above the Refill code moves its highlight down with it; editing a line inside it shows "Code changed" on the section](media/marketplace/live-edit.gif)
-
 ## Write them with any AI agent
 
 Sidestories are plain files: `sidestory.html`, `manifest.json` and optional widget `.tsx` files. Claude Code, Codex or any other agent (or you) can write them, and a checker that ships with the extension catches mistakes without running anything: problems appear in the Problems panel as you save, **Sidestory: Check Widgets** checks on demand, and a command-line checker serves agents in a terminal.
 
-![A widget that imports an unavailable library: the checker's diagnostic in the Problems panel, and the panel keeps running the last good version](media/marketplace/problems.png)
+![A widget that imports an unavailable library: the checker's diagnostic for .sidestory/retry-backoff/widgets in the Problems panel, and the panel keeps running the last good version](media/marketplace/problems.png)
 
 ## Safe by default
 
 Sidestories are content from the repository, so Sidestory treats them like untrusted input. The page itself can't run script, reach the network or read files outside the repository, which is why it works in **Restricted Mode**. Widgets are code, so they run only in trusted workspaces, only with the `sidestory.widgets.enabled` user setting on, and only after you agree in a VS Code dialog that says what they can do. Until then you see each widget's fallback. Details: [SECURITY.md](SECURITY.md).
 
-![The consent dialog before widgets run: what they can read and that they may reach the network](media/marketplace/consent-dialog.png)
+![The consent dialog before widgets run: the code they can read, and that they may be able to reach the network](media/marketplace/consent-dialog.png)
 
 ## Quick start
 
@@ -58,7 +77,7 @@ code --install-extension paperkite.sidestory
 
 ### 2. Open an example
 
-Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory** from the Command Palette and pick **dma-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
+Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory** from the Command Palette and pick **dma-overview**. For Python, open [`examples/tiny-lsm`](examples/tiny-lsm) and pick **lsm-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
 
 ### 3. Write your first sidestory
 
@@ -161,7 +180,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 - [Writing widgets](docs/WIDGETS.md): the widget contract, imports, theming, linking to code, checking, and a gallery. Written for people and for agents.
 - [Security](SECURITY.md): the threat model and what widgets can and can't reach.
 - [Changelog](CHANGELOG.md)
-- [The stream DMA example](examples/stream-dma)
+- Examples: [stream DMA](examples/stream-dma) (SystemVerilog) and [tiny-lsm](examples/tiny-lsm) (Python)
 
 ## License
 
