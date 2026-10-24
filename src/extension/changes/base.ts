@@ -2,24 +2,10 @@
 // through fully qualified refs, and the default base. Everything goes through a small reader over the vscode.git
 // API, so this file has no vscode import and is tested with a stub.
 
-/** Full commit ids: SHA-1 or SHA-256. */
-export const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+import { FULL_SHA, isValidBase } from '../../core/manifest.ts';
 
-/**
- * §3.1's grammar for a base written by a person or a manifest: a full commit id, or a ref name of 1–200 characters
- * from `[A-Za-z0-9._/-]` that doesn't start with `-` or `/`, doesn't end with `/`, `.` or `.lock`, has no `..`,
- * `//` or `@{`, and isn't a pseudo-ref (`HEAD`, `FETCH_HEAD`, any all-caps name ending in `HEAD`).
- */
-export function isValidBase(spec: string): boolean {
-  if (FULL_SHA.test(spec)) return true;
-  if (spec.length < 1 || spec.length > 200) return false;
-  if (!/^[A-Za-z0-9._/-]+$/.test(spec)) return false;
-  if (/^[-/]/.test(spec) || /(\/|\.|\.lock)$/.test(spec)) return false;
-  if (spec.includes('..') || spec.includes('//') || spec.includes('@{')) return false;
-  if (/^[A-Z_]*HEAD$/.test(spec)) return false;
-  // Each segment must be a valid ref component too: none may start with "." (git refuses those).
-  return spec.split('/').every((s) => s !== '' && !s.startsWith('.'));
-}
+// §3.1's grammar lives with the manifest, which reads `base` too.
+export { FULL_SHA, isValidBase };
 
 /** What `resolveBase` needs from a repository. Every method resolves to undefined rather than throwing. */
 export interface RefReader {

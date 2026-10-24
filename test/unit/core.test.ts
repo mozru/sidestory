@@ -79,7 +79,7 @@ describe('parseManifest', () => {
   });
 
   it('reports a future version distinctly', () => {
-    expect(parseManifest(JSON.stringify({ version: 3, title: 't', anchors: {} }))).toMatchObject({ ok: false, code: 'unsupported-version' });
+    expect(parseManifest(JSON.stringify({ version: 4, title: 't', anchors: {} }))).toMatchObject({ ok: false, code: 'unsupported-version' });
   });
 
   it('refuses oversized manifests', () => {
