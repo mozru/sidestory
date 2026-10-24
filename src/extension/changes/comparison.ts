@@ -28,6 +28,8 @@ export interface Snapshot {
   readonly partialClone: boolean;
   /** HEAD is the base branch (or its commit). */
   readonly onBase: boolean;
+  /** Working tree mode, and there are uncommitted edits (staged, unstaged, untracked or unsaved). */
+  readonly uncommitted: boolean;
   /** Changed files whose paths are unsafe to show or read (control characters, `..`, `.git`): not listed. */
   readonly unsafe: number;
 }
@@ -41,9 +43,12 @@ export type ComparisonState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; snapshot: Snapshot };
 
-/** Paths the view refuses to read or open (§4.5): control characters, `..`, `.git`, backslashes. */
+/**
+ * Paths the view refuses to read or open (§4.5): control characters, `..`, `.git`, backslashes, and a leading `:`
+ * (git reads `:(literal)x` and `:/x` as pathspec magic).
+ */
 export function isSafeRepoPath(p: string): boolean {
-  if (!p || p.length > 4096 || /[\x00-\x1f\x7f\\]/.test(p)) return false;
+  if (!p || p.length > 4096 || p.startsWith(':') || /[\x00-\x1f\x7f\\]/.test(p)) return false;
   return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..' && s.toLowerCase() !== '.git');
 }
 
@@ -122,8 +127,15 @@ export class Comparison implements vscode.Disposable {
   /** Only an active comparison (a visible view, or a command that needs it) recomputes; others note they're stale. */
   private activeNow = false;
   private stale = true;
-  /** Dirty documents seen last, so only a change of that set recomputes. */
-  private dirty = '';
+  /** Dirty documents of this repository (working tree mode): a change of the set recomputes, typing doesn't. */
+  private readonly dirty = new Set<string>();
+  /** Bumped by Refresh: a run that started before it doesn't write its caches back. */
+  private generation = 0;
+  /** Counts found later (per-file patches, untracked files), kept across recomputes of the same merge-base and head. */
+  private readonly counts = new Map<string, { added?: number; removed?: number; noText?: boolean }>();
+  private countsKey = '';
+  /** The committed list, per merge-base and head (§4.4: re-read only when either moved). */
+  private committedList: { key: string; list: (GitChange | GitDiffChange)[]; countsKnown: boolean } | undefined;
 
   constructor(repo: GitRepo, opts: ComparisonOptions) {
     this.repo = repo;
@@ -131,13 +143,27 @@ export class Comparison implements vscode.Disposable {
     this.subscriptions.push(
       this.emitter,
       repo.state.onDidChange(() => this.schedule()),
-      vscode.workspace.onDidChangeTextDocument((e) => {
-        if (e.document.uri.scheme === 'file' && this.dirtyKey() !== this.dirty) this.schedule();
-      }),
-      vscode.workspace.onDidCloseTextDocument(() => {
-        if (this.dirtyKey() !== this.dirty) this.schedule();
-      }),
+      vscode.workspace.onDidChangeTextDocument((e) => this.noteDocument(e.document)),
+      vscode.workspace.onDidSaveTextDocument((d) => this.noteDocument(d)),
+      vscode.workspace.onDidCloseTextDocument((d) => this.noteDocument(d, true)),
     );
+  }
+
+  /** A document became dirty or clean (or closed): only then does the list change, and only in working tree mode. */
+  private noteDocument(d: vscode.TextDocument, closed = false): void {
+    if (d.uri.scheme !== 'file' || this.opts.mode() !== 'workingTree') return;
+    const key = d.uri.toString();
+    const dirty = !closed && d.isDirty;
+    if (dirty === this.dirty.has(key)) return;
+    if (relPath(this.repo, d.uri) === undefined) return;
+    if (dirty) this.dirty.add(key);
+    else this.dirty.delete(key);
+    this.schedule();
+  }
+
+  /** Remembers a count found later for this merge-base and head (the view's per-file counting). */
+  remember(path: string, c: { added?: number; removed?: number; noText?: boolean }): void {
+    this.counts.set(path, c);
   }
 
   get state(): ComparisonState {
@@ -150,15 +176,18 @@ export class Comparison implements vscode.Disposable {
 
   /** Starts (or stops) recomputing on events; becoming active recomputes when something changed meanwhile. */
   set active(on: boolean) {
+    const was = this.activeNow;
     this.activeNow = on;
-    if (on && this.stale) this.schedule(0);
+    if (on && !was && this.stale) this.schedule(0);
   }
 
   /** Recomputes now; `full` also drops the cached base, merge-base and commit count (Refresh). */
   refresh(full = false): Promise<void> {
     if (full) {
-      this.base = this.mergeBase = this.commits = undefined;
+      this.base = this.mergeBase = this.commits = this.committedList = undefined;
       this.partial = undefined;
+      this.counts.clear();
+      this.generation++;
     }
     clearTimeout(this.timer);
     this.timer = undefined;
@@ -167,8 +196,12 @@ export class Comparison implements vscode.Disposable {
 
   /** The result once any recompute in flight is done (for commands run right after a change). */
   async settled(): Promise<ComparisonState> {
-    if (this.stale && !this.running) await this.run();
-    while (this.running) await this.running;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    for (let i = 0; i < 3 && (this.running || this.stale); i++) {
+      if (this.running) await this.running;
+      else await this.run();
+    }
     return this.current;
   }
 
@@ -232,16 +265,7 @@ export class Comparison implements vscode.Disposable {
     return resolveDefaultBase(refReader(this.repo), await this.inputs(branch));
   }
 
-  private dirtyKey(): string {
-    return vscode.workspace.textDocuments
-      .filter((d) => d.isDirty && d.uri.scheme === 'file' && relPath(this.repo, d.uri) !== undefined)
-      .map((d) => d.uri.toString())
-      .sort()
-      .join('\n');
-  }
-
   private async compute(): Promise<void> {
-    const epoch = ++this.epoch;
     const repo = this.repo;
     const s = repo.state;
     const wasBusy = this.busy;
@@ -251,6 +275,8 @@ export class Comparison implements vscode.Disposable {
       if (!wasBusy) this.emitter.fire();
       if (this.current.kind !== 'loading') return;
     } else if (wasBusy) this.emitter.fire();
+    const epoch = ++this.epoch;
+    const generation = this.generation;
     const head = s.HEAD;
     const headSha = head?.commit;
     if (!headSha || !FULL_SHA.test(headSha)) return this.set({ kind: 'noCommits' });
@@ -262,7 +288,8 @@ export class Comparison implements vscode.Disposable {
     const setting = this.opts.setting();
     const baseKey = `${pick}\n${setting}\n${branch}`;
     const ttl = this.opts.baseTtlMs ?? 5000;
-    if (!this.base || this.base.key !== baseKey || Date.now() - this.base.at > ttl) {
+    let baseEntry = this.base;
+    if (!baseEntry || baseEntry.key !== baseKey || Date.now() - baseEntry.at > ttl) {
       // An explicit pick that no longer resolves is said, not silently replaced by a default.
       const picked = pick ? await resolveBase(reader, pick) : undefined;
       const value = pick ? (picked && { ...picked, source: 'pick' as const }) : await resolveDefaultBase(reader, await this.inputs(branch));
@@ -271,14 +298,19 @@ export class Comparison implements vscode.Disposable {
         this.base = undefined;
         return this.set({ kind: 'baseNotFound', spec: pick });
       }
-      this.base = { key: baseKey, at: Date.now(), value };
+      baseEntry = { key: baseKey, at: Date.now(), value };
+      if (generation === this.generation) this.base = baseEntry;
     }
-    const base = this.base.value;
+    const base = baseEntry.value;
     if (!base) return this.set({ kind: 'noBase' });
 
     const mbKey = `${base.sha}\n${headSha}`;
-    if (this.mergeBase?.key !== mbKey) this.mergeBase = { key: mbKey, value: await reader.mergeBase(base.sha, headSha) };
-    const mergeBase = this.mergeBase.value;
+    let mergeBase = this.mergeBase?.key === mbKey ? this.mergeBase.value : undefined;
+    if (!mergeBase) {
+      mergeBase = await reader.mergeBase(base.sha, headSha);
+      // Only an answer is cached: a failure (a shallow clone being deepened, git busy) is asked again.
+      if (mergeBase && generation === this.generation) this.mergeBase = { key: mbKey, value: mergeBase };
+    }
     if (epoch !== this.epoch) return;
     if (!mergeBase) return this.set({ kind: 'noMergeBase', base });
 
@@ -290,13 +322,22 @@ export class Comparison implements vscode.Disposable {
     let list: (GitChange | GitDiffChange)[] = [];
     let countsKnown = false;
     // In a partial clone numstat reads (and so downloads) every blob: names only (§4.5).
+    const listKey = `${mergeBase}\n${headSha}\n${partialClone}`;
+    if (this.countsKey !== `${listKey}\n${mode}`) {
+      this.counts.clear();
+      this.countsKey = `${listKey}\n${mode}`;
+    }
     if (mode === 'committed') {
-      if (mergeBase !== headSha) {
-        if (repo.diffBetweenWithStats && !partialClone) {
-          list = await repo.diffBetweenWithStats(mergeBase, headSha);
-          countsKnown = true;
-        } else list = await repo.diffBetween(mergeBase, headSha);
-      } else countsKnown = true;
+      if (this.committedList?.key === listKey) ({ list, countsKnown } = this.committedList);
+      else {
+        if (mergeBase !== headSha) {
+          if (repo.diffBetweenWithStats && !partialClone) {
+            list = await repo.diffBetweenWithStats(mergeBase, headSha);
+            countsKnown = true;
+          } else list = await repo.diffBetween(mergeBase, headSha);
+        } else countsKnown = true;
+        if (generation === this.generation) this.committedList = { key: listKey, list, countsKnown };
+      }
     } else if (repo.diffBetweenWithStats2 && !partialClone) {
       list = await repo.diffBetweenWithStats2(mergeBase);
       countsKnown = true;
@@ -318,7 +359,8 @@ export class Comparison implements vscode.Disposable {
         }
       }
       // Unsaved edits are part of "uncommitted" (§4.4): a dirty document of a file at the merge-base.
-      this.dirty = this.dirtyKey();
+      this.dirty.clear();
+      for (const d of vscode.workspace.textDocuments) if (d.isDirty && d.uri.scheme === 'file' && relPath(repo, d.uri) !== undefined) this.dirty.add(d.uri.toString());
       for (const d of vscode.workspace.textDocuments) {
         if (!d.isDirty || d.uri.scheme !== 'file') continue;
         const p = relPath(repo, d.uri);
@@ -331,6 +373,19 @@ export class Comparison implements vscode.Disposable {
         }
       }
       if (epoch !== this.epoch) return;
+    }
+    const touched = new Set<string>();
+    if (mode === 'workingTree') {
+      for (const c of [...s.workingTreeChanges, ...s.indexChanges, ...(s.untrackedChanges ?? [])]) {
+        const r = relPath(repo, c.uri);
+        if (r) touched.add(r);
+      }
+      for (const e of entries) if (e.unsaved) touched.add(e.path);
+    }
+    for (const e of entries) {
+      if (e.added !== undefined || e.noText) continue;
+      const c = this.counts.get(e.path);
+      if (c && !touched.has(e.path)) Object.assign(e, c);
     }
     entries.sort((a, b) => comparePaths(a.path, b.path));
     const total = entries.length;
@@ -354,7 +409,9 @@ export class Comparison implements vscode.Disposable {
         commits,
         countsKnown,
         partialClone,
-        onBase: (!!base.branch && base.branch === head.name) || base.sha === headSha,
+        // HEAD is the base branch itself; a new branch at main's commit is a branch with no changes yet.
+        onBase: !!base.branch && base.branch === head.name,
+        uncommitted: mode === 'workingTree' && (s.workingTreeChanges.length > 0 || s.indexChanges.length > 0 || (s.untrackedChanges?.length ?? 0) > 0 || this.dirty.size > 0),
         unsafe,
       },
     });

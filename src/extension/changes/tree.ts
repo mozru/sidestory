@@ -45,10 +45,32 @@ export class ChangesTree implements vscode.TreeDataProvider<ChangesNode>, vscode
     this.emitter.fire();
   }
 
-  /** Repaints the rows (counts that arrived later) without rebuilding ids or expansion. */
+  /** Repaints the rows (counts that arrived later): folder totals are summed again, the order doesn't move. */
   repaint(): void {
-    if (this.render) this.build();
+    const sum = (n: ChangesNode): void => {
+      if (n.kind !== 'folder') return;
+      const f = n.folder;
+      f.added = f.removed = f.uncounted = 0;
+      for (const c of this.children.get(n) ?? []) {
+        if (c.kind === 'folder') {
+          sum(c);
+          f.added += c.folder.added;
+          f.removed += c.folder.removed;
+          f.uncounted += c.folder.uncounted;
+        } else if (c.kind === 'file') {
+          f.added += c.entry.added ?? 0;
+          f.removed += c.entry.removed ?? 0;
+          if (c.entry.added === undefined && c.entry.removed === undefined && !c.entry.noText) f.uncounted++;
+        }
+      }
+    };
+    this.top.forEach(sum);
     this.emitter.fire();
+  }
+
+  /** A new comparison starts expanded again after Collapse All. */
+  resetExpansion(): void {
+    this.expandAll = true;
   }
 
   collapseAll(): void {

@@ -62,7 +62,7 @@ export class RepoIds {
   forget(repo: GitRepo): void {
     const id = this.ids.get(repo);
     this.ids.delete(repo);
-    if (id) this.byId.delete(id);
+    if (id && this.byId.get(id) === repo) this.byId.delete(id);
   }
 }
 
@@ -118,11 +118,16 @@ export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposab
     const key = `${this.ids.idOf(repo)}\n${sha}\n${path}`;
     let p = this.stats.get(key);
     if (!p) {
-      p = repo.getObjectDetails(sha, apiPath(repo, path)).then(
+      const q = repo.getObjectDetails(sha, apiPath(repo, path)).then(
         (d) => (d && REGULAR.has(d.mode) && /^[0-9a-f]{40,64}$/.test(d.object) ? { object: d.object, size: d.size } : undefined),
-        () => undefined,
+        // Not cached: a failure may be passing (a partial clone fetching, git busy).
+        () => {
+          if (this.stats.get(key) === q) this.stats.delete(key);
+          return undefined;
+        },
       );
-      this.stats.set(key, p, 1);
+      p = q;
+      this.stats.set(key, q, 1);
     }
     return p;
   }
@@ -139,13 +144,16 @@ export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposab
     const d = await this.details(repo, sha, path);
     if (!d) throw vscode.FileSystemError.FileNotFound(uri);
     if (d.size > MAX_BLOB_BYTES) throw vscode.FileSystemError.Unavailable(`${path} is larger than 10 MB`);
-    const cached = this.blobs.get(d.object);
+    // Keyed by repository, commit and path: textconv output depends on the path's attributes, not the blob alone.
+    const blobKey = `${this.ids.idOf(repo)}\n${sha}\n${path}`;
+    const cached = this.blobs.get(blobKey);
     if (cached) return cached;
     const bytes = await repo.buffer(sha, apiPath(repo, path));
     // A textconv driver can make the output larger than the blob: capped after the call too.
     if (bytes.byteLength > MAX_BLOB_BYTES) throw vscode.FileSystemError.Unavailable(`${path} is larger than 10 MB`);
-    const out = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    this.blobs.set(d.object, out, out.byteLength);
+    // A copy: a small Buffer is a view into a shared 8 KB pool the cache would otherwise keep alive.
+    const out = new Uint8Array(bytes);
+    this.blobs.set(blobKey, out, out.byteLength);
     return out;
   }
 
@@ -225,7 +233,7 @@ export class ChangeDecorations implements vscode.FileDecorationProvider {
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (uri.scheme !== CHANGE_SCHEME) return undefined;
     const s = uri.query as ChangeStatus;
-    if (!(s in COLORS)) return undefined;
+    if (!Object.hasOwn(COLORS, s)) return undefined;
     return { badge: s, color: new vscode.ThemeColor(COLORS[s]), tooltip: STATUS_NAMES[s], propagate: false };
   }
 }

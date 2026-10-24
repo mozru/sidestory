@@ -1363,6 +1363,7 @@ Seams for 1b: `ChangesView.snapshot` (the comparison), `ChangesView.diffUris` (t
 ### 20.2 Deviations from the plan
 
 - **Line counts without numstat.** `diffBetweenWithStats` is missing on 1.95 and `diffBetweenWithStats2` (uncommitted counts in one call) on 1.95 and 1.105. Then counts are filled in per file from the git extension's one-file patch (`diffWith(ref, path)` / `diffBetween(a, b, path)`), 4 at a time, at most 2,000 files, in view order; renames stay uncounted (a one-path patch can't pair the sides) and folders say "· 1 uncounted". `hunks.ts` (§5.2) replaces this in 1b. Untracked files are counted by reading them (≤ 2 MB, `NUL` in the first 8 KB means binary).
+- **Counting later** keeps what it found per (merge-base, head) across status refreshes and recounts only files that are changing (in the working tree, staged, untracked or unsaved); it reads at most 2 MB per file, shows `…` while a file waits, and is skipped when `diff.external` is set (local or global config), since a per-file diff would run that tool in the background. Committed mode re-reads the list only when the merge-base or HEAD moved.
 - **Binary vs mode-only:** the API's numstat reports both as 0/0 (it maps `-` to 0), so both read "no line changes" until 1b reads the blobs.
 - **Unsafe paths** (control characters, `..`, `.git`, backslashes) are left out with a count in the view's message, not listed as an "unsupported path" row (that row belongs to 1b's "Not counted" group). The rule is `isSafeRepoPath`, not `isSafeRelativePath`, which also refuses `[`, `]`, `{`, `}`, `*`, `?` (for watcher globs) and would refuse `pages/[id].tsx`.
 - **Unsaved edits** (§4.4): a dirty document of a file present at the merge-base and not otherwise changed is listed as `M · unsaved` without comparing texts (that needs §5.2's decoding rules, 1b); counts are of the file on disk.
@@ -1371,6 +1372,7 @@ Seams for 1b: `ChangesView.snapshot` (the comparison), `ChangesView.diffUris` (t
 - **The base picker** has no "bases sidestories use" group (1b) and no Review a Branch (release 2).
 - **Commit count:** `log`'s `maxEntries` is ignored with a `range` (below), so the count first checks the merge-base is among HEAD's latest 1,001 commits and says "1000+" otherwise; only then does it read the range.
 - **Collapse All** is in the `…` menu and works by new ids (VS Code's built-in button would be a fifth inline action).
+- **Not built (later):** Open Changes on a folder (Git Tree Compare has it), and keeping focus in the tree when Next/Previous run from it.
 - The keybindings are those of §9.3 for Next/Previous Changed File; the Unexplained and Mark Viewed chords come with 1b and release 2.
 
 ### 20.3 The (verify) answers
@@ -1396,6 +1398,7 @@ Checked against the git extension of VS Code 1.95.0 and 1.142 (its `dist/main.js
 | §17 Q14 | Default bindings of the chords | macOS 1.143.1: `ctrl+cmd+down` is bound to `notebook.cell.focusInOutput`, `notebook.focusNextEditor`, `quickInput.nextSeparator` and `workbench.action.terminal.resizePaneDown`, `ctrl+cmd+up` to their counterparts, each scoped to a notebook, quick input or terminal; none applies in a diff, an editor or the Changes view, where ours does. Windows and Linux (`ctrl+alt+pagedown` / `pageup`) not checked on those platforms yet. In browser VS Code on macOS the chord reaches the workbench. |
 | §10.2 | A worktree call in the API | `createWorktree` exists in 1.142's API (not 1.95): for release 2. |
 | §9.9 | Welcome views | A `viewsWelcome` `when` can't test `view == …`: the views' welcome entries use only `sidestory.changes.state`. |
+| §9.3 | The context key for the chords | A key named after the view id plus `.active` (`sidestory.changes.active`) read as true in Restricted Mode before the extension ever set it, so the key is `sidestory.changes.hasFiles`; title actions that need a list test `sidestory.changes.state`. |
 | §16.3 | The e2e image | Has git. Its settings don't stop the trust prompt in openvscode-server 1.105.1; the Changes suite answers "Yes" (the git extension needs trust) while the other suites keep Restricted Mode. |
 
 Not needed by 1a and left open: §5.2 jsdiff, §7.5 `hideUnchangedRegions`, §10.2 `openWith(uri, 'default')` for notebooks.

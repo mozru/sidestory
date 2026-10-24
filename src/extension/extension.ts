@@ -186,10 +186,18 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     if (s === 'ready') {
       setAvailable(true);
       void context.workspaceState.update(AVAILABLE_KEY, true);
-    } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown' && !changes.relevant) {
-      // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view.
-      setAvailable(false);
-      void context.workspaceState.update(AVAILABLE_KEY, undefined);
+    } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown') {
+      // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view, or the branch has changes for
+      // the Changes view (docs/CHANGES-PLAN.md §9.1), which takes git a moment to answer.
+      void changes.relevantSoon().then((branch) => {
+        if (index.state !== 'empty' || context.workspaceState.get(AVAILABLE_KEY) === 'shown') return;
+        if (branch) {
+          void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+          return;
+        }
+        setAvailable(false);
+        void context.workspaceState.update(AVAILABLE_KEY, undefined);
+      });
     }
   };
   context.subscriptions.push(index.onDidChangeState(onState));

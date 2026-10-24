@@ -43,6 +43,13 @@ export class SizeLru<V> {
     }
   }
 
+  delete(key: string): void {
+    const e = this.map.get(key);
+    if (!e) return;
+    this.map.delete(key);
+    this.total -= e.size;
+  }
+
   clear(): void {
     this.map.clear();
     this.total = 0;

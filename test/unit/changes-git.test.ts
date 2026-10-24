@@ -265,14 +265,16 @@ describe('the merge diff of the fixture branch', () => {
     await vi.advanceTimersByTimeAsync(50);
     await c.settled();
     const before = calls.length;
+    const epoch = c.epoch;
     for (let i = 0; i < 10; i++) {
       repo.changed.fire();
       await vi.advanceTimersByTimeAsync(100);
     }
     await vi.advanceTimersByTimeAsync(400);
     await c.settled();
-    // The base is re-read at most every few seconds, the merge-base only when HEAD or the base moved.
-    expect(calls.slice(before).filter((x) => x.startsWith('diffBetween'))).toHaveLength(1);
+    // One recompute for the burst; in committed mode the list isn't even re-read (merge-base and HEAD didn't move).
+    expect(c.epoch).toBe(epoch + 1);
+    expect(calls.slice(before).filter((x) => x.startsWith('diffBetween'))).toHaveLength(0);
     const last = c.snapshot;
     repo.state.rebaseCommit = { hash: 'x' };
     repo.changed.fire();
@@ -285,8 +287,52 @@ describe('the merge diff of the fixture branch', () => {
   });
 });
 
+describe('documents and counts', () => {
+  it('committed mode ignores typing; working tree mode recomputes only when a document turns dirty or clean', async () => {
+    const stub = await import('./vscode-stub.ts');
+    vi.useFakeTimers();
+    const calls: string[] = [];
+    let mode: 'committed' | 'workingTree' = 'committed';
+    const repo = cliRepo(calls);
+    const c = new Comparison(repo, opts({ mode: () => mode }));
+    c.active = true;
+    await vi.advanceTimersByTimeAsync(50);
+    await c.settled();
+    const epoch = c.epoch;
+    const doc = { uri: Uri.file(join(dir, 'README.md')), isDirty: true };
+    for (let i = 0; i < 5; i++) stub.events.documentChanged.fire({ document: doc, contentChanges: [] } as never);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(c.epoch).toBe(epoch);
+    mode = 'workingTree';
+    for (let i = 0; i < 5; i++) stub.events.documentChanged.fire({ document: doc, contentChanges: [] } as never);
+    await vi.advanceTimersByTimeAsync(2500);
+    await c.settled();
+    expect(c.epoch).toBe(epoch + 1); // dirty once: one recompute, however many keystrokes
+    vi.useRealTimers();
+    c.dispose();
+  });
+
+  it('counts found later are kept across recomputes of the same merge-base and head', async () => {
+    const repo = cliRepo();
+    delete (repo as Partial<GitRepo>).diffBetweenWithStats;
+    const c = new Comparison(repo, opts());
+    await c.refresh();
+    c.remember('src/retry/retry.ts', { added: 4, removed: 1 });
+    await c.refresh();
+    expect(c.snapshot!.entries.find((e) => e.path === 'src/retry/retry.ts')).toMatchObject({ added: 4, removed: 1 });
+    await c.refresh(true); // Refresh forgets them
+    expect(c.snapshot!.entries.find((e) => e.path === 'src/retry/retry.ts')!.added).toBeUndefined();
+    c.dispose();
+  });
+});
+
 describe('counting commits', () => {
-  const fakeLog = (n: number) => ({ log: async (o: { maxEntries?: number; range?: string }) => Array.from({ length: o.range ? n : Math.min(n, o.maxEntries ?? 32) }, (_, i) => ({ hash: i === n - 1 ? 'mb' : `c${i}`, message: '', parents: [] })) }) as unknown as GitRepo;
+  // n commits on the branch: HEAD's log lists them, then the merge-base; `mb..h` lists only them.
+  const fakeLog = (n: number) =>
+    ({
+      log: async (o: { maxEntries?: number; range?: string }) =>
+        o.range ? Array.from({ length: n }, (_, i) => ({ hash: `c${i}`, message: '', parents: [] })) : Array.from({ length: Math.min(n + 1, o.maxEntries ?? 32) }, (_, i) => ({ hash: i === n ? 'mb' : `c${i}`, message: '', parents: [] })),
+    }) as unknown as GitRepo;
   it('exact below the cap; 1000+ when the merge-base is further back (the range would be unbounded)', async () => {
     expect(await countCommits(fakeLog(5), 'mb', 'h')).toEqual({ count: 5, capped: false });
     expect(await countCommits(fakeLog(5000), 'mb', 'h')).toEqual({ count: 1000, capped: true });
@@ -315,6 +361,7 @@ describe('the sidestory-git: provider (§4.5)', () => {
     expect(parseGitUri(ids, Uri.from({ scheme: 'sidestory-git', authority: u.authority, path: '/a.ts', query: 'HEAD' }) as never)).toBeUndefined();
     expect(isSafeRepoPath('pages/[id].tsx')).toBe(true);
     expect(isSafeRepoPath('a/\u0007b')).toBe(false);
+    expect(isSafeRepoPath(':(literal)x')).toBe(false);
   });
   it('the same repository gets the same id across reloads (the salt is kept)', () => {
     const m = memento();

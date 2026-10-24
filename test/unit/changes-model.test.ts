@@ -5,6 +5,8 @@ import type { ChangeEntry } from '../../src/extension/changes/model.ts';
 import {
   buildTree,
   commitsLabel,
+  countLines,
+  patchCounts,
   countsLabel,
   filterEntries,
   folderLabel,
@@ -162,5 +164,23 @@ describe('20,000 files', () => {
     console.log(`20,000 files: tree ${built.toFixed(1)} ms, filter ${filtered.toFixed(1)} ms, size sort ${sorted.toFixed(1)} ms`);
     expect(built).toBeLessThan(500);
     expect(filtered).toBeLessThan(30);
+  });
+});
+
+describe('counting lines later', () => {
+  it('counts a unified diff, ignoring headers, and says when it is binary', () => {
+    const patch = ['diff --git a/x b/x', 'index 1..2 100644', '--- a/x', '+++ b/x', '@@ -1,3 +1,3 @@', ' a', '-b', '--c', '+B', '+++d', ''].join('\n');
+    expect(patchCounts(patch)).toEqual({ added: 2, removed: 2 });
+    expect(patchCounts('diff --git a/p b/p\nBinary files a/p and b/p differ\n')).toEqual({ added: 0, removed: 0, noText: true });
+    expect(patchCounts('')).toEqual({ added: 0, removed: 0, noText: true });
+  });
+  it('counts lines, with or without a final newline', () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    expect(countLines(enc(''))).toBe(0);
+    expect(countLines(enc('a\nb\n'))).toBe(2);
+    expect(countLines(enc('a\nb'))).toBe(2);
+  });
+  it('a file queued for counting shows an ellipsis', () => {
+    expect(countsLabel({ counting: true })).toBe('…');
   });
 });

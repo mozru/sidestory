@@ -40,7 +40,7 @@ export async function branchDiffersFromBase(timeoutMs = 30_000): Promise<boolean
     const api = exports.getAPI(1);
     const setting = vscode.workspace.getConfiguration('sidestory.changes').get<string>('defaultBase')?.trim();
     const candidates = [
-      ...(setting && REF.test(setting) && !setting.includes('..') ? [setting] : []),
+      ...(setting && REF.test(setting) && !setting.includes('..') && !setting.includes('@{') ? [`refs/heads/${setting}`, `refs/remotes/${setting}`, `refs/remotes/origin/${setting}`] : []),
       'refs/remotes/origin/HEAD',
       'refs/heads/main',
       'refs/heads/master',

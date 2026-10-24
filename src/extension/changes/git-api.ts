@@ -45,6 +45,7 @@ export interface GitRepo {
     readonly onDidChange: vscode.Event<void>;
   };
   getConfig(key: string): Promise<string>;
+  getGlobalConfig?(key: string): Promise<string>;
   getObjectDetails(treeish: string, path: string): Promise<{ mode: string; object: string; size: number }>;
   buffer(ref: string, path: string): Promise<Uint8Array>;
   getCommit(ref: string): Promise<GitCommit>;
@@ -118,8 +119,10 @@ export function refReader(repo: GitRepo): RefReader {
       return mb && FULL_SHA.test(mb) ? mb : undefined;
     },
     remotes: () => {
-      const names = repo.state.remotes.map((r) => r.name);
-      const preferred = repo.state.HEAD?.upstream?.remote ?? (names.includes('origin') ? 'origin' : names[0]);
+      // A remote's name lands in a ref (refs/remotes/<name>/…): only names that are valid ref components.
+      const names = repo.state.remotes.map((r) => r.name).filter((n) => /^[A-Za-z0-9._-]{1,100}$/.test(n) && !n.startsWith('.') && !n.startsWith('-') && !n.endsWith('.lock') && !n.includes('..'));
+      const up = repo.state.HEAD?.upstream?.remote;
+      const preferred = up && names.includes(up) ? up : names.includes('origin') ? 'origin' : names[0];
       return preferred ? [preferred, ...names.filter((n) => n !== preferred)] : names;
     },
   };

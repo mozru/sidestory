@@ -57,7 +57,7 @@ test('a branch with no sidestory: the container, the merge diff as compact folde
   const headers = await page.locator('.part.sidebar .pane-header .title').allTextContents();
   expect(headers.slice(0, 2).map((h) => h.trim())).toEqual(['Changes', 'Sidestories']);
   const mb = inContainer(`cd ${REPO} && git merge-base main feature`).trim().slice(0, 7);
-  await expect.poll(() => description(page)).toBe(`vs main @ ${mb} · 3 commits · uncommitted`);
+  await expect.poll(() => description(page)).toBe(`vs main @ ${mb} · 3 commits`);
   expect(await labels(page)).toEqual(['legacy', 'sleep.ts', 'src/retry', 'backoff.ts', 'jitter.ts', 'retry.ts', 'test', 'retry.test.ts']);
   // Exact with numstat against the working tree (newer VS Code); counted file by file before, where a rename stays uncounted.
   await expect.poll(async () => (await rowInfo(row(page, 'src/retry'))).description).toMatch(/^3 files · \+(25 −3|23 −1 · 1 uncounted)$/);
@@ -86,7 +86,7 @@ test('list mode and sort by size; the filter narrows live and Clear restores', a
   await expect.poll(() => labels(page)).toEqual(['retry.ts', 'backoff.ts']);
   await page.keyboard.press('Enter');
   await expect(changes(page).locator('.message')).toContainText('Filtered by “src/**/*.ts !jitter”: 2 of 5 files');
-  await viewAction(page, 'Clear Changes Filter', changes(page));
+  await viewAction(page, 'Clear Filter', changes(page));
   await expect.poll(async () => (await labels(page)).length).toBe(5);
   await viewAction(page, 'View as Tree', changes(page));
   await expect(row(page, 'src/retry')).toBeVisible();
@@ -136,6 +136,7 @@ test('uncommitted edits and untracked files show up without Refresh; Committed O
   inContainer(`cd ${REPO} && printf 'new\\nfile\\n' > notes.txt && printf '# Fixture\\n\\nEdited.\\n' > README.md`);
   await expect(row(page, 'notes.txt')).toBeVisible({ timeout: 20_000 });
   await expect(row(page, 'notes.txt').locator('.label-description')).toHaveText('+2 · untracked');
+  await expect.poll(() => description(page)).toMatch(/ · 3 commits · \+ uncommitted$/);
   await expect(row(page, 'README.md').locator('.label-description')).toHaveText('+2');
   await command(page, 'Sidestory: Committed Changes Only');
   await expect(row(page, 'notes.txt')).toBeHidden();
@@ -156,7 +157,7 @@ test('the base picker: a commit on the branch narrows the diff; an unknown base 
   const first = inContainer(`cd ${REPO} && git rev-list --reverse main..feature | head -1`).trim();
   await viewAction(page, 'Change Base', changes(page));
   await page.locator('.quick-input-list .monaco-list-row', { hasText: 'Commit…' }).click();
-  await expect(page.locator('.quick-input-widget')).toContainText('Compare with a commit');
+  await expect(page.locator('.quick-input-widget')).toContainText('Compare With a Commit');
   await page.keyboard.type(first.slice(0, 8));
   await page.keyboard.press('Enter');
   await expect.poll(() => description(page)).toContain(`@ ${first.slice(0, 7)} · 2 commits`);

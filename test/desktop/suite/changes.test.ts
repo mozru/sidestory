@@ -48,7 +48,7 @@ export function changesTests(): void {
     it('describes the three-dot comparison and lists only the branch side', async () => {
       const s = await stats();
       const mb = gitOut('merge-base', 'main', 'feature');
-      assert.equal(s.description, `vs main @ ${mb.slice(0, 7)} · 3 commits · uncommitted`);
+      assert.equal(s.description, `vs main @ ${mb.slice(0, 7)} · 3 commits`);
       assert.ok(s.lastRenderMs < 200, `a render took ${s.lastRenderMs} ms`);
     });
 

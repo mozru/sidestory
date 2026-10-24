@@ -19,6 +19,8 @@ export interface ChangeEntry {
   readonly untracked?: boolean;
   /** An open document of this file has unsaved edits (working tree mode). */
   unsaved?: boolean;
+  /** Queued for counting (the view shows "…"). */
+  counting?: boolean;
   /** Counted, but has no text lines changed: binary, a mode change or an empty file (numstat can't tell). */
   noText?: boolean;
 }
@@ -157,7 +159,7 @@ export function buildTree(entries: readonly ChangeEntry[], sort: SortKey = 'path
     for (const f of files) {
       node.files.push(f);
       node.fileCount++;
-      if (sizeOf(f) < 0) node.uncounted++;
+      if (sizeOf(f) < 0 && !f.noText) node.uncounted++;
       node.added += f.added ?? 0;
       node.removed += f.removed ?? 0;
     }
@@ -238,9 +240,9 @@ export function step(length: number, from: number, dir: 1 | -1): { index: number
 const n = (x: number) => x.toLocaleString('en-US');
 
 /** "+23 −11", "+19", "−24", "" (unknown), "no text changes". */
-export function countsLabel(e: { added?: number; removed?: number; noText?: boolean }): string {
+export function countsLabel(e: { added?: number; removed?: number; noText?: boolean; counting?: boolean }): string {
   if (e.noText) return 'no line changes';
-  if (e.added === undefined && e.removed === undefined) return '';
+  if (e.added === undefined && e.removed === undefined) return e.counting ? '…' : '';
   const parts: string[] = [];
   if (e.added) parts.push(`+${n(e.added)}`);
   if (e.removed) parts.push(`−${n(e.removed)}`);
@@ -264,3 +266,27 @@ export function commitsLabel(count: number, capped: boolean): string {
 
 /** The first 7 characters of a commit id. */
 export const short = (sha: string) => sha.slice(0, 7);
+
+/** Lines added and removed in one file's unified diff; a binary file has none. */
+export function patchCounts(patch: string): { added: number; removed: number; noText?: true } {
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('@@')) inHunk = true;
+    else if (line.startsWith('diff --git ')) inHunk = false;
+    else if (!inHunk) {
+      if (/^Binary files .* differ$/.test(line) || line.startsWith('GIT binary patch')) return { added: 0, removed: 0, noText: true };
+    } else if (line[0] === '+') added++;
+    else if (line[0] === '-') removed++;
+  }
+  return added || removed ? { added, removed } : { added, removed, noText: true };
+}
+
+/** Lines in a text file's bytes (a final line without a newline counts). */
+export function countLines(bytes: Uint8Array): number {
+  if (!bytes.length) return 0;
+  let n = 0;
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] === 10) n++;
+  return bytes[bytes.length - 1] === 10 ? n : n + 1;
+}

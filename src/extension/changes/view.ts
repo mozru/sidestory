@@ -7,14 +7,14 @@ import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import { AVAILABLE_KEY } from '../bootstrap-shared.ts';
 import { log } from '../log.ts';
-import { COMMIT_INPUT, isValidBase } from './base.ts';
+import { COMMIT_INPUT, FULL_SHA, isValidBase } from './base.ts';
 import type { Mode, Snapshot } from './comparison.ts';
 import { chooseRepository, Comparison } from './comparison.ts';
 import type { ApiState, GitApi, GitRepo } from './git-api.ts';
-import { gitApi, relPath } from './git-api.ts';
+import { configValue, gitApi, relPath } from './git-api.ts';
 import { ChangeDecorations, emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import type { ChangeEntry, SortKey } from './model.ts';
-import { baseName, commitsLabel, filterEntries, MAX_LISTED, parseFilter, short, SORT_KEYS, step } from './model.ts';
+import { baseName, commitsLabel, countLines, filterEntries, patchCounts, MAX_LISTED, parseFilter, short, SORT_KEYS, step } from './model.ts';
 import type { ChangesNode } from './tree.ts';
 import { ChangesTree } from './tree.ts';
 
@@ -50,6 +50,7 @@ export class ChangesView implements vscode.Disposable {
   readonly view: vscode.TreeView<ChangesNode>;
   private readonly subscriptions: vscode.Disposable[] = [];
   private api: GitApi | undefined;
+  private initializing: Promise<void> = Promise.resolve();
   private comparison: Comparison | undefined;
   private comparisonSubs: vscode.Disposable[] = [];
   private apiSubs: vscode.Disposable[] = [];
@@ -59,7 +60,10 @@ export class ChangesView implements vscode.Disposable {
   /** Our own reveals change the selection: those never open a diff (openOnSelect). */
   private revealing = false;
   private lastOpened: { path: string; at: number } | undefined;
-  private countEpoch = -1;
+  /** The comparison and epoch counted last (epochs restart with each comparison). */
+  private counted: { comparison: Comparison; epoch: number } | undefined;
+  /** The last path opened because the selection moved (openOnSelect): a refresh re-selecting it opens nothing. */
+  private lastSelected: string | undefined;
   private repaintTimer: ReturnType<typeof setTimeout> | undefined;
   /** For tests and the perf smoke: how long the last render took. */
   readonly stats = { renders: 0, lastRenderMs: 0, files: 0 };
@@ -80,13 +84,16 @@ export class ChangesView implements vscode.Disposable {
       vscode.window.tabGroups.onDidChangeTabs(() => this.updateActiveFile()),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.init()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('sidestory.changes.defaultBase')) void this.comparison?.refresh(true);
+        if (e.affectsConfiguration('sidestory.changes.defaultBase') || e.affectsConfiguration('sidestory.changes.includeUncommitted')) {
+          this.syncToggles();
+          if (this.view.visible) void this.comparison?.refresh(true);
+        }
       }),
     );
     this.filterText = this.memento.get<string>(KEYS.filter(this.mode()), '') ?? '';
     this.syncToggles();
     this.setState('loading');
-    void this.init();
+    this.initializing = this.init();
   }
 
   // ---- settings and remembered choices ----
@@ -172,8 +179,10 @@ export class ChangesView implements vscode.Disposable {
     this.comparisonSubs.forEach((d) => d.dispose());
     this.comparisonSubs = [];
     this.comparison = undefined;
+    this.tree.resetExpansion();
     if (!repo) {
       this.tree.set(undefined);
+      setContext('sidestory.changes.hasFiles', false);
       this.updateTitle();
       return;
     }
@@ -207,6 +216,17 @@ export class ChangesView implements vscode.Disposable {
     return this.comparison?.snapshot;
   }
 
+  /** The first answer to "does this branch have changes?", waiting at most `ms` for git (extension.ts's container rule). */
+  async relevantSoon(ms = 30_000): Promise<boolean> {
+    const end = Date.now() + ms;
+    await this.initializing;
+    // The extension that owns the repositories opens them after it starts.
+    while (!this.comparison && this.api && this.api.state !== 'initialized' && Date.now() < end) await new Promise((r) => setTimeout(r, 250));
+    if (!this.comparison) return false;
+    const s = await Promise.race([this.current(), new Promise<undefined>((r) => setTimeout(() => r(undefined), Math.max(0, end - Date.now())))]);
+    return !!s?.entries.length;
+  }
+
   /** Whether the Changes view has something to show here (the container's visibility, §9.1). */
   get relevant(): boolean {
     return !!this.snapshot?.entries.length;
@@ -228,6 +248,7 @@ export class ChangesView implements vscode.Disposable {
     if (st.kind !== 'ready') {
       this.tree.set(undefined);
       this.shownPaths = new Set();
+      setContext('sidestory.changes.hasFiles', false);
       this.setState(st.kind === 'error' ? 'error' : st.kind);
       if (st.kind === 'error') log.warn(`Changes: ${st.message}`);
       this.updateTitle();
@@ -247,7 +268,7 @@ export class ChangesView implements vscode.Disposable {
     });
     this.shownPaths = new Set(snap.entries.map((e) => e.path));
     this.setState(snap.entries.length ? (entries.length ? 'ready' : 'filteredOut') : snap.onBase ? 'onBase' : 'noChanges');
-    setContext('sidestory.changes.active', snap.entries.length > 0);
+    setContext('sidestory.changes.hasFiles', snap.entries.length > 0);
     if (snap.entries.length && this.memento.get(AVAILABLE_KEY) === undefined) {
       // The navigator is useful on any branch with changes: keep the container (§9.1).
       void this.memento.update(AVAILABLE_KEY, 'shown');
@@ -271,7 +292,7 @@ export class ChangesView implements vscode.Disposable {
         st?.kind === 'baseNotFound'
           ? `Base “${name(st.spec)}” isn't in this repository. Fetch it, or pick another.`
           : st?.kind === 'noMergeBase'
-            ? `${name(st.base.label)} and this branch share no history here (a shallow clone? run git fetch --unshallow), or pick another base.`
+            ? `${name(st.base.label)} and this branch share no history here. A shallow clone? Run git fetch --unshallow, or pick another base.`
             : st?.kind === 'error'
               ? `Couldn't compare: ${displayText(st.message, 200)}`
               : undefined;
@@ -281,8 +302,8 @@ export class ChangesView implements vscode.Disposable {
     const parts: string[] = [];
     if (!s.head.name) parts.push(`detached ${short(s.head.sha)}`);
     parts.push(`vs ${name(s.base.label, 48)} @ ${short(s.mergeBase)}`);
-    if (s.commits) parts.push(commitsLabel(s.commits.count, s.commits.capped));
-    if (s.mode === 'workingTree') parts.push('uncommitted');
+    if (s.commits && (s.commits.count || !s.uncommitted)) parts.push(commitsLabel(s.commits.count, s.commits.capped));
+    if (s.uncommitted) parts.push('+ uncommitted');
     view.description = parts.join(' · ');
     const msg: string[] = [];
     if (c.busy) msg.push('Rebase or merge in progress: showing the last state.');
@@ -291,8 +312,8 @@ export class ChangesView implements vscode.Disposable {
       msg.push(`${name(s.head.name)} and ${name(s.head.upstream)} have diverged (${s.head.ahead} ahead, ${s.head.behind} behind): showing your local branch.`);
     }
     if (s.total > s.entries.length) msg.push(`Showing ${MAX_LISTED.toLocaleString('en-US')} of ${s.total.toLocaleString('en-US')} changed files.`);
-    if (s.unsafe) msg.push(`${s.unsafe} changed ${s.unsafe === 1 ? 'file has a path' : 'files have paths'} with control characters, “..” or “.git” in it: not listed.`);
-    if (s.partialClone) msg.push('Partial clone: line counts are off, since computing them could download every file.');
+    if (s.unsafe) msg.push(`${s.unsafe} changed ${s.unsafe === 1 ? 'file has a path' : 'files have paths'} with control characters, “..”, “.git” or a backslash in them: not listed.`);
+    if (s.partialClone) msg.push('Partial clone: no line counts (computing them could download every file).');
     if (this.filterText) {
       const shown = this.tree.order.length;
       msg.push(`Filtered by “${displayText(this.filterText, 60)}”: ${shown.toLocaleString('en-US')} of ${s.entries.length.toLocaleString('en-US')} files`);
@@ -302,19 +323,25 @@ export class ChangesView implements vscode.Disposable {
 
   /** Counts lines the list didn't come with, a few files at a time and in view order, then repaints. */
   private countLater(snap: Snapshot, epoch: number): void {
-    if (this.countEpoch === epoch || snap.partialClone) return;
-    this.countEpoch = epoch;
+    const c = this.comparison;
+    if (!c || (this.counted?.comparison === c && this.counted.epoch === epoch) || snap.partialClone) return;
+    this.counted = { comparison: c, epoch };
+    const live = () => this.comparison === c && c.epoch === epoch;
     // Renames and copies: a one-path patch can't pair the two sides, so they stay uncounted here.
     // What the view shows first, then files the filter hides.
     const todo = [...new Set([...this.tree.order, ...snap.entries])]
       .filter((e) => e.added === undefined && !e.noText && (e.untracked || e.status === 'A' || e.status === 'M' || e.status === 'D'))
       .slice(0, COUNT_LATER.files);
     if (!todo.length) return;
+    for (const e of todo) e.counting = true;
     const repo = snap.repo;
+    // A per-file `git diff` runs the user's diff.external: never in the background then (§20.2).
+    const external = Promise.all([configValue(repo, 'diff.external'), repo.getGlobalConfig?.('diff.external').catch(() => '')]).then((v) => v.some((x) => !!x?.trim()));
     let next = 0;
     const work = async () => {
-      while (next < todo.length && this.comparison?.epoch === epoch) {
+      while (next < todo.length && live()) {
         const e = todo[next++]!;
+        e.counting = false;
         try {
           const uri = vscode.Uri.joinPath(repo.rootUri, ...e.path.split('/'));
           if (e.untracked) {
@@ -325,15 +352,25 @@ export class ChangesView implements vscode.Disposable {
             else e.added = countLines(bytes);
             e.removed = 0;
           } else {
+            if (await external) continue;
+            // At most 2 MB on the side that has the file: a patch is read whole.
+            const size = snap.mode === 'workingTree' && e.status !== 'D'
+              ? (await vscode.workspace.fs.stat(uri)).size
+              : (await repo.getObjectDetails(e.status === 'D' ? snap.mergeBase : snap.head.sha, uri.fsPath)).size;
+            if (size > COUNT_LATER.bytes) continue;
             const patch = snap.mode === 'workingTree' ? await repo.diffWith(snap.mergeBase, uri.fsPath) : await repo.diffBetween(snap.mergeBase, snap.head.sha, uri.fsPath);
-            if (this.comparison?.epoch !== epoch) return;
+            if (!live()) return;
             Object.assign(e, patchCounts(patch));
           }
+          if (!e.unsaved) c.remember(e.path, { added: e.added, removed: e.removed, noText: e.noText });
           this.scheduleRepaint();
         } catch {
           // gone or unreadable: no count
+        } finally {
+          this.scheduleRepaint();
         }
       }
+      for (const e of todo) e.counting = false;
     };
     for (let i = 0; i < COUNT_LATER.parallel; i++) void work();
   }
@@ -342,7 +379,7 @@ export class ChangesView implements vscode.Disposable {
     this.repaintTimer ??= setTimeout(() => {
       this.repaintTimer = undefined;
       this.tree.repaint();
-    }, 250);
+    }, 500);
   }
 
   /**
@@ -372,7 +409,7 @@ export class ChangesView implements vscode.Disposable {
       const g = parseGitUri(this.ids, uri);
       if (!g || g.repo !== s.repo) return undefined;
       // The left side of a rename names the old path.
-      return s.entries.find((e) => e.oldPath === g.path)?.path ?? g.path;
+      return (g.sha === s.mergeBase ? s.entries.find((e) => e.oldPath === g.path)?.path : undefined) ?? g.path;
     }
     if (uri.scheme === EMPTY_SCHEME) return uri.path.slice(1);
     return undefined;
@@ -416,6 +453,8 @@ export class ChangesView implements vscode.Disposable {
     if (this.revealing || selection.length !== 1 || selection[0]!.kind !== 'file') return;
     if (!vscode.workspace.getConfiguration('sidestory.changes').get<boolean>('openOnSelect', false)) return;
     const e = selection[0]!.entry;
+    if (this.lastSelected === e.path) return;
+    this.lastSelected = e.path;
     // A click also runs the item's command: open once.
     setTimeout(() => {
       if (this.lastOpened?.path === e.path && Date.now() - this.lastOpened.at < 500) return;
@@ -446,7 +485,7 @@ export class ChangesView implements vscode.Disposable {
     const r = step(order.length, fromPath ? order.findIndex((e) => e.path === fromPath) : -1, dir);
     if (!r) return;
     const e = order[r.index]!;
-    if (r.wrapped) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first changed file' : 'Back to the last changed file', 3000);
+    if (r.wrapped && order.length > 1) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first changed file' : 'Back to the last changed file', 3000);
     await this.openDiff(e);
     await this.reveal(e.path);
   }
@@ -532,7 +571,7 @@ export class ChangesView implements vscode.Disposable {
         { key: 'status', label: 'By Status', description: 'added, modified, renamed, deleted' },
         { key: 'size', label: `By Size of Change${partial}`, description: 'lines added plus removed' },
       ];
-      for (const i of items) if (i.key === current) i.label = `$(check) ${i.label}`;
+      for (const i of items) if (i.key === current) i.description = i.description ? `current · ${i.description}` : 'current';
       const pick = await vscode.window.showQuickPick(items, { title: 'Sort Changed Files' });
       if (!pick) return;
       await this.memento.update(KEYS.sort, pick.key);
@@ -566,8 +605,9 @@ export class ChangesView implements vscode.Disposable {
     const before = this.filterText;
     const box = vscode.window.createInputBox();
     box.title = 'Filter Changed Files';
-    box.placeholder = 'Part of a path, a glob (src/**/*.ts, *.md), or !text to exclude';
+    box.placeholder = 'Part of a path, a glob (src/**/*.ts, *.md), or !text to exclude; every term must match';
     box.value = before;
+    box.ignoreFocusOut = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let accepted = false;
     return new Promise((resolve) => {
@@ -595,7 +635,7 @@ export class ChangesView implements vscode.Disposable {
   private async openAll(): Promise<void> {
     const s = await this.current();
     if (!s) return;
-    const files = this.tree.order.filter((e) => !e.noText);
+    const files = this.tree.order.filter((e) => !e.noText || e.unsaved);
     if (!files.length) {
       vscode.window.setStatusBarMessage('No changed files to open', 3000);
       return;
@@ -629,24 +669,33 @@ export class ChangesView implements vscode.Disposable {
     const branch = head?.name && isValidBase(head.name) ? head.name : 'HEAD';
     type Item = vscode.QuickPickItem & { spec?: string; kind2?: 'default' | 'commit' };
     const qp = vscode.window.createQuickPick<Item>();
-    qp.title = 'Compare with';
-    qp.placeholder = 'The diff is always merge-base(base, this branch) → this branch';
+    qp.title = 'Compare With';
+    qp.placeholder = 'Pick a branch, tag or commit to compare with';
     qp.busy = true;
     qp.matchOnDescription = true;
+    let hidden = false;
+    const chosenP = new Promise<Item | undefined>((resolve) => {
+      qp.onDidAccept(() => resolve(qp.selectedItems[0]));
+      qp.onDidHide(() => {
+        hidden = true;
+        resolve(undefined);
+      });
+    });
     qp.show();
+    const currentSpec = this.picks().find(([k]) => k === this.pickKey(repo, branch))?.[1];
     const items: Item[] = [];
     const def = await c.defaultBase().catch(() => undefined);
     const mb = def && head?.commit ? await repo.getMergeBase(def.sha, head.commit).catch(() => undefined) : undefined;
     items.push({
       label: `$(git-compare) Merge-base with ${escapeIcons(name(def?.label ?? 'main'))}`,
-      description: mb ? short(mb) : def ? '' : 'not found',
-      detail: def ? 'The default base' : 'No default base here: pick one below',
+      description: mb && FULL_SHA.test(mb) ? short(mb) : def ? '' : 'not found',
+      detail: def ? `The default base. The diff is always from the merge-base${currentSpec ? '' : ' · current'}` : 'No default base here: pick one below',
       kind2: 'default',
     });
     const recent = (this.memento.get<string[]>(KEYS.recent) ?? []).filter((x) => typeof x === 'string' && isValidBase(x));
     if (recent.length) {
       items.push({ label: 'Recent', kind: vscode.QuickPickItemKind.Separator });
-      for (const r of recent) items.push({ label: escapeIcons(name(r, 100)), spec: r });
+      for (const r of recent) items.push({ label: escapeIcons(name(r, 100)), description: r === currentSpec ? 'current' : undefined, spec: r });
     }
     const refs = async (pattern: string, count: number) => {
       if (repo.getRefs) return repo.getRefs({ pattern, count, sort: 'committerdate' }).catch(() => []);
@@ -657,19 +706,20 @@ export class ChangesView implements vscode.Disposable {
       const valid = list.filter((r) => r.name && isValidBase(r.name) && !r.name.endsWith('/HEAD') && r.name !== head?.name);
       if (!valid.length) return;
       items.push({ label, kind: vscode.QuickPickItemKind.Separator });
-      for (const r of valid) items.push({ label: escapeIcons(name(r.name!, 100)), description: r.commit ? short(r.commit) : undefined, spec: r.name! });
+      for (const r of valid) items.push({ label: escapeIcons(name(r.name!, 100)), description: [r.name === currentSpec ? 'current' : '', r.commit && FULL_SHA.test(r.commit) ? short(r.commit) : ''].filter(Boolean).join(' · ') || undefined, spec: r.name! });
     };
     group('Branches', locals);
     group('Remote Branches', remotes);
     group('Tags', tags);
     items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
     items.push({ label: '$(git-commit) Commit…', detail: 'A commit id on this branch: "the changes since that commit"', kind2: 'commit' });
+    if (hidden) {
+      qp.dispose();
+      return;
+    }
     qp.items = items;
     qp.busy = false;
-    const chosen = await new Promise<Item | undefined>((resolve) => {
-      qp.onDidAccept(() => resolve(qp.selectedItems[0]));
-      qp.onDidHide(() => resolve(undefined));
-    });
+    const chosen = await chosenP;
     qp.dispose();
     if (!chosen) return;
     let spec: string | undefined;
@@ -685,7 +735,7 @@ export class ChangesView implements vscode.Disposable {
   /** "Commit…": hex only, resolved to a full id that starts with the input, and an ancestor of HEAD. */
   private async askCommit(repo: GitRepo): Promise<string | undefined> {
     const input = await vscode.window.showInputBox({
-      title: 'Compare with a commit',
+      title: 'Compare With a Commit',
       prompt: 'A commit id (at least 4 hex digits) in this branch’s history',
       validateInput: (v) => (COMMIT_INPUT.test(v.trim()) ? undefined : 'Enter 4 to 64 hex digits'),
     });
@@ -712,7 +762,7 @@ export class ChangesView implements vscode.Disposable {
     if (!api || api.repositories.length < 2) return;
     const pick = await vscode.window.showQuickPick(
       api.repositories.map((r) => ({ label: escapeIcons(name(baseName(r.rootUri.path))), description: escapeIcons(name(vscode.workspace.asRelativePath(r.rootUri), 120)), repo: r })),
-      { title: 'Compare which repository?' },
+      { title: 'Change Repository' },
     );
     if (!pick) return;
     await this.memento.update(KEYS.repo, pick.repo.rootUri.toString());
@@ -724,7 +774,10 @@ export class ChangesView implements vscode.Disposable {
     const repo = this.comparison?.repo;
     if (!repo?.fetch) return;
     try {
-      await vscode.window.withProgress({ location: { viewId: VIEW_ID }, title: 'Fetching…' }, () => repo.fetch!({}));
+      const st = this.comparison?.state;
+      const spec = st?.kind === 'baseNotFound' ? st.spec : st?.kind === 'ready' ? st.snapshot.base.spec : undefined;
+      const remote = spec && repo.state.remotes.find((r) => spec.startsWith(`${r.name}/`))?.name;
+      await vscode.window.withProgress({ location: { viewId: VIEW_ID }, title: 'Fetching…' }, () => repo.fetch!(remote ? { remote } : {}));
     } catch (e) {
       void vscode.window.showErrorMessage(`Fetch failed: ${plainForMessage((e as Error).message ?? String(e))}`);
     }
@@ -737,28 +790,4 @@ export class ChangesView implements vscode.Disposable {
     this.comparisonSubs.forEach((d) => d.dispose());
     this.subscriptions.forEach((d) => d.dispose());
   }
-}
-
-/** Lines added and removed in one file's unified diff; a binary file has none. */
-export function patchCounts(patch: string): { added: number; removed: number; noText?: true } {
-  let added = 0;
-  let removed = 0;
-  let inHunk = false;
-  for (const line of patch.split('\n')) {
-    if (line.startsWith('@@')) inHunk = true;
-    else if (line.startsWith('diff --git ')) inHunk = false;
-    else if (!inHunk) {
-      if (/^Binary files .* differ$/.test(line) || line.startsWith('GIT binary patch')) return { added: 0, removed: 0, noText: true };
-    } else if (line[0] === '+') added++;
-    else if (line[0] === '-') removed++;
-  }
-  return added || removed ? { added, removed } : { added, removed, noText: true };
-}
-
-/** Lines in a text file's bytes (a final line without a newline counts). */
-export function countLines(bytes: Uint8Array): number {
-  if (!bytes.length) return 0;
-  let n = 0;
-  for (let i = 0; i < bytes.length; i++) if (bytes[i] === 10) n++;
-  return bytes[bytes.length - 1] === 10 ? n : n + 1;
 }

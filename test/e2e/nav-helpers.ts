@@ -40,10 +40,14 @@ export async function expand(row: Locator): Promise<void> {
 export async function viewAction(page: Page, title: string, pane: Locator = sidebar(page)): Promise<void> {
   const header = pane.locator('.pane-header');
   const own = header.locator(`.actions-container a[aria-label^="${title}"]`).first();
-  await header.hover().catch(() => {});
-  if (await own.count()) {
-    await own.click();
-    return;
+  if (await header.count()) {
+    // A pane's actions show while the pointer is over its header; VS Code may render them only then.
+    await header.hover();
+    await expect(own).toBeAttached({ timeout: 2_000 }).catch(() => {});
+    if (await own.count()) {
+      await own.click({ force: !(await own.isVisible()) });
+      return;
+    }
   }
   const bar = page.locator('.part.sidebar .composite.title');
   await bar.hover();

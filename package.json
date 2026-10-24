@@ -201,7 +201,7 @@
       },
       {
         "command": "sidestory.showChanges",
-        "title": "Show Changes",
+        "title": "Show Branch Changes",
         "category": "Sidestory",
         "icon": "$(git-compare)"
       },
@@ -237,7 +237,7 @@
       },
       {
         "command": "sidestory.changes.clearFilter",
-        "title": "Clear Changes Filter",
+        "title": "Clear Filter",
         "category": "Sidestory",
         "icon": "$(filter-filled)"
       },
@@ -279,7 +279,7 @@
       },
       {
         "command": "sidestory.changes.collapseAll",
-        "title": "Collapse All Changed Folders",
+        "title": "Collapse All",
         "category": "Sidestory",
         "icon": "$(collapse-all)"
       },
@@ -353,13 +353,13 @@
         "command": "sidestory.changes.nextFile",
         "key": "ctrl+alt+pagedown",
         "mac": "ctrl+cmd+down",
-        "when": "sidestory.changes.active && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
+        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.hasFilesFileChanged)"
       },
       {
         "command": "sidestory.changes.prevFile",
         "key": "ctrl+alt+pageup",
         "mac": "ctrl+cmd+up",
-        "when": "sidestory.changes.active && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
+        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.hasFilesFileChanged)"
       }
     ],
     "configuration": {
@@ -618,43 +618,43 @@
         },
         {
           "command": "sidestory.changes.nextFile",
-          "when": "sidestory.changes.active"
+          "when": "sidestory.changes.hasFiles"
         },
         {
           "command": "sidestory.changes.prevFile",
-          "when": "sidestory.changes.active"
+          "when": "sidestory.changes.hasFiles"
         },
         {
           "command": "sidestory.changes.openAll",
-          "when": "sidestory.changes.active"
+          "when": "sidestory.changes.hasFiles"
         },
         {
           "command": "sidestory.changes.pickBase",
-          "when": "sidestory.changes.state"
+          "when": "sidestory.changes.state && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo"
         },
         {
           "command": "sidestory.changes.sort",
-          "when": "sidestory.changes.state"
+          "when": "sidestory.changes.hasFiles"
         },
         {
           "command": "sidestory.changes.filter",
-          "when": "sidestory.changes.state"
+          "when": "sidestory.changes.hasFiles"
         },
         {
           "command": "sidestory.changes.refresh",
-          "when": "sidestory.changes.state"
+          "when": "sidestory.changes.state && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo"
         },
         {
           "command": "sidestory.changes.fetch",
-          "when": "sidestory.changes.state"
+          "when": "false"
         },
         {
           "command": "sidestory.changes.includeUncommitted",
-          "when": "sidestory.changes.state && !sidestory.changes.includeUncommitted"
+          "when": "sidestory.changes.state && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo && !sidestory.changes.includeUncommitted"
         },
         {
           "command": "sidestory.changes.committedOnly",
-          "when": "sidestory.changes.state && sidestory.changes.includeUncommitted"
+          "when": "sidestory.changes.state && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo && sidestory.changes.includeUncommitted"
         }
       ],
       "editor/context": [
@@ -699,12 +699,12 @@
         },
         {
           "command": "sidestory.changes.pickBase",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo",
           "group": "navigation@1"
         },
         {
           "command": "sidestory.changes.filter",
-          "when": "view == sidestory.changes && !sidestory.changes.filtered",
+          "when": "view == sidestory.changes && !sidestory.changes.filtered && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "navigation@2"
         },
         {
@@ -714,37 +714,37 @@
         },
         {
           "command": "sidestory.changes.viewAsList",
-          "when": "view == sidestory.changes && !sidestory.changes.listMode",
+          "when": "view == sidestory.changes && !sidestory.changes.listMode && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "navigation@3"
         },
         {
           "command": "sidestory.changes.viewAsTree",
-          "when": "view == sidestory.changes && sidestory.changes.listMode",
+          "when": "view == sidestory.changes && sidestory.changes.listMode && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "navigation@3"
         },
         {
           "command": "sidestory.changes.refresh",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && sidestory.changes.state != untrusted && sidestory.changes.state != missing && sidestory.changes.state != disabled && sidestory.changes.state != noRepo",
           "group": "navigation@4"
         },
         {
           "command": "sidestory.changes.openAll",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "1_open@1"
         },
         {
           "command": "sidestory.changes.nextFile",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "1_open@2"
         },
         {
           "command": "sidestory.changes.prevFile",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "1_open@3"
         },
         {
           "command": "sidestory.changes.sort",
-          "when": "view == sidestory.changes",
+          "when": "view == sidestory.changes && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "2_view@1"
         },
         {
@@ -759,7 +759,7 @@
         },
         {
           "command": "sidestory.changes.collapseAll",
-          "when": "view == sidestory.changes && !sidestory.changes.listMode",
+          "when": "view == sidestory.changes && !sidestory.changes.listMode && (sidestory.changes.state == ready || sidestory.changes.state == filteredOut)",
           "group": "2_view@3"
         }
       ],
