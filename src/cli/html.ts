@@ -5,8 +5,6 @@
 // worked out only for what is reported. Lines are 1-based.
 import { HtmlTokenizer, TreeBuilder, type StartTag } from '../core/html-scan.ts';
 
-export { decodeEntities } from '../core/html-scan.ts';
-
 export interface Element {
   name: string;
   attrs: Map<string, string>;

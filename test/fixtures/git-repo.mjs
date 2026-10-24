@@ -1,4 +1,4 @@
-// The git fixture for the Changes view (docs/CHANGES-PLAN.md §16.1), built deterministically: fixed author, dates
+// The git fixture for branch coverage and steps in diffs (docs/CHANGES-PLAN.md §16.1), built deterministically: fixed author, dates
 // and no system or global config. `main` has an initial commit; `feature` (checked out) adds, modifies, deletes
 // and renames files in three commits; then `main` moves on (a new file, an edit) after the fork, so only a
 // three-dot merge diff (merge-base → feature) leaves main's later work out.

@@ -66,7 +66,7 @@ for (const eol of ['lf', 'crlf']) {
   }
 }
 
-// The Changes view (docs/CHANGES-PLAN.md §16.4): the fixture repository with 1,500 more changed files, trusted, through
+// Branch comparison (docs/CHANGES-PLAN.md §16.4): the fixture repository with 1,500 more changed files, trusted, through
 // the real git extension.
 if (!only || only === 'changes') {
   const base = mkdtempSync(join(tmpdir(), 'cx desktop ü-'));
@@ -76,7 +76,7 @@ if (!only || only === 'changes') {
   const userData = join(base, 'user-data');
   mkdirSync(join(userData, 'User'), { recursive: true });
   writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never' }));
-  console.log(`\n== desktop VS Code ${version}, ${process.platform}, the Changes view ==`);
+  console.log(`\n== desktop VS Code ${version}, ${process.platform}, branch comparison ==`);
   try {
     await runTests({
       version,

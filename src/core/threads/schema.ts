@@ -2,7 +2,7 @@
 // everything is validated and size-limited here, and nothing from a file is ever used as a path.
 import { z } from 'zod';
 import { displayText } from '../display-text.ts';
-import { anchorIdSchema, explainerNameSchema, isSafeRelativePath, ULID as MANIFEST_ULID } from '../manifest.ts';
+import { anchorIdSchema, isSafeRelativePath, ULID as MANIFEST_ULID } from '../manifest.ts';
 
 /** Crockford base32, 26 characters: 48 bits of milliseconds, then 80 random bits. */
 const ULID = '[0-9A-HJKMNP-TV-Z]{26}';
@@ -13,7 +13,6 @@ export const EVENT_ID_RE = new RegExp(`^e_${ULID}$`);
 export const SEND_ID_RE = new RegExp(`^s_${ULID}$`);
 export const SERVER_ID_RE = new RegExp(`^srv_${ULID}$`);
 export const isThreadId = (s: unknown): s is string => typeof s === 'string' && THREAD_ID_RE.test(s);
-export const isEventId = (s: unknown): s is string => typeof s === 'string' && EVENT_ID_RE.test(s);
 
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -261,6 +260,3 @@ export function canonicalJson(v: unknown): string {
     .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
     .join(',')}}`;
 }
-
-/** A sidestory folder name, as thread locations name it (§3.1). */
-export const sidestoryNameSchema = explainerNameSchema;

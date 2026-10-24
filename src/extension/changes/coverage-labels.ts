@@ -47,7 +47,6 @@ export function fileDecoration(f: FileCoverage, steps: readonly string[] = []): 
 
 /** Why a file counts as one change without lines (coverage's `WholeKind`), in This File's words. */
 export const WHOLE_WORDS = { binary: 'binary file', link: 'symlink', submodule: 'submodule', tooLarge: 'too large', unsupported: 'unsupported path', archive: 'archived sidestory file', lfs: 'Git LFS file' } as const;
-export type WholeKindWord = keyof typeof WHOLE_WORDS;
 
 /** The status bar line when Next/Previous Unexplained Change finds nothing left to open. */
 export function everyChangeMessage(r: { incomplete: boolean; unsupportedLeft?: readonly string[] }): string {
@@ -60,10 +59,6 @@ export function everyChangeMessage(r: { incomplete: boolean; unsupportedLeft?: r
 export function changeLabel(b: ChangeBlock): string {
   if (b.new) return `L${span(b.new)}`;
   return b.old ? `L${span(b.old)} (removed)` : `L${b.newAt}`;
-}
-
-export function changeCounts(b: ChangeBlock): string {
-  return [b.added ? `+${b.added}` : '', b.removed ? `−${b.removed}` : ''].filter(Boolean).join(' ');
 }
 
 /** The kind the "Explain This Change" prompt names. */

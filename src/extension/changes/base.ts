@@ -121,9 +121,6 @@ export async function remoteDefault(reader: RefReader, remote: string, others: (
   return undefined;
 }
 
-/** The "Commit…" input (§9.4): 4–64 hex digits, before anything reaches git. */
-export const COMMIT_INPUT = /^[0-9a-fA-F]{4,64}$/;
-
 /** A sidestory's `base` the comparison may take (§11.4): a symbolic name, never a commit id that could hide most of the branch. */
 export const isStoryBase = (spec: string): boolean => isValidBase(spec) && !FULL_SHA.test(spec);
 

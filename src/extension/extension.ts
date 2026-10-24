@@ -17,7 +17,7 @@ import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
-import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
+import { createPanel, panelOptions } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
 import { ThisFileView } from './this-file.ts';
 import { PreparedTextCache } from './prepared-cache.ts';
@@ -74,7 +74,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const selectionEditor = () =>
     vscode.window.activeTextEditor ?? (lastTextEditor && vscode.window.visibleTextEditors.includes(lastTextEditor) ? lastTextEditor : undefined);
 
-  /** Where a selection in a diff's virtual side is (set once the Changes view exists, §7.6). */
+  /** Where a selection in a diff's virtual side is (set once the changes layer is up, §7.6). */
   let selectionSides: SelectionSide | undefined;
   const reanchor = async (ref: ExplainerRef, anchorId: string, confirm: boolean) => {
     try {

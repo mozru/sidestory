@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { explainerNameSchema } from '../core/manifest.ts';
 import { reduceThread, type Thread, type TrustedEvent } from '../core/threads/reduce.ts';
 import { CAPS, EVENT_ID_RE, isThreadId, parseEvent, serializeEvent, type AuthorKind, type Tier, type ThreadEvent } from '../core/threads/schema.ts';
-import { exists, listDir, mkdirsNoFollow, readSmall, realInside, retrying, UnsafePathError, writeNoReplace } from './fsx.ts';
+import { listDir, mkdirsNoFollow, readSmall, realInside, retrying, UnsafePathError, writeNoReplace } from './fsx.ts';
 import { hashText, type Ledger } from './ledger.ts';
 
 export type Scope = { kind: 'sidestory'; name: string } | { kind: 'code' } | { kind: 'review'; slug: string };

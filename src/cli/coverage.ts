@@ -1,10 +1,10 @@
-// `check.cjs --coverage` (docs/CHANGES-PLAN.md §13.1): the branch's merge diff, as the Changes view counts it, and
+// `check.cjs --coverage` (docs/CHANGES-PLAN.md §13.1): the branch's merge diff, as the extension counts it, and
 // which of its changes the sidestories that belong to it explain. Git runs only through src/cli/git.ts (§13.2);
 // changes, coverage and membership are the shared core (src/core/hunks.ts, coverage.ts, membership.ts), so the
 // checker and the extension agree. The checker in CI is authoritative (§4.1).
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
-import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
+import { coverage as computeCoverage, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
 import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';

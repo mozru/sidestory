@@ -3,7 +3,7 @@
 // trusted input in host chrome. What the host sends carries cleaned strings, trust labels and our own enums.
 import { z } from 'zod';
 import { anchorIdSchema } from '../core/manifest.ts';
-import { CAPS, EVENT_ID_RE, SEND_ID_RE, SERVER_ID_RE, THREAD_ID_RE, type Trust } from '../core/threads/schema.ts';
+import { CAPS, EVENT_ID_RE, THREAD_ID_RE, type Trust } from '../core/threads/schema.ts';
 
 export type DeliveryState =
   | 'sending'
@@ -108,8 +108,7 @@ export type CommentsFromWebview =
   | { type: 'threadAction'; thread: string; action: 'resolve' | 'reopen' | 'share' | 'local' | 'delete' | 'copyPrompt' | 'copyMarkdown' | 'showCode' }
   | { type: 'threadRead'; threads: string[] }
   | { type: 'deliveryAction'; event: string; action: DeliveryAction }
-  | { type: 'pickSession' }
-  | { type: 'sendCancel'; send: string };
+  | { type: 'pickSession' };
 
 const body = z.string().min(1).max(CAPS.bodyChars);
 const threadId = z.string().regex(THREAD_ID_RE);
@@ -124,10 +123,7 @@ export const commentsFromWebviewSchemas = [
   z.object({ type: z.literal('threadRead'), threads: z.array(threadId).max(200) }),
   z.object({ type: z.literal('deliveryAction'), event: eventId, action: z.enum(['copyPrompt', 'sendAgain', 'chooseSession', 'howTo', 'sendElsewhere', 'markAnswered', 'stopWaiting']) }),
   z.object({ type: z.literal('pickSession') }),
-  z.object({ type: z.literal('sendCancel'), send: z.string().regex(SEND_ID_RE) }),
 ] as const;
 
-export const isServerId = (s: string) => SERVER_ID_RE.test(s);
-
-const COMMENT_TYPES = new Set(['commentCreate', 'commentReply', 'commentEdit', 'commentRetract', 'threadAction', 'threadRead', 'deliveryAction', 'pickSession', 'sendCancel']);
+const COMMENT_TYPES = new Set(['commentCreate', 'commentReply', 'commentEdit', 'commentRetract', 'threadAction', 'threadRead', 'deliveryAction', 'pickSession']);
 export const isCommentsMessage = (m: { type: string }): m is CommentsFromWebview => COMMENT_TYPES.has(m.type);

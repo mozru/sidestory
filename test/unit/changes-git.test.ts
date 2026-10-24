@@ -1,4 +1,4 @@
-// The Changes view's git side (docs/CHANGES-PLAN.md §4.3–§4.5, §16.1 base-resolve, changes-comparison, git-fs): the
+// Branch comparison's git side (docs/CHANGES-PLAN.md §4.3–§4.5, §16.1 base-resolve, changes-comparison, git-fs): the
 // base grammar and resolution, the merge diff against a real git fixture (read through a stand-in for the vscode.git
 // API that runs the same git commands the git extension does), the recompute rules, and the read-only provider.
 import { execFileSync } from 'node:child_process';

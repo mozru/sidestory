@@ -15,7 +15,7 @@ import { parseCodeTarget, type CodeLink } from '../shared/code-link.ts';
 import { matchProviderSymbol, type LinkResolution, type ProviderSymbol } from './code-paths.ts';
 import { MAX_CODE_BYTES } from './explainers.ts';
 
-export { checkCodePath, matchProviderSymbol, OpenCodeGate, type LinkResolution, type PathCheck } from './code-paths.ts';
+export { checkCodePath, matchProviderSymbol, OpenCodeGate, type LinkResolution } from './code-paths.ts';
 
 /** Symbol providers get this long; then the symbol counts as unavailable. */
 export const PROVIDER_TIMEOUT_MS = 2000;

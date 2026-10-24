@@ -79,7 +79,7 @@ export interface SessionHost {
   comments?: { handle(s: ExplainerSession, m: CommentsFromWebview): boolean; onInit(s: ExplainerSession): void };
 }
 
-/** What a session with a `base` needs from the Changes view. */
+/** What a session with a `base` needs from branch comparison. */
 export interface SessionDiffs {
   /**
    * The comparison when `base` gives its merge-base and the sidestory folder `dir` is in its repository (§11.4);

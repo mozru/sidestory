@@ -60,8 +60,6 @@ export function statusLetter(status: number): ChangeStatus | undefined {
   }
 }
 
-export const STATUS_NAMES: Record<ChangeStatus, string> = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed', C: 'Copied' };
-
 /** At most this many changed files are listed (sorted by path), docs/CHANGES-PLAN.md §4.6. */
 export const MAX_LISTED = 20_000;
 

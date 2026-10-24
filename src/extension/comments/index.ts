@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { ANSWER_WAITING_PROMPT } from '../../core/threads/prompt.ts';
 import { mkdirsNoFollow, readSmall, writeReplace } from '../../comments/fsx.ts';
 import type { CommentsFromWebview } from '../../shared/comments-protocol.ts';
-import type { ExplainerRef } from '../explainers.ts';
 import type { SidestoryIndex } from '../nav/index.ts';
 import { claudeCommandText, showHowTo } from './commands-text.ts';
 import { CommentsController } from './controller.ts';
@@ -196,5 +195,3 @@ require(ok[0].path);
 `;
   await writeReplace(bin, 'sidestory-mcp.cjs', launcher, 0o644);
 }
-
-export type { ExplainerRef };
