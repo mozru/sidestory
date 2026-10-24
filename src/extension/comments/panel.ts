@@ -32,6 +32,7 @@ export class CommentsPanels implements vscode.Disposable {
   private readonly sessions = new Set<CommentsSession>();
   private readonly views = new Map<CommentsSession, Map<string, Entry>>();
   private readonly timers = new Map<CommentsSession, ReturnType<typeof setTimeout>>();
+  private readonly lastSent = new Map<CommentsSession, string>();
   private readonly sub: vscode.Disposable;
 
   constructor(service: CommentService, deps: PanelDeps) {
@@ -53,6 +54,7 @@ export class CommentsPanels implements vscode.Disposable {
       dispose: () => {
         this.sessions.delete(s);
         this.views.delete(s);
+        this.lastSent.delete(s);
         clearTimeout(this.timers.get(s));
       },
     };
@@ -60,6 +62,7 @@ export class CommentsPanels implements vscode.Disposable {
 
   /** The page was (re)built or switched sidestories: send it the threads. */
   onInit(s: CommentsSession): void {
+    this.lastSent.delete(s); // a rebuilt page has nothing
     this.schedule(s, 0);
   }
 
@@ -116,6 +119,10 @@ export class CommentsPanels implements vscode.Disposable {
       restricted: !vscode.workspace.isTrusted,
       ...(local.ok ? {} : { localBlocked: local.why }),
     };
+    // Skip a post that would change nothing (the backstop polls while a send is in flight).
+    const json = JSON.stringify({ threads, context });
+    if (this.lastSent.get(s) === json) return;
+    this.lastSent.set(s, json);
     s.postMessage({ type: 'threads', dir: s.ref.dir.toString(), threads, context });
   }
 
@@ -135,6 +142,7 @@ export class CommentsPanels implements vscode.Disposable {
         retracted: c.retracted,
         toClaude: c.to === 'claude',
         ...(c.trust === 'claude' && c.edited ? { editedChips: c.edited } : {}),
+        ...(c.trust === 'local_user' && c.to === 'claude' && c.changed && this.service.wasSent(c.id) ? { editedAfterSend: true } : {}),
         ...(c.trust === 'local_user' && c.to === 'claude' ? { delivery: await this.service.delivery(e, c.id) } : {}),
       });
     }
@@ -155,7 +163,14 @@ export class CommentsPanels implements vscode.Disposable {
       waiting: this.service.isWaiting(e),
       canReply: true,
       canDelete: e.location.tier === 'local',
+      ...(await this.threadSession(e)),
     };
+  }
+
+  /** The session a send in this thread would go to (the send button names it). */
+  private async threadSession(e: Entry): Promise<{ session?: string }> {
+    const r = await this.service.routeFor(e.root, e.thread.id).catch(() => undefined);
+    return r?.route ? { session: this.service.sessionLabel(r.route) } : {};
   }
 
   /** Handles a comments message from the panel; true when it was one. */
@@ -180,6 +195,7 @@ export class CommentsPanels implements vscode.Disposable {
         if (!s.stepIds().includes(m.step)) return;
         const tier = vscode.workspace.getConfiguration('sidestory.comments').get<string>('defaultLocation') === 'shared' ? 'shared' : 'local';
         const location: Location = { tier, scope: { kind: 'sidestory', name: s.ref.name } };
+        if (m.toClaude && tier === 'shared' && !(await svc.warnSharedAsk(`new:${s.ref.name}`))) return;
         const { thread, event } = await svc.createThread(s.ref.root, location, { kind: 'step', step: m.step }, m.body, { toClaude: m.toClaude, sidestoryId: manifestId(s.manifestRaw()) });
         if (m.toClaude) {
           const e = await svc.findEntry(s.ref.root, thread);
@@ -297,16 +313,16 @@ export async function deliveryAction(svc: CommentService, e: Entry, event: strin
     case 'sendAgain':
       // A new send for the same comment; the old one is retired through the arbiter first.
       await svc.retire(event);
-      await svc.ask(e, event, c.body, 'answer');
+      await svc.ask(e, event, c.body, svc.intentOf(event));
       break;
     case 'chooseSession':
     case 'sendElsewhere': {
       if (!(await svc.retire(event))) {
-        void vscode.window.showInformationMessage('That session already picked up the comment.');
+        void vscode.window.showInformationMessage('That session already has the comment and is still running; it may still answer.');
         return;
       }
       const p = await svc.pickSession(e.root, action === 'chooseSession');
-      if (p) await svc.ask(e, event, c.body, 'answer', p);
+      if (p) await svc.ask(e, event, c.body, svc.intentOf(event), p);
       break;
     }
     case 'howTo':
@@ -314,7 +330,7 @@ export async function deliveryAction(svc: CommentService, e: Entry, event: strin
       break;
     case 'markAnswered':
     case 'stopWaiting':
-      await svc.stopWaiting(e.thread.id);
+      await svc.stopWaiting(e);
       break;
   }
 }

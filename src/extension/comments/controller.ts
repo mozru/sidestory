@@ -63,6 +63,7 @@ export class CommentsController implements vscode.Disposable {
   private refreshing: Promise<void> | undefined;
   private again = false;
   /** Lines the user selected for Comment on Selection: commentable even outside steps. */
+  private expandNext: string | undefined;
   private selection: { key: string; range: vscode.Range } | undefined;
   /** Set by Ask Claude About Selection: the next new thread has only the Ask Claude button. */
   private pendingAskOnly = false;
@@ -164,7 +165,8 @@ export class CommentsController implements vscode.Disposable {
       }
       if (!t) {
         t = this.controller.createCommentThread(uri, pos.range, []) as OurThread;
-        t.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+        t.collapsibleState = this.expandNext === e.thread.id ? vscode.CommentThreadCollapsibleState.Expanded : vscode.CommentThreadCollapsibleState.Collapsed;
+        if (this.expandNext === e.thread.id) this.expandNext = undefined;
         this.threads.set(e.thread.id, t);
       } else if (!t.range || !t.range.isEqual(pos.range)) t.range = pos.range;
       t.root = e.root;
@@ -185,6 +187,8 @@ export class CommentsController implements vscode.Disposable {
   }
 
   private async fill(t: OurThread, e: Entry, codeState: string) {
+    // A comment being edited keeps its editor: refreshes wait until it is saved or cancelled.
+    if (t.comments.some((c) => c.mode === vscode.CommentMode.Editing)) return;
     const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
     const d = ask ? await this.service.delivery(e, ask.id) : undefined;
     const lost = codeState === 'lost' ? ' · Code not found' : codeState === 'changed' || codeState === 'stale' ? ' · Code changed' : '';
@@ -197,7 +201,7 @@ export class CommentsController implements vscode.Disposable {
     t.comments = e.thread.comments
       .filter((c) => !c.retracted)
       .map((c) => {
-        const tier = e.location.tier === 'local' ? 'local' : c.trust === 'repository' ? 'from the repository' : 'shared';
+        const tier = c.trust === 'repository' ? 'from the repository' : e.location.tier;
         const author: vscode.CommentAuthorInformation = { name: authorLabel(c), ...(c.trust === 'claude' ? { iconPath: this.icon } : {}) };
         const ctx = [c.trust === 'local_user' ? 'mine' : 'other', ...(c.trust === 'local_user' && c.to === 'claude' ? ['sent'] : [])].join(':');
         return new OurComment(c.id, t, c.body, author, `${tier}${c.changed ? ' · edited' : ''}`, ctx, c.at);
@@ -230,8 +234,12 @@ export class CommentsController implements vscode.Disposable {
       return;
     }
     const created = await this.createFrom(r.thread, text, toClaude);
+    if (!created) return; // keep the reader's text in the widget
     r.thread.dispose();
-    if (created && toClaude) {
+    this.selection = undefined;
+    this.expandNext = created.thread; // the thread just written opens expanded, to show delivery and the reply
+    void this.refresh();
+    if (toClaude) {
       const e = await this.service.findEntry(created.root, created.thread);
       if (e) await this.service.ask(e, created.event, text, intent);
     }
@@ -261,6 +269,7 @@ export class CommentsController implements vscode.Disposable {
     // Stored with the tightest sidestory covering it, else in `_code` (§3.1).
     const covering = this.index.anchorsCovering(uriKey(t.uri), trimmed.start, trimmed.end).sort((a, b) => a.entry.end[a.index]! - a.entry.start[a.index]! - (b.entry.end[b.index]! - b.entry.start[b.index]!))[0];
     const tier = vscode.workspace.getConfiguration('sidestory.comments').get<string>('defaultLocation') === 'shared' && covering ? 'shared' : 'local';
+    if (toClaude && tier === 'shared' && !(await this.service.warnSharedAsk(`new:${covering!.entry.ref.name}`))) return undefined;
     const location: Location = covering ? { tier, scope: { kind: 'sidestory', name: covering.entry.ref.name } } : { tier: 'local', scope: { kind: 'code' } };
     let sidestoryId: string | undefined;
     if (covering) {
@@ -283,6 +292,24 @@ export class CommentsController implements vscode.Disposable {
     if (e) await threadAction(this.service, e, action, deps);
   }
 
+  /** Choose a Session… for the thread's latest ask (the editor's "No session" state has no buttons). */
+  async chooseSession(t: vscode.CommentThread | undefined): Promise<void> {
+    const e = t && (await this.entryOf(t));
+    const ask = e && [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
+    if (e && ask) await deliveryAction(this.service, e, ask.id, 'chooseSession');
+    else if (e) void vscode.window.showInformationMessage('Nothing in this thread was sent to Claude yet: reply with Ask Claude.');
+  }
+
+  /** The step whose anchor covers a code thread, for Show in Sidestory. */
+  async sidestoryOf(t: vscode.CommentThread | undefined): Promise<{ dir: string; anchor?: string } | undefined> {
+    const e = t && (await this.entryOf(t));
+    if (!e || !t?.range) return undefined;
+    const covering = this.index.anchorsCovering(uriKey(t.uri), t.range.start.line + 1, t.range.end.line + 1).sort((a, b) => a.entry.end[a.index]! - a.entry.start[a.index]! - (b.entry.end[b.index]! - b.entry.start[b.index]!))[0];
+    if (covering) return { dir: covering.entry.ref.dir.toString(), anchor: covering.entry.ids[covering.index] };
+    if (e.location.scope.kind === 'sidestory') return { dir: vscode.Uri.joinPath(e.root, '.sidestory', e.location.scope.name).toString() };
+    return undefined;
+  }
+
   async commentCommand(c: vscode.Comment | undefined, action: 'edit' | 'delete' | 'sendAgain' | 'save' | 'cancel'): Promise<void> {
     if (!(c instanceof OurComment)) return;
     const e = await this.entryOf(c.thread);
@@ -300,7 +327,9 @@ export class CommentsController implements vscode.Disposable {
         break;
       case 'save': {
         const text = typeof c.body === 'string' ? c.body : c.body.value;
+        c.mode = vscode.CommentMode.Preview;
         if (text.trim()) await this.service.change(e, c.id, text.trim());
+        else void this.refresh();
         break;
       }
       case 'delete': {

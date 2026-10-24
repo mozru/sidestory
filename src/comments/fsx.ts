@@ -133,7 +133,8 @@ export async function exists(p: string): Promise<boolean> {
 export async function readSmall(p: string, maxBytes: number): Promise<string | undefined> {
   let h;
   try {
-    h = await fs.open(p, constants.O_RDONLY | NOFOLLOW);
+    // Non-blocking: a FIFO planted in the repository can't stall the reader.
+    h = await fs.open(p, constants.O_RDONLY | NOFOLLOW | (constants.O_NONBLOCK ?? 0));
   } catch {
     return undefined;
   }

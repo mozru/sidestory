@@ -376,6 +376,16 @@
         "command": "sidestory.comments.sendAgain",
         "title": "Send to Claude Again",
         "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.chooseSession",
+        "title": "Ask Claude in Session…",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.showInSidestory",
+        "title": "Show in Sidestory",
+        "category": "Sidestory"
       }
     ],
     "keybindings": [
@@ -740,6 +750,14 @@
         {
           "command": "sidestory.comments.sendAgain",
           "when": "false"
+        },
+        {
+          "command": "sidestory.comments.chooseSession",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.showInSidestory",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -915,6 +933,11 @@
           "command": "sidestory.comments.replyAsk",
           "group": "inline@2",
           "when": "commentController == sidestory"
+        },
+        {
+          "command": "sidestory.comments.replyAskEdit",
+          "group": "inline@3",
+          "when": "commentController == sidestory && !(commentThread =~ /askOnly/)"
         }
       ],
       "comments/commentThread/title": [
@@ -947,6 +970,21 @@
           "command": "sidestory.comments.deleteThread",
           "group": "more@4",
           "when": "commentController == sidestory && commentThread =~ /:local/"
+        },
+        {
+          "command": "sidestory.comments.chooseSession",
+          "group": "more@5",
+          "when": "commentController == sidestory && commentThread =~ /asked/"
+        },
+        {
+          "command": "sidestory.comments.showInSidestory",
+          "group": "more@6",
+          "when": "commentController == sidestory && commentThread =~ /^sidestory:(open|resolved)/"
+        },
+        {
+          "command": "sidestory.comments.howTo",
+          "group": "more@7",
+          "when": "commentController == sidestory && commentThread =~ /waiting/"
         }
       ],
       "comments/comment/title": [

@@ -5,6 +5,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalJson, type AuthorKind, type Trust } from '../core/threads/schema.ts';
 import { listDir, mkdirsNoFollow, readSmall, writeReplace } from './fsx.ts';
+import { checkPrivate } from './state-dir.ts';
 
 export interface LedgerEntry {
   /** The event file, relative to the repository root, `/` separators. */
@@ -35,6 +36,8 @@ const TRUST: Record<AuthorKind, Trust> = { human: 'local_user', claude: 'claude'
 export class Ledger {
   private readonly state: string;
   readonly repoKey: string;
+  /** The state directory failed its checks: nothing is trusted and nothing is recorded (fails closed). */
+  disabled = false;
   constructor(state: string, repoKey: string) {
     this.state = state;
     this.repoKey = repoKey;
@@ -45,11 +48,14 @@ export class Ledger {
   }
 
   async record(e: LedgerEntry): Promise<void> {
+    if (this.disabled) throw new Error("the state directory failed its safety checks");
+    checkPrivate(this.state);
     const dir = await mkdirsNoFollow(this.state, ['authored', this.repoKey], 0o700);
     await writeReplace(dir, `${keyOf(e.path, e.id)}.json`, JSON.stringify(e));
   }
 
   async get(path: string, id: string): Promise<LedgerEntry | undefined> {
+    if (this.disabled) return undefined;
     const t = await readSmall(join(this.dir(), `${keyOf(path, id)}.json`), 4096);
     if (!t) return undefined;
     try {
@@ -72,6 +78,7 @@ export class Ledger {
 
   /** Every entry (for Share, Make Local and the sweep). */
   async all(): Promise<LedgerEntry[]> {
+    if (this.disabled) return [];
     const out: LedgerEntry[] = [];
     for (const f of await listDir(this.dir())) {
       if (!f.endsWith('.json')) continue;

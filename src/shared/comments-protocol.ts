@@ -76,6 +76,8 @@ export interface ThreadView {
   waiting: boolean;
   canReply: boolean;
   canDelete: boolean;
+  /** The session a send in this thread goes to, when known. */
+  session?: string;
   /** Tracked by git although it lives in `.local`. */
   tracked?: boolean;
 }

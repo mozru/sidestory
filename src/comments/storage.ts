@@ -206,11 +206,22 @@ export class ThreadFiles {
     if (!(await isPlainDir(src))) throw new Error('thread not found');
     const parent = await mkdirsNoFollow(this.root, threadsSegments(to));
     const dst = join(parent, threadId);
-    if (await exists(dst)) throw new Error('a thread with this id already exists there');
+    // Created exclusively first: rename then replaces only this empty folder, and fails if anything appeared in it.
+    try {
+      await fs.mkdir(dst);
+    } catch {
+      throw new Error('a thread with this id already exists there');
+    }
     const fromPrefix = `${threadsSegments(from).join('/')}/${threadId}/`;
     const toPrefix = `${threadsSegments(to).join('/')}/${threadId}/`;
     const moved = await this.ledger.prepareMove(fromPrefix, toPrefix);
-    await retrying(() => fs.rename(src, dst), 8);
+    try {
+      await retrying(() => fs.rename(src, dst), 8);
+    } catch (e) {
+      await fs.rmdir(dst).catch(() => undefined);
+      await this.ledger.finishMove((await this.ledger.all()).filter((x) => x.path.startsWith(toPrefix)));
+      throw e;
+    }
     await this.ledger.finishMove(moved);
   }
 

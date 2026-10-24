@@ -143,6 +143,8 @@ export class CommentsPane {
   private composer: Composer | undefined;
   private drafts: Record<string, string> = {};
   private editing: string | undefined;
+  /** The edit box, kept across re-renders so a half-typed edit survives a host update. */
+  private editBox: HTMLTextAreaElement | undefined;
   private height = 260;
   private readTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly seen = new Set<string>();
@@ -166,6 +168,7 @@ export class CommentsPane {
         this.dir = m.dir;
         this.composer = undefined;
         this.editing = undefined;
+        this.editBox = undefined;
       }
       this.threads = m.threads;
       this.context = m.context;
@@ -304,6 +307,7 @@ export class CommentsPane {
   escape(): boolean {
     if (this.editing) {
       this.editing = undefined;
+      this.editBox = undefined;
       this.render();
       return true;
     }
@@ -374,7 +378,10 @@ export class CommentsPane {
     const visible = this.visibleThreads();
     const openN = visible.filter((t) => t.state === 'open').length;
     const doneN = visible.length - openN;
-    const focusKey = document.activeElement && this.pane.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.focusKey : undefined;
+    const activeEl = document.activeElement as HTMLElement | null;
+    const focusKey = activeEl && this.pane.contains(activeEl) ? activeEl.dataset.focusKey : undefined;
+    // A focused text box survives the re-render (it is moved, not rebuilt): remember its caret to restore it.
+    const typing = activeEl instanceof HTMLTextAreaElement && this.pane.contains(activeEl) ? { el: activeEl, start: activeEl.selectionStart, end: activeEl.selectionEnd } : undefined;
     if (this.composer) this.saveDraft();
 
     const head = el('div', 'cx-c-head');
@@ -424,7 +431,10 @@ export class CommentsPane {
       const d = this.drafts[this.composer.key];
       if (d !== undefined && !this.composer.text.value) this.composer.text.value = d;
     }
-    if (focusKey) this.pane.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
+    if (typing && typing.el.isConnected) {
+      typing.el.focus();
+      typing.el.setSelectionRange(typing.start, typing.end);
+    } else if (focusKey) this.pane.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
   }
 
   private card(t: ThreadView): HTMLElement {
@@ -469,6 +479,7 @@ export class CommentsPane {
     if (c.claude) meta.append(icon('sparkle'));
     meta.append(el('span', 'cx-c-author', c.author), el('span', 'cx-c-ago', ago(c.at)));
     if (c.changed) meta.append(el('span', 'cx-c-ago', 'edited'));
+    if (c.editedAfterSend) meta.append(el('span', 'cx-c-ago', 'edited after sending'));
     if (c.mine) {
       meta.append(this.menu(`comment:${c.id}`, [
         ['Edit', () => {
@@ -481,25 +492,32 @@ export class CommentsPane {
     }
     row.append(meta);
     if (this.editing === c.id) {
-      const ta = el('textarea', 'cx-c-text');
-      ta.value = c.body;
-      ta.setAttribute('aria-label', 'Edit comment');
+      // The same box across re-renders: what the reader typed survives host updates.
+      const fresh = !this.editBox || this.editBox.dataset.event !== c.id;
+      const ta = fresh ? el('textarea', 'cx-c-text') : this.editBox!;
+      if (fresh) {
+        ta.value = c.body;
+        ta.dataset.event = c.id;
+        ta.setAttribute('aria-label', 'Edit comment');
+        this.editBox = ta;
+        requestAnimationFrame(() => ta.focus());
+      }
       const save = () => {
         const v = ta.value.trim();
         if (v) this.hooks.post({ type: 'commentEdit', event: c.id, body: v });
         this.editing = undefined;
+        this.editBox = undefined;
         this.render();
       };
-      ta.addEventListener('keydown', (e) => {
+      ta.onkeydown = (e) => {
         if (!e.isTrusted) return;
         e.stopPropagation();
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save();
         else if (e.key === 'Escape') this.escape();
-      });
+      };
       const actions = el('div', 'cx-c-actions');
       actions.append(button('cx-c-send', 'Save', save), button('cx-c-link', 'Cancel', () => this.escape()));
       row.append(ta, actions);
-      requestAnimationFrame(() => ta.focus());
     } else {
       const b = el('div', 'cx-c-text-view');
       b.append(renderBody(c.body, (path, start, end) => this.hooks.post({ type: 'openCode', path, ...(start ? { target: `L${start}-L${end ?? start}` } : {}) })));
@@ -517,8 +535,9 @@ export class CommentsPane {
     if (c.delivery) {
       const d = el('div', `cx-c-delivery cx-${c.delivery.state}`);
       d.setAttribute('role', 'status');
-      const since = c.delivery.since !== undefined ? ` · ${Math.round(c.delivery.since / 1000)}s` : '';
-      d.append(el('span', undefined, `${c.delivery.state === 'pushed' ? '✓ ' : ''}${c.delivery.text}${since}`));
+      // Elapsed time right after "Claude is on it", before any longer hint.
+      const text = c.delivery.since !== undefined ? c.delivery.text.replace(/^Claude is on it/, `Claude is on it · ${Math.round(c.delivery.since / 1000)}s`) : c.delivery.text;
+      d.append(el('span', undefined, `${c.delivery.state === 'pushed' ? '✓ ' : ''}${text}`));
       for (const a of c.delivery.actions) d.append(button('cx-c-link', ACTION_TEXT[a], () => this.hooks.post({ type: 'deliveryAction', event: c.id, action: a })));
       row.append(d);
     }
@@ -587,7 +606,8 @@ export class CommentsPane {
       c.mode = m;
       for (const b of seg.querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-checked', String(b.dataset.mode === m));
       intent.hidden = m !== 'ask';
-      const label = m === 'ask' ? (this.context.session ? `Ask Claude · ${this.context.session}` : 'Ask Claude') : 'Comment';
+      const session = thread?.session ?? this.context.session;
+      const label = m === 'ask' ? (session ? `Ask Claude · ${session}` : 'Ask Claude') : 'Comment';
       send.replaceChildren(el('span', 'cx-c-sendlabel', label));
       send.title = label;
       pick.hidden = m !== 'ask' || !this.context.manySessions;

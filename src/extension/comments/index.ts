@@ -113,7 +113,7 @@ export function activateComments(context: vscode.ExtensionContext, deps: Comment
     'sidestory.comments.view.delete': viewAction('delete'),
     'sidestory.comments.view.stopWaiting': async (n?: unknown) => {
       const t = threadNode(n);
-      if (t) await service.stopWaiting(t.entry.thread.id);
+      if (t) await service.stopWaiting(t.entry);
     },
     'sidestory.nextComment': () => stepComment(1),
     'sidestory.previousComment': () => stepComment(-1),
@@ -126,6 +126,12 @@ export function activateComments(context: vscode.ExtensionContext, deps: Comment
     'sidestory.comments.share': (t?: unknown) => controller.threadCommand(t as vscode.CommentThread, 'share', deps),
     'sidestory.comments.makeLocal': (t?: unknown) => controller.threadCommand(t as vscode.CommentThread, 'local', deps),
     'sidestory.comments.copyPrompt': (t?: unknown) => controller.threadCommand(t as vscode.CommentThread, 'copyPrompt', deps),
+    'sidestory.comments.chooseSession': (t?: unknown) => controller.chooseSession(t as vscode.CommentThread),
+    'sidestory.comments.showInSidestory': async (t?: unknown) => {
+      const at = await controller.sidestoryOf(t as vscode.CommentThread);
+      if (at) await deps.openAt({ ...at, source: 'comments' });
+      else void vscode.window.showInformationMessage('No sidestory covers these lines.');
+    },
     'sidestory.comments.deleteThread': (t?: unknown) => controller.threadCommand(t as vscode.CommentThread, 'delete', deps),
     'sidestory.comments.editComment': (c?: unknown) => controller.commentCommand(c as vscode.Comment, 'edit'),
     'sidestory.comments.saveComment': (c?: unknown) => controller.commentCommand(c as vscode.Comment, 'save'),
@@ -134,14 +140,17 @@ export function activateComments(context: vscode.ExtensionContext, deps: Comment
     'sidestory.comments.sendAgain': (c?: unknown) => controller.commentCommand(c as vscode.Comment, 'sendAgain'),
   };
 
+  let lastStepped: string | undefined;
   const stepComment = async (delta: 1 | -1) => {
     await view.rebuild();
-    const list = [...view.nodes('forYou'), ...view.nodes('open')];
+    const list = view.nodes('forYou').filter((n) => n.kind === 'thread') as Extract<CommentNode, { kind: 'thread' }>[];
     if (!list.length) {
       vscode.window.setStatusBarMessage('No comment threads for you', 3000);
       return;
     }
-    const i = Math.max(0, Math.min(list.length - 1, delta === 1 ? 0 : list.length - 1));
+    const cur = list.findIndex((n) => n.entry.thread.id === lastStepped);
+    const i = cur < 0 ? (delta === 1 ? 0 : list.length - 1) : (cur + delta + list.length) % list.length;
+    lastStepped = list[i]!.entry.thread.id;
     await openThread(list[i]);
   };
 

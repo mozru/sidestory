@@ -62,6 +62,8 @@ export const COMMANDS = [
   'sidestory.comments.makeLocal',
   'sidestory.comments.copyPrompt',
   'sidestory.comments.deleteThread',
+  'sidestory.comments.chooseSession',
+  'sidestory.comments.showInSidestory',
   'sidestory.comments.editComment',
   'sidestory.comments.saveComment',
   'sidestory.comments.cancelEdit',

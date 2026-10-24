@@ -1,6 +1,6 @@
 // What agents read about threads (docs/COMMENTS-PLAN.md §9.5, §10.2): the MCP server's get_thread and
 // list_threads, and the checker's `threads` command, from one place, with the same labels.
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { displayText } from '../core/display-text.ts';
 import { outlineHtml } from '../core/html-scan.ts';
@@ -9,7 +9,7 @@ import { resolveAnchor } from '../core/resolve.ts';
 import { authorLabel, type Thread } from '../core/threads/reduce.ts';
 import { CAPS, type CodeAnchor } from '../core/threads/schema.ts';
 import { PreparedText } from '../core/text.ts';
-import { readSmall } from './fsx.ts';
+import { readSmall, realInside } from './fsx.ts';
 import { locationKey, type Location, type ThreadFiles, type ThreadRead } from './storage.ts';
 
 export interface ThreadEntry {
@@ -70,12 +70,14 @@ export function filterStatus(entries: readonly ThreadEntry[], status: Status, si
 }
 
 /** A step's title from the sidestory's HTML (repository data). */
-function stepTitle(root: string, sidestory: string | undefined, step: string): string | undefined {
+async function stepTitle(root: string, sidestory: string | undefined, step: string): Promise<string | undefined> {
   if (!sidestory) return undefined;
   try {
     const p = join(root, '.sidestory', sidestory, 'sidestory.html');
-    if (statSync(p).size > 5_000_000) return undefined;
-    const o = outlineHtml(readFileSync(p, 'utf8'));
+    if (!(await realInside(p, root))) return undefined; // no symlinks out of the repository
+    const html = await readSmall(p, 5_000_000);
+    if (html === undefined) return undefined;
+    const o = outlineHtml(html);
     const s = o.steps.find((x) => x.id === step) ?? o.steps.find((x) => x.id === o.anchorStep.get(step));
     return s ? displayText(s.title, 200) : undefined;
   } catch {
@@ -85,7 +87,9 @@ function stepTitle(root: string, sidestory: string | undefined, step: string): s
 
 /** Where a code thread's quote is now, with the core resolver (exact, moved, changed, stale, lost). */
 export async function resolveCode(root: string, a: CodeAnchor): Promise<{ state: string; lines?: [number, number] }> {
-  const text = await readSmall(join(root, ...a.file.split('/')), 10_000_000);
+  const p = join(root, ...a.file.split('/'));
+  if (!(await realInside(p, root))) return { state: 'lost' };
+  const text = await readSmall(p, 10_000_000);
   if (text === undefined) return { state: 'lost' };
   const anchor: Anchor = { id: 'x', file: a.file, range: { start: a.range[0], end: a.range[1] }, quote: { ...a.quote, norm: 'ws' }, highlight: [] };
   const r = resolveAnchor(PreparedText.from(text), anchor);
@@ -99,7 +103,7 @@ export async function threadDetail(e: ThreadEntry, limit = 50, before?: string):
   const anchor: Record<string, unknown> = { kind: a.kind === 'code' ? 'code' : 'step' };
   if (a.kind !== 'code') {
     anchor.step = a.step;
-    const title = stepTitle(e.files.root, ss, a.step);
+    const title = await stepTitle(e.files.root, ss, a.step);
     if (title) anchor.step_title = title;
   } else {
     const r = await resolveCode(e.files.root, a);

@@ -49,9 +49,14 @@ export function readParentCommand(ppid = process.ppid): string | undefined {
     if (process.platform === 'linux') {
       const comm = readFileSync(`/proc/${ppid}/comm`, 'utf8').trim();
       const args = readFileSync(`/proc/${ppid}/cmdline`, 'utf8').split('\0').join(' ');
-      return `${comm} ${args}`;
+      return `${basename(comm).replace(/\s/g, '_')} ${args}`;
     }
-    if (process.platform === 'darwin') return execFileSync('ps', ['-o', 'comm=,args=', '-p', String(ppid)], { encoding: 'utf8', timeout: 2000 }).trim();
+    if (process.platform === 'darwin') {
+      // Separately: a path with spaces in comm would otherwise run into the arguments.
+      const comm = execFileSync('ps', ['-o', 'comm=', '-p', String(ppid)], { encoding: 'utf8', timeout: 2000 }).trim();
+      const args = execFileSync('ps', ['-o', 'args=', '-p', String(ppid)], { encoding: 'utf8', timeout: 2000 }).trim();
+      return `${basename(comm).replace(/\s/g, '_')} ${args}`;
+    }
   } catch {
     /* unknown */
   }
@@ -62,8 +67,10 @@ export function readParentCommand(ppid = process.ppid): string | undefined {
 export function detectChannel(cmd: string | undefined, flag: 'dev' | 'channels' | undefined): 'likely' | 'unknown' {
   if (!cmd) return 'unknown';
   const [comm, ...rest] = cmd.split(/\s+/);
-  if (!comm || basename(comm) !== 'claude') return 'unknown';
-  const args = rest;
+  // The native claude executable, or node running Claude Code's CLI (an npm install).
+  const isClaude = comm === 'claude' || (/^node(\.exe)?$/.test(comm ?? '') && rest.slice(0, 2).some((a) => /(^|\/)claude$|@anthropic-ai\/claude-code\//.test(a)));
+  if (!comm || !isClaude) return 'unknown';
+  const args = rest.flatMap((a) => (/^--[\w-]+=/.test(a) ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a]));
   const named = (f: string) => {
     const i = args.indexOf(f);
     return i >= 0 && args.slice(i + 1).some((a, j) => a === CHANNEL_PLUGIN && !args.slice(i + 1, i + 1 + j).some((x) => x.startsWith('--')));
@@ -197,7 +204,7 @@ export class SidestoryServer {
     } catch {
       /* the poll covers it */
     }
-    transport.onclose = () => void this.close();
+    this.server.onclose = () => void this.close();
   }
 
   async close(): Promise<void> {
@@ -249,7 +256,8 @@ export class SidestoryServer {
     if (!first) return 'Claude session';
     const top = repoRootFor(first);
     const sub = relative(top, first);
-    const time = this.startedAt.slice(11, 16);
+    const d = new Date(this.startedAt);
+    const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     return `${basename(top)}${sub ? `/${sub}` : ''} · ${time}`.slice(0, 200);
   }
 
@@ -282,7 +290,11 @@ export class SidestoryServer {
     try {
       do {
         this.rescan = false;
-        for (const id of await this.state.sendIds()) {
+        const ids = await this.state.sendIds();
+        // Forget ids whose send file is gone (swept), so the set doesn't grow for the session's lifetime.
+        const present = new Set(ids);
+        for (const h of this.handled) if (!present.has(h)) this.handled.delete(h);
+        for (const id of ids) {
           if (this.handled.has(id) || this.closed) continue;
           const text = await fs.readFile(join(this.opts.stateDir, 'sends', `${id}.json`), 'utf8').catch(() => undefined);
           if (text === undefined) continue;
@@ -292,7 +304,7 @@ export class SidestoryServer {
           } catch {
             continue; // being written; the next scan reads it
           }
-          if (raw && typeof raw === 'object' && typeof (raw as { v?: unknown }).v === 'number' && (raw as { v: number }).v > SEND_FORMAT) {
+          if (raw && typeof raw === 'object' && typeof (raw as { v?: unknown }).v === 'number' && (raw as { v: number }).v > SEND_FORMAT && (raw as { route?: unknown }).route === this.id) {
             this.newer = true;
             this.handled.add(id);
             continue;
@@ -397,10 +409,11 @@ export class SidestoryServer {
     }
   }
 
-  private async confirm(nonce: string | undefined): Promise<PushedSend | undefined> {
+  /** A nonce this server pushed, for this thread: marks the send seen and the channel confirmed. */
+  private async confirm(nonce: string | undefined, thread: string): Promise<PushedSend | undefined> {
     if (!nonce || !isNonce(nonce)) return undefined;
     const p = this.byNonce.get(nonce);
-    if (!p) return undefined;
+    if (!p || p.send.thread !== thread) return undefined;
     if (!(await this.state.seen(p.send.send))) await this.state.markSeen(p.send.send).catch(() => undefined);
     if (this.channel !== 'confirmed') {
       this.channel = 'confirmed';
@@ -410,20 +423,19 @@ export class SidestoryServer {
   }
 
   private async ack(a: z.infer<typeof ackInput>) {
-    const p = await this.confirm(a.nonce);
-    return this.ok({ ok: true, ...(p && p.send.thread !== a.thread ? { note: 'that nonce belongs to another thread' } : {}) });
+    const p = await this.confirm(a.nonce, a.thread);
+    return this.ok({ ok: true, ...(!p && a.nonce && this.byNonce.has(a.nonce) ? { note: 'that nonce belongs to another thread' } : {}) });
   }
 
   private async reply(a: z.infer<typeof replyInput>) {
     const t = await this.findThread(a.thread);
     if (t === 'ambiguous') return this.err('That thread id exists in more than one place; ask the user to check the Comments view.');
     if (!t) return this.err('Unknown thread (or in a repository this session does not serve).');
-    if (t.location.scope.kind === 'review' && t.location.tier === 'shared') return this.err('This thread is read from git and is read-only.');
-    const pushed = await this.confirm(a.nonce);
+    const pushed = await this.confirm(a.nonce, a.thread);
     const kind = this.clientKind();
     const profile = await readProfile(this.opts.stateDir);
     const via = cleanAuthorName(pushed?.send.via ?? profile.name ?? '');
-    const inReplyTo = a.in_reply_to ?? (pushed && pushed.send.thread === a.thread ? pushed.send.event : undefined) ?? [...t.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude')?.id;
+    const inReplyTo = a.in_reply_to ?? pushed?.send.event ?? [...t.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude')?.id;
     const event: ThreadEvent = {
       v: 1,
       id: newId('e'),
@@ -439,7 +451,10 @@ export class SidestoryServer {
     await t.files.write(t.location, event, kind.kind);
     // The thread may have moved (Share, Make Local) while we wrote: follow it (§3.5).
     const locs = await t.files.findThread(a.thread);
-    if (locs.length > 1) {
+    // Only when the thread really moved: its old folder holds nothing but this reply (a planted folder elsewhere
+    // with the same id doesn't redirect it).
+    const left = await fs.readdir(join(t.files.root, ...threadsSegments(t.location), a.thread)).catch(() => [] as string[]);
+    if (locs.length > 1 && left.filter((n) => n.endsWith('.json')).every((n) => n === `${event.id}.json`)) {
       const other = locs.find((l) => l.tier !== t.location.tier || JSON.stringify(l.scope) !== JSON.stringify(t.location.scope));
       if (other) await moveEvent(t.files, t.location, other, event.id, a.thread).catch((e) => this.log(`follow move: ${(e as Error).message}`));
     }

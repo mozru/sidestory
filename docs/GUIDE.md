@@ -383,7 +383,7 @@ Comment on a step of a sidestory, or on lines of code, and ask Claude about it w
 
 **In the editor:** select lines and run **Sidestory: Comment on Selection** or **Ask Claude About Selection** (also in the editor's context menu), or use the gutter **+** on lines a step covers. The thread opens in VS Code's own comment widget, with **Comment** and **Ask Claude** buttons; <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> runs the first. The setting `sidestory.comments.ranges` (`steps` or `everywhere`) says where the **+** appears; `everywhere` overlaps the GitHub Pull Requests extension, and VS Code then asks which one to use.
 
-**The Comments view** (in the Sidestory sidebar) lists threads: *For you* (new replies in threads you took part in, and Claude's suggestions to resolve), *Waiting for Claude* (with **Copy Prompt: Answer Waiting Comments**, **Stop Waiting** and **Mark as Answered**), *Open*, *Resolved*, and *Elsewhere* (local threads whose sidestory was renamed, archived or replaced).
+**The Comments view** (in the Sidestory sidebar) lists threads: *For you* (new replies in threads you took part in, and Claude's suggestions to resolve), *Waiting for Claude* (with **Copy Prompt: Answer Waiting Comments**, and **Stop Waiting** for an answer you got elsewhere), *Open*, *Resolved*, and *Elsewhere* (local threads whose sidestory was renamed, archived or replaced).
 
 ### Local or shared
 

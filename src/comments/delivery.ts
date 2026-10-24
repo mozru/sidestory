@@ -7,6 +7,7 @@ import { anchorIdSchema, explainerNameSchema } from '../core/manifest.ts';
 import { isNonce } from '../core/threads/prompt.ts';
 import { CAPS, COMMIT_RE, EVENT_ID_RE, isPlainPath, isSafeBranch, SEND_ID_RE, SERVER_ID_RE, THREAD_ID_RE } from '../core/threads/schema.ts';
 import { listDir, readSmall, writeNoReplace, writeReplace } from './fsx.ts';
+import { checkPrivate } from './state-dir.ts';
 
 export const HEARTBEAT_MS = 15_000;
 export const LIVE_MS = 45_000;
@@ -84,6 +85,8 @@ export class StateStore {
   }
 
   async writeSend(s: Send): Promise<void> {
+    checkPrivate(this.dir);
+    checkPrivate(join(this.dir, "sends"));
     sendSchema.parse(s);
     if (!(await writeNoReplace(join(this.dir, 'sends'), `${s.send}.json`, JSON.stringify(s), 0o600))) throw new Error('send exists');
   }
@@ -103,6 +106,7 @@ export class StateStore {
    */
   async claim(sendId: string, record: Pushed): Promise<boolean> {
     if (!SEND_ID_RE.test(sendId)) return false;
+    checkPrivate(join(this.dir, "pushed"));
     return writeNoReplace(join(this.dir, 'pushed'), `${sendId}.json`, JSON.stringify(record), 0o600);
   }
 

@@ -182,5 +182,7 @@ export function authorLabel(c: Pick<CommentView, 'by' | 'trust'>): string {
   const name = c.by.name || 'Anonymous';
   if (c.by.kind === 'claude') return c.trust === 'claude' ? `Claude${c.by.via ? ` (via ${c.by.via})` : ''}` : 'Claude (from the repository)';
   if (c.by.kind === 'agent') return c.trust === 'agent' ? `${name}${c.by.via ? ` (via ${c.by.via})` : ''}` : `${name} (from the repository)`;
+  // A name that could pass for the reader or for Claude is marked, so a planted comment can't look like theirs.
+  if (/^(you|me)$/i.test(name) || /claude|anthropic/i.test(name)) return `${name} (from the repository)`;
   return name;
 }

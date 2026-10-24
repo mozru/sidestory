@@ -85,8 +85,8 @@ const REVIEW_LINE =
 function intentLine(p: Pick<PushInput, 'intent' | 'mode' | 'sidestory'>): string {
   if (p.mode === 'review') return REVIEW_LINE;
   if (p.intent === 'edit') {
-    const where = p.sidestory && explainerNameSchema.safeParse(p.sidestory).success ? ` (.sidestory/${p.sidestory}/)` : '';
-    return `You may edit the sidestory${where} or the code if the comment asks; list what you edited in the reply's edited field.`;
+    // The folder name comes from the repository: it stays in meta, not in this text (§9.6).
+    return "You may edit the sidestory named in this event's sidestory attribute, or the code, if the comment asks; list what you edited in the reply's edited field.";
   }
   return "Answer the question; don't edit files unless the comment asks you to.";
 }

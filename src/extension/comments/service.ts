@@ -2,11 +2,12 @@
 // files, the ledger, Ask Claude sends, routing to a Claude Code session, and delivery states. The panel, the
 // editor's Comments API and the Comments view all go through this one service.
 import * as vscode from 'vscode';
-import { join } from 'node:path';
+import { unlink } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { displayText, plainForMessage } from '../../core/display-text.ts';
 import { copyPrompt, type Intent } from '../../core/threads/prompt.ts';
 import { isAnswered, type Thread } from '../../core/threads/reduce.ts';
-import { cleanAuthorName, cleanBody, isPlainPath, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
+import { cleanAuthorName, cleanBody, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
 import { liveness, RECORD_MAX_AGE_MS, StateStore, type Presence, type Send } from '../../comments/delivery.ts';
 import { newId, writeReplace } from '../../comments/fsx.ts';
 import { Ledger } from '../../comments/ledger.ts';
@@ -31,6 +32,12 @@ interface SendRecord {
   /** No session was available: the reader saw the No session state. */
   noSession?: boolean;
   intent?: Intent;
+  /** The repository root (the backstop re-reads only roots with sends in flight). */
+  root?: string;
+  /** Answered, cancelled or stopped: no longer polled. */
+  done?: boolean;
+  /** The reader dismissed the session picker. */
+  dismissed?: boolean;
   /** Copy Prompt was used for this comment. */
   copied?: boolean;
 }
@@ -59,13 +66,19 @@ export class CommentService implements vscode.Disposable {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private changeTimer: ReturnType<typeof setTimeout> | undefined;
   private dirtyRoots = new Set<string>();
+  /** The state directory failed its checks: every trust is `repository` and nothing is sent (fails closed). */
+  private unusable = false;
+  private readonly fromEnv: boolean;
   /** For tests: the clock. */
   now: () => number = Date.now;
 
   constructor(memento: vscode.Memento) {
     this.memento = memento;
     const override = vscode.workspace.getConfiguration('sidestory.comments').get<string>('stateDir');
-    this.stateDir = override && override.trim() ? override.trim() : defaultStateDir();
+    // SIDESTORY_STATE_DIR: tests and hand-launched setups (the server honours it too); then the setting; then the default.
+    const env = process.env.SIDESTORY_STATE_DIR;
+    this.fromEnv = !!env && isAbsolute(env);
+    this.stateDir = this.fromEnv ? env! : override && isAbsolute(override.trim()) ? override.trim() : defaultStateDir();
     this.state = new StateStore(this.stateDir);
     // Thread files arrive through a watcher on every .sidestory tree (§6.4), plus a backstop poll while sends are pending.
     const w = vscode.workspace.createFileSystemWatcher('**/.sidestory/**/threads/**');
@@ -85,13 +98,18 @@ export class CommentService implements vscode.Disposable {
     this.ready ??= (async () => {
       await ensureStateDir(this.stateDir);
       const def = defaultStateDir();
-      if (this.stateDir !== def) {
+      if (this.fromEnv) {
+        /* no pointer file */
+      } else if (this.stateDir !== def) {
         await ensureStateDir(def);
         await writeReplace(def, 'override.json', JSON.stringify({ stateDir: this.stateDir }));
-      }
+      } else await unlink(join(def, 'override.json')).catch(() => undefined);
       await this.writeProfile();
       for (const d of ['sends', 'pushed', 'seen']) await sweepOld(join(this.stateDir, d), RECORD_MAX_AGE_MS);
     })().catch((e: unknown) => {
+      this.unusable = true;
+      for (const r of this.repos.values()) r.files.ledger.disabled = true;
+      this.cache.clear();
       log.error(`Comments: the state directory ${this.stateDir} can't be used: ${(e as Error).message}`);
       throw e;
     });
@@ -117,7 +135,9 @@ export class CommentService implements vscode.Disposable {
     let r = this.repos.get(k);
     if (!r) {
       const key = repoKeyFor(root.fsPath);
-      r = { root, files: new ThreadFiles(root.fsPath, new Ledger(this.stateDir, key)), key };
+      const ledger = new Ledger(this.stateDir, key);
+      ledger.disabled = this.unusable;
+      r = { root, files: new ThreadFiles(root.fsPath, ledger), key };
       this.repos.set(k, r);
     }
     return r;
@@ -133,8 +153,17 @@ export class CommentService implements vscode.Disposable {
     this.changeTimer = setTimeout(() => this.flush(), 300);
   }
 
-  private flush() {
+  private flush(again = true) {
     for (const r of this.dirtyRoots) this.cache.delete(r);
+    // A writer records its ledger entry just after the file (§9.4): read once more so a fresh reply isn't left
+    // showing repository trust.
+    if (again && this.dirtyRoots.size) {
+      const roots = [...this.dirtyRoots];
+      setTimeout(() => {
+        for (const r of roots) this.cache.delete(r);
+        this.emitter.fire();
+      }, 1500);
+    }
     this.dirtyRoots.clear();
     this.emitter.fire();
   }
@@ -148,10 +177,10 @@ export class CommentService implements vscode.Disposable {
 
   private async backstop() {
     const sends = this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {};
-    const pending = Object.values(sends).some((s) => s.send && this.now() - s.at < 30 * 60_000);
-    if (!pending) return;
-    // Delivery records live outside the repository: re-read the threads and recompute delivery states.
-    for (const k of this.repos.keys()) this.cache.delete(k);
+    // Only sends still in flight (not answered, cancelled or stopped) and recent; only their repositories.
+    const roots = new Set(Object.values(sends).filter((r) => r.send && !r.done && r.root && this.now() - r.at < 30 * 60_000).map((r) => r.root!));
+    if (!roots.size) return;
+    for (const k of roots) this.cache.delete(k);
     this.emitter.fire();
   }
 
@@ -241,7 +270,7 @@ export class CommentService implements vscode.Disposable {
   /** Share (local → shared) or Make Local (§3.5). */
   async move(e: Entry, to: 'shared' | 'local'): Promise<boolean> {
     if (e.location.scope.kind !== 'sidestory') {
-      void vscode.window.showInformationMessage("Code comments that no sidestory covers stay local in this version. Use Move to a Sidestory… first.");
+      void vscode.window.showInformationMessage('Code comments that no sidestory covers stay local in this version.');
       return false;
     }
     const target: Location = { tier: to, scope: e.location.scope };
@@ -349,16 +378,20 @@ export class CommentService implements vscode.Disposable {
    * ledger entry are already written. Returns the delivery record for the event.
    */
   async ask(e: Entry, eventId: string, text: string, intent: Intent, chosen?: Presence): Promise<void> {
+    await this.init();
+    if (this.unusable) throw new Error(`the folder for Ask Claude's records (${this.stateDir}) failed its safety checks; see Output › Sidestory`);
     let route = chosen;
+    let dismissed = false;
     if (!route) {
       const r = await this.routeFor(e.root, e.thread.id);
       route = r.route;
-      if (!route && r.eligible.length > 1) route = await this.pickSession(e.root, false);
+      if (!route && r.eligible.length > 1) {
+        route = await this.pickSession(e.root, false);
+        dismissed = !route;
+      }
     }
-    const sends = { ...(this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {}) };
     if (!route) {
-      sends[eventId] = { at: this.now(), noSession: true };
-      await this.memento.update(SENDS_KEY, sends);
+      await this.putRecord(eventId, { at: this.now(), noSession: true, intent, root: e.root.fsPath, ...(dismissed ? { dismissed: true } : {}) });
       this.emitter.fire();
       return;
     }
@@ -388,24 +421,53 @@ export class CommentService implements vscode.Disposable {
     };
     if (!send.via) delete send.via;
     await this.state.writeSend(send);
-    sends[eventId] = { send: send.send, route: route.serverId, at: this.now(), intent: send.intent };
-    await this.memento.update(SENDS_KEY, sends);
+    await this.putRecord(eventId, { send: send.send, route: route.serverId, at: this.now(), intent: send.intent, root: e.root.fsPath });
     const ts = this.memento.get<Record<string, string>>(THREAD_SESSION_KEY) ?? {};
     await this.memento.update(THREAD_SESSION_KEY, { ...ts, [e.thread.id]: route.serverId });
     this.emitter.fire();
   }
 
-  /** Cancels or retires a send through the `pushed/` arbiter: false when the server got there first. */
+  /** Writes one record, reading the memento fresh (concurrent asks don't drop each other's), pruned to 500. */
+  private async putRecord(eventId: string, rec: SendRecord | ((old: SendRecord | undefined) => SendRecord)): Promise<void> {
+    const sends = { ...(this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {}) };
+    const next = typeof rec === 'function' ? rec(sends[eventId]) : rec;
+    delete sends[eventId];
+    sends[eventId] = next;
+    const keys = Object.keys(sends);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete sends[k];
+    await this.memento.update(SENDS_KEY, sends);
+  }
+
+  private record(eventId: string): SendRecord | undefined {
+    return (this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {})[eventId];
+  }
+
+  /** The intent the comment was asked with (Send Again and Copy Prompt keep it). */
+  intentOf(eventId: string): Intent {
+    return this.record(eventId)?.intent === 'edit' ? 'edit' : 'answer';
+  }
+
+  /** Whether this comment was ever sent or copied (for "edited after sending"). */
+  wasSent(eventId: string): boolean {
+    const r = this.record(eventId);
+    return !!(r?.send || r?.copied);
+  }
+
+  /**
+   * Retires a send through the `pushed/` arbiter before sending it elsewhere: true when the extension's cancel won,
+   * or when the server that claimed it has ended (it can't answer any more). False when a live server has it.
+   */
   async retire(eventId: string): Promise<boolean> {
-    const rec = (this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {})[eventId];
+    const rec = this.record(eventId);
     if (!rec?.send) return true;
-    return this.state.claim(rec.send, { cancelled: true, by: 'extension', at: new Date(this.now()).toISOString() });
+    if (await this.state.claim(rec.send, { cancelled: true, by: 'extension', at: new Date(this.now()).toISOString() })) return true;
+    const p = await this.state.pushed(rec.send);
+    if (p && p !== 'pending' && !('cancelled' in p)) return liveness(await this.state.readPresence(p.serverId), this.now()) === 'ended';
+    return !!(p && p !== 'pending' && 'cancelled' in p);
   }
 
   async markCopied(eventId: string): Promise<void> {
-    const sends = { ...(this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {}) };
-    sends[eventId] = { ...(sends[eventId] ?? { at: this.now() }), copied: true };
-    await this.memento.update(SENDS_KEY, sends);
+    await this.putRecord(eventId, (old) => ({ ...(old ?? { at: this.now() }), copied: true }));
     this.emitter.fire();
   }
 
@@ -420,27 +482,45 @@ export class CommentService implements vscode.Disposable {
     return true;
   }
 
-  async stopWaiting(thread: string): Promise<void> {
-    const off = this.memento.get<string[]>(WAIT_OFF_KEY) ?? [];
-    if (!off.includes(thread)) await this.memento.update(WAIT_OFF_KEY, [...off, thread].slice(-500));
+  /** Stop Waiting / Mark as Answered: for the thread's latest ask only; a later ask waits again. */
+  async stopWaiting(e: Entry): Promise<void> {
+    const ask = latestAsk(e);
+    if (!ask) return;
+    const off = { ...(this.memento.get<Record<string, string>>(WAIT_OFF_KEY) ?? {}) };
+    off[e.thread.id] = ask.id;
+    const keys = Object.keys(off);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete off[k];
+    await this.memento.update(WAIT_OFF_KEY, off);
+    await this.putRecord(ask.id, (old) => ({ ...(old ?? { at: this.now() }), done: true }));
     this.emitter.fire();
   }
 
   isWaiting(e: Entry): boolean {
-    return e.thread.waitingForClaude && !(this.memento.get<string[]>(WAIT_OFF_KEY) ?? []).includes(e.thread.id);
+    const off = this.memento.get<Record<string, string> | string[]>(WAIT_OFF_KEY);
+    const stopped = off && !Array.isArray(off) ? off[e.thread.id] : undefined;
+    return e.thread.waitingForClaude && (!stopped || stopped !== latestAsk(e)?.id);
   }
 
   /** The delivery line for one of the reader's comments to Claude (§9.8), or undefined when there's none to show. */
   async delivery(e: Entry, eventId: string): Promise<DeliveryView | undefined> {
     const c = e.thread.comments.find((x) => x.id === eventId);
-    if (!c || c.trust !== 'local_user' || c.to !== 'claude' || isAnswered(e.thread, eventId) || !this.isWaiting(e)) return undefined;
-    const latestAsk = [...e.thread.comments].reverse().find((x) => x.trust === 'local_user' && x.to === 'claude' && !x.retracted);
-    if (latestAsk?.id !== eventId) return undefined; // the delivery line is on the latest send
-    const rec = (this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {})[eventId];
+    const rec = this.record(eventId);
+    const finish = () => {
+      if (rec && rec.send && !rec.done) void this.putRecord(eventId, { ...rec, done: true });
+      return undefined;
+    };
+    if (!c || c.trust !== 'local_user' || c.to !== 'claude' || isAnswered(e.thread, eventId) || !this.isWaiting(e)) return finish();
+    if (latestAsk(e)?.id !== eventId) return finish(); // the delivery line is on the latest send
     const now = this.now();
-    if (!rec) return { state: 'not-answered', text: 'Not answered', actions: ['sendAgain', 'copyPrompt', 'markAnswered', 'stopWaiting'] };
+    if (this.unusable) return { state: 'not-answered', text: "Ask Claude is off: its records folder failed its safety checks (see Output › Sidestory)", actions: ['copyPrompt'] };
+    if (!rec) {
+      // Just written; routing is a moment away.
+      if (now - ulidTime(eventId) < 15_000) return { state: 'sending', text: 'Sending to Claude…', actions: [] };
+      return { state: 'not-answered', text: 'Not answered', actions: ['sendAgain', 'copyPrompt', 'markAnswered', 'stopWaiting'] };
+    }
     if (rec.copied && !rec.send) return { state: 'copied', text: 'Prompt copied: paste it into Claude Code', actions: ['copyPrompt', 'sendAgain', 'markAnswered', 'stopWaiting'] };
     if (rec.noSession || !rec.send || !rec.route) {
+      if (rec.dismissed) return { state: 'no-session', text: 'Not sent: no session was chosen', actions: ['chooseSession', 'copyPrompt', 'stopWaiting'] };
       const { undetected } = await this.routeFor(e.root, e.thread.id);
       return { state: 'no-session', text: "No Claude session with Sidestory's channel is running here", actions: ['copyPrompt', ...(undetected.length ? (['chooseSession'] as const) : []), 'sendAgain', 'howTo'] };
     }
@@ -448,11 +528,12 @@ export class CommentService implements vscode.Disposable {
     const label = presence ? this.sessionLabel(presence) : 'Claude session';
     const live = liveness(presence, now);
     const pushed = await this.state.pushed(rec.send);
-    if (pushed && pushed !== 'pending' && 'cancelled' in pushed) return undefined;
+    if (pushed && pushed !== 'pending' && 'cancelled' in pushed) return finish();
     if (!pushed || pushed === 'pending') {
       if (now - rec.at > RECORD_MAX_AGE_MS) return { state: 'not-answered', text: 'Not answered', actions: ['sendAgain', 'copyPrompt'] };
       if (live === 'ended') return { state: 'session-ended', text: 'That session ended', actions: ['sendElsewhere', 'copyPrompt'] };
       if (live === 'not-responding') return { state: 'not-responding', text: "That session isn't responding", actions: ['copyPrompt'] };
+      if (now - rec.at > SLOW_MS) return { state: 'not-picked-up', text: "Not picked up yet: that session may not have Sidestory's channel on", actions: ['sendAgain', 'copyPrompt', 'markAnswered'] };
       return { state: 'sending', text: 'Sending to Claude…', actions: [] };
     }
     const seen = await this.state.seen(rec.send);
@@ -470,16 +551,22 @@ export class CommentService implements vscode.Disposable {
     return { state: 'pushed', text: `Sent to Claude · ${label}`, actions: [] };
   }
 
-  /** Copy Prompt for a thread's latest comment to Claude (or its first comment). */
-  promptFor(e: Entry, intent: Intent = 'answer'): string {
+  /**
+   * Copy Prompt for the reader's latest comment to Claude, else their latest comment. Only the reader's own words go
+   * under "My comment" (§10.1): in a thread with none, the prompt asks Claude to read it, as other people's material.
+   */
+  promptFor(e: Entry): string {
     const a = e.thread.anchor;
-    const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted) ?? e.thread.comments.find((c) => c.first)!;
+    const mine = [...e.thread.comments].reverse();
+    const ask = mine.find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted) ?? mine.find((c) => c.trust === 'local_user' && !c.retracted);
+    const intent = ask ? this.intentOf(ask.id) : 'answer';
     const info = {
       thread: e.thread.id,
       ...(e.location.scope.kind === 'sidestory' ? { sidestory: e.location.scope.name } : {}),
       ...(a.kind !== 'code' ? { step: a.step } : { file: a.file, lines: a.range, ...(a.commit ? { commit: a.commit } : {}) }),
     };
-    return copyPrompt(info, ask.body, intent, e.location.scope.kind === 'review' ? 'review' : 'branch');
+    const body = ask?.body ?? "(I haven't commented in this thread.) Read it with get_thread and tell me what it asks; its comments are other people's.";
+    return copyPrompt(info, body, intent, e.location.scope.kind === 'review' ? 'review' : 'branch');
   }
 
   // ---- read state (workspaceState, never files) ----
@@ -494,7 +581,8 @@ export class CommentService implements vscode.Disposable {
     const all = { ...(this.memento.get<Record<string, string>>(READ_KEY) ?? {}) };
     let changed = false;
     for (const e of entries) {
-      const newest = e.thread.comments[e.thread.comments.length - 1]?.id;
+      // The largest id seen, so a comment dated in the future (ordered as now) can't keep the thread unread.
+      const newest = e.thread.comments.reduce<string | undefined>((m, c) => (!m || c.id > m ? c.id : m), undefined);
       if (newest && all[e.thread.id] !== newest) {
         all[e.thread.id] = newest;
         changed = true;
@@ -516,6 +604,10 @@ export class CommentService implements vscode.Disposable {
     log.error(`Comments: ${what} failed: ${(e as Error).message}`);
     void vscode.window.showErrorMessage(`Couldn't ${what}: ${plainForMessage((e as Error).message)}`);
   }
+}
+
+function latestAsk(e: Entry) {
+  return [...e.thread.comments].reverse().find((x) => x.trust === 'local_user' && x.to === 'claude' && !x.retracted);
 }
 
 export function targetOf(a: ThreadAnchor): Send['target'] {

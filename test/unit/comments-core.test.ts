@@ -195,7 +195,8 @@ describe('what reaches Claude', () => {
   });
   it('adds the follow-up, edit and review lines, and caps the length', () => {
     expect(channelContent({ ...base, followUp: 2 })).toContain('follow-up in a thread with 2 earlier comments');
-    expect(channelContent({ ...base, intent: 'edit' })).toContain('You may edit the sidestory (.sidestory/retry-jitter/)');
+    expect(channelContent({ ...base, intent: 'edit' })).toContain("You may edit the sidestory named in this event's sidestory attribute");
+    expect(channelContent({ ...base, intent: 'edit' })).not.toContain('retry-jitter');
     expect(channelContent({ ...base, mode: 'review' })).toContain('git show');
     expect(channelContent({ ...base, text: 'x'.repeat(20_000) }).length).toBeLessThanOrEqual(10_000);
   });
