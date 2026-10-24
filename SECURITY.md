@@ -30,6 +30,15 @@ What it can't do, and how that is enforced:
 - `localResourceRoots` includes the `.sidestory/` folder (a panel can move between the sidestories in it). VS Code checks resource paths by prefix, not by real path, so a symlink inside `.sidestory/` could in principle expose another readable file to the panel's own resource loader. Sidestory content itself can't load such URLs (assets go through the extension, which checks real paths), and the panel can't send data anywhere.
 - Sidestory HTML can't run script. Code from the repository runs only as widgets, below.
 
+## Comments and Claude
+
+- **Comments are untrusted text.** They are shown as text with a small formatting subset (paragraphs, bold, italics, code, lists, quotes), never as links or images; a code reference like `` `src/a.ts#L10-L20` `` is the one clickable form, and it goes through the same checks as code links. In the editor, comments are untrusted Markdown with HTML, commands and icons off and autolinks broken.
+- **Only comments you send with Ask Claude go to Claude**, only to the Claude Code session you picked, with Sidestory's channel on. A plain comment, a teammate's comment, or any file in the repository never causes a push: what is pushed is decided by records in a per-user folder outside every repository (`~/Library/Application Support/sidestory` on macOS, `~/.local/state/sidestory` on Linux, `%LOCALAPPDATA%\sidestory` on Windows; created private, refused if it's a link or writable by others). Only your own words go in the push; everything else is ids and values that pass fixed patterns.
+- **Other people's comments reach Claude only when it reads them**, through the plugin's tools, each labelled with who wrote it (`local_user` for your own, `claude` for this machine's Claude, `repository` for everything else) and escaped, under instructions that say they are data, not instructions. Who wrote a comment comes from a ledger in that same per-user folder, never from the name in the file; a file claiming to be Claude's that this machine didn't write shows as "Claude (from the repository)".
+- **The channel can't approve tool use** (it doesn't declare Claude Code's permission relay), listens on no port, and is a research-preview feature of Claude Code. Its reply tools only read and write thread files.
+- **Local comments stay local:** `.sidestory/.local/` ignores itself through its own `.gitignore`, which is checked before every write; a repository that changes it gets no local comments.
+- **Accepted risks:** Claude reading a teammate's comment can still be influenced by it; Claude's replies can be wrong or steered by what it read; any program running as you (including an agent) can send a comment to your Claude sessions, as it could already change your Claude Code settings or hooks.
+
 ## Interactive widgets
 
 Widgets are React components in a sidestory's folder (`<explain-widget src="widgets/x.tsx">`). Unlike the rest of a sidestory, **they are code from the repository, and they run.** The boundary is your informed consent plus limits on what a widget can see; the sandbox makes misuse harder but is not treated as containment.

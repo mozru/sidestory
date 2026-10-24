@@ -17,6 +17,9 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Styling](#styling)
   - [What's supported, and what's removed](#whats-supported-and-whats-removed)
   - [Interactive widgets](#interactive-widgets)
+- [Comments and Claude](#comments-and-claude)
+  - [Local or shared](#local-or-shared)
+  - [Turning on Ask Claude](#turning-on-ask-claude)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -373,6 +376,50 @@ export default function Refill({ width = 64 }: { width?: number }) {
 
 **Writing them:** [WIDGETS.md](WIDGETS.md) is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Sidestory: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .sidestory/<name>`; [WIDGETS.md §13](WIDGETS.md#13-checking-your-work-and-consent) has the exact command). **Sidestory: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
 
+## Comments and Claude
+
+Comment on a step of a sidestory, or on lines of code, and ask Claude about it without leaving the panel.
+
+**In the panel:** press <kbd>C</kbd> to comment on the active step, <kbd>A</kbd> to ask Claude, <kbd>T</kbd> to show or hide the **Comments** pane under the sidestory, <kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>N</kbd> for the next or previous thread with something new for you. Steps with threads show a count on their chip and a badge at the section's corner. In the composer, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> sends in the mode shown (**Comment** or **Ask Claude**), and <kbd>Esc</kbd> closes it and keeps your draft. With **Ask Claude**, choose **Answer only** (the default) or **Let Claude edit**.
+
+**In the editor:** select lines and run **Sidestory: Comment on Selection** or **Ask Claude About Selection** (also in the editor's context menu), or use the gutter **+** on lines a step covers. The thread opens in VS Code's own comment widget, with **Comment** and **Ask Claude** buttons; <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Enter</kbd> runs the first. The setting `sidestory.comments.ranges` (`steps` or `everywhere`) says where the **+** appears; `everywhere` overlaps the GitHub Pull Requests extension, and VS Code then asks which one to use.
+
+**The Comments view** (in the Sidestory sidebar) lists threads: *For you* (new replies in threads you took part in, and Claude's suggestions to resolve), *Waiting for Claude* (with **Copy Prompt: Answer Waiting Comments**, **Stop Waiting** and **Mark as Answered**), *Open*, *Resolved*, and *Elsewhere* (local threads whose sidestory was renamed, archived or replaced).
+
+### Local or shared
+
+New threads are **local**: kept in `.sidestory/.local/`, which ignores itself through its own `.gitignore` (`*`), so they never reach a commit. **Share** moves a thread to `.sidestory/<name>/threads/`, committed with the sidestory, where teammates see it after a pull; **Make Local** moves it back (a committed thread stays in git history). Each comment is its own small file, so branches never conflict. The first Share offers to add `.sidestory/**/threads/** linguist-generated=true` to `.gitattributes`, which collapses thread files in GitHub's "Files changed". `sidestory.comments.defaultLocation` flips the default, and `sidestory.comments.authorName` sets the name on your comments (otherwise git's `user.name`; never an email address).
+
+### Turning on Ask Claude
+
+Ask Claude sends your comment to a running **Claude Code** session, which answers in the thread. It needs the `sidestory-comments` plugin (and **Node 20 or later** on `PATH`) and Claude Code started with Sidestory's channel:
+
+```
+/plugin marketplace add mozru/sidestory
+/plugin install sidestory-comments@sidestory
+```
+
+| You use | Start Claude Code with |
+|---|---|
+| Claude Code, Pro or Max (no organization), or a Console API key | `claude --dangerously-load-development-channels plugin:sidestory-comments@sidestory`. Claude Code shows a warning at every start; choose "I am using this for local development". Sidestory isn't on Anthropic's channel allowlist during the research preview, so plain `--channels` doesn't register it. |
+| Team or Enterprise, or a Console organization with managed settings | An Owner turns channels on (Organization settings › Claude Code › Channels, or `channelsEnabled: true`); then the command above works. For plain `claude --channels plugin:sidestory-comments@sidestory`, the admin also adds `{ "marketplace": "sidestory", "plugin": "sidestory-comments" }` to `allowedChannelPlugins` (which replaces Anthropic's list), and you set `sidestory.claude.channelFlag` to `channels`. |
+| Bedrock, Google Cloud's Agent Platform, Foundry; `claude -p`, the Agent SDK | Channels aren't available: use **Copy Prompt**, or ask Claude to "check the Sidestory comments". |
+| The Claude Code VS Code extension | It can't pass the flag: run `claude` with the flag in VS Code's terminal. |
+
+**Sidestory: Copy Claude Command with Comments** copies the right command, with `--allowedTools` for the four comment tools so Claude's first reply doesn't stop for an approval in a terminal you aren't looking at. To allow them everywhere instead, add them to `permissions.allow` in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["mcp__plugin_sidestory-comments_sidestory__ack", "mcp__plugin_sidestory-comments_sidestory__reply", "mcp__plugin_sidestory-comments_sidestory__get_thread", "mcp__plugin_sidestory-comments_sidestory__list_threads"] } }
+```
+
+These tools only read and write thread files; edits Claude makes still ask as usual. A shell alias such as `alias claude-sidestory='claude --dangerously-load-development-channels plugin:sidestory-comments@sidestory'` saves typing. A **separate Claude Code session for questions while reading** works best: a comment that arrives while Claude is busy lands in its current turn, and a smaller model may set it aside; the comment then shows **Send Again**.
+
+**What you see:** "Sent to Claude · <session>", then "Claude is on it" once Claude acknowledges, then the reply in the thread. "No Claude session with Sidestory's channel is running here" means none was found; **Choose a Session…** lists sessions whose channel couldn't be detected, and **Copy Prompt** copies a prompt to paste anywhere. With several sessions in a repository, the send button names the one it goes to; its ▾ changes it, and your choice is remembered. A session in another worktree isn't offered. If the channel doesn't register on Claude Code's v2 MCP runtime, start Claude Code with `MCP_PROTOCOL_NEGOTIATION=legacy`.
+
+**Other agents** (Codex, Cursor): **Sidestory: Copy MCP Server Config** copies a server entry with the tools (no push); then ask the agent to answer the waiting comments. Without MCP, `node <extension>/dist/check.cjs threads --waiting --json` lists them.
+
+Comments from other people, and anything from the repository, reach Claude only when it reads them, labelled as theirs; [SECURITY.md](https://github.com/mozru/sidestory/blob/main/SECURITY.md#comments-and-claude) has the details.
+
 ## Settings
 
 | Setting | Default | |
@@ -384,6 +431,11 @@ export default function Refill({ width = 64 }: { width?: number }) {
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
 | `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
+| `sidestory.comments.defaultLocation` | `local` | Where new comment threads are kept: `local` (only on this machine) or `shared` (committed). Application scope. |
+| `sidestory.comments.authorName` | (git's `user.name`) | The name on your comments; never an email address. Application scope. |
+| `sidestory.comments.ranges` | `steps` | Where the editor's comment **+** appears: lines a step covers, or `everywhere`. |
+| `sidestory.comments.stateDir` | (per-user default) | Where Ask Claude's delivery records and presence are kept, shared with the comments plugin. Machine scope. |
+| `sidestory.claude.channelFlag` | `dev` | The flag the copied Claude command uses: `dev` (`--dangerously-load-development-channels`) or `channels`. |
 
 ## Troubleshooting
 

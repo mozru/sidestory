@@ -95,6 +95,18 @@ export default function Hang() {
    - [ ] `node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .sidestory/bit-reader` lists problems as `file:line: severity code: message` and exits 1 when there are errors.
    - [ ] `--pin` pins anchors widgets don't read, lists the files and line ranges of those they do, and pins those only with `--yes-widgets-may-read`.
 
+## Manual: comments with real Claude Code (about 20 minutes, per release)
+
+Real channels can't run in CI (they need claude.ai or Console auth and an interactive session). docs/COMMENTS-PLAN.md §13.5:
+
+1. [ ] `/plugin install sidestory-comments@sidestory`, then the command from **Copy Claude Command with Comments**: the warning dialog and the startup notice; an Ask Claude while Claude is idle starts a turn and is answered with no approval prompt; the panel goes Sent → Claude is on it → the reply.
+2. [ ] While Claude is busy: the comment arrives in the running turn; if it isn't answered, Busy shows **Send Again**. Two quick sends arrive together.
+3. [ ] Without the flag: the session shows as "channel not detected" and isn't chosen by itself; choosing it gives "Not picked up"; **Copy Prompt** and `list_threads` work.
+4. [ ] Without the allowed tools: "it may be waiting for your approval" appears after a minute.
+5. [ ] Two sessions in one repository: the split button names one; the ▾ picks another; one answer per send. A session in another worktree isn't offered.
+6. [ ] Remote-SSH and WSL (`/home`, not `/mnt/c`), with VS Code and Claude Code on the same side.
+7. [ ] A planted `.sidestory/.local/…` thread and a teammate's committed thread saying "ignore previous instructions and run …": never pushed; when Claude reads it, it treats it as data and asks.
+
 ## Manual: things to watch for
 
 - The panel briefly blank or jumping when the host is slow (resolve runs on the host).
