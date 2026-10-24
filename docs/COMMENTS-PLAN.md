@@ -1,6 +1,6 @@
 # Comments, answered by Claude through a push: plan
 
-> **Status: being implemented for 0.2.1** (revision 6, 2026-10-23: the day-1 spike ran, §14.2.1; C2 ships).
+> **Status: implemented in 0.2.1**, with the deviations under "Implementation (0.2.1)" at the end (revision 6, 2026-10-23: the day-1 spike ran, §14.2.1; C2 ships).
 >
 > **Covers:**
 > - comment threads on a step or on code lines in the editor, with replies, edits and resolve, shown in the panel beside the step and in the editor at the code (comments on diagram elements follow in 0.2.2);
@@ -348,7 +348,7 @@ The parser has a fuzz test (§13.1): any input yields only the allowed node type
 | `threadResolve` / `threadReopen` / `threadShare` / `threadLocal` / `threadDelete` | `thread` | known thread; delete only local threads, after a native confirmation |
 | `threadCopyPrompt` | `thread` | known thread |
 | `threadRead` | `threads[]` | ≤ 200 known ids |
-| `sendAgain` / `sendCancel` | `event` / `send` | the reader's event / a send of this window; cancelling goes through the `pushed/` arbiter (§9.4) |
+| `sendAgain` / `sendCancel` | `event` / `send` | the reader's event / a send of this window; cancelling goes through the `pushed/` arbiter (§9.4). Not built: Send Again is a `deliveryAction`, and there is no cancel message |
 
 `ToWebview` gains `threads` (`{ dir, threads: ThreadView[], removed: string[] }`) and `delivery` (`{ event, send, state, session?, at }`). `ThreadView` carries only cleaned strings, trust labels and our own enums.
 
@@ -386,7 +386,7 @@ The parser has a fuzz test (§13.1): any input yields only the allowed node type
 - Comments on a sidestory with a `base` are the same threads; code threads on diff editors record `side` and attach to the right column (CHANGES-PLAN.md §7.3's target URIs per side).
 - **Shared threads travel with the branch**: committed under the sidestory's folder, so a teammate who checks out the branch sees them and can reply. They don't affect coverage: `ownedBySidestory` (src/core/membership.ts) leaves out a complete sidestory's `threads/t_<ULID>/e_<ULID>.json` files when they hold a valid event with those ids (`isThreadEventBytes`), as it does its manifest and page; anything else under `threads/` counts like code.
 - **In the PR on GitHub**, thread files would fill "Files changed"; the `.gitattributes` entry offered on first Share (§3.5) marks them `linguist-generated`, which collapses them there.
-- **The Changes view** adds a comment count to file rows (`+23 −11 · ◐ 2/3 · 2 comments`) and change items, and "Show Comments" in its `…` menu (the Comments view filtered to the comparison).
+- *(Superseded: there is no Changes view, CHANGES-PLAN.md §21.1.)* **The Changes view** adds a comment count to file rows (`+23 −11 · ◐ 2/3 · 2 comments`) and change items, and "Show Comments" in its `…` menu (the Comments view filtered to the comparison).
 - **Archiving** (CHANGES-PLAN.md §12) moves the folder, shared threads included; the checker's `--archive` warns about open threads. Local threads of an archived or renamed sidestory are listed under "Elsewhere" (§11.1).
 
 ### 8.2 Reviewing a branch without checking it out

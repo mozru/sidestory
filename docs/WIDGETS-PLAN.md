@@ -1,6 +1,6 @@
 # Interactive widgets: plan
 
-Status: plan, revision 4.5 (2026-10-22), reviewed to only nits by architecture, security and authoring reviewers over five rounds. Not built yet.
+Status: plan, revision 4.5 (2026-10-22), reviewed to only nits by architecture, security and authoring reviewers over five rounds. Built; docs/WIDGETS.md is the reference for what shipped.
 
 Explainers today are HTML and CSS without script: safe, but they can't hold the app-like visuals people expect from Claude artifacts (live charts, simulations, draggable diagrams). This plan adds **widgets**: React components, written the way Claude writes artifacts, that run in isolated frames inside the explainer. The prose stays plain HTML; only widgets run code.
 
