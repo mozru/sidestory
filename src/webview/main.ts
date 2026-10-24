@@ -1168,7 +1168,8 @@ function bindFrameEvents(d: Document): void {
 
 function noteKey(e: KeyboardEvent): void {
   lastKeyAt = Date.now();
-  if (e.isTrusted && e.key === 'Tab') lastTabAt = lastKeyAt;
+  // Any other key clears it, so "the last key was a Tab" doesn't hang on two presses landing in the same millisecond.
+  lastTabAt = e.isTrusted && e.key === 'Tab' ? lastKeyAt : 0;
 }
 document.addEventListener('keydown', noteKey, true);
 
