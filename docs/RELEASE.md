@@ -71,7 +71,7 @@ npm run typecheck
 npm test                                        # unit tests
 npm audit --omit=dev --audit-level=moderate
 npm run build && npm run test:webview && npm run test:widgets
-npm run package                                 # dist/sidestory.vsix, must be < 2 MB
+npm run package                                 # dist/sidestory.vsix, must be < 3 MB
 npm run test:e2e                                # browser VS Code; needs Docker
 npm run test:desktop                            # desktop VS Code
 ```
