@@ -204,7 +204,7 @@ describe('the checker\'s rules in the extension', () => {
     expect([...r.paired]).toEqual([['docs/old.md', 'docs/new.md']]);
     // A move (§5.1): its folder's move group's one change, carried by this file, not in its line diff.
     expect(r.files.get('docs/new.md')!.diff.changes).toEqual([]);
-    expect(r.files.get('docs/new.md')!.move).toMatchObject({ from: 'docs', to: 'docs', files: [{ path: 'docs/new.md', oldPath: 'docs/old.md' }] });
+    expect(r.files.get('docs/new.md')!.move).toMatchObject({ inPlace: true, files: [{ path: 'docs/new.md', oldPath: 'docs/old.md' }] });
     expect(r.files.get('docs/new.md')!.coverage!.changes.map((c) => c.state)).toEqual(['unexplained']);
     // The comparison's own untracked entry shows the counts.
     expect(s.entries.find((e) => e.path === 'docs/new.md')).toMatchObject({ added: 0, removed: 0 });

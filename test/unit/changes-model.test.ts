@@ -56,6 +56,30 @@ describe('Next/Previous Unexplained Change (§9.3)', () => {
     expect(nextChange(changes, rank, { path: 'elsewhere.ts', pos: 5 }, -1)).toEqual({ target: changes[0], wrapped: false });
     expect(nextChange([], rank, undefined, 1)).toBeUndefined();
   });
+
+  it('a move (pos 0) and a line-1 edit in one file are two stops, forward and backward', () => {
+    const list: OpenChange[] = [
+      { path: 'a.ts', key: 'move-x', pos: 0 },
+      { path: 'a.ts', key: 'e1', pos: 1 },
+      { path: 'b.ts', key: 'b1', pos: 1 },
+    ];
+    const rank = fileRanks(['a.ts', 'b.ts']);
+    // From the move (lastWalk carries its key): the edit, then b.ts.
+    expect(nextChange(list, rank, { path: 'a.ts', pos: 0, key: 'move-x' }, 1)?.target.key).toBe('e1');
+    expect(nextChange(list, rank, { path: 'a.ts', pos: 1, key: 'e1' }, 1)?.target.key).toBe('b1');
+    // Backward: b.ts, the edit, the move.
+    expect(nextChange(list, rank, { path: 'b.ts', pos: 1, key: 'b1' }, -1)?.target.key).toBe('e1');
+    expect(nextChange(list, rank, { path: 'a.ts', pos: 1, key: 'e1' }, -1)?.target.key).toBe('move-x');
+    // Two changes at one position are told apart by key.
+    const tied: OpenChange[] = [
+      { path: 'a.ts', key: 'k1', pos: 5 },
+      { path: 'a.ts', key: 'k2', pos: 5 },
+    ];
+    expect(nextChange(tied, rank, { path: 'a.ts', pos: 5, key: 'k1' }, 1)).toEqual({ target: tied[1], wrapped: false });
+    expect(nextChange(tied, rank, { path: 'a.ts', pos: 5, key: 'k2' }, -1)).toEqual({ target: tied[0], wrapped: false });
+    // A cursor in a lineless file (pos 0, no key) goes on past its move.
+    expect(nextChange(list, rank, { path: 'a.ts', pos: 0 }, 1)?.target.key).toBe('e1');
+  });
 });
 
 describe('statuses', () => {

@@ -522,7 +522,8 @@ export async function computeCoverage(
     }
   }
   // Moves (§5.1), as the checker counts them: one change per (old folder → new folder), on the group's first file.
-  const groups = moveGroups(done.map((d) => d.entry));
+  // Archive changes and unsupported paths are counted already, one change each: never in a move group too.
+  const groups = moveGroups(done.filter((d) => d.whole !== 'archive' && d.whole !== 'unsupported').map((d) => d.entry));
   const carried = moveCarriers(groups, (p) => texts.has(p));
   const movedWith = new Map<string, string>();
   for (const g of groups) {

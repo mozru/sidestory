@@ -17,7 +17,8 @@ export const COVERAGE_COLORS = { done: 'sidestory.coverageDoneForeground', left:
 export interface CoverageMark {
   /** `✓` all explained (some may be trivial), `–` all marked trivial, `◐` partly, `○` none yet, `!` needs a look. */
   badge: string;
-  color: keyof typeof COVERAGE_COLORS;
+  /** None for a file moved with a group another file carries: a tooltip, no badge. */
+  color?: keyof typeof COVERAGE_COLORS;
   tooltip: string;
 }
 

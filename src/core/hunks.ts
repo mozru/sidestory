@@ -57,34 +57,49 @@ export function tooLargeChange(path: string, oldLines: number, newLines: number)
   };
 }
 
-/** Files moved from one folder to another (§5.1), counted as one change: the folders, and each file's paths. */
+/**
+ * Files moved from one place to another (§5.1), counted as one change: the moved prefixes (old and new paths with
+ * their common trailing segments stripped, so `src/a/x/y.ts → src/b/x/y.ts` is `src/a → src/b`), and each file's
+ * paths. `inPlace`: a rename within one folder, a group of its own.
+ */
 export interface MoveGroup {
-  /** The old parent folder ('' for the root). */
   readonly from: string;
-  /** The new parent folder. */
   readonly to: string;
   /** By new path. */
   readonly files: readonly { readonly path: string; readonly oldPath: string; readonly copy?: boolean }[];
+  readonly inPlace?: boolean;
 }
 
 /** A path's parent folder, '' at the root. */
 export const parentFolder = (p: string): string => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 
+/** The moved prefixes of a rename: both paths without their longest common trailing segments ('' for the root). */
+export function movedPrefix(oldPath: string, path: string): { from: string; to: string } {
+  const o = oldPath.split('/');
+  const n = path.split('/');
+  while (o.length && n.length && o[o.length - 1] === n[n.length - 1]) {
+    o.pop();
+    n.pop();
+  }
+  return { from: o.join('/'), to: n.join('/') };
+}
+
 /**
- * The moves of a comparison (§5.1): every counted rename or copy whose path changed, grouped by (old parent folder →
- * new parent folder), pure moves and moved-and-edited files alike. Moving `src/auth.js` to `src/disabled/auth.js`
- * can switch a module off, so each group needs a mention; a refactor moving 50 files from `src/a` to `src/b` is one
- * group, not 50 changes. Groups are sorted by their first file's new path. Shared by the checker and the extension.
+ * The moves of a comparison (§5.1): every counted rename or copy whose path changed. Files moved across folders group
+ * by their moved prefix (a refactor moving 50 files from `src/a` to `src/b`, subfolders included, is one group, not
+ * 50 changes); a rename within one folder is a change of its own. The caller leaves out entries already counted
+ * otherwise (archive changes, unsupported paths). Groups are sorted by their first file's new path. Shared by the
+ * checker and the extension.
  */
 export function moveGroups(entries: readonly { readonly status: string; readonly path: string; readonly oldPath?: string }[]): MoveGroup[] {
-  const groups = new Map<string, { from: string; to: string; files: { path: string; oldPath: string; copy?: boolean }[] }>();
+  const groups = new Map<string, { from: string; to: string; files: { path: string; oldPath: string; copy?: boolean }[]; inPlace?: boolean }>();
   for (const e of entries) {
     if ((e.status !== 'R' && e.status !== 'C') || e.oldPath === undefined || e.oldPath === e.path) continue;
-    const from = parentFolder(e.oldPath);
-    const to = parentFolder(e.path);
-    const k = `${from}\0${to}`;
+    const inPlace = parentFolder(e.oldPath) === parentFolder(e.path);
+    const { from, to } = inPlace ? { from: e.oldPath, to: e.path } : movedPrefix(e.oldPath, e.path);
+    const k = `${inPlace ? 'r' : 'm'}\0${from}\0${to}`;
     let g = groups.get(k);
-    if (!g) groups.set(k, (g = { from, to, files: [] }));
+    if (!g) groups.set(k, (g = { from, to, files: [], ...(inPlace ? { inPlace: true } : {}) }));
     g.files.push({ path: e.path, oldPath: e.oldPath, ...(e.status === 'C' ? { copy: true } : {}) });
   }
   const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -93,9 +108,9 @@ export function moveGroups(entries: readonly { readonly status: string; readonly
 }
 
 /**
- * A move group's one change, carried by the group's first file (the caller picks it): no lines, key from the two
- * folders. Covered by any head-side anchor that resolves in a file of the group, or a trivial mark there; by
- * trivialFiles only when it matches every file of the group (`coverage`).
+ * A move group's one change, carried by the group's first file (the caller picks it): no lines, key from the moved
+ * prefixes. Explained by a step anchored in any file of the group; trivial only when every file has its own trivial
+ * mark or trivialFiles match (`coverage`).
  */
 export function moveChange(g: MoveGroup): ChangeBlock {
   return { key: `move-${contentHash(g.to, [g.from], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, move: g };
@@ -114,10 +129,18 @@ export function moveCarriers(groups: readonly MoveGroup[], has: (path: string) =
   return out;
 }
 
-/** "renamed from src/auth.js" for one file, "3 files moved src/a → src/b" for more (raw paths: display them safely). */
+/** "renamed src/a.ts → src/b.ts" within a folder, "moved X → Y" for one file, "3 files moved src/a → src/b" (raw paths: display them safely). */
 export function moveLabel(g: MoveGroup): string {
-  if (g.files.length === 1) return `${g.files[0]!.copy ? 'copied' : 'renamed'} from ${g.files[0]!.oldPath}`;
+  const one = g.files[0]!;
+  if (g.inPlace) return `${one.copy ? 'copied' : 'renamed'} ${one.oldPath} → ${one.path}`;
+  if (g.files.length === 1) return `${one.copy ? 'copied' : 'moved'} ${one.oldPath} → ${one.path}`;
   return `${g.files.length} files moved ${g.from || '.'} → ${g.to || '.'}`;
+}
+
+/** Every file of a group, "old → new", capped with "and N more" (raw paths). */
+export function moveFiles(g: MoveGroup, cap = 10): string {
+  const shown = g.files.slice(0, cap).map((f) => `${f.oldPath} → ${f.path}`);
+  return `${shown.join(', ')}${g.files.length > cap ? `, and ${g.files.length - cap} more` : ''}`;
 }
 
 // ---- what a side holds (§5.1) ----

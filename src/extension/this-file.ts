@@ -87,13 +87,16 @@ type Node =
   | { kind: 'step'; id: string; entry: IndexEntry; row: StepRow; parent: Node; repin?: { dir: string; anchor: string } }
   | { kind: 'more'; id: string; count: number }
   | { kind: 'changes'; id: string; children: Node[] }
-  | { kind: 'change'; id: string; path: string; key: string; label: string; c: ChangeCoverage; whole?: boolean; parent: Node };
+  | { kind: 'change'; id: string; path: string; key: string; label: string; c: ChangeCoverage; whole?: boolean; detail?: string; parent: Node }
+  | { kind: 'note'; id: string; label: string; tooltip: string };
 
 /** A changed file's coverage, as This File shows it. */
 export interface FileChanges {
   path: string;
   /** Changes that aren't explained or marked trivial, in file order. */
-  open: { key: string; label: string; c: ChangeCoverage; whole?: boolean }[];
+  open: { key: string; label: string; c: ChangeCoverage; whole?: boolean; detail?: string }[];
+  /** Lines about the file that aren't changes of its own (a file moved with a group another file carries). */
+  notes?: { label: string; tooltip: string }[];
   /** `${dir}\0${anchor}` of anchors whose code grew since they were written. */
   needsLook: Set<string>;
 }
@@ -238,9 +241,10 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     const changes = this.host.changesOf?.(f);
     if (changes?.open.length) {
       const g: Node & { kind: 'changes' } = { kind: 'changes', id: 'changes', children: [] };
-      for (const o of changes.open) g.children.push({ kind: 'change', id: `c:${o.key}`, path: changes.path, key: o.key, label: o.label, c: o.c, ...(o.whole ? { whole: true } : {}), parent: g });
+      for (const o of changes.open) g.children.push({ kind: 'change', id: `c:${o.key}`, path: changes.path, key: o.key, label: o.label, c: o.c, ...(o.whole ? { whole: true } : {}), ...(o.detail ? { detail: o.detail } : {}), parent: g });
       this.top.push(g);
     }
+    (changes?.notes ?? []).forEach((n, i) => this.top.push({ kind: 'note', id: `n:${i}`, label: n.label, tooltip: n.tooltip }));
     const order = [...groups.entries()].sort((a, b) => (a[1][0]!.range?.start ?? 1e9) - (b[1][0]!.range?.start ?? 1e9));
     for (const [key, rows] of order) {
       const e = entries.get(key)!;
@@ -289,6 +293,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
   stats(): { file: string | undefined; description: string | undefined; rows: string[] } {
     const rows: string[] = [];
     for (const n of this.top) {
+      if (n.kind === 'note') rows.push(n.label);
       if (n.kind === 'changes') {
         rows.push('Not explained yet');
         for (const c of this.getChildren(n)) rows.push(`  ${this.getTreeItem(c).label as string} ${this.getTreeItem(c).description as string}`);
@@ -324,6 +329,14 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
       item.contextValue = 'thisFileSidestory';
       return item;
     }
+    if (node.kind === 'note') {
+      const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+      item.id = node.id;
+      item.iconPath = new vscode.ThemeIcon('arrow-right');
+      item.tooltip = node.tooltip;
+      item.contextValue = 'thisFileNote';
+      return item;
+    }
     if (node.kind === 'changes') {
       const item = new vscode.TreeItem('Not explained yet', vscode.TreeItemCollapsibleState.Expanded);
       item.id = node.id;
@@ -339,7 +352,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
       item.description = displayText(stateWords(node.c), 120);
       const icon = changeIcon(node.c);
       item.iconPath = new vscode.ThemeIcon(icon.id, icon.colored ? new vscode.ThemeColor('sidestory.unexplainedForeground') : undefined);
-      item.tooltip = `${node.label}: ${displayText(stateWords(node.c), 300)}\nClick to open the diff at this change`;
+      item.tooltip = `${node.label}: ${displayText(stateWords(node.c), 300)}${node.detail ? `\n${node.detail}` : ''}\nClick to open the diff at this change`;
       item.command = { command: 'sidestory.changes.openChange', title: 'Open Change', arguments: [{ path: node.path, key: node.key }] };
       // A whole-file change: no Mark as Trivial or line prompt in its menu (only a trivialFiles glob covers it).
       item.contextValue = node.whole ? 'thisFileChange:whole' : `thisFileChange:${node.c.state}`;

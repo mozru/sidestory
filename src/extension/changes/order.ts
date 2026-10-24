@@ -25,19 +25,22 @@ export function fileRanks(paths: readonly string[], first: readonly string[] = [
 /** The changes in walking order. */
 export function orderChanges(list: readonly OpenChange[], rank: ReadonlyMap<string, number>): OpenChange[] {
   const r = (p: string) => rank.get(p) ?? Number.MAX_SAFE_INTEGER;
-  return [...list].sort((a, b) => r(a.path) - r(b.path) || a.pos - b.pos || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return [...list].sort((a, b) => r(a.path) - r(b.path) || a.pos - b.pos || byKey(a.key, b.key));
 }
+
+const byKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * The change after (or before) the place `at`, wrapping; with no place (the active editor isn't a changed file), the
- * first (or the last). `wrapped` says it went round.
+ * first (or the last). `wrapped` says it went round. With `at.key` (the last change walked to), changes at the same
+ * position are told apart by key, so two stops at one place (a move and a line-1 edit) are both visited.
  */
-export function nextChange(list: readonly OpenChange[], rank: ReadonlyMap<string, number>, at: { path: string; pos: number } | undefined, dir: 1 | -1): { target: OpenChange; wrapped: boolean } | undefined {
+export function nextChange(list: readonly OpenChange[], rank: ReadonlyMap<string, number>, at: { path: string; pos: number; key?: string } | undefined, dir: 1 | -1): { target: OpenChange; wrapped: boolean } | undefined {
   const sorted = orderChanges(list, rank);
   if (!sorted.length) return undefined;
   if (!at || !rank.has(at.path)) return { target: dir === 1 ? sorted[0]! : sorted.at(-1)!, wrapped: false };
   const r = (p: string) => rank.get(p) ?? Number.MAX_SAFE_INTEGER;
-  const cmp = (x: OpenChange) => r(x.path) - r(at.path) || x.pos - at.pos;
+  const cmp = (x: OpenChange) => r(x.path) - r(at.path) || x.pos - at.pos || (at.key !== undefined ? byKey(x.key, at.key) : 0);
   const found = dir === 1 ? sorted.find((x) => cmp(x) > 0) : [...sorted].reverse().find((x) => cmp(x) < 0);
   if (found) return { target: found, wrapped: false };
   return { target: dir === 1 ? sorted[0]! : sorted.at(-1)!, wrapped: true };

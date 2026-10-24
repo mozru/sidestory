@@ -312,4 +312,47 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(r.files.get('src/b/four.js')!.move!.files.map((f) => f.path)).toEqual(['src/b/four.js', 'src/b/one.js', 'src/b/three.js', 'src/b/two.js']);
     expect(r.files.get('src/b/one.js')!.movedWith).toBe('src/b/four.js');
   });
+
+  it('groups by moved prefix; one file\'s trivial mark covers only its own move; archive and unsupported entries are never in a group', async () => {
+    const dir = copy();
+    const commit = (msg: string) => {
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+    };
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, 'src/a/deep'), { recursive: true });
+    writeFileSync(join(dir, 'src/a/one.js'), 'export const one = 1;\n');
+    writeFileSync(join(dir, 'src/a/deep/two.js'), 'export const two = 2;\n');
+    commit('A package with a subfolder');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    git(dir, 'mv', 'src/a', 'src/b');
+    // A trivial mark on one moved file: it covers that file's move only.
+    const mf = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(mf, 'utf8'));
+    m.anchors['trivial-9'] = { file: 'src/b/one.js', range: [1, 1], trivial: true, why: 'moved with its package' };
+    writeFileSync(mf, JSON.stringify(m, null, 2));
+    // A rename onto an unsupported path, and a move into an archive: one change each, in no group.
+    git(dir, 'mv', 'README.md', WEIRD.replace('.txt', '.md'));
+    mkdirSync(join(dir, '.sidestory/archive/2026-01-01-x'), { recursive: true });
+    git(dir, 'mv', 'docs/notes.md', '.sidestory/archive/2026-01-01-x/notes.md');
+    commit('Moves');
+
+    const c = await checker(dir, true);
+    const r = await extension(dir, false);
+    const cs = checkerStates(c);
+    expect(cs['src/b/deep/two.js']).toBe('unexplained'); // the carrier: src/a → src/b, two files
+    expect(cs['src/b/one.js']).toBeUndefined();
+    const move = c.files.find((f) => f.path === 'src/b/deep/two.js')!.changes[0]!;
+    expect(move.move).toMatchObject({ label: '2 files moved src/a → src/b' });
+    expect(move.uncoveredFiles).toEqual(['src/b/deep/two.js']);
+    expect(cs[WEIRD.replace('.txt', '.md')]).toBe('unexplained');
+    expect(cs['.sidestory/archive/2026-01-01-x/notes.md']).toBe('unexplained');
+    // The only move carriers: the package, and the fixture's own backoff.ts move.
+    expect(c.files.filter((f) => f.changes.some((x) => x.move)).map((f) => f.path)).toEqual(['src/b/deep/two.js', 'src/retry/backoff.ts']);
+    expect(extensionStates(r)).toEqual(cs);
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+    expect([...r.files.values()].filter((f) => f.move).map((f) => f.entry.path)).toEqual(['src/b/deep/two.js', 'src/retry/backoff.ts']);
+    expect(r.files.get('src/b/deep/two.js')!.coverage!.changes[0]!.uncoveredFiles).toEqual(['src/b/deep/two.js']);
+  });
 });

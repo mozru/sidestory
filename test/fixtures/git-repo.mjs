@@ -6,7 +6,8 @@
 //   --many adds n changed files under gen/, for perf.
 //   --explained adds a fourth commit on feature with .sidestory/retry-jitter/ (base main, version 3) that explains
 //   part of the branch (docs/CHANGES-PLAN.md §6.3): jitter.ts and the retry.ts replacement by head-side steps,
-//   the deleted legacy/sleep.ts by a base-side step, backoff.ts's renamed lines by a trivial mark with a why,
+//   the deleted legacy/sleep.ts by a base-side step, backoff.ts's renamed lines by a trivial mark with a why (which
+//   also covers backoff.ts's move from old/, a one-file move group, CHANGES-PLAN §5.1),
 //   and test/retry.test.ts left unexplained, so `check.cjs --coverage --base main` exits 3.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, unlinkSync, renameSync } from 'node:fs';

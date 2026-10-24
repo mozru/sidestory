@@ -190,7 +190,7 @@ describe('--coverage on the fixture', () => {
     const f = r.coverage.files.find((x) => x.path === 'docs/renamed.md')!;
     // Paired, and as a move that changed no line, one change (§5.1).
     expect(f).toMatchObject({ oldPath: 'docs/notes.md', status: 'R', kind: 'rename', changes: [{ status: 'unexplained' }] });
-    expect(r.findings.some((x) => x.code === 'unexplained' && /^renamed from docs\/notes\.md \(docs\/notes\.md → docs\/renamed\.md\): a move can switch code off/.test(x.message))).toBe(true);
+    expect(r.findings.some((x) => x.code === 'unexplained' && /^renamed docs\/notes\.md → docs\/renamed\.md: a move can switch code off/.test(x.message))).toBe(true);
     expect(r.coverage.files.find((x) => x.path === 'docs/notes.md')).toBeUndefined();
   });
 
@@ -233,9 +233,19 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     git(dir, 'mv', 'docs/notes.md', 'lib/notes.md');
     commitAll(dir, 'move');
     const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
-    // Two folders moved from ('' and docs): two groups, one finding each.
-    const moves = r.findings.filter((f) => f.code === 'unexplained' && /moved|renamed from/.test(f.message));
-    expect(moves.map((f) => f.message.split(' (')[0])).toEqual(['renamed from README.md', 'renamed from docs/notes.md']);
+    // Two moved prefixes ('' → lib for README.md, docs → lib for notes.md): two groups, one finding each.
+    const moves = r.findings.filter((f) => f.code === 'unexplained' && /moved/.test(f.message));
+    expect(moves.map((f) => f.message.split(':')[0])).toEqual(['moved README.md → lib/README.md', 'moved docs/notes.md → lib/notes.md']);
+    // Moved under one new prefix, subfolders kept: one group, its files listed, also in --json.
+    const dir2 = copy();
+    mkdirSync(join(dir2, 'lib/docs'), { recursive: true });
+    git(dir2, 'mv', 'README.md', 'lib/README.md');
+    git(dir2, 'mv', 'docs/notes.md', 'lib/docs/notes.md');
+    commitAll(dir2, 'move');
+    const r2 = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir2]);
+    expect(r2.findings.filter((f) => /files moved/.test(f.message)).map((f) => f.message.split(':')[0])).toEqual(['2 files moved . → lib (README.md → lib/README.md, docs/notes.md → lib/docs/notes.md)']);
+    const carrier = r2.coverage.files.find((f) => f.path === 'lib/README.md')!.changes[0]!;
+    expect(carrier.move).toMatchObject({ label: '2 files moved . → lib', from: '', to: 'lib', files: [{ path: 'lib/README.md' }, { path: 'lib/docs/notes.md' }] });
   });
 
   it.skipIf(process.platform === 'win32')('a type change (file to link) is one change, with its own finding', async () => {

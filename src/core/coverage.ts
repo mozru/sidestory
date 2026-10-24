@@ -67,6 +67,8 @@ export interface ChangeCoverage {
   broad?: boolean;
   /** The `why` of the trivial marks that cover it. */
   why?: string[];
+  /** A move group's files that have neither a step nor their own trivial mark or trivialFiles match (§5.1). */
+  uncoveredFiles?: string[];
 }
 
 export interface FileCoverage {
@@ -181,32 +183,30 @@ function isBroad(lines: number, explains: number): boolean {
 }
 
 /**
- * A move group's one change (§5.1): covered by any head-side target that resolves in a file of the group (a step
- * that mentions the move, or a trivial mark there), or by trivialFiles only when they match every file of the group
- * (a glob over the new folder would otherwise wave through the edits too). It doesn't count toward `explains`.
+ * A move group's one change (§5.1). Explained by a step (a non-trivial head-side target that resolves and that the
+ * prose uses: targets are only used anchors) anchored in any file of the group. A trivial mark, or a trivialFiles
+ * match, covers only the move of its own file: the group is trivial only when every file has one, so a mark on a
+ * README can't wave through a moved auth.js. Otherwise unexplained, naming the files without cover.
  */
 function coverMove(c: ChangeBlock, g: MoveGroup, bySide: ReadonlyMap<string, number[]>, trivialByPath: ReadonlyMap<string, boolean>, targets: readonly Target[]): { cov: ChangeCoverage; users: Set<number> } {
-  if (g.files.every((f) => trivialByPath.get(f.path) === true)) return trivialFileChange(c);
-  const head = [...new Set(g.files.flatMap((f) => bySide.get(`head\u0000${f.path}`) ?? []))].sort((a, b) => a - b);
-  return coverRename(c, head, targets);
-}
-
-function coverRename(c: ChangeBlock, head: number[], targets: readonly Target[]): { cov: ChangeCoverage; users: Set<number> } {
-  const users = new Set(head);
-  const explaining = head.some((i) => !targets[i]!.trivial);
-  const state: ChangeState = !users.size ? 'unexplained' : explaining ? 'explained' : 'trivial';
-  const whys = [...new Set(head.flatMap((i) => (targets[i]!.trivial && targets[i]!.why ? [targets[i]!.why!] : [])))];
-  const cov: ChangeCoverage = {
-    key: c.key,
-    state,
-    by: head.map((i) => ({ sidestory: targets[i]!.sidestory, anchor: targets[i]!.anchor })),
-    uncovered: [],
-    coveredLines: users.size ? 1 : 0,
-    changedLines: 1,
-  };
-  if (state === 'trivial' && whys.length) cov.why = whys;
-  if (head.some((i) => targets[i]!.state === 'stale')) cov.stale = true;
-  return { cov, users };
+  const headOf = (p: string) => bySide.get(`head\u0000${p}`) ?? [];
+  const explaining = [...new Set(g.files.flatMap((f) => headOf(f.path).filter((i) => !targets[i]!.trivial)))].sort((a, b) => a - b);
+  const base = { key: c.key, uncovered: [], changedLines: 1 };
+  if (explaining.length) {
+    const cov: ChangeCoverage = { ...base, state: 'explained', by: explaining.map((i) => ({ sidestory: targets[i]!.sidestory, anchor: targets[i]!.anchor })), coveredLines: 1 };
+    if (explaining.some((i) => targets[i]!.state === 'stale')) cov.stale = true;
+    return { cov, users: new Set(explaining) };
+  }
+  const marks = new Map(g.files.map((f) => [f.path, headOf(f.path).filter((i) => targets[i]!.trivial)]));
+  const lacking = g.files.filter((f) => trivialByPath.get(f.path) !== true && !marks.get(f.path)!.length).map((f) => f.path);
+  const used = [...new Set([...marks.values()].flat())].sort((a, b) => a - b);
+  if (lacking.length) {
+    return { cov: { ...base, state: 'unexplained', by: [], coveredLines: 0, uncoveredFiles: lacking }, users: new Set() };
+  }
+  const whys = [...new Set(used.flatMap((i) => (targets[i]!.why ? [targets[i]!.why!] : [])))];
+  const cov: ChangeCoverage = { ...base, state: 'trivial', by: used.map((i) => ({ sidestory: targets[i]!.sidestory, anchor: targets[i]!.anchor })), coveredLines: 1 };
+  if (whys.length) cov.why = whys;
+  return { cov, users: new Set(used) };
 }
 
 function trivialFileChange(c: ChangeBlock): { cov: ChangeCoverage; users: Set<number> } {

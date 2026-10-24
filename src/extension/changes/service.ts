@@ -11,7 +11,7 @@
 import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import type { ChangeCoverage } from '../../core/coverage.ts';
-import { decodePair, moveLabel, oldToNew, textLines, type ChangeBlock } from '../../core/hunks.ts';
+import { decodePair, moveFiles, moveLabel, oldToNew, textLines, type ChangeBlock, type MoveGroup } from '../../core/hunks.ts';
 import { trivialGlobFor } from '../../core/manifest.ts';
 import { isStoryBase, isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
 import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
@@ -853,7 +853,8 @@ export class ChangesService implements vscode.Disposable {
     for (const [path, f] of r.files) {
       for (const c of f.coverage?.changes ?? []) {
         const b = f.blocks.get(c.key);
-        if (b && !isDone(c.state)) list.push({ path, key: c.key, pos: b.new?.start ?? b.newAt });
+        // A move sits before the file's lines (pos 0), so a line-1 edit in the same file is its own stop.
+        if (b && !isDone(c.state)) list.push({ path, key: c.key, pos: b.move ? 0 : (b.new?.start ?? b.newAt) });
       }
     }
     if (!list.length) {
@@ -862,15 +863,15 @@ export class ChangesService implements vscode.Disposable {
     }
     const rank = fileRanks([...r.files.keys()], this.stepFiles(s, r));
     const place = this.activePlace(s);
-    let at: { path: string; pos: number } | undefined;
+    let at: { path: string; pos: number; key?: string } | undefined;
     const last = this.lastWalk;
     if (last && last.snapshot === s && last.sig === this.walkSignature() && list.some((x) => x.path === last.target.path && x.key === last.target.key)) {
       // Nothing moved since the last walk (a whole-file diff has no cursor to read): continue after its target.
-      at = { path: last.target.path, pos: last.target.pos };
+      at = { path: last.target.path, pos: last.target.pos, key: last.target.key };
     } else if (place) {
       const line = place.editor.selection.active.line + 1;
       const f = r.files.get(place.entry.path);
-      at = { path: place.entry.path, pos: f && lineless(f) ? 1 : place.key.side === 'base' && f?.diff ? oldToNew(f.diff, line) : line };
+      at = { path: place.entry.path, pos: f && lineless(f) ? 0 : place.key.side === 'base' && f?.diff ? oldToNew(f.diff, line) : line };
     }
     const next = nextChange(list, rank, at, dir);
     if (!next) return;
@@ -997,26 +998,37 @@ export class ChangesService implements vscode.Disposable {
   // ---- This File's view of a file's changes ----
 
   /** The changes of a file that aren't done, and the steps whose code changed since they were written (This File). */
-  changesOf(file: vscode.Uri): { path: string; open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean }[]; needsLook: Set<string> } | undefined {
+  changesOf(file: vscode.Uri): { path: string; open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean; detail?: string }[]; needsLook: Set<string>; notes: { label: string; tooltip: string }[] } | undefined {
     const s = this.snapshot;
     const r = this.result(s);
     if (!s || !r?.belonging.length) return undefined;
     const path = this.pathOf(file);
     const f = path ? r.files.get(path) : undefined;
     if (!path || !f?.coverage) return undefined;
-    const open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean }[] = [];
+    const open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean; detail?: string }[] = [];
+    const notes: { label: string; tooltip: string }[] = [];
     const needsLook = new Set<string>();
+    // What a move group moved, listed wherever its change is shown (§5.1), covered or not.
+    const files = (g: MoveGroup) => displayText(moveFiles(g, 20), 4000);
+    if (f.movedWith) {
+      const carrier = r.files.get(f.movedWith);
+      const g = carrier?.move;
+      const state = carrier?.coverage?.changes.find((c) => carrier.blocks.get(c.key)?.move)?.state;
+      notes.push({ label: `moved with ${displayText(f.movedWith, 80)} · 1 change for the group`, tooltip: `${g ? `${displayText(moveLabel(g), 200)}: ${files(g)}` : ''}${state ? `\n${isDone(state) ? state : 'not explained yet'}` : ''}` });
+    }
     for (const c of f.coverage.changes) {
       const b = f.blocks.get(c.key);
       // A whole-file change is named by its kind ("binary file"), not by lines it doesn't have.
       const label = b?.move ? displayText(moveLabel(b.move), 120) : f.whole ? WHOLE_WORDS[f.whole] : b && changeLabel(b);
-      if (b && label && !isDone(c.state)) open.push({ key: c.key, label, state: c.state, c, ...(f.whole ? { whole: true } : {}) });
+      const detail = b?.move ? `${files(b.move)}${c.uncoveredFiles?.length && c.uncoveredFiles.length < b.move.files.length ? `\nWithout a step or their own trivial mark: ${displayText(c.uncoveredFiles.slice(0, 20).join(', '), 2000)}` : ''}` : undefined;
+      if (b && label && !isDone(c.state)) open.push({ key: c.key, label, state: c.state, c, ...(f.whole && !b.move ? { whole: true } : {}), ...(detail ? { detail } : {}) });
+      else if (b?.move && label) notes.push({ label: `${label} · ${c.state}`, tooltip: detail ?? '' });
       for (const n of c.needsLook ?? []) {
         const dir = r.belonging.find((x) => x.folder === n.sidestory)?.dir;
         if (dir) needsLook.add(`${dir.toString()}\0${n.anchor}`);
       }
     }
-    return { path, open, needsLook };
+    return { path, open, needsLook, notes };
   }
 
   // ---- commands ----
@@ -1051,16 +1063,23 @@ export class ChangesService implements vscode.Disposable {
       return;
     }
     if (one?.b.move) {
-      // A move: a trivial mark in any file of the group covers it. On the first non-blank line of the cursor's file
-      // when it is in the group, else of the group's first file.
-      const inGroup = place && one.b.move.files.some((x) => x.path === place.entry.path) ? place.entry.path : one.path;
-      const text = await this.sideText(s, { path: inGroup, side: 'head' });
-      const line = text === undefined ? -1 : textLines(text).findIndex((l) => l.trim() !== '');
-      if (line < 0) {
-        void vscode.window.showInformationMessage(`${name(inGroup, 100)} has no line to put a trivial mark on. Mention the move in a step anchored in another file of the group, or add a trivialFiles glob that matches every moved file.`);
+      // A trivial mark covers only its own file's move (§5.1). A one-file move: on the first non-blank line no change
+      // touches (so the mark explains nothing else). A group: one sentence in a step covers it, or a mark per file.
+      const g = one.b.move;
+      const prompt = 'Copy Prompt: Explain This Change asks for one sentence on the move in a step';
+      if (g.files.length > 1) {
+        void vscode.window.showInformationMessage(`${displayText(moveLabel(g), 120)}: a trivial mark covers only its own file's move, so mark each file, or (better) mention the move once: ${prompt}.`);
         return;
       }
-      target = { path: inGroup, side: 'head', range: { start: line + 1, end: line + 1 } };
+      const fr = r?.files.get(one.path);
+      const touched = [...(fr?.blocks.values() ?? [])].flatMap((b) => (b.new ? [b.new] : []));
+      const text = await this.sideText(s, { path: one.path, side: 'head' });
+      const line = text === undefined ? -1 : textLines(text).findIndex((l, i) => l.trim() !== '' && !touched.some((x) => i + 1 >= x.start && i + 1 <= x.end));
+      if (line < 0) {
+        void vscode.window.showInformationMessage(`${name(one.path, 100)} has no unchanged line to put a trivial mark on. ${prompt}.`);
+        return;
+      }
+      target = { path: one.path, side: 'head', range: { start: line + 1, end: line + 1 } };
     } else if (one && !named && place && !place.editor.selection.isEmpty) {
       // A selection: those lines, on the side they are on.
       const sel = place.editor.selection;
@@ -1364,7 +1383,9 @@ export class CoverageDecorations implements vscode.FileDecorationProvider, vscod
         }
       }
       const m = fileDecoration(f.coverage, steps);
+      if (m && f.move) m.tooltip = `${m.tooltip} · ${displayText(moveLabel(f.move), 120)}: ${displayText(moveFiles(f.move, 10), 2000)}`;
       if (m) out.set(path, m);
+      else if (f.movedWith) out.set(path, { badge: '', tooltip: `moved with ${displayText(f.movedWith, 120)} · 1 change for the group` });
     }
     return out;
   }
@@ -1401,7 +1422,7 @@ export class CoverageDecorations implements vscode.FileDecorationProvider, vscod
     const path = this.svc.pathOf(uri);
     const m = path ? this.marks.get(path) : undefined;
     if (!m) return undefined;
-    const d = new vscode.FileDecoration(m.badge, m.tooltip, new vscode.ThemeColor(COVERAGE_COLORS[m.color]));
+    const d = new vscode.FileDecoration(m.badge || undefined, m.tooltip, m.color ? new vscode.ThemeColor(COVERAGE_COLORS[m.color]) : undefined);
     d.propagate = false;
     return d;
   }

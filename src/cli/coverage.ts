@@ -8,7 +8,7 @@ import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, moveLabel, type ChangeBlock } from '../core/hunks.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
 import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
@@ -63,6 +63,10 @@ export interface JsonChange {
   stale?: boolean;
   broad?: boolean;
   why?: string[];
+  /** A move group's change (§5.1): what moved. */
+  move?: { label: string; from: string; to: string; files: { path: string; oldPath: string }[]; more?: number };
+  /** A move group's files with neither a step nor their own trivial mark or trivialFiles match. */
+  uncoveredFiles?: string[];
 }
 
 export interface CoverageJson {
@@ -649,7 +653,9 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     };
   });
   // Moves (§5.1): one change per (old folder → new folder), carried by the group's first file.
-  const carried = moveCarriers(moveGroups(counted), (p) => inputs.some((f) => f.path === p));
+  // Archive changes and unsupported paths are counted already, one change each: never in a move group too.
+  const inputPaths = new Set(inputs.map((f) => f.path));
+  const carried = moveCarriers(moveGroups(counted.filter((e) => e.kind !== 'archive' && e.kind !== 'unsupported')), (p) => inputPaths.has(p));
   for (const f of inputs) {
     const move = carried.get(f.path);
     if (move) f.changes = [move, ...f.changes];
@@ -671,11 +677,15 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const at = block.new ? block.new.start : e.newMode === '000000' ? (block.old?.start ?? 1) : Math.max(1, Math.min(block.newAt, e.diff?.newLines ?? 1));
       const where = block.new ? `lines ${span(block.new)}`.replace(/^lines (\d+)$/, 'line $1') : e.newMode === '000000' ? 'deleted file' : `deleted at line ${at}`;
       if (block.move) {
+        // Every move is said with its files, covered or not, so a reviewer sees what moved.
+        const g = block.move;
+        const what = `${moveLabel(g)}${g.files.length > 1 ? ` (${moveFiles(g)})` : ''}`;
         if (c.state === 'unexplained') {
-          const g = block.move;
-          const shown = g.files.slice(0, 10).map((x) => `${x.oldPath} → ${x.path}`);
-          const more = g.files.length > shown.length ? `, and ${g.files.length - shown.length} more` : '';
-          add('warning', file, 'unexplained', `${moveLabel(g)} (${shown.join(', ')}${more}): a move can switch code off, so it needs a mention. One step (or trivial mark) anchored in any of these files covers the move; a trivialFiles glob only when it matches all of them.`, 1);
+          const lacking = c.uncoveredFiles ?? [];
+          const without = lacking.length && lacking.length < g.files.length ? ` Without cover: ${lacking.slice(0, 10).join(', ')}${lacking.length > 10 ? `, and ${lacking.length - 10} more` : ''}.` : '';
+          add('warning', file, 'unexplained', `${what}: a move can switch code off, so it needs a mention. A step anchored in any of these files explains it; a trivial mark or trivialFiles match covers only its own file's move.${without}`, 1);
+        } else {
+          add('info', file, 'moved', `${what}: ${c.state === 'trivial' ? 'every file marked trivial' : `explained by ${c.by.map((x) => title(x.sidestory, x.anchor) + of(x.sidestory)).join(', ')}`}.`, 1);
         }
         return;
       }
@@ -790,7 +800,14 @@ function toJson(c: ChangeCoverage, b: ChangeBlock): JsonChange {
     ...(c.stale ? { stale: true } : {}),
     ...(c.broad ? { broad: true } : {}),
     ...(c.why ? { why: c.why } : {}),
+    ...(b.move ? { move: moveJson(b.move) } : {}),
+    ...(c.uncoveredFiles ? { uncoveredFiles: c.uncoveredFiles } : {}),
   };
+}
+
+/** A move group in --json: its label, prefixes and files (at most 200, `more` past that). */
+function moveJson(g: MoveGroup): NonNullable<JsonChange['move']> {
+  return { label: moveLabel(g), from: g.from, to: g.to, files: g.files.slice(0, 200).map((f) => ({ path: f.path, oldPath: f.oldPath })), ...(g.files.length > 200 ? { more: g.files.length - 200 } : {}) };
 }
 
 /** The finding for a file that counts as one change: its code, the file it names, and what it is. */
