@@ -204,11 +204,13 @@
       {
         "command": "sidestory.nextStep",
         "key": "alt+]",
+        "mac": "ctrl+alt+]",
         "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       },
       {
         "command": "sidestory.prevStep",
         "key": "alt+[",
+        "mac": "ctrl+alt+[",
         "when": "sidestory.active && !inlineSuggestionVisible && !suggestWidgetVisible"
       }
     ],

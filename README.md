@@ -10,7 +10,7 @@ A sidestory is an HTML page in your repository (`.sidestory/<name>/`) whose sect
 
 ## Linked both ways
 
-Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory jumps to the section about it. Links in the text, and boxes or wires in a diagram, show their code when clicked; a box can link straight to a symbol (`data-explain-code="#driver(state_q)"`) without a manifest entry. Block diagrams can light up the parts each step is about and fade the rest (`data-explain-on`).
+Step through the sidestory (arrow buttons, <kbd>J</kbd>/<kbd>K</kbd>, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere; <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS) and the editor scrolls to the code each section is about, highlights it and marks the identifiers that matter. Move the cursor in the code and the sidestory jumps to the section about it, and the boxes that point at that code light up. Links in the text, and boxes or wires in a diagram, show their code when clicked; a box can link straight to a SystemVerilog symbol (`data-explain-code="#driver(state_q)"`, `#driver(state_d).case(IDLE)`, `#u_ctrl(.start)`) without a manifest entry. Block diagrams can light up the parts each step is about and fade the rest (`data-explain-on`).
 
 ![Clicking lines in bit_reader.sv: the sidestory beside it follows to the Refill, Handshakes, Consume and State sections](media/marketplace/cursor-follow.gif)
 
@@ -128,7 +128,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | **Sidestory: Show Sidestories for This Code** | The sidestories that explain the code under the cursor (also in the editor's context menu). |
 | **Sidestory: Show Sidestories** | Show the Sidestories view, even in a repository with none yet. |
 | **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your coding agent to write a sidestory. |
-| **Sidestory: Next Step** / **Previous Step** | Move through the sidestory (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
+| **Sidestory: Next Step** / **Previous Step** | Move through the sidestory (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>, or <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
 | **Sidestory: Pin Anchors to the Current Code** | Record each anchor's code so sections follow it through edits and say when it changed. |
 | **Sidestory: Re-anchor Section to Selection** | Point a section at the selected code (also in the editor's context menu). |
 | **Sidestory: Check Widgets** | Check the open sidestory's widgets now; results go to the Problems panel. |
@@ -142,6 +142,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
+| `sidestory.followCursorInDiagrams` | `true` | Ring the boxes and links in a sidestory whose code holds the editor cursor. |
 | `sidestory.codeLens.enabled` | `true` | A CodeLens above code a sidestory explains, naming it and its step (at most 30 per file, then one that lists them all; hidden while a visible panel shows that sidestory). Can be set per language. |
 | `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |

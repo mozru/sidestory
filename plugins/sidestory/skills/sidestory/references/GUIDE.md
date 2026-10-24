@@ -33,8 +33,8 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 
 Open one with **Sidestory: Open Sidestory** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
 
-- **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere.
-- **Move your cursor in the code** and the sidestory jumps to the section about it.
+- **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote).
+- **Move your cursor in the code** and the sidestory jumps to the section about it. Boxes and links that point at the code under the cursor get a ring, wherever they are in the page; only code a section covers changes the step.
 - **Everything updates live.** Edit the code (saved or not) or the sidestory and the panel follows at once, keeping your place, your focus and anything you're typing. Sections follow code that moves, and tell you when the code changed, needs a look, or can't be found.
 
 ## Writing a sidestory
@@ -226,10 +226,12 @@ A box in a diagram often deserves a link to its code without a manifest entry or
     - inside a labelled block or generate block: `#g_lane.driver(lane_q)`.
 
     Prefix the module (`#dma_ctrl.driver(state_q)`) when a name isn't unique in the file. Only the first arm of each `` `ifdef `` is read, so a name declared only in a later arm isn't found.
-  - a symbol in other languages: the names VS Code's outline shows (`#RetryClient.send`), found when the reader clicks.
+  - a symbol in other languages: the names VS Code's outline shows (`#RetryClient.send`), found when the reader clicks (and, for the cursor ring below, in files the reader already has open).
+- **The cursor lights it.** With the editor cursor in a link's code, the element gets a ring (`--cx-here`); when several links contain the line, only the tightest does, so the cursor in an FSM's `case` arm rings that bubble, not the whole module. Links to `data-explain-ref` anchors light the same way. This never changes the step: only code a section covers does. Turn it off with `sidestory.followCursorInDiagrams`.
 - **No drift detection.** A symbol link either finds its name or doesn't, and a line link points wherever those lines are now; neither says "Code changed". Use a manifest anchor and `data-explain-ref` for code the text makes claims about, and `data-explain-code` for "where is this thing".
-- It looks and behaves like `data-explain-ref`: a click, or <kbd>Enter</kbd> after tabbing to it, opens the code, with the same built-in look. With both on one element, `data-explain-ref` wins. A link that doesn't parse (a path outside the repository, `#L0`) is ignored, and **View › Output › Sidestory** says why.
-- Links open only when the reader clicks one or presses <kbd>Enter</kbd> on it, and only files inside the repository.
+- It looks and behaves like `data-explain-ref`: a click, or <kbd>Enter</kbd> after tabbing to it, opens the code at the target's first line, with the same built-in look. With both on one element, `data-explain-ref` wins. A link that doesn't parse (a path outside the repository, `#L0`) is ignored, and **View › Output › Sidestory** says why. A target that isn't there (a renamed signal, lines past the end) opens nothing; the status bar says it wasn't found, and Output says what the file has instead (an input port, a connection to link, a name in a later `` `ifdef `` arm).
+- Links open only when the reader clicks one or presses <kbd>Enter</kbd> on it, and only files inside the repository, after following symlinks, and never inside `.git`. A file whose name looks like it holds secrets (`.env`, `*.pem`, `secrets.json` …, by the link's name or the real file's) opens only after the reader confirms.
+- **The checker checks every code link** (`check.cjs`, as in [WIDGETS.md §13](WIDGETS.md#13-checking-your-work-and-consent)): errors for bad syntax and files that aren't in the repository, warnings for SystemVerilog symbols that are missing or ambiguous and for lines past the end, and, for line links in SystemVerilog, the symbol that would follow the code instead. It also checks that every `data-explain-anchor`, `data-explain-ref` and `data-explain-on` id is in the manifest, and that every manifest anchor is used by the page or a widget.
 
 ### How sections follow the code
 
@@ -373,6 +375,7 @@ export default function Refill({ width = 64 }: { width?: number }) {
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
+| `sidestory.followCursorInDiagrams` | `true` | Ring the boxes and links (`data-explain-ref`, `data-explain-code`) whose code holds the editor cursor. |
 | `sidestory.codeLens.enabled` | `true` | A CodeLens above explained code (at most 30 per file; hidden while that sidestory is open in a panel). Language-overridable. |
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |

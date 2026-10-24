@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Code links that work, and diagrams lit from the cursor.** `data-explain-code` links open their target: `#L10-L20`, or in SystemVerilog and Verilog a name (`#state_q`, `#u_fifo`), what drives a signal (`#driver(state_q)`), one arm of its `case` (`#driver(state_d).case(IDLE)`) or one port connection (`#u_ctrl(.start)`), found by a built-in scanner; other languages use VS Code's outline. With the editor cursor in a box's code, the box gets a ring, the tightest one winning; steps follow the cursor only through sections now, so an anchor used only by links no longer takes the step. New setting `sidestory.followCursorInDiagrams`.
+- The checker reports page ids missing from the manifest and manifest anchors nothing uses, links inside `role="img"`, unnamed links, empty diagrams, and every code link it can't resolve, with what to link instead.
+- On macOS, Next Step and Previous Step are <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd>: <kbd>Option</kbd>+<kbd>]</kbd> and <kbd>Option</kbd>+<kbd>[</kbd> type ‘ and “, which the old keys swallowed while a panel was open.
+- Opening a sidestory with no editor open shows its first step's code at once.
+
 - **Find your way in big repositories.** A **Sidestories** view in its own activity bar container lists every sidestory by package (each `.sidestory/` folder), group and overview, with **Start here**, a filter, and badges for code that changed. A **CodeLens** above explained code names the sidestory and step, and the status bar names the one for the cursor's line. **Go to Step…** finds any step by its title; **Open Sidestory…** lists recently opened sidestories first and opens a detail with its overview on the trail. Panels opened from these reuse a preview panel instead of piling up. New manifest fields `group` and `top`; new settings `sidestory.codeLens.enabled`, `statusBar.enabled`, `gutter.enabled` and `sidebar.followPanel`.
 - The checker reports `group`, `unknown-detail` and `detail-self`, its `--json` report adds each sidestory's `title`, `group`, `steps` and `details`, and its HTML scanner is linear on any input.
 - The extension starts with a small bootstrap in every workspace and loads the rest only once a workspace has sidestories or you run a command.
