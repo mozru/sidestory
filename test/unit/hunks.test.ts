@@ -199,6 +199,18 @@ describe('line maps', () => {
     expect(oldToNew(d, 6)).toBe(6);
   });
 
+  it('maps unchanged lines merged into a change one to one', () => {
+    // a → A, then b unchanged, then B added: one change (merged across b), and b keeps its place on both sides.
+    const m = diffTexts('f', text(['x', 'a', 'b', 'y']), text(['x', 'A', 'b', 'B', 'y']));
+    expect(m.changes).toHaveLength(1);
+    expect(oldToNew(m, 3)).toBe(3);
+    expect(newToOld(m, 3)).toBe(3);
+    expect(oldToNew(m, 2)).toBe(2);
+    expect(newToOld(m, 4)).toBe(2);
+    expect(oldToNew(m, 4)).toBe(5);
+    expect(newToOld(m, 5)).toBe(4);
+  });
+
   it('clamps at the ends', () => {
     const del = diffTexts('f', text(['a', 'b', 'c']), text(['a']));
     expect(oldToNew(del, 3)).toBe(1);
@@ -225,6 +237,12 @@ describe('decoding', () => {
     expect(p.new).toBe('cafÃ©\n');
     const same = decodePair(latin, latin);
     expect(diffTexts('f', same.old, same.new).changes).toEqual([]);
+  });
+
+  it('drops a BOM before the Latin-1 fallback too', () => {
+    const p = decodePair(new Uint8Array([0xef, 0xbb, 0xbf, ...enc('a\nb\n')]), new Uint8Array([...enc('a\nb\n'), 0xe9, 0x0a]));
+    expect(p).toEqual({ old: 'a\nb\n', new: 'a\nb\né\n', latin1: true });
+    expect(shape(diffTexts('f', p.old, p.new))).toEqual([{ old: null, new: { start: 3, end: 3 }, added: 1, removed: 0 }]);
   });
 
   it('decodes UTF-8, including astral characters, and refuses overlongs and surrogates', () => {

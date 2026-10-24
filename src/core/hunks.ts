@@ -6,6 +6,15 @@
 // O(D²)) over interned line ids, after trimming the common head and tail. Its work has a deterministic budget, the
 // same everywhere: past 5,000 lines of edit distance or 5×10⁷ snake steps the file is one change spanning both
 // sides, so a slow machine never changes the answer.
+//
+// Why not jsdiff (`diff` on npm, `diffArrays` over the same interned ids, `maxEditLength: 5000`, never its wall-clock
+// `timeout`)? It is deterministic and adds only about 8 KB minified, but it is the forward-only Myers that keeps
+// every live path's component list: memory grows with D² rather than N + M, and nothing bounds its snake work. On
+// 50,000 × 50,000-line worst cases (measured 2026-10-23, Node 24, Apple silicon, diff 7.0.0; 8.x/9.x run the same
+// loop) it took up to 0.88 s and 250 MB peak RSS where this code takes 0.10 s and 100 MB (the process baseline),
+// which breaks the plan's linear-memory rule and its ~0.5 s per file (§4.6), and on a slow machine could reach the
+// extension's 5 s watchdog, which would make the result depend on machine speed. So the search stays here; the
+// normalization around it (decoding, line endings, trimming, sliding, merging, keys, line maps) is the shared part.
 import type { LineRange } from './manifest.ts';
 
 export const DIFF_LIMITS = {
@@ -58,8 +67,11 @@ export function decodePair(oldBytes: Uint8Array | undefined, newBytes: Uint8Arra
   const a = oldBytes ? decodeUtf8(oldBytes) : '';
   const b = newBytes ? decodeUtf8(newBytes) : '';
   if (a !== undefined && b !== undefined) return { old: a, new: b, latin1: false };
-  return { old: oldBytes ? decodeLatin1(oldBytes) : '', new: newBytes ? decodeLatin1(newBytes) : '', latin1: true };
+  // A UTF-8 BOM is dropped here too: a BOM on one side and a Latin-1 byte on the other must not change line 1.
+  return { old: oldBytes ? decodeLatin1(dropBom(oldBytes)) : '', new: newBytes ? decodeLatin1(dropBom(newBytes)) : '', latin1: true };
 }
+
+const dropBom = (b: Uint8Array) => (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf ? b.subarray(3) : b);
 
 /** Strict UTF-8 (no overlongs, surrogates or code points past U+10FFFF), a leading BOM dropped; undefined when invalid. */
 export function decodeUtf8(bytes: Uint8Array): string | undefined {
@@ -474,8 +486,9 @@ function contentHash(path: string, removed: readonly string[], added: readonly s
 // ---- line maps (§5.3) ----
 
 /**
- * An old-side line on the new side: unchanged lines map one to one; a line inside a change maps to the first line
- * of the change's new side, or, when nothing was added, to the line just after where the removed lines were
+ * An old-side line on the new side: unchanged lines map one to one, including unchanged lines merged into a change
+ * (the k-th unchanged line of a change's old region is the k-th of its new region); a removed line maps to the first
+ * line of the change's new side, or, when nothing was added, to the line just after where the removed lines were
  * (clamped to the last line). Lines past either end are clamped.
  */
 export function oldToNew(diff: FileDiff, line: number): number {
@@ -485,6 +498,28 @@ export function oldToNew(diff: FileDiff, line: number): number {
 /** The reverse of `oldToNew`. */
 export function newToOld(diff: FileDiff, line: number): number {
   return mapLine(diff, line, false);
+}
+
+/** Which unchanged line of a change's region (from `at`) `line` is, 0-based; -1 when it is a changed line. */
+function unchangedIndex(runs: readonly LineRange[], at: number, line: number): number {
+  let changedBefore = 0;
+  for (const r of runs) {
+    if (line >= r.start && line <= r.end) return -1;
+    if (r.end < line) changedBefore += r.end - r.start + 1;
+  }
+  return line - at - changedBefore;
+}
+
+/** The k-th (0-based) unchanged line of the region [at, end), or undefined. */
+function unchangedLine(runs: readonly LineRange[], at: number, end: number, k: number): number | undefined {
+  let line = at;
+  for (const r of runs) {
+    const free = r.start - line;
+    if (k < free) return line + k;
+    k -= Math.max(0, free);
+    line = r.end + 1;
+  }
+  return line + k < end ? line + k : undefined;
 }
 
 function mapLine(diff: FileDiff, line: number, forward: boolean): number {
@@ -498,6 +533,11 @@ function mapLine(diff: FileDiff, line: number, forward: boolean): number {
     const toLen = forward ? c.newLen : c.oldLen;
     if (line < fromAt) break;
     if (line < fromAt + fromLen) {
+      const k = unchangedIndex(forward ? c.removedRuns : c.addedRuns, fromAt, line);
+      if (k >= 0) {
+        const to = unchangedLine(forward ? c.addedRuns : c.removedRuns, toAt, toAt + toLen, k);
+        if (to !== undefined) return clamp(to);
+      }
       const other = forward ? c.new : c.old;
       return clamp(other ? other.start : toAt + toLen);
     }
