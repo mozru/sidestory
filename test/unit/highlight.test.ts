@@ -35,7 +35,7 @@ beforeAll(async () => {
 afterAll(() => rmSync(out, { recursive: true, force: true }));
 
 function sourceOf(c: GrammarCatalog): GrammarSource {
-  return { key: c.key, scopeFor: (l) => c.scopeFor(l), load: (s) => loadGrammarSet(c, s, diskReader) };
+  return { key: c.key, scopeFor: (l) => c.scopeFor(l), load: (s, have) => loadGrammarSet(c, s, diskReader, undefined, have), origin: (s) => c.origin(s) };
 }
 
 /** A theme from the bundled fallbacks (VS Code's defaults). */
@@ -418,7 +418,8 @@ describe('tokenizer', () => {
     const t = new Tokenizer(e.lib);
     expect(await t.load('source.bad', { files: [{ scopeName: 'source.bad', format: 'json', text: '{ "scopeName": ' }], injections: [] })).toBe(false);
     expect(await t.load('source.bad2', { files: [{ scopeName: 'source.bad2', format: 'plist', text: '<plist><dict><key>' }], injections: [] })).toBe(false);
-    expect(await t.load('source.missing', { files: [], injections: [] })).toBe(false);
+    // Its own text not sent: the host's view of this worker was wrong, and a new worker is asked for.
+    expect(await t.load('source.missing', { files: [], injections: [] })).toBe('stale');
   });
 
   it('falls back to the JavaScript engine without a usable wasm', async () => {
@@ -498,8 +499,23 @@ describe('highlighter (host, with the worker)', () => {
     h.dispose();
   });
 
+  it("sends a worker only what it hasn't parsed, and colors scopes reached through one rule of a file later", async () => {
+    // Vue's grammars bring html-derivative, which includes single rules of text.html.basic: that file's own
+    // includes (python among them) are sent but never parsed, so the worker doesn't have them afterwards.
+    const c = new GrammarCatalog([await writeGrammarExtension(join(out, 'vue'), ['html-derivative', 'python', 'markdown', 'html', 'css', 'javascript', 'vue'], 'vscode.vue')]);
+    const h = new Highlighter({ workerFile, wasmFiles: [ONIG_WASM] });
+    h.setGrammars(sourceOf(c));
+    h.setTheme(await fallback('dark'));
+    const who = h.newRequester();
+    const order = ['html-derivative', 'python', 'markdown', 'css', 'javascript', 'html'];
+    for (const l of order) expect(c.scopeFor(l), l).toBeDefined();
+    for (const [id, lang] of order.entries()) expect((await h.request(who, [{ id, lang, code: 'x = 1 /* y */ "z"' }]))!.blocks[0]!.runs, lang).not.toBeNull();
+    expect(h.workersStarted).toBe(1);
+    h.dispose();
+  });
+
   it('replaces a worker that holds too many grammars, and new grammars arriving mid-job', async () => {
-    const h = make({ workerGrammarBudget: 1 });
+    const h = make({ workerHeapBudget: 1 });
     h.setTheme(await fallback('dark'));
     const who = h.newRequester();
     for (const [id, lang] of ['py', 'go', 'rs', 'ts'].entries()) expect((await h.request(who, [{ id, lang, code: 'x = 1' }]))!.blocks[0]!.runs, lang).not.toBeNull();

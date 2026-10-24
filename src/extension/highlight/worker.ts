@@ -1,5 +1,6 @@
 // The highlight worker (dist/highlight-worker.cjs): tokenizes sidestory code blocks off the extension host's
 // thread, so a slow grammar on hostile input can be cut off by terminating it (docs/HIGHLIGHT-PLAN.md §5, §10.4).
+import { getHeapStatistics } from 'node:v8';
 import { parentPort, workerData } from 'node:worker_threads';
 import { createOnigLib, Tokenizer } from './tokenize.ts';
 import type { WorkerReply, WorkerRequest } from './worker-protocol.ts';
@@ -9,7 +10,8 @@ const engine = createOnigLib((workerData as { wasmFiles?: string[] } | undefined
 const tokenizer = new Tokenizer(engine.then((e) => e.lib));
 
 parentPort!.on('message', (m: WorkerRequest) => {
-  void handle(m).then((reply) => parentPort!.postMessage(reply));
+  // Every reply says how full this worker's heap is: the host replaces it between jobs before it runs out.
+  void handle(m).then((reply) => parentPort!.postMessage({ ...reply, heap: getHeapStatistics().used_heap_size }));
 });
 
 async function handle(m: WorkerRequest): Promise<WorkerReply> {
@@ -18,7 +20,8 @@ async function handle(m: WorkerRequest): Promise<WorkerReply> {
     if (m.type === 'load') {
       const loaded = await tokenizer.load(m.scope, m.set);
       const e = await engine;
-      return { id: m.id, ok: true, loaded: loaded === true, ...(loaded === 'stale' ? { stale: true } : {}), engine: e.engine, ...(notes.length ? { engineNote: notes.join('; ').slice(0, 500) } : {}) };
+      const parsed = tokenizer.parsed(m.set.files.map((f) => f.scopeName));
+      return { id: m.id, ok: true, loaded: loaded === true, parsed, ...(loaded === 'stale' ? { stale: true } : {}), engine: e.engine, ...(notes.length ? { engineNote: notes.join('; ').slice(0, 500) } : {}) };
     }
     if (!tokenizer.isWarm(m.scope) || !tokenizer.hasTheme(m.themeKey)) return { id: m.id, ok: true, cold: true };
     const r = tokenizer.tokenize(m.code, m.scope, m.themeKey);

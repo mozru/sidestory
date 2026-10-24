@@ -133,6 +133,11 @@ export class Tokenizer {
     return pal;
   }
 
+  /** Which of `scopes` this worker has parsed for good (what the host needn't send again). */
+  parsed(scopes: readonly string[]): string[] {
+    return scopes.filter((s) => this.asked.has(s) && !this.missing.has(s));
+  }
+
   /** Whether a scope's grammar is loaded (the host warms the worker before timing a block). */
   isWarm(scope: string): boolean {
     return this.loaded.has(scope);
@@ -151,9 +156,11 @@ export class Tokenizer {
     for (const [s, inj] of set.injections) this.injections.set(s, inj);
     // A grammar that's missing or doesn't parse is reported by throwing.
     const g = await this.registry.loadGrammar(scope).catch(() => null);
-    // Texts the grammar didn't need (an injection target never loaded) aren't kept either.
+    // Texts the grammar didn't need (an include of another file's single rule leaves that file's other includes
+    // unasked, an injection target never loaded) aren't kept either: `parsed` tells the host what this worker has.
     this.files.clear();
-    if (!g) return false;
+    // Its own text wasn't sent (the host thought this worker had it): a new worker gets everything.
+    if (!g) return this.missing.has(scope) ? 'stale' : false;
     this.loaded.set(scope, g);
     g.tokenizeLine2('x', INITIAL, LINE_TIME_MS);
     return true;

@@ -10,7 +10,7 @@ import type { GrammarSet } from './catalog.ts';
 import type { HighlightTheme } from './theme.ts';
 import { countLines } from './grammars.ts';
 import type { EngineName } from './tokenize.ts';
-import type { WorkerReply, WorkerRequest } from './worker-protocol.ts';
+import type { WorkerMessage, WorkerReply, WorkerRequest } from './worker-protocol.ts';
 
 /** Where grammars come from (docs/HIGHLIGHT-PLAN.md §10): the installed extensions, through a GrammarCatalog. */
 export interface GrammarSource {
@@ -43,8 +43,8 @@ export interface HighlighterOptions {
   slowJobMs?: number;
   /** Result cache, in bytes (default 4 MB). */
   cacheBytes?: number;
-  /** Grammar text a worker may hold before it's replaced (default 12 MB). */
-  workerGrammarBudget?: number;
+  /** Heap a worker may use before it's replaced between jobs (default 96 MB, half its limit). */
+  workerHeapBudget?: number;
   log?: (message: string) => void;
   /** News that isn't a problem (default: `log`). */
   info?: (message: string) => void;
@@ -84,12 +84,22 @@ export const BREAKER_BUDGET_MS = 20_000;
 /** Jobs up to this long aren't charged; longer ones are charged the excess. */
 export const SLOW_JOB_MS = 250;
 
-/** Grammar text (UTF-16 code units) a worker may hold before it's replaced: ~8 bytes of heap per unit parsed. */
-export const WORKER_GRAMMAR_BUDGET = 12 * 1024 * 1024;
+/** The worker's heap limit, and what it may use before it's replaced between jobs: grammars take 30–65 times their text. */
+export const WORKER_HEAP_MB = 192;
+export const WORKER_HEAP_BUDGET = 96 * 1024 * 1024;
+/** Root grammars a worker may hold, a backstop to the heap budget. */
+export const WORKER_MAX_GRAMMARS = 24;
+
+/** Filled in when a job starts: whether its worker held no grammars, and its heap use then. */
+interface JobStart {
+  fresh: boolean;
+  heap: number;
+}
 
 interface Job {
   /** Only for this worker (its grammar set leaves out what that worker had); another answers "cold". */
   forWorker?: number;
+  start?: JobStart;
   req: WorkerRequest;
   timeoutMs: number;
   resolve: (r: WorkerReply | 'timeout' | 'crashed') => void;
@@ -104,9 +114,9 @@ export class Highlighter {
   private worker: Worker | undefined;
   /** What the current worker has: grammars loaded and warmed, themes sent. */
   private warm = new Set<string>();
-  /** Grammar scopes sent to the current worker, and their text's size. */
+  /** Grammar scopes the current worker has parsed, and its heap use after its last reply. */
   private sent = new Set<string>();
-  private sentBytes = 0;
+  private heap = 0;
   /** Counts workers started: a job can be tied to one. */
   private workerGen = 0;
   private themesSent = new Set<string>();
@@ -121,8 +131,18 @@ export class Highlighter {
   private version = 0;
   /** The worker must be replaced before its next job (the grammars changed). */
   private restartWorker = false;
-  /** Scopes whose grammar couldn't be read or loaded, under the current grammars. */
-  private readonly failed = new Set<string>();
+  /** Scopes whose grammar couldn't be read or loaded, under the current grammars, and when (they're tried again
+   * after the breaker's window). */
+  private readonly failedAt = new Map<string, number>();
+  private readonly failed = {
+    has: (scope: string) => {
+      const at = this.failedAt.get(scope);
+      if (at !== undefined && Date.now() - at > BREAKER_WINDOW_MS) this.failedAt.delete(scope);
+      return this.failedAt.has(scope);
+    },
+    add: (scope: string) => void this.failedAt.set(scope, Date.now()),
+    clear: () => this.failedAt.clear(),
+  };
   private engineName: EngineName | undefined;
   /** Results by (theme, lang, hash of code). */
   private readonly cache: SizeLru<Uint32Array | null>;
@@ -256,7 +276,7 @@ export class Highlighter {
         const grammars = this.grammars;
         if (!grammars) return null;
         // A worker holding many grammars is replaced before it loads more (its heap is capped).
-        if (this.sentBytes > (this.opts.workerGrammarBudget ?? WORKER_GRAMMAR_BUDGET)) this.restartWorker = true;
+        if (this.full()) this.restartWorker = true;
         // What the current worker already has isn't sent again; such a set only fits that worker.
         const have = this.restartWorker || !this.worker ? new Set<string>() : new Set(this.sent);
         const forWorker = have.size ? this.workerGen : undefined;
@@ -269,14 +289,14 @@ export class Highlighter {
           this.opts.log?.(`Code block colors: couldn't read the grammar ${name}; its blocks stay plain.`);
           return null;
         }
-        const fresh = this.restartWorker || !this.worker || this.sent.size === 0;
+        const start: JobStart = { fresh: false, heap: 0 };
         // Charged to the requester like tokenizing (beyond the free time), so naming every language costs it.
-        const r = await this.job({ id: 0, type: 'load', scope, set }, this.opts.loadTimeoutMs ?? 10_000, theme, who, forWorker);
+        const r = await this.job({ id: 0, type: 'load', scope, set }, this.opts.loadTimeoutMs ?? 10_000, theme, who, forWorker, start);
         if (grammars !== this.grammars) return null;
         if (r === 'timeout' || r === 'crashed') {
           // On a worker with nothing else loaded, this grammar alone is to blame: it stays plain. Otherwise the worker
           // may have been full of others' grammars: try again on a fresh one, without charging this requester.
-          if (fresh) {
+          if (start.fresh) {
             this.timedOut(who);
             this.failed.add(scope);
             this.opts.log?.(`Code block colors: loading the grammar ${name} ${r === 'timeout' ? 'took too long' : 'stopped the highlighter'}; its blocks stay plain.`);
@@ -291,8 +311,9 @@ export class Highlighter {
           this.restartWorker = true;
           continue;
         }
-        for (const f of set.files) this.sent.add(f.scopeName);
-        this.sentBytes += set.bytes ?? 0;
+        // Only what the worker parsed counts as held: an include of one rule of a file doesn't load that file's
+        // own includes, and those texts were dropped.
+        for (const s of r.parsed ?? []) this.sent.add(s);
         if (!r.loaded) {
           this.failed.add(scope);
           this.opts.log?.(`Code block colors: the grammar ${name} didn't load; its blocks stay plain.`);
@@ -302,7 +323,10 @@ export class Highlighter {
       }
       if (who.tripped) return null;
       const limit = Math.max(this.opts.blockTimeoutMs ?? 1000, Math.ceil((code.length / 1024) * (this.opts.msPerKb ?? 30)));
-      const r = await this.job({ id: 0, type: 'tokenize', scope, code, themeKey: theme.key }, limit, theme, who);
+      const start: JobStart = { fresh: false, heap: 0 };
+      const r = await this.job({ id: 0, type: 'tokenize', scope, code, themeKey: theme.key }, limit, theme, who, undefined, start);
+      // Out of memory with a heap already half full of grammars: not this block's doing. Once more on a fresh worker.
+      if (r === 'crashed' && round === 0 && start.heap > this.heapBudget / 2) continue;
       if (r === 'timeout' || r === 'crashed') {
         this.timedOut(who);
         this.cache.set(key, null, 64); // warm and still too slow, or it killed the worker: stays plain under this theme
@@ -323,6 +347,15 @@ export class Highlighter {
       return runs;
     }
     return null;
+  }
+
+  private get heapBudget(): number {
+    return this.opts.workerHeapBudget ?? WORKER_HEAP_BUDGET;
+  }
+
+  /** The worker should be replaced before it loads more grammars. */
+  private full(): boolean {
+    return this.worker !== undefined && (this.heap > this.heapBudget || this.warm.size >= WORKER_MAX_GRAMMARS);
   }
 
   private noteEngine(r: { engine?: EngineName; engineNote?: string }): void {
@@ -375,13 +408,14 @@ export class Highlighter {
   }
 
   /** Runs a job in the worker; resolves with its outcome and the worker time it took (`ms`). */
-  private job(req: WorkerRequest, timeoutMs: number, theme: HighlightTheme, who?: Requester, forWorker?: number): Promise<WorkerReply | 'timeout' | 'crashed'> {
+  private job(req: WorkerRequest, timeoutMs: number, theme: HighlightTheme, who?: Requester, forWorker?: number, start?: JobStart): Promise<WorkerReply | 'timeout' | 'crashed'> {
     if (this.disposed) return Promise.resolve('crashed');
     return new Promise((resolve) => {
       const job: Job = {
         req: { ...req, id: this.nextId++ },
         timeoutMs,
         forWorker,
+        start,
         resolve: (r) => {
           if (who && job.startedAt !== undefined) this.spend(who, Date.now() - job.startedAt);
           resolve(r);
@@ -410,7 +444,8 @@ export class Highlighter {
       this.worker ??= this.startWorker();
     } catch (e) {
       this.opts.log?.((e as Error).message);
-      job.resolve('crashed');
+      // Not the job's fault: no grammar is marked plain for it, no requester charged.
+      job.resolve({ id: job.req.id, ok: false, error: (e as Error).message });
       this.pump();
       return;
     }
@@ -422,6 +457,10 @@ export class Highlighter {
     }
     this.current = job;
     job.startedAt = Date.now();
+    if (job.start) {
+      job.start.fresh = this.sent.size === 0 && this.warm.size === 0;
+      job.start.heap = this.heap;
+    }
     const req = { ...job.req };
     if (job.theme && !this.themesSent.has(job.theme.key)) {
       req.theme = job.theme;
@@ -447,15 +486,16 @@ export class Highlighter {
     if (!file || !existsSync(file)) throw new Error('The highlight worker is missing from this build.');
     const w = new Worker(resolve(file), {
       workerData: { wasmFiles: this.opts.wasmFiles ?? [] },
-      resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
+      resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_MB, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
       stdout: false,
       stderr: false,
     });
     this.workersStarted++;
     this.workerGen++;
     w.unref();
-    w.on('message', (msg: WorkerReply) => {
+    w.on('message', (msg: WorkerMessage) => {
       if (w !== this.worker) return;
+      if (typeof msg.heap === 'number') this.heap = msg.heap;
       const job = this.current;
       if (job && job.req.id === msg.id) this.finish(job, msg);
     });
@@ -485,7 +525,7 @@ export class Highlighter {
     this.warm.clear();
     this.themesSent.clear();
     this.sent.clear();
-    this.sentBytes = 0;
+    this.heap = 0;
     void w?.terminate();
   }
 

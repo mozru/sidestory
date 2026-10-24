@@ -19,6 +19,8 @@ export type WorkerReply =
     cold?: boolean;
     /** `load`: whether the grammar loaded, and the regex engine in use. */
     loaded?: boolean;
+    /** `load`: the sent scopes this worker parsed (it keeps them; others were dropped unused). */
+    parsed?: string[];
     /** `load`: this worker already knows the scope as missing; a new worker can load it. */
     stale?: boolean;
     engine?: EngineName;
@@ -26,3 +28,6 @@ export type WorkerReply =
     engineNote?: string;
   }
   | { id: number; ok: false; error: string };
+
+/** What the worker actually posts: a reply and its heap use after it. */
+export type WorkerMessage = WorkerReply & { heap?: number };

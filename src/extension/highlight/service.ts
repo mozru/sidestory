@@ -43,7 +43,7 @@ const reader: ThemeReader = {
         return await readFile(real, 'utf8');
       }
       const st = await vscode.workspace.fs.stat(u);
-      if (st.size > maxBytes) return undefined;
+      if (!(st.type & vscode.FileType.File) || st.size > maxBytes) return undefined;
       return new TextDecoder().decode(await vscode.workspace.fs.readFile(u));
     } catch {
       return undefined;
