@@ -56,8 +56,42 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('coverage in the extension (computeCoverage)', () => {
   it('counts only the sidestory added on the branch whose base gives the merge-base', async () => {
-    const found = await belongingSidestories(source());
+    const { found, incomplete } = await belongingSidestories(source());
     expect(found.map((f) => f.folder)).toEqual(['.sidestory/retry-jitter']);
+    expect(incomplete).toBe(false);
+  });
+
+  it('never takes a git error for "absent at the merge-base": not counted, and incomplete', async () => {
+    const s = { ...source(), presentAtMergeBase: async () => undefined };
+    const { found, incomplete } = await belongingSidestories(s);
+    expect(found).toEqual([]);
+    expect(incomplete).toBe(true);
+    const r = (await computeCoverage(s))!;
+    expect(r.belonging).toEqual([]);
+    expect(r.incomplete).toBe(true);
+  });
+
+  it('counts a side past MAX_COMPARE_BYTES as one change and an unreadable file as incomplete, like the checker', async () => {
+    const base = source();
+    const s: Source = {
+      ...base,
+      diffKey: undefined,
+      newBytes: async (p) => (p === 'test/retry.test.ts' ? 'tooLarge' : p === 'src/retry/jitter.ts' ? undefined : base.newBytes(p)),
+    };
+    const r = (await computeCoverage(s))!;
+    expect(r.files.get('test/retry.test.ts')!.coverage!.changes).toHaveLength(1);
+    expect(r.files.get('test/retry.test.ts')!.diff.tooLarge).toBe('size');
+    expect(r.files.has('src/retry/jitter.ts')).toBe(false);
+    expect(r.incomplete).toBe(true);
+  });
+
+  it('gives the same per-path maps whatever order reads finish in', async () => {
+    const slow = source();
+    const s: Source = { ...slow, diffKey: undefined, oldBytes: async (p) => (await new Promise((r) => setTimeout(r, p.length % 3 ? 15 : 0)), slow.oldBytes(p)) };
+    const a = (await computeCoverage(s))!;
+    const b = (await computeCoverage(slow))!;
+    expect([...a.files.keys()]).toEqual([...b.files.keys()]);
+    expect([...a.files.keys()]).toEqual([...a.files.keys()].sort());
   });
 
   it('explains by head-side, base-side and trivial anchors and leaves the test file unexplained', async () => {

@@ -1,6 +1,6 @@
 // The bootstrap's one git question (docs/CHANGES-PLAN.md §9.1): is HEAD on a branch with commits its default base
-// doesn't have? Then the Sidestory container is worth showing even with no sidestory yet, since the Changes view
-// navigates the branch's merge diff. One getMergeBase call per candidate base through the vscode.git API (never
+// doesn't have? Then the Sidestory container is worth showing even with no sidestory yet, since its "This branch" group
+// offers to explain the branch. One getMergeBase call per candidate base through the vscode.git API (never
 // git itself), no file list. Bundled into the bootstrap: it imports nothing but `vscode`.
 import * as vscode from 'vscode';
 

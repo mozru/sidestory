@@ -12,12 +12,9 @@ import { FULL_SHA } from './base.ts';
 import { isSafeRepoPath } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';
 import { apiPath } from './git-api.ts';
-import type { ChangeStatus } from './model.ts';
-import { STATUS_NAMES } from './model.ts';
 
 export const GIT_SCHEME = 'sidestory-git';
 export const EMPTY_SCHEME = 'sidestory-empty';
-export const CHANGE_SCHEME = 'sidestory-change';
 
 /** One cap for every reader: the provider can't know who asks (callers apply their own smaller caps). */
 export const MAX_BLOB_BYTES = 10 * 1024 * 1024;
@@ -210,30 +207,5 @@ class EmptyFileSystem implements vscode.FileSystemProvider {
   }
   rename(uri: vscode.Uri): never {
     throw vscode.FileSystemError.NoPermissions(uri);
-  }
-}
-
-// ---- status letters on the view's rows ----
-
-const COLORS: Record<ChangeStatus, string> = {
-  A: 'gitDecoration.addedResourceForeground',
-  M: 'gitDecoration.modifiedResourceForeground',
-  D: 'gitDecoration.deletedResourceForeground',
-  R: 'gitDecoration.renamedResourceForeground',
-  C: 'gitDecoration.addedResourceForeground',
-};
-
-/**
- * The row's resource: `sidestory-change:/<path>?<status>`. The real `file:` URI would let the git extension decorate
- * the row with its HEAD-relative letter, contradicting ours; the path keeps its name, so file icons still apply.
- */
-export const changeUri = (path: string, status: ChangeStatus | 'folder') => vscode.Uri.from({ scheme: CHANGE_SCHEME, path: `/${path}`, query: status });
-
-export class ChangeDecorations implements vscode.FileDecorationProvider {
-  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
-    if (uri.scheme !== CHANGE_SCHEME) return undefined;
-    const s = uri.query as ChangeStatus;
-    if (!Object.hasOwn(COLORS, s)) return undefined;
-    return { badge: s, color: new vscode.ThemeColor(COLORS[s]), tooltip: STATUS_NAMES[s], propagate: false };
   }
 }

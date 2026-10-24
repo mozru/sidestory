@@ -1,7 +1,7 @@
 // One way to open code (docs/CHANGES-PLAN.md §7.1–§7.2): `openTarget`, used by the session's reveals (steps and
-// inline refs) and by the Changes view's change items. A target whose file is in the comparison opens the merge diff
-// with the same two URIs as the Changes view (`ChangesView.diffUris`), so both reuse one tab; then the side's editor
-// is awaited (vscode.diff returns before its editors are visible, at most 1 s) and revealed. A file the branch didn't
+// inline refs) and by Next/Previous Unexplained Change. A target whose file is in the comparison opens the merge diff
+// with the comparison's two URIs (`ChangesService.diffUris`), so every opener reuses one tab; then the side's editor
+// in that diff's group is awaited (vscode.diff returns before its editors are visible, at most 1 s) and revealed. A file the branch didn't
 // change opens a plain editor. When the left side has no editor (an inline diff, §7.5), the base-side lines are
 // revealed on the right at their mapped position.
 import * as vscode from 'vscode';
@@ -12,10 +12,10 @@ import type { ChangeEntry } from './model.ts';
 import type { SideKey } from './targets.ts';
 import { mapOldRange } from './targets.ts';
 
-/** What opening and cursor-follow need from the comparison; built by the Changes view. */
+/** What opening and cursor-follow need from the comparison; built by the changes service. */
 export interface DiffContext {
   readonly snapshot: Snapshot;
-  /** The two sides of a file's merge diff and its title (the view's `diffUris`). */
+  /** The two sides of a file's merge diff and its title (the service's `diffUris`). */
   diffUris(e: ChangeEntry): { left: vscode.Uri; right: vscode.Uri; title: string };
   /** An editor's document as (repo path, side): `file:` → head, `sidestory-git:` at the merge-base → base, at HEAD → head. */
   keyOf(uri: vscode.Uri): SideKey | undefined;
@@ -49,10 +49,27 @@ export interface Opened {
 export const STEPS_SETTING = 'changes.openStepsIn';
 export const openStepsIn = (): 'diff' | 'editor' => (vscode.workspace.getConfiguration('sidestory').get<string>(STEPS_SETTING, 'diff') === 'editor' ? 'editor' : 'diff');
 
-/** A visible editor showing `uri`, waiting for one at most `ms` (vscode.diff shows its editors a moment later). */
-export function editorFor(uri: vscode.Uri, ms = 1000): Promise<vscode.TextEditor | undefined> {
+/**
+ * A visible editor showing `uri`, waiting for one at most `ms` (vscode.diff shows its editors a moment later). With
+ * `diff`, only an editor in the group whose active tab is that diff (left ↔ right): the same file may be open in a
+ * plain editor or another diff elsewhere, and revealing there would miss the diff the step opened.
+ */
+export function editorFor(uri: vscode.Uri, ms = 1000, diff?: { left: vscode.Uri; right: vscode.Uri }): Promise<vscode.TextEditor | undefined> {
   const key = uri.toString();
-  const find = () => vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key);
+  const find = () => {
+    const shown = vscode.window.visibleTextEditors.filter((e) => e.document.uri.toString() === key);
+    if (!diff) return shown[0];
+    const group = vscode.window.tabGroups.all.find((g) => {
+      const input = g.activeTab?.input;
+      return input instanceof vscode.TabInputTextDiff && input.original.toString() === diff.left.toString() && input.modified.toString() === diff.right.toString();
+    });
+    if (!group) return undefined;
+    const inGroup = shown.find((e) => e.viewColumn === group.viewColumn);
+    if (inGroup) return inGroup;
+    // A diff's original side may report no column: take it only when nothing else shows that document.
+    const unplaced = shown.filter((e) => e.viewColumn === undefined);
+    return unplaced.length === 1 ? unplaced[0] : undefined;
+  };
   const now = find();
   if (now) return Promise.resolve(now);
   return new Promise((resolve) => {
@@ -97,14 +114,14 @@ export async function openTarget(ctx: DiffContext | undefined, target: SideKey &
     const { left, right, title } = ctx.diffUris(entry);
     const uri = target.side === 'base' ? left : right;
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { viewColumn: o.viewColumn, preview: true, preserveFocus: o.preserveFocus });
-    const editor = await editorFor(uri);
+    const editor = await editorFor(uri, 1000, { left, right });
     if (editor) {
       reveal(editor, target.range, o.moveCursor);
       return { editor, uri, range: target.range, inDiff: true };
     }
     // No editor for the left side (an inline diff): the removed lines' place on the right.
     const diff = target.side === 'base' ? ctx.lineMap(entry.path) : undefined;
-    const rightEditor = target.side === 'base' && entry.status !== 'D' ? await editorFor(right, 300) : undefined;
+    const rightEditor = target.side === 'base' && entry.status !== 'D' ? await editorFor(right, 300, { left, right }) : undefined;
     if (rightEditor && diff) {
       const mapped = mapOldRange(diff, target.range);
       const at = { start: mapped.start, end: mapped.start };

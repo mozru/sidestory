@@ -3,6 +3,10 @@
 // anchors under their step), grouped by sidestory, sorted by line; positions from Explained here's resolved results
 // for visible documents, else the manifest's range with "≈"; lost ones last. The step at the cursor is marked `●`
 // through the shared cursor helper and selected only while the view is visible. Works in Restricted Mode: it only reads.
+//
+// For a file the branch changed, with a sidestory that explains the branch: "Not explained yet" lists its changes
+// that aren't done (Copy Prompt: Explain This Change, Mark as Trivial…), and a step whose code grew since it was
+// written says so and offers Re-pin This Step (§13.1).
 import * as vscode from 'vscode';
 import { displayText } from '../core/display-text.ts';
 import type { LineRange } from '../core/manifest.ts';
@@ -11,6 +15,8 @@ import { uriKey } from './explainers.ts';
 import type { ExplainedHere } from './nav/explained-here.ts';
 import type { IndexEntry, SidestoryIndex } from './nav/index.ts';
 import { explainFilePrompt, COPIED } from './changes/prompts.ts';
+import type { ChangeCoverage } from '../core/coverage.ts';
+import { changeIcon, stateWords } from './changes/coverage-labels.ts';
 
 export const THIS_FILE_VIEW = 'sidestory.thisFile';
 export const THIS_FILE_CAP = 500;
@@ -78,14 +84,27 @@ export function foldSteps(inputs: readonly StepInput[], cap = THIS_FILE_CAP): { 
 
 type Node =
   | { kind: 'group'; id: string; entry: IndexEntry; label: string; description?: string; children: Node[] }
-  | { kind: 'step'; id: string; entry: IndexEntry; row: StepRow; parent: Node }
-  | { kind: 'more'; id: string; count: number };
+  | { kind: 'step'; id: string; entry: IndexEntry; row: StepRow; parent: Node; repin?: { dir: string; anchor: string } }
+  | { kind: 'more'; id: string; count: number }
+  | { kind: 'changes'; id: string; children: Node[] }
+  | { kind: 'change'; id: string; path: string; key: string; label: string; c: ChangeCoverage; parent: Node };
+
+/** A changed file's coverage, as This File shows it. */
+export interface FileChanges {
+  path: string;
+  /** Changes that aren't explained or marked trivial, in file order. */
+  open: { key: string; label: string; c: ChangeCoverage }[];
+  /** `${dir}\0${anchor}` of anchors whose code grew since they were written. */
+  needsLook: Set<string>;
+}
 
 export interface ThisFileHost {
   /** A diff side's repository path → its working tree file (§9.10: a diff and the plain editor list the same steps). */
   fileOf(uri: vscode.Uri): vscode.Uri | undefined;
   /** "vs main" for a sidestory with a base, when known. */
   baseOf(dir: vscode.Uri): string | undefined;
+  /** The file's changes on this branch, when a sidestory explains the branch. */
+  changesOf?(file: vscode.Uri): FileChanges | undefined;
 }
 
 export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Disposable {
@@ -193,6 +212,12 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
       return;
     }
     const { groups, total, shown, entries } = this.stepsFor(f);
+    const changes = this.host.changesOf?.(f);
+    if (changes?.open.length) {
+      const g: Node & { kind: 'changes' } = { kind: 'changes', id: 'changes', children: [] };
+      for (const o of changes.open) g.children.push({ kind: 'change', id: `c:${o.key}`, path: changes.path, key: o.key, label: o.label, c: o.c, parent: g });
+      this.top.push(g);
+    }
     const order = [...groups.entries()].sort((a, b) => (a[1][0]!.range?.start ?? 1e9) - (b[1][0]!.range?.start ?? 1e9));
     for (const [key, rows] of order) {
       const e = entries.get(key)!;
@@ -200,14 +225,16 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
       // Nodes are built once per rebuild: `reveal` and `getParent` need the same objects VS Code got.
       const g: Node & { kind: 'group' } = { kind: 'group', id: `g:${key}`, entry: e, label: this.index.pathLabel(e), description: base ? `vs ${displayText(base, 40)}` : undefined, children: [] };
       for (const row of rows) {
-        const n: Node = { kind: 'step', id: `s:${e.key}\0${row.stepId}`, entry: e, row, parent: g };
+        const dir = e.ref.dir.toString();
+        const look = row.anchors.find((a) => changes?.needsLook.has(`${dir}\0${a}`));
+        const n: Node = { kind: 'step', id: `s:${e.key}\0${row.stepId}`, entry: e, row, parent: g, ...(look ? { repin: { dir, anchor: look } } : {}) };
         g.children.push(n);
         this.byStep.set(`${e.key}\0${row.stepId}`, n);
       }
       this.top.push(g);
     }
     if (total > shown) this.top.push({ kind: 'more', id: 'more', count: total - shown });
-    void vscode.commands.executeCommand('setContext', 'sidestory.thisFile.state', total ? 'ready' : 'empty');
+    void vscode.commands.executeCommand('setContext', 'sidestory.thisFile.state', total || changes?.open.length ? 'ready' : 'empty');
     this.emitter.fire();
     this.markCursor();
   }
@@ -239,6 +266,10 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
   stats(): { file: string | undefined; description: string | undefined; rows: string[] } {
     const rows: string[] = [];
     for (const n of this.top) {
+      if (n.kind === 'changes') {
+        rows.push('Not explained yet');
+        for (const c of this.getChildren(n)) rows.push(`  ${this.getTreeItem(c).label as string} ${this.getTreeItem(c).description as string}`);
+      }
       if (n.kind !== 'group') continue;
       rows.push(`${n.label}${n.description ? ` (${n.description})` : ''}`);
       for (const c of this.getChildren(n)) rows.push(`  ${this.getTreeItem(c).label as string} ${this.getTreeItem(c).description as string}`);
@@ -248,11 +279,11 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
 
   getChildren(node?: Node): Node[] {
     if (!node) return this.top;
-    return node.kind === 'group' ? node.children : [];
+    return node.kind === 'group' || node.kind === 'changes' ? node.children : [];
   }
 
   getParent(node: Node): Node | undefined {
-    return node.kind === 'step' ? node.parent : undefined;
+    return node.kind === 'step' || node.kind === 'change' ? node.parent : undefined;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
@@ -270,17 +301,45 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
       item.contextValue = 'thisFileSidestory';
       return item;
     }
+    if (node.kind === 'changes') {
+      const item = new vscode.TreeItem('Not explained yet', vscode.TreeItemCollapsibleState.Expanded);
+      item.id = node.id;
+      item.iconPath = new vscode.ThemeIcon('circle-large-outline');
+      item.description = `${node.children.length} ${node.children.length === 1 ? 'change' : 'changes'} on this branch`;
+      item.tooltip = 'Changes in this file that no step explains and no one marked trivial. Right-click one to copy a prompt or mark it trivial.';
+      item.contextValue = 'thisFileChanges';
+      return item;
+    }
+    if (node.kind === 'change') {
+      const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
+      item.id = node.id;
+      item.description = stateWords(node.c);
+      const icon = changeIcon(node.c);
+      item.iconPath = new vscode.ThemeIcon(icon.id, icon.colored ? new vscode.ThemeColor('sidestory.unexplainedForeground') : undefined);
+      item.tooltip = `${node.label}: ${stateWords(node.c)}\nClick to open the diff at this change`;
+      item.command = { command: 'sidestory.changes.openChange', title: 'Open Change', arguments: [{ path: node.path, key: node.key }] };
+      item.contextValue = `thisFileChange:${node.c.state}`;
+      return item;
+    }
     const r = node.row;
     const here = this.marked === `${node.entry.key}\0${r.stepId}`;
     const num = r.stepIndex >= 0 ? `${r.stepIndex + 1}  ` : '';
     const item = new vscode.TreeItem(`${here ? '● ' : ''}${num}${displayText(r.title, 80)}`, vscode.TreeItemCollapsibleState.None);
     item.id = node.id;
     const lines = r.range ? (r.range.start === r.range.end ? `L${r.range.start}` : `L${r.range.start}–${r.range.end}`) : '';
-    item.description = r.lost ? 'code not found' : `${lines}${r.approx ? '  ≈' : ''}`;
-    item.tooltip = [displayText(r.title, 200), r.lost ? 'Its code is not found in this file' : r.approx ? `${lines} (from the manifest; not yet checked against the file)` : lines, here ? 'At the cursor' : '', 'Click to open at this step'].filter(Boolean).join('\n');
+    item.description = r.lost ? 'code not found' : `${lines}${r.approx ? '  ≈' : ''}${node.repin ? ' · code added' : ''}`;
+    item.tooltip = [
+      displayText(r.title, 200),
+      r.lost ? 'Its code is not found in this file' : r.approx ? `${lines} (from the manifest; not yet checked against the file)` : lines,
+      node.repin ? 'Code was added to it since it was written: read it, update the prose, then Re-pin This Step' : '',
+      here ? 'At the cursor' : '',
+      'Click to open at this step',
+    ]
+      .filter(Boolean)
+      .join('\n');
     item.accessibilityInformation = { label: `${here ? 'At the cursor: ' : ''}step ${r.stepIndex + 1}, ${displayText(r.title, 80)}, ${item.description}` };
     item.command = { command: 'sidestory.openAt', title: 'Open at Step', arguments: [{ dir: node.entry.ref.dir.toString(), anchor: r.stepId, trail: this.index.trail(node.entry), source: 'tree' }] };
-    item.contextValue = 'thisFileStep';
+    item.contextValue = node.repin ? 'thisFileStep:needsLook' : 'thisFileStep';
     return item;
   }
 

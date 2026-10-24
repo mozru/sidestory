@@ -1,6 +1,7 @@
-// The coverage layer's words and marks (docs/CHANGES-PLAN.md §9.6): file marks as text (descriptions can't be
-// coloured, and text reads the same in every theme and to screen readers), their accessibility labels, the file
-// tooltip's list of unexplained changes, change item labels and icons, and the totals. Pure: no vscode import.
+// The coverage layer's words and marks (docs/CHANGES-PLAN.md §9.6): a file's decoration (a badge of at most two
+// characters, as VS Code requires, a colour and a tooltip), shown on the real files wherever VS Code decorates them
+// (the Explorer, Source Control, Git Tree Compare); change labels and icons for This File; the "This branch" rows of
+// the Sidestories view; and the totals. Pure: no vscode import.
 import type { ChangeCoverage, ChangeState, FileCoverage, Totals } from '../../core/coverage.ts';
 import type { ChangeBlock } from '../../core/hunks.ts';
 import type { LineRange } from '../../core/manifest.ts';
@@ -10,26 +11,35 @@ const span = (r: LineRange) => (r.start === r.end ? `${r.start}` : `${r.start}�
 /** Done means explained or trivial (§6.3). */
 export const isDone = (s: ChangeState) => s === 'explained' || s === 'trivial';
 
-/** `✓`, `✓ · 1 trivial`, `– trivial`, `◐ 2/3`, `○`, `!` (something needs a look). Undefined: nothing to count. */
-export function fileMark(f: FileCoverage): string | undefined {
-  const n = f.changes.length;
-  if (!n) return undefined;
-  if (f.needsLook) return '!';
-  if (f.left === 0) {
-    if (f.explained === 0) return '– trivial';
-    return f.trivial ? `✓ · ${f.trivial} trivial` : '✓';
-  }
-  if (f.explained + f.trivial === 0) return '○';
-  return `◐ ${f.explained}/${n}`;
+/** The two theme colours the decorations use (contributed in package.json). */
+export const COVERAGE_COLORS = { done: 'sidestory.coverageDoneForeground', left: 'sidestory.coverageLeftForeground' } as const;
+
+export interface CoverageMark {
+  /** `✓` all explained (some may be trivial), `–` all marked trivial, `◐` partly, `○` none yet, `!` needs a look. */
+  badge: string;
+  color: keyof typeof COVERAGE_COLORS;
+  tooltip: string;
 }
 
-/** What a screen reader says for the mark: "2 of 3 changes explained, 1 marked trivial". */
-export function fileMarkLabel(f: FileCoverage): string {
+/**
+ * A changed file's decoration (§9.6). `steps` names the steps that explain its changes ("Step 3 of Retry with
+ * jitter"). Undefined for a file with nothing to count (only line endings changed).
+ */
+export function fileDecoration(f: FileCoverage, steps: readonly string[] = []): CoverageMark | undefined {
   const n = f.changes.length;
+  if (!n) return undefined;
+  let badge: string;
+  let color: CoverageMark['color'] = 'left';
+  if (f.needsLook) badge = '!';
+  else if (f.left === 0) {
+    badge = f.explained ? '✓' : '–';
+    color = 'done';
+  } else badge = f.explained + f.trivial ? '◐' : '○';
   const parts = [`${f.explained} of ${n} ${n === 1 ? 'change' : 'changes'} explained`];
   if (f.trivial) parts.push(`${f.trivial} marked trivial`);
-  if (f.needsLook) parts.push(`${f.needsLook} changed since the step was written`);
-  return parts.join(', ');
+  if (f.needsLook) parts.push(`${f.needsLook} changed since ${f.needsLook === 1 ? 'its step was' : 'their steps were'} written`);
+  if (steps.length) parts.push(steps.length > 2 ? `${steps.slice(0, 2).join(', ')} and ${steps.length - 2} more` : steps.join(', '));
+  return { badge, color, tooltip: parts.join(' · ') };
 }
 
 /** A change's place: `L40–44` on the new side, `L39–62 (removed)` for a pure deletion (old lines). */
@@ -63,19 +73,6 @@ export function stateWords(c: ChangeCoverage): string {
   }
 }
 
-/** The tooltip's lines for a file: each change that isn't done ("L40–44 (+5): not explained"). */
-export function hunkLines(f: FileCoverage, blocks: ReadonlyMap<string, ChangeBlock>, max = 20): string[] {
-  const out: string[] = [];
-  const open = f.changes.filter((c) => !isDone(c.state));
-  for (const c of open.slice(0, max)) {
-    const b = blocks.get(c.key);
-    if (!b) continue;
-    const counts = changeCounts(b);
-    out.push(`${changeLabel(b)}${c.state === 'partly' ? '' : counts ? ` (${counts})` : ''}: ${stateWords(c)}`);
-  }
-  if (open.length > max) out.push(`and ${open.length - max} more`);
-  return out;
-}
 
 /** The codicon for a change item (§9.6), and whether it takes the unexplained colour. */
 export function changeIcon(c: ChangeCoverage): { id: string; colored?: boolean } {
@@ -98,7 +95,68 @@ export function totalsLabel(t: Totals): string {
   return `${t.explained} explained · ${t.trivial} trivial · ${t.left} left`;
 }
 
-/** Folders: "· 2 left" over the files below. */
-export function folderLeft(files: readonly (FileCoverage | undefined)[]): number {
-  return files.reduce((n, f) => n + (f?.left ?? 0), 0);
+// ---- the "This branch" group of the Sidestories view ----
+
+export interface BranchRow {
+  id: string;
+  label: string;
+  description?: string;
+  tooltip: string;
+  icon: string;
+  command: { command: string; title: string; arguments?: unknown[] };
+  contextValue: string;
+}
+
+export interface BranchInputs {
+  /** The sidestories that belong to the branch's comparison, with what each explains or marks. */
+  belonging: { folder: string; title: string; base: string; dir: string; totals: Totals }[];
+  /** The branch's totals over every belonging sidestory. */
+  totals: Totals | undefined;
+  /** The branch has changes against its base (a comparison, or the probe's answer). */
+  hasChanges: boolean;
+  /** "Copy Prompt: Explain This Branch" is wanted: the setting is on and it wasn't dismissed for this branch. */
+  suggest: boolean;
+}
+
+/**
+ * The rows under "This branch" (§9.6): each belonging sidestory ("vs main · 3 explained · 1 trivial · 1 left"), then
+ * the update prompt while something is left; with none belonging and changes on the branch, the explain prompt.
+ * Empty: no group.
+ */
+export function branchRows(i: BranchInputs): BranchRow[] {
+  const rows: BranchRow[] = [];
+  const t = i.totals;
+  for (const b of i.belonging) {
+    rows.push({
+      id: `b:${b.folder}`,
+      label: b.title || b.folder,
+      description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}`,
+      tooltip: `${b.title}\n${b.folder} · vs ${b.base}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${t?.left ?? 0} left on the branch\nClick to open`,
+      icon: 'book',
+      command: { command: 'sidestory.openAt', title: 'Open Sidestory', arguments: [{ dir: b.dir, source: 'tree' }] },
+      contextValue: 'branchSidestory',
+    });
+  }
+  if (i.belonging.length && t && t.left > 0) {
+    const look = t.needsLook ? ` (${t.needsLook} changed since ${t.needsLook === 1 ? 'its step was' : 'their steps were'} written)` : '';
+    rows.push({
+      id: 'b:update',
+      label: 'Copy Prompt: Update the Sidestory for New Changes',
+      tooltip: `${t.left} ${t.left === 1 ? 'change' : 'changes'} left${look}. Copies a prompt for Claude Code (or your agent) to extend the sidestory.`,
+      icon: 'sparkle',
+      command: { command: 'sidestory.changes.copyUpdatePrompt', title: 'Copy Prompt: Update the Sidestory for New Changes' },
+      contextValue: 'updatePrompt',
+    });
+  }
+  if (!i.belonging.length && i.hasChanges && i.suggest) {
+    rows.push({
+      id: 'b:explain',
+      label: 'Copy Prompt: Explain This Branch',
+      tooltip: 'Copies a prompt for Claude Code (or your agent) to write a sidestory that explains this branch’s changes, step by step',
+      icon: 'sparkle',
+      command: { command: 'sidestory.changes.copyExplainPrompt', title: 'Copy Prompt: Explain This Branch' },
+      contextValue: 'explainPrompt',
+    });
+  }
+  return rows;
 }

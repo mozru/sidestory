@@ -123,6 +123,8 @@ export class ExplainerSession implements vscode.Disposable {
   private navRequest = 0;
   /** Bumped whenever the trail changes, so work started for the explainer shown before stops. */
   private generation = 0;
+  /** The latest comparison lookup (updateDiff). */
+  private diffSeq = 0;
   /** The generation the page last got `init` for. Until it's the current one, half-updated state isn't sent. */
   private initGeneration = 0;
   private explainerWatchers: vscode.Disposable[] = [];
@@ -254,12 +256,17 @@ export class ExplainerSession implements vscode.Disposable {
     }
   }
 
-  /** Looks up the comparison for this sidestory's base; true when what anchors resolve against changed (a rebase). */
+  /**
+   * Looks up the comparison for this sidestory's base; true when what anchors resolve against changed (a rebase).
+   * Only the latest lookup, for the sidestory still shown, is kept: an older answer arriving late never overwrites it.
+   */
   private async updateDiff(): Promise<boolean> {
+    const mine = ++this.diffSeq;
+    const generation = this.generation;
     const base = this.manifest?.base;
     const ctx = base && this.host.diffs ? await this.host.diffs.context(base, this.diffWho) : undefined;
+    if (this.disposed || mine !== this.diffSeq || generation !== this.generation) return false;
     if (!base) this.host.diffs?.release(this.diffWho);
-    if (this.disposed) return false;
     const was = this.diff;
     this.diff = ctx;
     const sig = (c: DiffContext | undefined) => (c ? `${c.snapshot.mergeBase}\0${c.snapshot.head.sha}\0${c.snapshot.mode}` : '');

@@ -3,23 +3,25 @@
 // through the git extension: belonging sidestories (manifest absent at the merge-base, present at the head, the same
 // merge-base from their own `base`), their used anchors resolved per side (head side against the comparison's new
 // text, base side against the merge-base blob of the old path), and change blocks from both sides decoded the same
-// way. Work is lazy and bounded (§4.6): only while someone needs it (the Changes view visible, or an open sidestory
-// with this base), 4 files at a time, anchored files first, at most 200 MB read per recompute, cached by content.
+// way. Work is lazy and bounded (§4.6): only while someone needs it (a sidestory with a base in the workspace, an open
+// one, or a command), 4 files at a time, anchored files first, at most 200 MB read per recompute, cached by content.
+// The rules shared with the checker: which paths count (`countedPath`), a sidestory needs both its files, a side past
+// MAX_COMPARE_BYTES counts as one change (`tooLargeChange`), an unreadable one makes the result incomplete.
 //
 // `computeCoverage` is the core and takes a `CoverageSource` (unit tests stub it); `CoverageService` builds the
-// source from the Changes view's snapshot and the git extension, caches, and fires when a result changes.
+// source from the comparison's snapshot and the git extension, caches, and fires when a result changes.
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodePair, diffTexts, textLines, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
+import { decodePair, decodeUtf8, diffTexts, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
-import { belongs, isArchivePath } from '../../core/membership.ts';
+import { belongs, countedPath, isArchivePath, sidestoryFolderOf } from '../../core/membership.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
-import { MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readInside } from '../explainers.ts';
+import { MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readInside } from '../explainers.ts';
 import { log } from '../log.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
@@ -27,7 +29,7 @@ import type { GitRepo } from './git-api.ts';
 import { apiPath, refReader, relPath } from './git-api.ts';
 import type { ChangeEntry } from './model.ts';
 
-export const COVERAGE_WORK = { parallel: 4, bytesPerRecompute: 200 * 1024 * 1024, fileBytes: MAX_CODE_BYTES, debounceMs: 300, diffCache: 5000, textCache: 2000 } as const;
+export const COVERAGE_WORK = { parallel: 4, bytesPerRecompute: 200 * 1024 * 1024, fileBytes: MAX_COMPARE_BYTES, debounceMs: 300, diffCache: 5000, textCache: 2000 } as const;
 
 /** A sidestory folder seen at the head (working tree or HEAD), before the membership test. */
 export interface Candidate {
@@ -45,11 +47,13 @@ export interface CoverageSource {
   readonly mergeBase: string;
   readonly entries: readonly ChangeEntry[];
   candidates(): Promise<Candidate[]>;
-  presentAtMergeBase(repoPath: string): Promise<boolean>;
+  /** Whether the merge-base holds a path; undefined when git couldn't say (an error is never "absent"). */
+  presentAtMergeBase(repoPath: string): Promise<boolean | undefined>;
   /** The merge-base a sidestory's `base` gives against the comparison's head. */
   ownMergeBase(spec: string): Promise<string | undefined>;
-  oldBytes(repoPath: string): Promise<Uint8Array | undefined>;
-  newBytes(repoPath: string): Promise<Uint8Array | undefined>;
+  /** A side's bytes; 'tooLarge' past MAX_COMPARE_BYTES; undefined when unreadable. */
+  oldBytes(repoPath: string): Promise<Uint8Array | 'tooLarge' | undefined>;
+  newBytes(repoPath: string): Promise<Uint8Array | 'tooLarge' | undefined>;
   /** A content key for the new side when it is cheaper than reading it (immutable blobs); else undefined. */
   diffKey?(e: ChangeEntry): string | undefined;
 }
@@ -88,13 +92,15 @@ export interface CoverageResult {
 }
 
 const isBinary = (b: Uint8Array | undefined) => !!b && b.subarray(0, 8000).includes(0);
+const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const under = (prefix: string, p: string) => (prefix ? (p.startsWith(`${prefix}/`) ? p.slice(prefix.length + 1) : undefined) : p);
 const join = (prefix: string, p: string) => (prefix ? `${prefix}/${p}` : p);
-const isSidestoryPath = (p: string) => p.startsWith('.sidestory/') || p.includes('/.sidestory/');
+const isSidestoryPath = (p: string) => sidestoryFolderOf(p) !== undefined || isArchivePath(p);
 
 /** The sidestories that belong, from candidates (§6.1). */
-export async function belongingSidestories(src: CoverageSource): Promise<(Candidate & { manifest: Manifest })[]> {
+export async function belongingSidestories(src: CoverageSource): Promise<{ found: (Candidate & { manifest: Manifest })[]; incomplete: boolean }> {
   const out: (Candidate & { manifest: Manifest })[] = [];
+  let incomplete = false;
   for (const c of await src.candidates()) {
     if (isArchivePath(c.folder)) continue;
     const parsed = parseManifest(c.manifestText);
@@ -102,9 +108,14 @@ export async function belongingSidestories(src: CoverageSource): Promise<(Candid
     const m = parsed.manifest;
     const own = await src.ownMergeBase(m.base!);
     const presentAtMergeBase = own === src.mergeBase ? await src.presentAtMergeBase(`${c.folder}/manifest.json`) : true;
+    // Git couldn't say whether it was there before: not counted, and the result says it is incomplete.
+    if (presentAtMergeBase === undefined) {
+      incomplete = true;
+      continue;
+    }
     if (belongs({ presentAtMergeBase, presentAtHead: true, ownMergeBase: own, comparisonMergeBase: src.mergeBase, manifestHead: m.head })) out.push({ ...c, manifest: m });
   }
-  return out.sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
+  return { found: out.sort((a, b) => byPath(a.folder, b.folder)), incomplete };
 }
 
 interface Texts {
@@ -122,23 +133,23 @@ export async function computeCoverage(
 ): Promise<CoverageResult | undefined> {
   const isCurrent = opts.isCurrent ?? (() => true);
   const cache = opts.cache ?? new Map();
-  const found = await belongingSidestories(src);
+  const { found, incomplete: unsure } = await belongingSidestories(src);
   if (!isCurrent()) return undefined;
   const none: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   // No layer without a sidestory (§9.2): the navigator's own counting fills in the counts then.
-  if (!found.length) return { mergeBase: src.mergeBase, belonging: [], files: new Map(), totals: none, targets: [], incomplete: false, done: 0, total: 0 };
-  const counted = src.entries.filter((e) => !isSidestoryPath(e.path) && !e.noText);
+  if (!found.length) return { mergeBase: src.mergeBase, belonging: [], files: new Map(), totals: none, targets: [], incomplete: unsure, done: 0, total: 0 };
+  const counted = src.entries.filter((e) => countedPath(e.path) && !e.noText);
   // Anchored files first (a step's file can't wait behind 5,000 others), then the view's order, then by path.
   const anchored = new Set<string>();
   for (const s of found) for (const a of s.manifest.anchors.values()) anchored.add(join(s.prefix, a.file));
   const rank = new Map((opts.order ?? []).map((p, i) => [p, i]));
   const todo = counted.slice().sort((a, b) => {
     const x = Number(!anchored.has(a.path) && !anchored.has(a.oldPath ?? '')) - Number(!anchored.has(b.path) && !anchored.has(b.oldPath ?? ''));
-    return x || (rank.get(a.path) ?? 1e9) - (rank.get(b.path) ?? 1e9) || (a.path < b.path ? -1 : 1);
+    return x || (rank.get(a.path) ?? 1e9) - (rank.get(b.path) ?? 1e9) || byPath(a.path, b.path);
   });
   const texts = new Map<string, { entry: ChangeEntry; diff: FileDiff; texts: Texts }>();
   let bytes = 0;
-  let incomplete = false;
+  let incomplete = unsure;
   let next = 0;
   const work = async () => {
     while (next < todo.length && isCurrent()) {
@@ -154,7 +165,15 @@ export async function computeCoverage(
         continue;
       }
       const [ob, nb] = await Promise.all([e.status === 'A' ? undefined : src.oldBytes(e.oldPath ?? e.path), e.status === 'D' ? undefined : src.newBytes(e.path)]);
-      if ((e.status !== 'A' && !ob) || (e.status !== 'D' && !nb)) continue; // unreadable or over the size cap: not computed
+      if (ob === 'tooLarge' || nb === 'tooLarge') {
+        // Past MAX_COMPARE_BYTES: one change, as the checker counts it (no text, so only trivialFiles can cover it).
+        texts.set(e.path, { entry: e, diff: { changes: [tooLargeChange(e.path, 0, 0)], tooLarge: 'size', lineEndingsOnly: false, oldLines: 0, newLines: 0 }, texts: { old: undefined, new: undefined } });
+        continue;
+      }
+      if ((e.status !== 'A' && !ob) || (e.status !== 'D' && !nb)) {
+        incomplete = true; // unreadable: not counted, and the totals say so
+        continue;
+      }
       bytes += (ob?.length ?? 0) + (nb?.length ?? 0);
       if (isBinary(ob) || isBinary(nb)) {
         e.noText = true;
@@ -174,17 +193,19 @@ export async function computeCoverage(
   };
   await Promise.all(Array.from({ length: COVERAGE_WORK.parallel }, work));
   if (!isCurrent()) return undefined;
+  // By path, whatever order the workers finished in: the same result for the same inputs.
+  const done = [...texts.values()].sort((a, b) => byPath(a.entry.path, b.entry.path));
 
   // Counts from the blocks (§5.2): exact, and the same for renames and untracked files.
-  for (const { entry, diff } of texts.values()) {
+  for (const { entry, diff } of done) {
     if (diff.tooLarge) continue;
     entry.added = diff.changes.reduce((n, c) => n + c.added, 0);
     entry.removed = diff.changes.reduce((n, c) => n + c.removed, 0);
     entry.counting = false;
   }
 
-  const byNew = new Map([...texts.values()].map((t) => [t.entry.path, t]));
-  const byOld = new Map([...texts.values()].map((t) => [t.entry.oldPath ?? t.entry.path, t]));
+  const byNew = new Map(done.map((t) => [t.entry.path, t]));
+  const byOld = new Map(done.map((t) => [t.entry.oldPath ?? t.entry.path, t]));
   const matchers = found.map((s) => ({ s, match: globMatcher(s.manifest.trivialFiles ?? []) }));
   const isTrivialFile = (p: string) => matchers.some(({ s, match }) => {
     const r = under(s.prefix, p);
@@ -226,7 +247,7 @@ export async function computeCoverage(
       });
     }
   }
-  const inputs: FileInput[] = [...texts.values()].map(({ entry, diff, texts: t }) => {
+  const inputs: FileInput[] = done.map(({ entry, diff, texts: t }) => {
     const newLines = t.new !== undefined ? textLines(t.new) : [];
     const oldLines = t.old !== undefined ? textLines(t.old) : [];
     return {
@@ -242,7 +263,7 @@ export async function computeCoverage(
   const result = coverage(inputs, targets);
   const files = new Map<string, FileResult>();
   const covByPath = new Map(result.files.map((f) => [f.path, f]));
-  for (const { entry, diff } of texts.values()) {
+  for (const { entry, diff } of done) {
     files.set(entry.path, { entry, diff, coverage: covByPath.get(entry.path), blocks: new Map(diff.changes.map((c) => [c.key, c])) });
   }
   // Per sidestory: the changes it explains or marks (a change several explain counts for each).
@@ -260,7 +281,7 @@ export async function computeCoverage(
     }
     t.files = seen.size;
   }
-  return { mergeBase: src.mergeBase, belonging, files, totals: result.totals, targets, incomplete, done: texts.size, total: counted.length };
+  return { mergeBase: src.mergeBase, belonging, files, totals: result.totals, targets, incomplete, done: done.length, total: counted.length };
 }
 
 // ---- the service ----
@@ -268,7 +289,7 @@ export async function computeCoverage(
 export interface CoverageHost {
   /** The current comparison. */
   snapshot(): Snapshot | undefined;
-  /** File order as the view shows it (what to diff first). */
+  /** Paths to diff first (files open in editors). */
   order(): readonly string[];
   /** Sidestory folders in the workspace (the index). */
   sidestoryDirs(): vscode.Uri[];
@@ -283,8 +304,8 @@ export class CoverageService implements vscode.Disposable {
   /** Merge-bases by (base spec, head): resolving a base costs a few git calls. */
   private readonly own = new Map<string, Promise<string | undefined>>();
   /** Whether the merge-base holds a path: immutable per merge-base. */
-  private readonly present = new Map<string, Promise<boolean>>();
-  private readonly oldTexts = new Map<string, Promise<Uint8Array | undefined>>();
+  private readonly present = new Map<string, Promise<boolean | undefined>>();
+  private readonly oldTexts = new Map<string, Promise<Uint8Array | 'tooLarge' | undefined>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
   private running = false;
@@ -305,7 +326,7 @@ export class CoverageService implements vscode.Disposable {
     );
   }
 
-  /** Who needs coverage now ('view', a session key): computing runs only while someone does. */
+  /** Who needs coverage now ('workspace', a session key, a command): computing runs only while someone does. */
   want(who: string, on: boolean): void {
     const before = this.wanted.size > 0;
     if (on) this.wanted.add(who);
@@ -350,34 +371,33 @@ export class CoverageService implements vscode.Disposable {
 
   private source(s: Snapshot): CoverageSource {
     const repo = s.repo;
-    const tooBig = async (sha: string, p: string) => {
+    const blob = async (sha: string, p: string): Promise<Uint8Array | 'tooLarge' | undefined> => {
       try {
-        return (await repo.getObjectDetails(sha, apiPath(repo, p))).size > COVERAGE_WORK.fileBytes;
-      } catch {
-        return true; // missing
-      }
-    };
-    const blob = async (sha: string, p: string): Promise<Uint8Array | undefined> => {
-      try {
-        if (await tooBig(sha, p)) return undefined;
+        if ((await repo.getObjectDetails(sha, apiPath(repo, p))).size > COVERAGE_WORK.fileBytes) return 'tooLarge';
         return await repo.buffer(sha, apiPath(repo, p));
       } catch {
-        return undefined;
+        return undefined; // missing or unreadable
       }
     };
     const fileUri = (p: string) => vscode.Uri.joinPath(repo.rootUri, ...p.split('/'));
-    const working = async (p: string): Promise<Uint8Array | undefined> => {
-      const uri = fileUri(p);
-      // Unsaved edits count in working tree mode (§9.7): the open document's text.
-      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
-      if (doc && doc.isDirty) return new TextEncoder().encode(doc.getText());
+    const disk = async (uri: vscode.Uri): Promise<Uint8Array | 'tooLarge' | undefined> => {
       try {
         const st = await vscode.workspace.fs.stat(uri);
-        if (st.type !== vscode.FileType.File || st.size > COVERAGE_WORK.fileBytes) return undefined;
+        if (st.type !== vscode.FileType.File) return undefined;
+        if (st.size > COVERAGE_WORK.fileBytes) return 'tooLarge';
         return await vscode.workspace.fs.readFile(uri);
       } catch {
         return undefined;
       }
+    };
+    const working = async (p: string): Promise<Uint8Array | 'tooLarge' | undefined> => {
+      const uri = fileUri(p);
+      const bytes = await disk(uri);
+      // Unsaved edits count in working tree mode (§9.7): the open document's text, but only while the file on disk
+      // is UTF-8. A Latin-1 file's text re-encoded as UTF-8 would turn every non-ASCII line into a change (§5.2).
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+      if (doc?.isDirty && bytes !== 'tooLarge' && (!bytes || decodeUtf8(bytes) !== undefined)) return new TextEncoder().encode(doc.getText());
+      return bytes;
     };
     return {
       mergeBase: s.mergeBase,
@@ -387,7 +407,10 @@ export class CoverageService implements vscode.Disposable {
         const key = `${s.mergeBase}\0${p}`;
         let v = this.present.get(key);
         if (!v) {
-          v = repo.getObjectDetails(s.mergeBase, apiPath(repo, p)).then(() => true, () => false);
+          v = repo.getObjectDetails(s.mergeBase, apiPath(repo, p)).then(
+            () => true,
+            (e: unknown) => (isUnknownPath(e) ? false : undefined),
+          );
           if (this.present.size > 2000) this.present.clear();
           this.present.set(key, v);
         }
@@ -440,7 +463,8 @@ export class CoverageService implements vscode.Disposable {
         manifestText = await read('manifest.json', MAX_MANIFEST_BYTES);
         html = await read('sidestory.html', MAX_HTML_BYTES);
       }
-      if (manifestText !== undefined) out.push({ folder, prefix, dir, manifestText, html: html ?? '' });
+      // Both files, or it isn't a sidestory yet (an agent still writing the page), as the checker counts.
+      if (manifestText !== undefined && html !== undefined) out.push({ folder, prefix, dir, manifestText, html });
     }
     return out;
   }
@@ -478,6 +502,12 @@ export class CoverageService implements vscode.Disposable {
     this.seq++;
     this.subs.forEach((d) => d.dispose());
   }
+}
+
+/** The git extension's answer for a path a commit doesn't have (`GitErrorCodes.UnknownPath`), as opposed to an error. */
+export function isUnknownPath(e: unknown): boolean {
+  const x = e as { gitErrorCode?: unknown; message?: unknown } | undefined;
+  return x?.gitErrorCode === 'UnknownPath' || (typeof x?.message === 'string' && /not known by git|does not exist in|exists on disk, but not in/i.test(x.message));
 }
 
 export type { GitRepo };

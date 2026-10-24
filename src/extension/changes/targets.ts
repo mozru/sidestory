@@ -17,6 +17,16 @@ export interface SideKey {
 
 export const targetKey = (k: SideKey): string => `${k.side}\0${k.path}`;
 
+/**
+ * A `sidestory-git:` document as (path, side) in a comparison (§8): the merge-base is the base side, any other commit
+ * of the same repository the head side. Keys never hold a commit, so a tab opened at an older head commit (before
+ * the last commit, in committed mode) still maps to the head side.
+ */
+export function gitSideKey<R>(g: { repo: R; sha: string; path: string } | undefined, s: { repo: R; mergeBase: string }): SideKey | undefined {
+  if (!g || g.repo !== s.repo) return undefined;
+  return { path: g.path, side: g.sha === s.mergeBase ? 'base' : 'head' };
+}
+
 type Resolved = { range: LineRange | null; state: AnchorState | 'pending' };
 
 /** Anchor ids by side key; resolutions by id. */

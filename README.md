@@ -121,9 +121,15 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 
 ## Explaining a branch
 
-The **Changes** view lists your branch's changes against its base, like a review. When a sidestory with a `"base"` explains the branch, its row comes first with its coverage (`9 explained · 3 trivial · 0 left`), each file says how much of it is explained (`✓`, `◐ 2/3`, `○`, `– trivial`, `!` for code that changed since its step was written), and each change is a child you can open. **Next Unexplained Change** (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> on macOS) walks what is left. With no sidestory yet, **Copy Prompt: Explain This Branch** copies a prompt for Claude Code; **Copy Prompt: Explain This Change** and **Mark as Trivial…** work on one change.
+A sidestory with a `"base"` in its manifest explains a branch: its steps cover the branch's changes against that base. To browse the branch itself, use a branch-diff tool you already like: [Git Tree Compare](https://marketplace.visualstudio.com/items?itemName=letmaik.git-tree-compare) (recommended), GitLens, or Source Control. Sidestory adds to them rather than replacing them:
 
-Steps of such a sidestory open the branch's diff at their side: added code highlighted on the right, removed code on the left, and the cursor on either side moves the panel. **This File** lists every step, in any sidestory, that covers the file you're in.
+- **Coverage marks on files.** Each changed file gets a small badge wherever VS Code decorates files (Git Tree Compare, Source Control, the Explorer, tabs): `✓` every change explained, `–` all marked trivial, `◐` partly, `○` not yet, `!` code added since its step was written. The tooltip says how much (`2 of 3 changes explained · Step 3 of Retry with jitter`).
+- **This branch**, at the top of the Sidestories view: the sidestories that explain the branch with their totals (`vs main · 9 explained · 3 trivial · 1 left`), and **Copy Prompt: Update the Sidestory for New Changes** while something is left. With none yet, **Copy Prompt: Explain This Branch** copies a prompt for Claude Code (or your agent); **Don't Suggest on This Branch** hides it.
+- **Steps open the branch's diff** at their side: added code highlighted on the right, removed code on the left, and the cursor on either side moves the panel. Changed lines no step explains get a dotted mark in the gutter while the sidestory is open.
+- **This File** lists every step, in any sidestory, that covers the file you're in, and for a changed file the changes not explained yet.
+- **One change at a time:** with the cursor in a change (in its diff or the changed file), the editor's context menu has **Copy Prompt: Explain This Change**, **Mark as Trivial…** (asks why, and writes it into the sidestory), and **Re-pin This Step** for a step whose code grew, once you've updated its prose.
+
+The base is the sidestory's `"base"`. Without a sidestory, a branch is compared with the merge-base of `main` (or the `sidestory.changes.defaultBase` setting); **Sidestory: Set Base…** picks another for the branch.
 
 Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
 
@@ -145,6 +151,13 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | **Sidestory: Add Widget Types** | Write type declarations so `tsc` and IntelliSense work on widget files. |
 | **Sidestory: Enable Widgets** | Turn widgets back on after the watchdog stopped one (and the setting, if it's off). |
 | **Sidestory: Revoke Widget Consent** | Forget that you agreed to run this workspace's widgets. |
+| **Sidestory: Next Unexplained Change** / **Previous…** | Open the branch's diff at the next change no step explains, from the active editor, in the sidestory's step order (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> on macOS). |
+| **Sidestory: Next Changed File** / **Previous…** | Open the next changed file's diff against the base, in path order (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> on macOS). |
+| **Sidestory: Copy Prompt: Explain This Branch** | Copy a prompt that asks your agent to explain the branch's changes, step by step. |
+| **Sidestory: Copy Prompt: Explain This Change** | Copy a prompt for the change at the cursor (editor context menu, This File). |
+| **Sidestory: Mark as Trivial…** | Mark the change at the cursor, or the selected lines, as needing no explanation, with a reason. |
+| **Sidestory: Re-pin This Step** | Pin a step whose code grew since it was written, once its prose covers the new lines. |
+| **Sidestory: Set Base…** | Pick the branch to compare this branch with when no sidestory gives one. |
 
 ## Settings
 
@@ -157,7 +170,9 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
 | `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
-| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** in the Changes view when no sidestory explains the branch. |
+| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under **This branch** when no sidestory explains the branch. |
+| `sidestory.changes.defaultBase` | `""` | The branch to compare with when no sidestory gives a base and none was set (empty: the recorded branch base, the remote's default branch, then `main` or `master`). |
+| `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |
 | `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 

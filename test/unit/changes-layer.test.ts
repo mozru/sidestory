@@ -1,17 +1,16 @@
 // Release 1b's pure pieces (docs/CHANGES-PLAN.md §7.4, §8, §9.6, §9.10, §14.3): cursor lookup by (path, side) with
 // the old → new map, the diff column, coverage marks and tooltips, copied prompts and their data block, This File's
-// folding, and the Changes tree's layer rows and change items.
+// folding, the decorations' badges, colours and tooltips, and the "This branch" rows.
 import { describe, expect, it, vi } from 'vitest';
 import type { ChangeCoverage, FileCoverage } from '../../src/core/coverage.ts';
 import { diffTexts } from '../../src/core/hunks.ts';
 import { codeColumnFor } from '../../src/extension/columns.ts';
-import { changeIcon, changeLabel, fileMark, fileMarkLabel, hunkLines } from '../../src/extension/changes/coverage-labels.ts';
+import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, fileDecoration, stateWords } from '../../src/extension/changes/coverage-labels.ts';
 import { changePrompt, explainBranchPrompt, explainFilePrompt, safePath, updatePrompt } from '../../src/extension/changes/prompts.ts';
-import { anchorAtSide, mapOldRange, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
+import { anchorAtSide, gitSideKey, mapOldRange, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
 import { addTrivialAnchor, branchSlug } from '../../src/extension/changes/trivial.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
-const { ChangesTree } = await import('../../src/extension/changes/tree.ts');
 const { foldSteps } = await import('../../src/extension/this-file.ts');
 
 const lines = (n: number, p = 'l') => Array.from({ length: n }, (_, i) => `${p}${i + 1}`).join('\n') + '\n';
@@ -73,35 +72,60 @@ const cov = (states: ChangeCoverage['state'][], extra: Partial<FileCoverage> = {
   };
 };
 
-describe('coverage marks and words (§9.6)', () => {
-  it('marks files with text, trivial never as ✓ alone', () => {
-    expect(fileMark(cov(['explained', 'explained']))).toBe('✓');
-    expect(fileMark(cov(['explained', 'trivial']))).toBe('✓ · 1 trivial');
-    expect(fileMark(cov(['trivial']))).toBe('– trivial');
-    expect(fileMark(cov(['explained', 'unexplained', 'explained']))).toBe('◐ 2/3');
-    expect(fileMark(cov(['unexplained']))).toBe('○');
-    expect(fileMark(cov(['explained', 'needsLook']))).toBe('!');
-    expect(fileMark(cov([]))).toBeUndefined();
-    expect(fileMarkLabel(cov(['explained', 'unexplained', 'trivial']))).toBe('1 of 3 changes explained, 1 marked trivial');
-  });
-  it('lists open changes in the tooltip and labels change items', () => {
-    const d = diffTexts('a.ts', lines(10), lines(10).replace('l5\n', 'n1\nn2\n').replace('l9\n', ''));
-    const blocks = new Map(d.changes.map((c) => [c.key, c]));
-    const f: FileCoverage = {
-      path: 'a.ts',
-      changes: [
-        { key: d.changes[0]!.key, state: 'partly', by: [], uncovered: [{ side: 'head', range: { start: 6, end: 6 } }], coveredLines: 1, changedLines: 3 },
-        { key: d.changes[1]!.key, state: 'unexplained', by: [], uncovered: [], coveredLines: 0, changedLines: 1 },
-      ],
-      explained: 0,
-      trivial: 0,
-      left: 2,
-      needsLook: 0,
+describe('coverage decorations (§9.6)', () => {
+  it('gives a badge of at most two characters and a colour per state', () => {
+    const mark = (states: ChangeCoverage['state'][]) => {
+      const m = fileDecoration(cov(states))!;
+      return [m.badge, m.color];
     };
-    expect(hunkLines(f, blocks)).toEqual(['L5–6: partly (6 left)', 'L9 (removed) (−1): not explained']);
+    expect(mark(['explained', 'explained'])).toEqual(['✓', 'done']);
+    expect(mark(['explained', 'trivial'])).toEqual(['✓', 'done']);
+    expect(mark(['trivial'])).toEqual(['–', 'done']);
+    expect(mark(['explained', 'unexplained', 'explained'])).toEqual(['◐', 'left']);
+    expect(mark(['trivial', 'partly'])).toEqual(['◐', 'left']);
+    expect(mark(['unexplained'])).toEqual(['○', 'left']);
+    expect(mark(['explained', 'needsLook'])).toEqual(['!', 'left']);
+    expect(fileDecoration(cov([]))).toBeUndefined();
+    for (const states of [['explained'], ['trivial'], ['partly'], ['unexplained'], ['needsLook']] as ChangeCoverage['state'][][]) expect([...fileDecoration(cov(states))!.badge].length).toBeLessThanOrEqual(2);
+    expect(COVERAGE_COLORS).toEqual({ done: 'sidestory.coverageDoneForeground', left: 'sidestory.coverageLeftForeground' });
+  });
+  it('says what is explained, trivial and changed since, and which steps explain it', () => {
+    expect(fileDecoration(cov(['explained', 'explained', 'unexplained']), ['Step 3 of Retry with jitter'])!.tooltip).toBe('2 of 3 changes explained · Step 3 of Retry with jitter');
+    expect(fileDecoration(cov(['explained', 'trivial', 'needsLook']), ['Step 1 of A', 'Step 2 of A', 'Step 4 of A'])!.tooltip).toBe(
+      '1 of 3 changes explained · 1 marked trivial · 1 changed since its step was written · Step 1 of A, Step 2 of A and 1 more',
+    );
+    expect(fileDecoration(cov(['needsLook', 'needsLook']))!.tooltip).toBe('0 of 2 changes explained · 2 changed since their steps were written');
+  });
+  it('labels changes for This File', () => {
+    const d = diffTexts('a.ts', lines(10), lines(10).replace('l5\n', 'n1\nn2\n').replace('l9\n', ''));
+    const partly: ChangeCoverage = { key: d.changes[0]!.key, state: 'partly', by: [], uncovered: [{ side: 'head', range: { start: 6, end: 6 } }], coveredLines: 1, changedLines: 3 };
     expect(changeLabel(d.changes[0]!)).toBe('L5–6');
-    expect(changeIcon(f.changes[0]!)).toEqual({ id: 'circle-large-filled', colored: true });
-    expect(changeIcon({ ...f.changes[0]!, state: 'explained', stale: true }).id).toBe('warning');
+    expect(changeLabel(d.changes[1]!)).toBe('L9 (removed)');
+    expect(stateWords(partly)).toBe('partly (6 left)');
+    expect(changeIcon(partly)).toEqual({ id: 'circle-large-filled', colored: true });
+    expect(changeIcon({ ...partly, state: 'explained', stale: true }).id).toBe('warning');
+  });
+});
+
+describe('the "This branch" group (§9.6)', () => {
+  const totals = (t: Partial<import('../../src/core/coverage.ts').Totals>) => ({ changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0, ...t });
+  const b = { folder: '.sidestory/retry-jitter', title: 'Retry with jitter', base: 'main', dir: 'file:///r/.sidestory/retry-jitter', totals: totals({ explained: 3, trivial: 1 }) };
+  it('lists the belonging sidestories, then the update prompt while something is left', () => {
+    const rows = branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1, left: 2, needsLook: 1 }), hasChanges: true, suggest: true });
+    expect(rows.map((r) => [r.label, r.description, r.contextValue])).toEqual([
+      ['Retry with jitter', 'vs main · 3 explained · 1 trivial · 2 left', 'branchSidestory'],
+      ['Copy Prompt: Update the Sidestory for New Changes', undefined, 'updatePrompt'],
+    ]);
+    expect(rows[0]!.command).toEqual({ command: 'sidestory.openAt', title: 'Open Sidestory', arguments: [{ dir: b.dir, source: 'tree' }] });
+    expect(rows[1]!.tooltip).toMatch(/^2 changes left \(1 changed since its step was written\)\./);
+  });
+  it('drops the update prompt when nothing is left', () => {
+    expect(branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1 }), hasChanges: true, suggest: true }).map((r) => r.id)).toEqual(['b:.sidestory/retry-jitter']);
+  });
+  it('offers to explain a branch with changes and no sidestory, unless dismissed; nothing on a branch without changes', () => {
+    expect(branchRows({ belonging: [], totals: undefined, hasChanges: true, suggest: true }).map((r) => [r.label, r.contextValue])).toEqual([['Copy Prompt: Explain This Branch', 'explainPrompt']]);
+    expect(branchRows({ belonging: [], totals: undefined, hasChanges: true, suggest: false })).toEqual([]);
+    expect(branchRows({ belonging: [], totals: undefined, hasChanges: false, suggest: true })).toEqual([]);
   });
 });
 
@@ -134,8 +158,23 @@ describe('Mark as Trivial writes', () => {
     const base = addTrivialAnchor(head.text, { file: 'old.ts', side: 'base', range: { start: 1, end: 1 }, quote, why: 'dead code' });
     expect(base.id).toBe('trivial-2');
     expect(JSON.parse(base.text)).toMatchObject({ version: 3, anchors: { 'trivial-2': { side: 'base' } } });
-    expect(branchSlug('alice/retry jitter!')).toBe('retry-jitter');
+    // As the skill makes it: `/` becomes `-`.
+    expect(branchSlug('alice/retry')).toBe('alice-retry');
+    expect(branchSlug('alice/retry jitter!')).toBe('alice-retry-jitter');
     expect(branchSlug(undefined)).toBe('this-branch');
+  });
+});
+
+describe('sidestory-git: documents as sides (§8)', () => {
+  const repo = {};
+  const s = { repo, mergeBase: 'b'.repeat(40) };
+  it('maps the merge-base to the base side and any other commit to the head side, keys without a commit', () => {
+    expect(gitSideKey({ repo, sha: 'b'.repeat(40), path: 'legacy/sleep.ts' }, s)).toEqual({ path: 'legacy/sleep.ts', side: 'base' });
+    expect(gitSideKey({ repo, sha: 'c'.repeat(40), path: 'src/a.ts' }, s)).toEqual({ path: 'src/a.ts', side: 'head' });
+    // A tab opened at the head before the last commit: still the head side.
+    expect(gitSideKey({ repo, sha: 'd'.repeat(40), path: 'src/a.ts' }, s)).toEqual({ path: 'src/a.ts', side: 'head' });
+    expect(gitSideKey({ repo: {}, sha: 'c'.repeat(40), path: 'src/a.ts' }, s)).toBeUndefined();
+    expect(gitSideKey(undefined, s)).toBeUndefined();
   });
 });
 
@@ -155,34 +194,5 @@ describe('This File folding (§9.10)', () => {
     ]);
     expect(r.groups.get('h')![0]).toMatchObject({ lost: true, range: null });
     expect(foldSteps(r.groups.get('g')!.map((x) => ({ group: 'g', stepIndex: x.stepIndex, stepId: x.stepId, title: x.title, anchor: x.stepId, range: x.range, state: 'exact' as const, approx: false })), 1).shown).toBe(1);
-  });
-});
-
-describe('the Changes tree with the layer (§9.6)', () => {
-  it('puts the layer rows first, marks files, and lists change items', () => {
-    const d = diffTexts('src/a.ts', lines(10), lines(10).replace('l5\n', 'n1\n'));
-    const c = d.changes[0]!;
-    const t = new ChangesTree();
-    t.set({
-      entries: [{ path: 'src/a.ts', status: 'M', added: 1, removed: 1 }],
-      listMode: true,
-      sort: 'path',
-      onDisk: true,
-      layer: {
-        rows: [{ id: 's', label: 'Retry', description: '1 explained · 0 trivial · 0 left · 2 steps', icon: 'book', command: { command: 'sidestory.openAt', title: 'Open' }, contextValue: 'sidestory' }],
-        files: new Map([['src/a.ts', { coverage: { path: 'src/a.ts', changes: [{ key: c.key, state: 'explained', by: [{ sidestory: '.sidestory/r', anchor: 'loop' }], uncovered: [], coveredLines: 2, changedLines: 2 }], explained: 1, trivial: 0, left: 0, needsLook: 0 }, blocks: new Map([[c.key, c]]) }]]),
-        onlyUnexplained: false,
-        stepName: () => 'Retry › The loop',
-      },
-    });
-    const top = t.getChildren();
-    expect(top.map((n) => n.kind)).toEqual(['row', 'file']);
-    const file = t.getTreeItem(top[1]!);
-    expect(file.description).toBe('src · +1 −1 · ✓');
-    expect(file.contextValue).toBe('file:M:onDisk:explained');
-    const kids = t.getChildren(top[1]);
-    const change = t.getTreeItem(kids[0]!);
-    expect([change.label, change.description, change.contextValue]).toEqual(['L5', '+1 −1 · Retry › The loop', 'change:explained:explained']);
-    expect(t.changeNode('src/a.ts', c.key)).toBe(kids[0]);
   });
 });

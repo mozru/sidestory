@@ -1,116 +1,10 @@
-// The Changes view's model (docs/CHANGES-PLAN.md §9.2–§9.5, §16.1 changes-nav): compact folders and counts, the
-// sorts, the filter, Next/Previous order and wrapping, labels, and the cost on 20,000 files.
+// The comparison's model and the walk order (docs/CHANGES-PLAN.md §9.3): status letters, path order, Next/Previous
+// stepping and wrapping, the order Next/Previous Unexplained Change walks from the active editor, and the context
+// keys package.json names.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { ChangeEntry } from '../../src/extension/changes/model.ts';
-import {
-  buildTree,
-  commitsLabel,
-  countLines,
-  patchCounts,
-  countsLabel,
-  filterEntries,
-  folderLabel,
-  GitStatus,
-  parseFilter,
-  sortEntries,
-  statusLetter,
-  step,
-  treeOrder,
-} from '../../src/extension/changes/model.ts';
-
-const fixture: ChangeEntry[] = [
-  { path: 'src/retry/retry.ts', status: 'M', added: 4, removed: 1 },
-  { path: 'src/retry/jitter.ts', status: 'A', added: 19, removed: 0 },
-  { path: 'src/retry/backoff.ts', oldPath: 'old/backoff.ts', status: 'R', added: 2, removed: 2 },
-  { path: 'legacy/sleep.ts', status: 'D', added: 0, removed: 24 },
-  { path: 'test/retry.test.ts', status: 'M', added: 30, removed: 0 },
-  { path: 'README.md', status: 'M', added: 1, removed: 1 },
-];
-
-describe('the folder tree', () => {
-  it('joins single-child folder chains, puts folders before files, sorts by name, and sums counts', () => {
-    const root = buildTree(fixture);
-    expect(root.folders.map((f) => f.label)).toEqual(['legacy', 'src/retry', 'test']);
-    expect(root.files.map((f) => f.path)).toEqual(['README.md']);
-    const retry = root.folders[1]!;
-    expect(retry.path).toBe('src/retry');
-    expect(retry.files.map((f) => f.path)).toEqual(['src/retry/backoff.ts', 'src/retry/jitter.ts', 'src/retry/retry.ts']);
-    expect(folderLabel(retry)).toBe('3 files · +25 −3');
-    expect(folderLabel(root.folders[0]!)).toBe('1 file · −24');
-    expect(root.fileCount).toBe(6);
-  });
-
-  it("doesn't join a folder that has files of its own, or the top level", () => {
-    const root = buildTree([
-      { path: 'a/b/c/x.ts', status: 'M' },
-      { path: 'a/y.ts', status: 'M' },
-    ]);
-    expect(root.folders.map((f) => f.label)).toEqual(['a']);
-    expect(root.folders[0]!.folders.map((f) => f.label)).toEqual(['b/c']);
-    expect(root.folders[0]!.folders[0]!.depth).toBe(1);
-  });
-
-  it('says "3 files" until counts arrive, and natural-sorts names', () => {
-    const root = buildTree([
-      { path: 'f/file10.ts', status: 'A' },
-      { path: 'f/file2.ts', status: 'A' },
-      { path: 'f/File1.ts', status: 'A' },
-    ]);
-    expect(folderLabel(root.folders[0]!)).toBe('3 files');
-    expect(root.folders[0]!.files.map((f) => f.path)).toEqual(['f/File1.ts', 'f/file2.ts', 'f/file10.ts']);
-  });
-
-  it('walks in tree order: depth first, folders before files', () => {
-    expect(treeOrder(buildTree(fixture)).map((e) => e.path)).toEqual([
-      'legacy/sleep.ts',
-      'src/retry/backoff.ts',
-      'src/retry/jitter.ts',
-      'src/retry/retry.ts',
-      'test/retry.test.ts',
-      'README.md',
-    ]);
-  });
-
-  it('sorts files inside folders by the chosen key', () => {
-    const root = buildTree(fixture, 'size');
-    expect(root.folders[1]!.files.map((f) => f.path)).toEqual(['src/retry/jitter.ts', 'src/retry/retry.ts', 'src/retry/backoff.ts']);
-  });
-});
-
-describe('sorting the list', () => {
-  it('by path, status and size, with ties broken by path and unknown sizes last', () => {
-    expect(sortEntries(fixture, 'path').map((e) => e.path)[0]).toBe('legacy/sleep.ts');
-    expect(sortEntries(fixture, 'status').map((e) => e.status)).toEqual(['A', 'M', 'M', 'M', 'R', 'D']);
-    const sized = sortEntries([...fixture, { path: 'zzz.bin', status: 'M' }, { path: 'aaa.bin', status: 'M' }], 'size').map((e) => e.path);
-    expect(sized.slice(0, 2)).toEqual(['test/retry.test.ts', 'legacy/sleep.ts']);
-    expect(sized.slice(-2)).toEqual(['aaa.bin', 'zzz.bin']);
-    // Stable whatever the input order.
-    expect(sortEntries([...fixture].reverse(), 'status')).toEqual(sortEntries(fixture, 'status'));
-  });
-});
-
-describe('the filter', () => {
-  const paths = (text: string) => filterEntries(fixture, parseFilter(text)).map((e) => e.path);
-  it('matches substrings case-insensitively', () => {
-    expect(paths('RETRY')).toEqual(['src/retry/retry.ts', 'src/retry/jitter.ts', 'src/retry/backoff.ts', 'test/retry.test.ts']);
-  });
-  it('accepts globs, at any depth without a slash', () => {
-    expect(paths('*.md')).toEqual(['README.md']);
-    expect(paths('src/**/*.ts')).toEqual(['src/retry/retry.ts', 'src/retry/jitter.ts', 'src/retry/backoff.ts']);
-  });
-  it('excludes with !, and combines terms', () => {
-    expect(paths('!test/')).not.toContain('test/retry.test.ts');
-    expect(paths('retry !test/ !jitter')).toEqual(['src/retry/retry.ts', 'src/retry/backoff.ts']);
-  });
-  it('matches a rename on its old path', () => {
-    expect(paths('old/')).toEqual(['src/retry/backoff.ts']);
-  });
-  it('an empty filter keeps everything', () => {
-    expect(parseFilter('   ')).toBeUndefined();
-    expect(paths('')).toHaveLength(fixture.length);
-  });
-});
+import { comparePaths, GitStatus, statusLetter, step } from '../../src/extension/changes/model.ts';
+import { fileRanks, nextChange, orderChanges, type OpenChange } from '../../src/extension/changes/order.ts';
 
 describe('next and previous', () => {
   it('starts at the ends, steps, and wraps', () => {
@@ -121,10 +15,51 @@ describe('next and previous', () => {
     expect(step(3, 0, -1)).toEqual({ index: 2, wrapped: true });
     expect(step(0, -1, 1)).toBeUndefined();
   });
+
+  it('path order is natural and per segment', () => {
+    expect(['src/b10.ts', 'src/b2.ts', 'README.md', 'legacy/sleep.ts'].sort(comparePaths)).toEqual(['legacy/sleep.ts', 'README.md', 'src/b2.ts', 'src/b10.ts']);
+  });
 });
 
-describe('labels and statuses', () => {
-  it('maps the git API statuses to the letters the view shows', () => {
+describe('Next/Previous Unexplained Change (§9.3)', () => {
+  const changes: OpenChange[] = [
+    { path: 'test/retry.test.ts', key: 't1', pos: 3 },
+    { path: 'src/retry/retry.ts', key: 'r2', pos: 40 },
+    { path: 'src/retry/retry.ts', key: 'r1', pos: 10 },
+    { path: 'README.md', key: 'm1', pos: 1 },
+  ];
+  const paths = ['README.md', 'src/retry/retry.ts', 'test/retry.test.ts', 'src/retry/jitter.ts'];
+
+  it('walks files in repo path order, by line within a file', () => {
+    const rank = fileRanks(paths);
+    expect(orderChanges(changes, rank).map((c) => c.key)).toEqual(['m1', 'r1', 'r2', 't1']);
+  });
+
+  it('puts files in the sidestory’s step order first, then the rest by path', () => {
+    const rank = fileRanks(paths, ['test/retry.test.ts', 'src/retry/retry.ts', 'test/retry.test.ts', 'gone.ts']);
+    expect(orderChanges(changes, rank).map((c) => c.key)).toEqual(['t1', 'r1', 'r2', 'm1']);
+  });
+
+  it('goes from the active editor’s cursor, wrapping at the ends', () => {
+    const rank = fileRanks(paths);
+    expect(nextChange(changes, rank, { path: 'src/retry/retry.ts', pos: 10 }, 1)).toEqual({ target: changes[1], wrapped: false });
+    expect(nextChange(changes, rank, { path: 'src/retry/retry.ts', pos: 20 }, -1)?.target.key).toBe('r1');
+    // Past the last: back to the first.
+    expect(nextChange(changes, rank, { path: 'test/retry.test.ts', pos: 9 }, 1)).toEqual({ target: changes[3], wrapped: true });
+    // A changed file with nothing open in it still has its place in the order.
+    expect(nextChange(changes, rank, { path: 'src/retry/jitter.ts', pos: 1 }, 1)?.target.key).toBe('r1');
+  });
+
+  it('starts from the first (or last) when the active editor isn’t a changed file', () => {
+    const rank = fileRanks(paths);
+    expect(nextChange(changes, rank, undefined, 1)).toEqual({ target: changes[3], wrapped: false });
+    expect(nextChange(changes, rank, { path: 'elsewhere.ts', pos: 5 }, -1)).toEqual({ target: changes[0], wrapped: false });
+    expect(nextChange([], rank, undefined, 1)).toBeUndefined();
+  });
+});
+
+describe('statuses', () => {
+  it('maps the git API statuses to letters', () => {
     expect(statusLetter(GitStatus.INDEX_ADDED)).toBe('A');
     expect(statusLetter(GitStatus.UNTRACKED)).toBe('A');
     expect(statusLetter(GitStatus.MODIFIED)).toBe('M');
@@ -133,66 +68,32 @@ describe('labels and statuses', () => {
     expect(statusLetter(GitStatus.INDEX_COPIED)).toBe('C');
     expect(statusLetter(GitStatus.IGNORED)).toBeUndefined();
   });
-  it('counts and commits', () => {
-    expect(countsLabel({ added: 23, removed: 11 })).toBe('+23 −11');
-    expect(countsLabel({ added: 19, removed: 0 })).toBe('+19');
-    expect(countsLabel({ added: 0, removed: 24 })).toBe('−24');
-    expect(countsLabel({})).toBe('');
-    expect(countsLabel({ added: 0, removed: 0, noText: true })).toBe('no line changes');
-    expect(commitsLabel(1, false)).toBe('1 commit');
-    expect(commitsLabel(4, false)).toBe('4 commits');
-    expect(commitsLabel(1000, true)).toBe('1,000+ commits');
-  });
 });
 
-describe('20,000 files', () => {
-  const big: ChangeEntry[] = Array.from({ length: 20_000 }, (_, i) => ({ path: `pkg${i % 40}/src/mod${i % 300}/file${i}.ts`, status: 'M', added: i % 17, removed: i % 5 }));
-  it('builds the tree and the order quickly, and filters in a few milliseconds', () => {
-    const t0 = performance.now();
-    const root = buildTree(big);
-    const order = treeOrder(root);
-    const built = performance.now() - t0;
-    expect(order).toHaveLength(20_000);
-    expect(root.fileCount).toBe(20_000);
-    const f = parseFilter('mod7/')!;
-    const t1 = performance.now();
-    const kept = filterEntries(big, f);
-    const filtered = performance.now() - t1;
-    expect(kept.length).toBeGreaterThan(0);
-    const t2 = performance.now();
-    sortEntries(big, 'size');
-    const sorted = performance.now() - t2;
-    console.log(`20,000 files: tree ${built.toFixed(1)} ms, filter ${filtered.toFixed(1)} ms, size sort ${sorted.toFixed(1)} ms`);
-    expect(built).toBeLessThan(500);
-    expect(filtered).toBeLessThan(30);
-  });
-});
+describe('package.json', () => {
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 
-describe('counting lines later', () => {
-  it('counts a unified diff, ignoring headers, and says when it is binary', () => {
-    const patch = ['diff --git a/x b/x', 'index 1..2 100644', '--- a/x', '+++ b/x', '@@ -1,3 +1,3 @@', ' a', '-b', '--c', '+B', '+++d', ''].join('\n');
-    expect(patchCounts(patch)).toEqual({ added: 2, removed: 2 });
-    expect(patchCounts('diff --git a/p b/p\nBinary files a/p and b/p differ\n')).toEqual({ added: 0, removed: 0, noText: true });
-    expect(patchCounts('')).toEqual({ added: 0, removed: 0, noText: true });
-  });
-  it('counts lines, with or without a final newline', () => {
-    const enc = (t: string) => new TextEncoder().encode(t);
-    expect(countLines(enc(''))).toBe(0);
-    expect(countLines(enc('a\nb\n'))).toBe(2);
-    expect(countLines(enc('a\nb'))).toBe(2);
-  });
-  it('a file queued for counting shows an ellipsis', () => {
-    expect(countsLabel({ counting: true })).toBe('…');
-  });
-});
-
-describe('context keys', () => {
   it('every sidestory.changes.* key a when clause names is one the extension sets', () => {
-    const pkg = readFileSync('package.json', 'utf8');
-    const named = new Set([...pkg.matchAll(/"when": "([^"]*)"/g)].flatMap((m) => [...m[1]!.matchAll(/sidestory\.changes\.[A-Za-z]+/g)].map((k) => k[0])));
-    const src = readFileSync('src/extension/changes/view.ts', 'utf8');
+    const text = JSON.stringify(pkg);
+    const named = new Set([...text.matchAll(/"when":"([^"]*)"/g)].flatMap((m) => [...m[1]!.matchAll(/sidestory\.changes\.[A-Za-z]+/g)].map((k) => k[0])));
+    const src = readFileSync('src/extension/changes/service.ts', 'utf8');
     const set = new Set([...src.matchAll(/setContext\('(sidestory\.changes\.[A-Za-z]+)'/g)].map((m) => m[1]));
-    expect(named.size).toBeGreaterThan(3);
+    expect(named.size).toBeGreaterThan(2);
     for (const k of named) expect(set, k).toContain(k);
+  });
+
+  it('has no Changes view of its own: Sidestories, then This File', () => {
+    expect(pkg.contributes.views.sidestory.map((v: { id: string }) => v.id)).toEqual(['sidestory.tree', 'sidestory.thisFile']);
+    const commands = pkg.contributes.commands.map((c: { command: string }) => c.command);
+    for (const gone of ['sidestory.showChanges', 'sidestory.changes.pickBase', 'sidestory.changes.filter', 'sidestory.changes.viewAsList', 'sidestory.changes.sort']) expect(commands).not.toContain(gone);
+    for (const kept of ['sidestory.changes.nextUnexplained', 'sidestory.changes.nextFile', 'sidestory.changes.repinStep', 'sidestory.changes.setBase', 'sidestory.changes.markTrivial']) expect(commands).toContain(kept);
+    expect(JSON.stringify(pkg.contributes)).not.toContain('view == sidestory.changes');
+  });
+
+  it('registers the decoration colours, and hides the writing commands in read-only mode', () => {
+    const colors = pkg.contributes.colors.map((c: { id: string }) => c.id);
+    expect(colors).toEqual(expect.arrayContaining(['sidestory.coverageDoneForeground', 'sidestory.coverageLeftForeground']));
+    const menus = Object.values(pkg.contributes.menus).flat() as { command: string; when?: string }[];
+    for (const m of menus.filter((x) => x.command === 'sidestory.changes.markTrivial' || x.command === 'sidestory.changes.repinStep')) expect(m.when).toContain('!sidestory.readOnly');
   });
 });

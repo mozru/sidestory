@@ -8,9 +8,16 @@
 // reasons, and the author picks which to re-pin anyway (an intended change), either where the code is
 // now or at the lines its `range` gives (so editing `range` by hand repairs a lost anchor).
 // "Re-anchor Section to Selection" points one anchor at whatever code the author selects.
+//
+// A base-side anchor (docs/CHANGES-PLAN.md §7.6) quotes the merge-base's text, never the working tree's: Pin reads it
+// from the merge-base blob of the sidestory's base (as the checker's --pin does), and skips it with a reason when
+// there is no such comparison here. And a step whose code grew since it was written ("needs a look", §13.1) is only
+// re-pinned when the author says so: re-pinning would hide that its prose doesn't cover the new lines.
 import * as vscode from 'vscode';
+import { normLine } from '../core/coverage.ts';
+import { textLines } from '../core/hunks.ts';
 import type { Anchor, LineRange, Quote, Side } from '../core/manifest.ts';
-import { isSafeRelativePath, parseManifest } from '../core/manifest.ts';
+import { isSafeRelativePath, parseManifest, sideOf } from '../core/manifest.ts';
 import { pinQuote, trimBlankLines } from '../core/pin.ts';
 import type { AnchorState, Resolution } from '../core/resolve.ts';
 import { resolveAnchor } from '../core/resolve.ts';
@@ -25,7 +32,7 @@ import { isSecretPath } from './widgets/secret-files.ts';
 import { ourModal } from './widgets/watchdog.ts';
 
 /** Why an anchor wasn't pinned outright. */
-type Refusal = 'changed' | 'stale' | 'lost' | 'ambiguous' | 'missing' | 'unpinnable' | 'widgets-declined' | 'widgets-secret';
+type Refusal = 'changed' | 'stale' | 'lost' | 'ambiguous' | 'missing' | 'unpinnable' | 'widgets-declined' | 'widgets-secret' | 'added' | 'base-unread';
 
 const REASON: Record<Refusal, string> = {
   changed: 'code changed',
@@ -36,7 +43,18 @@ const REASON: Record<Refusal, string> = {
   unpinnable: 'lines blank or too long',
   'widgets-declined': 'widgets would read it; not confirmed',
   'widgets-secret': 'widgets read it, and the file looks like it holds secrets',
+  added: 'code added since it was written',
+  'base-unread': 'base side',
 };
+
+/**
+ * Reads a sidestory's base-side files at the merge-base of its `base` (files relative to the sidestory's root), or
+ * says why it can't: the extension builds it from the branch's comparison.
+ */
+export type BaseSide = (base: string | undefined) => Promise<{ read(file: string): Promise<string | undefined> } | { why: string }>;
+
+/** Files by (side, path): a base-side anchor's text is the merge-base's, a head-side one's the working tree's. */
+const fileKey = (a: { file: string; side?: Side }) => `${sideOf(a)}\0${a.file}`;
 
 /** A place an anchor could be re-pinned to, offered to the author. */
 interface Candidate {
@@ -52,10 +70,12 @@ interface Candidate {
 interface Snapshot {
   manifestText: string;
   anchors: Anchor[];
-  /** Anchored files (relative path → text), read once; undefined if missing or refused. */
+  /** Anchored files by `fileKey` (side, relative path) → text, read once; undefined if missing or refused. */
   files: Map<string, PreparedText | undefined>;
   /** Anchored files that had unsaved changes in an editor. */
   dirty: Set<string>;
+  /** Why base-side anchors weren't read (no comparison with the sidestory's base here). */
+  baseWhy?: string;
 }
 
 /** The quote for these lines and the range it covers (blank edge lines are left out of both), or null. */
@@ -68,7 +88,7 @@ function pinAt(lines: readonly string[], range: LineRange, norm: Quote['norm'] |
 const rangeText = (r: LineRange) => (r.start === r.end ? `${r.start}` : `${r.start}–${r.end}`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-async function snapshot(ref: ExplainerRef): Promise<Snapshot | undefined> {
+async function snapshot(ref: ExplainerRef, baseSide?: BaseSide): Promise<Snapshot | undefined> {
   const uri = manifestUri(ref);
   const manifestText = await readInside(uri, ref.root, MAX_MANIFEST_BYTES);
   if (manifestText === undefined) {
@@ -83,14 +103,30 @@ async function snapshot(ref: ExplainerRef): Promise<Snapshot | undefined> {
   const anchors = [...parsed.manifest.anchors.values()];
   const files = new Map<string, PreparedText | undefined>();
   const dirty = new Set<string>();
+  let base: Awaited<ReturnType<BaseSide>> | undefined;
+  if (anchors.some((a) => sideOf(a) === 'base')) base = baseSide ? await baseSide(parsed.manifest.base) : { why: 'no git comparison here' };
   for (const a of anchors) {
-    if (files.has(a.file)) continue;
+    const key = fileKey(a);
+    if (files.has(key)) continue;
+    if (sideOf(a) === 'base') {
+      // Never the working tree: the merge-base's blob, or not at all.
+      const text = base && 'read' in base ? await base.read(a.file) : undefined;
+      files.set(key, text === undefined ? undefined : PreparedText.from(text));
+      continue;
+    }
     const fileUri = vscode.Uri.joinPath(ref.root, a.file);
     const source = await readInside(fileUri, ref.root, MAX_CODE_BYTES);
-    files.set(a.file, source === undefined ? undefined : PreparedText.from(source));
+    files.set(key, source === undefined ? undefined : PreparedText.from(source));
     if (vscode.workspace.textDocuments.some((d) => d.isDirty && d.uri.toString() === fileUri.toString())) dirty.add(a.file);
   }
-  return { manifestText, anchors, files, dirty };
+  return { manifestText, anchors, files, dirty, ...(base && 'why' in base ? { baseWhy: base.why } : {}) };
+}
+
+/** Lines of the resolved range that aren't in the pinned quote: code added since the step was written (§13.1). */
+function addedLines(a: Anchor, doc: PreparedText, range: LineRange): number {
+  if (!a.quote) return 0;
+  const pinned = new Set(textLines(a.quote.exact).map(normLine));
+  return doc.lines.slice(range.start - 1, range.end).filter((l) => l.trim() && !pinned.has(normLine(l))).length;
 }
 
 /**
@@ -98,30 +134,63 @@ async function snapshot(ref: ExplainerRef): Promise<Snapshot | undefined> {
  * `widgets`, anchors that widgets read are pinned only after the user confirms what widgets could then read
  * (docs/WIDGETS-PLAN.md §5.2), and never in secret-looking files.
  */
-export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => LineRange | undefined = () => undefined, widgets?: PinWidgetHooks): Promise<void> {
-  const snap = await snapshot(ref);
+export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => LineRange | undefined = () => undefined, widgets?: PinWidgetHooks, baseSide?: BaseSide): Promise<void> {
+  const snap = await snapshot(ref, baseSide);
   if (!snap) return;
   const patches = new Map<string, AnchorPatch>();
   const slightlyChanged: string[] = [];
-  const refused: { anchor: Anchor; reason: Refusal }[] = [];
+  const refused: { anchor: Anchor; reason: Refusal; why?: string }[] = [];
   const candidates: Candidate[] = [];
+  const grew: string[] = [];
   for (const a of snap.anchors) {
-    const doc = snap.files.get(a.file);
+    const base = sideOf(a) === 'base';
+    if (base && snap.baseWhy) {
+      refused.push({ anchor: a, reason: 'base-unread', why: snap.baseWhy });
+      continue;
+    }
+    const doc = snap.files.get(fileKey(a));
     if (!doc) {
       refused.push({ anchor: a, reason: 'missing' });
       continue;
     }
-    const r = resolveAnchor(doc, a, { hint: liveHint(a.id) });
+    // Live hints track the working tree's documents: not a base-side quote's place.
+    const r = resolveAnchor(doc, a, { hint: base ? undefined : liveHint(a.id) });
     const confident = !!r.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || (r.state === 'changed' && r.similarity >= 0.9));
     const pin = confident ? pinAt(doc.lines, r.range!, a.quote?.norm) : null;
     if (pin) {
       patches.set(a.id, pin);
-      if (r.state === 'changed') slightlyChanged.push(a.id);
+      if (r.state === 'changed') {
+        slightlyChanged.push(a.id);
+        if (!base && addedLines(a, doc, r.range!) > 0) grew.push(a.id);
+      }
       continue;
     }
     const reason = refusal(r, confident);
     refused.push({ anchor: a, reason });
     candidates.push(...candidatesFor(a, reason, r, doc));
+  }
+
+  // "Needs a look" (§13.1): asked, never accepted silently.
+  if (grew.length) {
+    const repin = 'Re-pin';
+    const others = 'Pin the Others';
+    const n = grew.length;
+    const choice = await ourModal(() =>
+      vscode.window.showWarningMessage(
+        `${n} ${n === 1 ? 'step has' : 'steps have'} code added since ${n === 1 ? 'it was' : 'they were'} written. Re-pin ${n === 1 ? 'it' : 'them'} anyway?`,
+        { modal: true, detail: `${grew.join(', ')}. Re-pinning says the prose already covers the new lines; update the prose first if it doesn't.` },
+        repin,
+        others,
+      ),
+    );
+    if (choice === undefined) return;
+    if (choice === others) {
+      for (const id of grew) {
+        patches.delete(id);
+        refused.push({ anchor: snap.anchors.find((a) => a.id === id)!, reason: 'added' });
+      }
+      for (let i = slightlyChanged.length - 1; i >= 0; i--) if (grew.includes(slightlyChanged[i]!)) slightlyChanged.splice(i, 1);
+    }
   }
 
   const confirmed: { file: string; quote: Quote; range: LineRange }[] = [];
@@ -160,14 +229,50 @@ export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => Li
   const parts: string[] = [];
   parts.push(patches.size ? `Pinned ${plural(patches.size, 'anchor')} in ${ref.name}.` : `Nothing pinned in ${ref.name}: no anchor's code was found with confidence.`);
   if (slightlyChanged.length) parts.push(`Accepted small changes in: ${slightlyChanged.join(', ')}.`);
-  if (refused.length) parts.push(`Not pinned: ${refused.map((x) => `${x.anchor.id} (${REASON[x.reason]})`).join(', ')}.`);
+  if (refused.length) parts.push(`Not pinned: ${refused.map((x) => `${x.anchor.id} (${REASON[x.reason]}${x.why ? `: ${x.why}` : ''})`).join(', ')}.`);
   const dirty = [...snap.dirty].filter((f) => snap.anchors.some((a) => a.file === f && patches.has(a.id)));
   if (dirty.length) parts.push(`Pinned from unsaved changes in ${dirty.join(', ')}.`);
   const message = parts.join(' ');
   if (patches.size) void vscode.window.showInformationMessage(message);
   else void vscode.window.showWarningMessage(message);
 
-  if (candidates.length) await offerRepin(ref, candidates);
+  if (candidates.length) await offerRepin(ref, candidates, baseSide);
+}
+
+/**
+ * Re-pin This Step (§13.1): one head-side anchor, pinned where its code is now, once the author has read the step and
+ * says its prose covers the new lines. Widgets that read it ask first, as in Pin.
+ */
+export async function repinAnchor(ref: ExplainerRef, anchorId: string, liveHint: (id: string) => LineRange | undefined = () => undefined, widgets?: PinWidgetHooks): Promise<void> {
+  const snap = await snapshot(ref);
+  if (!snap) return;
+  const a = snap.anchors.find((x) => x.id === anchorId);
+  if (!a || sideOf(a) === 'base') {
+    void vscode.window.showWarningMessage(a ? `“${anchorId}” quotes the base side: there is nothing added to re-pin.` : `${ref.name} has no anchor “${anchorId}”.`);
+    return;
+  }
+  const doc = snap.files.get(fileKey(a));
+  const r = doc ? resolveAnchor(doc, a, { hint: liveHint(a.id) }) : undefined;
+  const pin = doc && r?.range && !r.ambiguous ? pinAt(doc.lines, r.range, a.quote?.norm) : null;
+  if (!pin) {
+    void vscode.window.showWarningMessage(`Can't re-pin “${anchorId}”: its code isn't found with confidence. Re-anchor it to a selection instead.`);
+    return;
+  }
+  if (widgets) {
+    const read = await widgets.readAnchors();
+    if (read === 'all' || read?.has(a.id)) {
+      if (isSecretPath(a.file)) {
+        void vscode.window.showWarningMessage(`Not re-pinned: widgets read “${anchorId}”, and ${a.file} looks like it holds secrets.`);
+        return;
+      }
+      if (!widgets.isConfirmed(a.file, pin.quote, pin.range)) {
+        if (!(await widgets.confirm([{ id: a.id, file: a.file, range: pin.range }]))) return;
+        widgets.record([{ file: a.file, quote: pin.quote, range: pin.range }]);
+      }
+    }
+  }
+  await writeManifest(ref, snap.manifestText, patchManifest(snap.manifestText, new Map([[a.id, pin]])));
+  vscode.window.setStatusBarMessage(`Re-pinned “${anchorId}” to ${a.file}:${rangeText(pin.range)}.`, 5000);
 }
 
 function refusal(r: Resolution, confident: boolean): Refusal {
@@ -191,7 +296,7 @@ function candidatesFor(anchor: Anchor, reason: Refusal, r: Resolution, doc: Prep
 }
 
 /** Lets the author pick refused anchors to re-pin anyway, then pins those. */
-async function offerRepin(ref: ExplainerRef, candidates: Candidate[]): Promise<void> {
+async function offerRepin(ref: ExplainerRef, candidates: Candidate[], baseSide?: BaseSide): Promise<void> {
   const items = candidates.map((c) => {
     const first = c.text.split('\n').find((l) => l.trim())?.trim() ?? '';
     return {
@@ -211,17 +316,17 @@ async function offerRepin(ref: ExplainerRef, candidates: Candidate[]): Promise<v
   const byAnchor = new Map<string, Candidate[]>();
   for (const p of picks) byAnchor.set(p.candidate.anchor.id, [...(byAnchor.get(p.candidate.anchor.id) ?? []), p.candidate]);
 
-  const snap = await snapshot(ref);
+  const snap = await snapshot(ref, baseSide);
   if (!snap) return;
   const patches = new Map<string, AnchorPatch>();
   const skipped: string[] = [];
   for (const [id, chosen] of byAnchor) {
     const c = chosen[0]!;
     const anchor = snap.anchors.find((a) => a.id === id);
-    const doc = snap.files.get(c.anchor.file);
+    const doc = snap.files.get(fileKey(c.anchor));
     const now = doc?.lines.slice(c.range.start - 1, c.range.end).join('\n');
     // Two places picked for one anchor, or the code moved on while the list was open.
-    const pin = chosen.length === 1 && anchor?.file === c.anchor.file && doc && now === c.text ? pinAt(doc.lines, c.range, anchor.quote?.norm) : null;
+    const pin = chosen.length === 1 && anchor?.file === c.anchor.file && sideOf(anchor) === sideOf(c.anchor) && doc && now === c.text ? pinAt(doc.lines, c.range, anchor.quote?.norm) : null;
     if (!pin) {
       skipped.push(chosen.length > 1 ? `${id} (two places picked)` : `${id} (its code changed meanwhile)`);
       continue;
@@ -293,7 +398,7 @@ async function readManifestAnchors(ref: ExplainerRef): Promise<Anchor[] | undefi
  * Where a selection in a virtual document is (docs/CHANGES-PLAN.md §7.6): the left side of the branch's diff gives the
  * old path on the base side; a document at another commit is refused. Undefined: an ordinary file.
  */
-export type SelectionSide = (uri: vscode.Uri, ref: ExplainerRef) => { file: string; side: Side } | 'refuse' | undefined;
+export type SelectionSide = (uri: vscode.Uri, ref: ExplainerRef) => Promise<{ file: string; side: Side } | 'refuse' | undefined>;
 
 /**
  * Pins one anchor to the lines selected in `editor` (file and lines; the file must be inside the
@@ -307,9 +412,9 @@ export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, e
     return;
   }
   const doc = editor.document;
-  const mapped = sides?.(doc.uri, ref);
+  const mapped = await sides?.(doc.uri, ref);
   if (mapped === 'refuse') {
-    void vscode.window.showWarningMessage("Select the code in the diff of this branch's changes.");
+    void vscode.window.showWarningMessage("Select the code in the diff of this branch's changes against this sidestory's base.");
     return;
   }
   const file = mapped ? mapped.file : await relativeInside(doc.uri, ref.root);

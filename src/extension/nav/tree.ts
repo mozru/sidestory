@@ -2,9 +2,13 @@
 // them, rendered lazily child by child (shared details appear under every parent; the tree never enumerates
 // paths). A filter shows each match once, under its primary path. Labels are repository text: cleaned when
 // indexed, never escaped here (tree items render no icon syntax), and tooltips are plain strings.
+//
+// On a branch, a "This branch" group comes first (docs/CHANGES-PLAN.md §9.6): the sidestories that explain the
+// branch with their coverage, and the copied prompts (update one, or explain the branch when none does).
 import * as vscode from 'vscode';
 import { displayText } from '../../core/display-text.ts';
 import { MAX_TRAIL } from '../../shared/protocol.ts';
+import type { BranchRow } from '../changes/coverage-labels.ts';
 import type { ExplainerSession } from '../session.ts';
 import type { Drift, DriftQueue } from './drift.ts';
 import type { IndexEntry, IndexPackage, SidestoryIndex } from './index.ts';
@@ -16,7 +20,14 @@ export type TreeNode =
   | { kind: 'package'; id: string; pkg: IndexPackage; parent?: undefined }
   | { kind: 'group'; id: string; pkg: IndexPackage; key: string; label: string; members: string[]; parent?: TreeNode }
   | { kind: 'sidestory'; id: string; entry: IndexEntry; path: string[]; startHere: boolean; parent?: TreeNode }
-  | { kind: 'leaf'; id: string; entry: IndexEntry; path: string[]; reason: 'back' | 'deep'; parent?: TreeNode };
+  | { kind: 'leaf'; id: string; entry: IndexEntry; path: string[]; reason: 'back' | 'deep'; parent?: TreeNode }
+  | { kind: 'branch'; id: string; description: string | undefined; rows: BranchRow[]; parent?: undefined }
+  | { kind: 'branchRow'; id: string; row: BranchRow; parent: TreeNode };
+
+/** What the "This branch" group shows (the changes service). */
+export interface BranchSource {
+  branchGroup(): { description: string | undefined; rows: BranchRow[] };
+}
 
 /** Ids encode each part, so package paths and group names containing `/` stay unique; never parsed back. */
 const idOf = (...parts: string[]) => parts.map(encodeURIComponent).join('/');
@@ -35,6 +46,8 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   private filterText: string;
   private filtered: { matches: Set<string>; needed: Set<string>; shown: number; total: number } | undefined;
   view: vscode.TreeView<TreeNode> | undefined;
+  /** The "This branch" group's rows; none on a branch without changes or outside git. */
+  branch: BranchSource | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
   constructor(index: SidestoryIndex, drift: DriftQueue, memento: vscode.Memento) {
@@ -118,11 +131,17 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   getChildren(node?: TreeNode): TreeNode[] {
     if (!node) {
       const pkgs = this.index.packages().filter((p) => !this.filtered || [...p.entries.keys()].some((k) => this.filtered!.matches.has(k)));
-      if (this.index.packageCount > 1) return pkgs.map((p) => this.make({ kind: 'package', id: this.id('p', p.key), pkg: p }));
+      const branch = this.branchNode();
+      const top = branch ? [branch] : [];
+      if (this.index.packageCount > 1) return [...top, ...pkgs.map((p) => this.make({ kind: 'package', id: this.id('p', p.key), pkg: p }))];
       const only = pkgs[0];
-      return only ? this.packageChildren(only, undefined) : [];
+      return [...top, ...(only ? this.packageChildren(only, undefined) : [])];
     }
     switch (node.kind) {
+      case 'branch':
+        return node.rows.map((row) => this.make({ kind: 'branchRow', id: `branch/${encodeURIComponent(row.id)}`, row, parent: node }));
+      case 'branchRow':
+        return [];
       case 'package':
         return this.packageChildren(node.pkg, node);
       case 'group':
@@ -134,6 +153,16 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       case 'leaf':
         return [];
     }
+  }
+
+  /** The "This branch" group, when it has rows. Not filtered: it is about the branch, not a match. */
+  private branchNode(): TreeNode | undefined {
+    const g = this.branch?.branchGroup();
+    if (!g?.rows.length) return undefined;
+    // Not through `make`: its rows change with coverage, and a cached node would keep the old ones.
+    const node: TreeNode = { kind: 'branch', id: 'branch', description: g.description, rows: g.rows };
+    this.nodes.set(node.id, node);
+    return node;
   }
 
   private startHere(pkg: IndexPackage): string | undefined {
@@ -272,6 +301,26 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       }
       case 'sidestory':
         return this.sidestoryItem(node);
+      case 'branch': {
+        const item = new vscode.TreeItem('This branch', vscode.TreeItemCollapsibleState.Expanded);
+        item.id = node.id;
+        item.description = node.description;
+        item.iconPath = new vscode.ThemeIcon('git-branch');
+        item.tooltip = 'The sidestories that explain this branch’s changes against its base, and what is left';
+        item.contextValue = 'branch';
+        return item;
+      }
+      case 'branchRow': {
+        const r = node.row;
+        const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.None);
+        item.id = node.id;
+        item.description = r.description;
+        item.tooltip = r.tooltip;
+        item.iconPath = new vscode.ThemeIcon(r.icon);
+        item.command = r.command;
+        item.contextValue = r.contextValue;
+        return item;
+      }
     }
   }
 

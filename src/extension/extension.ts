@@ -18,7 +18,7 @@ import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
-import { pickAnchor, pinAnchors, reanchorToSelection, type SelectionSide } from './pin.ts';
+import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
 import { ThisFileView } from './this-file.ts';
 import { PreparedTextCache } from './prepared-cache.ts';
 import type { SessionHost, SessionOptions } from './session.ts';
@@ -30,7 +30,8 @@ import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
-import { ChangesView } from './changes/view.ts';
+import { branchDiffersFromBase } from './changes/probe.ts';
+import { ChangesService, CoverageDecorations } from './changes/service.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -180,16 +181,36 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   };
 
   // ---- the sidebar ----
-  // The Changes view (docs/CHANGES-PLAN.md §9, release 1a): the merge diff as a file navigator, no sidestory needed.
-  const changes = new ChangesView(context);
+  // The branch's comparison (docs/CHANGES-PLAN.md §4, §6, §7, §9.6): no view of its own (Git Tree Compare, GitLens and
+  // Source Control browse the branch); coverage shows as decorations on the files, the "This branch" group and This File.
+  const changes = new ChangesService(context, {
+    sidestoryDirs: () => [...index.all()].map((e) => e.ref.dir),
+    repin: async (dir, anchor) => {
+      const ref = await explainerFor(dir.toString());
+      if (!ref) return;
+      try {
+        await repinAnchor(ref, anchor, (id) => showing(ref)?.liveHint(id), widgets.pinHooks(ref));
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Couldn't re-pin: ${plainForMessage((e as Error).message)}`);
+      }
+    },
+  });
   context.subscriptions.push(changes);
-  // 1b: sessions with a base use the view's comparison (§7, §8, §11.4); coverage reads the index's sidestories (§6.1).
+  // Sessions with a base use the comparison (§7, §8, §11.4); coverage reads the index's sidestories (§6.1). Nothing is
+  // computed until some sidestory in the workspace has a base (§4.6).
   host.diffs = changes.sessionDiffs;
-  changes.sidestoryDirs = () => [...index.all()].map((e) => e.ref.dir);
-  context.subscriptions.push(index.onDidChange(() => changes.coverage.schedule()));
-  selectionSides = (uri, ref) => {
+  const syncWants = () => changes.setWorkspaceWants([...index.all()].some((e) => e.base !== undefined));
+  context.subscriptions.push(
+    index.onDidChange(() => {
+      syncWants();
+      changes.coverage.schedule();
+    }),
+  );
+  syncWants();
+  selectionSides = async (uri, ref) => {
     if (uri.scheme !== 'sidestory-git') return undefined;
-    const s = changes.snapshot;
+    // Only the diff of this sidestory's own comparison: its base must give the diff's merge-base (§7.6).
+    const s = await changes.sameMergeBase(index.entry(ref.dir)?.base);
     const k = s ? changes.keyOf(s, uri) : undefined;
     if (!s || !k) return 'refuse';
     const full = vscode.Uri.joinPath(s.repo.rootUri, ...k.path.split('/'));
@@ -204,8 +225,20 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       return p && s ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
     },
     baseOf: (dir) => changes.coverage.result?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
+    changesOf: (file) => changes.changesOf(file),
   });
   context.subscriptions.push(thisFile, changes.coverage.onDidChange(() => thisFile.refresh()));
+  // "This branch" at the top of Sidestories (§9.6): repainted only when its rows change.
+  tree.branch = changes;
+  let branchSig = '';
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      const sig = JSON.stringify(changes.branchGroup());
+      if (sig === branchSig) return;
+      branchSig = sig;
+      tree.refresh();
+    }),
+  );
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
   context.subscriptions.push(view);
@@ -220,8 +253,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       void context.workspaceState.update(AVAILABLE_KEY, true);
     } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown') {
       // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view, or the branch has changes for
-      // the Changes view (docs/CHANGES-PLAN.md §9.1), which takes git a moment to answer.
-      void changes.relevantSoon().then((branch) => {
+      // the "This branch" group's prompt (docs/CHANGES-PLAN.md §9.1), which takes git a moment to answer.
+      void branchDiffersFromBase().then((branch) => {
         if (index.state !== 'empty' || context.workspaceState.get(AVAILABLE_KEY) === 'shown') return;
         if (branch) {
           void context.workspaceState.update(AVAILABLE_KEY, 'shown');
@@ -240,6 +273,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   void watchHead(context, () => {
     void index.reconcile(true);
     drift.invalidateAll();
+    void changes.probe();
   });
 
   /** The panel showing this explainer now: the active one if it does, else any. */
@@ -423,7 +457,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (!ref) return;
       const open = showing(ref);
       try {
-        await pinAnchors(ref, (id) => open?.liveHint(id), widgets.pinHooks(ref));
+        await pinAnchors(ref, (id) => open?.liveHint(id), widgets.pinHooks(ref), (base) => changes.baseSide(ref.root, base));
       } catch (e) {
         log.error(`Pin Anchors failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't pin anchors: ${plainForMessage((e as Error).message)}`);
@@ -507,7 +541,11 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         await index.ready;
         return { ...index.stats(), here: here.stats() };
       }),
-      vscode.commands.registerCommand('sidestory._changesStats', () => ({ ...changes.stats, description: changes.view.description, message: changes.view.message })),
+      vscode.commands.registerCommand('sidestory._changes', () => ({
+        branch: changes.branchGroup(),
+        marks: Object.fromEntries(CoverageDecorations.marksOf(changes.result())),
+        mergeBase: changes.snapshot?.mergeBase,
+      })),
       vscode.commands.registerCommand('sidestory._focus', () => [...sessions].map((s) => s.focusInfo())),
       vscode.commands.registerCommand('sidestory._thisFile', () => thisFile.stats()),
       vscode.commands.registerCommand('sidestory._coverage', () => {
