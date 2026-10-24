@@ -1,7 +1,7 @@
 // Coverage (src/core/coverage.ts): every row of docs/CHANGES-PLAN.md §6.3, and which anchors a page uses (§6.2).
 import { describe, expect, it } from 'vitest';
 import { coverage, COVERAGE_LIMITS, normLine, usedAnchorIds, type FileInput, type Target } from '../../src/core/coverage.ts';
-import { diffTexts, moveCarriers, movedPrefix, moveFiles, moveGroups, moveLabel, textLines } from '../../src/core/hunks.ts';
+import { diffTexts, moveCarriers, moveChange, movedPrefix, moveFiles, moveGroups, moveLabel, renameTransform, textLines } from '../../src/core/hunks.ts';
 import { globMatcher } from '../../src/core/glob.ts';
 
 const text = (lines: string[]) => (lines.length ? `${lines.join('\n')}\n` : '');
@@ -248,11 +248,35 @@ describe('moves (§5.1): one change per moved prefix', () => {
     expect(movedPrefix('README.md', 'lib/README.md')).toEqual({ from: '', to: 'lib' });
     const groups = moveGroups(entries);
     expect(groups.map((g) => [g.from, g.to, g.files.length, moveLabel(g)])).toEqual([
-      ['lib/old-name.js', 'lib/new-name.js', 1, 'renamed lib/old-name.js → lib/new-name.js'],
+      ['lib', 'lib', 1, 'renamed lib/old-name.js → lib/new-name.js'],
       ['src/a', 'src/b', 3, '3 files moved src/a → src/b'],
       ['src', 'src/disabled', 1, 'moved src/auth.js → src/disabled/auth.js'],
     ]);
     expect(moveFiles(groups[1]!, 2)).toBe('src/a/deep/three.js → src/b/deep/three.js, src/a/one.js → src/b/one.js, and 1 more');
+  });
+  it('groups in-place renames of one folder that share a transform; keeps other renames apart', () => {
+    expect(renameTransform('Button.js', 'Button.ts')).toBe('*.js → *.ts');
+    expect(renameTransform('Makefile', 'Makefile.old')).toBe('* → *.old');
+    expect(renameTransform('auth.ts', 'auth.ts.disabled')).toBe('* → *.disabled');
+    expect(renameTransform('old_a.ts', 'new_a.ts')).toBe('old* → new*');
+    expect(renameTransform('retry.ts', 'retry-policy.ts')).toBeUndefined();
+    const inPlace = [
+      { status: 'R', oldPath: 'src/components/A.js', path: 'src/components/A.ts' },
+      { status: 'R', oldPath: 'src/components/B.js', path: 'src/components/B.ts' },
+      { status: 'R', oldPath: 'src/components/C.js', path: 'src/components/C.ts' },
+      { status: 'R', oldPath: 'src/components/auth.ts', path: 'src/components/auth.ts.disabled' },
+      { status: 'R', oldPath: 'src/components/retry.ts', path: 'src/components/retry-policy.ts' },
+      { status: 'R', oldPath: 'src/other/D.js', path: 'src/other/D.ts' },
+    ];
+    expect(moveGroups(inPlace).map((g) => moveLabel(g))).toEqual([
+      '3 files renamed in src/components (*.js → *.ts)',
+      'renamed src/components/auth.ts → src/components/auth.ts.disabled',
+      'renamed src/components/retry.ts → src/components/retry-policy.ts',
+      'renamed src/other/D.js → src/other/D.ts',
+    ]);
+    // Distinct keys: the folder's .js → .ts group, and the one in src/other.
+    const keys = moveGroups(inPlace).map((g) => moveChange(g).key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
   it('is one change per group on its first file; the edited file keeps its line change too', () => {
     const r = coverage(build(), []);

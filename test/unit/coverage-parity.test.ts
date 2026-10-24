@@ -355,4 +355,33 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect([...r.files.values()].filter((f) => f.move).map((f) => f.entry.path)).toEqual(['src/b/deep/two.js', 'src/retry/backoff.ts']);
     expect(r.files.get('src/b/deep/two.js')!.coverage!.changes[0]!.uncoveredFiles).toEqual(['src/b/deep/two.js']);
   });
+
+  it('in-place renames sharing a transform are one change; other renames in the folder stay apart', async () => {
+    const dir = copy();
+    const commit = (msg: string) => {
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+    };
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, 'src/components'), { recursive: true });
+    for (const n of ['A', 'B', 'C', 'auth', 'retry']) writeFileSync(join(dir, `src/components/${n}.js`), `export const ${n} = '${n}';\n`);
+    commit('Components');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    for (const n of ['A', 'B', 'C']) git(dir, 'mv', `src/components/${n}.js`, `src/components/${n}.ts`);
+    git(dir, 'mv', 'src/components/auth.js', 'src/components/auth.js.disabled');
+    git(dir, 'mv', 'src/components/retry.js', 'src/components/retry-policy.js');
+    commit('Renames');
+
+    const c = await checker(dir, true);
+    const r = await extension(dir, false);
+    const labels = c.files.flatMap((f) => f.changes.flatMap((x) => (x.move && f.path.startsWith('src/components/') ? [x.move.label] : [])));
+    expect(labels.sort()).toEqual([
+      '3 files renamed in src/components (*.js → *.ts)',
+      'renamed src/components/auth.js → src/components/auth.js.disabled',
+      'renamed src/components/retry.js → src/components/retry-policy.js',
+    ]);
+    expect(extensionStates(r)).toEqual(checkerStates(c));
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+  });
 });

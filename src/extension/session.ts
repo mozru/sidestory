@@ -1131,7 +1131,7 @@ export class ExplainerSession implements vscode.Disposable {
     let file = checked;
     if (checked.secret) {
       const open = 'Open';
-      const choice = await ourModal(() => vscode.window.showWarningMessage(`This sidestory links to ${name}. Open it?`, { modal: true, detail: 'Its name looks like it holds secrets (keys, tokens, passwords).' }, open));
+      const choice = await ourModal(() => vscode.window.showWarningMessage(`This sidestory links to ${plainForMessage(path.split('/').pop() ?? path, 80)}. Open it?`, { modal: true, detail: 'Its name looks like it holds secrets (keys, tokens, passwords).' }, open));
       if (choice !== open || this.disposed || generation !== this.generation) return;
       // The dialog may have stayed up a long time (a checkout meanwhile): check the path again.
       const again = await checkCodePath(root.fsPath, path);
@@ -1241,7 +1241,7 @@ export class ExplainerSession implements vscode.Disposable {
     const url = safeExternalUrl(raw);
     if (!url) return;
     const open = 'Open';
-    const choice = await ourModal(() => vscode.window.showInformationMessage(`The sidestory links to:\n\n${url}`, { modal: true, detail: 'It will open outside VS Code.' }, open));
+    const choice = await ourModal(() => vscode.window.showInformationMessage(`The sidestory links to:\n\n${plainForMessage(url, 2000)}`, { modal: true, detail: 'It will open outside VS Code.' }, open));
     if (choice === open) await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 
@@ -1333,7 +1333,7 @@ export class ExplainerSession implements vscode.Disposable {
       else if (this.active === id) this.decorateActive(dim && !opened.inDiff); // unless the reader moved on while the file opened
 
     } catch (e) {
-      void vscode.window.showWarningMessage(`Can't open ${a.file}: ${(e as Error).message}`);
+      void vscode.window.showWarningMessage(`Can't open ${plainForMessage(a.file, 120)}: ${plainForMessage((e as Error).message)}`);
     }
   }
 

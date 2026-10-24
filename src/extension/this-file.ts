@@ -8,7 +8,7 @@
 // that aren't done (Copy Prompt: Explain This Change, Mark as Trivial…), and a step whose code grew since it was
 // written says so and offers Re-pin This Step (§13.1).
 import * as vscode from 'vscode';
-import { displayText } from '../core/display-text.ts';
+import { displayText, plainForMessage } from '../core/display-text.ts';
 import type { LineRange } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 import { uriKey } from './explainers.ts';
@@ -393,7 +393,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     }
     const rel = vscode.workspace.asRelativePath(uri, false);
     await vscode.env.clipboard.writeText(explainFilePrompt(rel));
-    void vscode.window.showInformationMessage(`No sidestory explains ${displayText(rel.split('/').pop() ?? rel, 60).replace(/\]\(/g, '] (')} yet. ${COPIED}`);
+    void vscode.window.showInformationMessage(`No sidestory explains ${plainForMessage(rel.split('/').pop() ?? rel, 60)} yet. ${COPIED}`);
   }
 
   dispose(): void {

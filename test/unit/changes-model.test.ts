@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { comparePaths, GitStatus, statusLetter, step } from '../../src/extension/changes/model.ts';
-import { fileRanks, nextChange, orderChanges, type OpenChange } from '../../src/extension/changes/order.ts';
+import { fileRanks, nextChange, orderChanges, walkPos, type OpenChange } from '../../src/extension/changes/order.ts';
 
 describe('next and previous', () => {
   it('starts at the ends, steps, and wraps', () => {
@@ -79,6 +79,20 @@ describe('Next/Previous Unexplained Change (§9.3)', () => {
     expect(nextChange(tied, rank, { path: 'a.ts', pos: 5, key: 'k2' }, -1)).toEqual({ target: tied[0], wrapped: false });
     // A cursor in a lineless file (pos 0, no key) goes on past its move.
     expect(nextChange(list, rank, { path: 'a.ts', pos: 0 }, 1)?.target.key).toBe('e1');
+  });
+
+  it('whole-file changes sit at 0 like moves, so Next from a lineless file goes on to the next file', () => {
+    expect(walkPos({ new: null, newAt: 1 }, true)).toBe(0);
+    expect(walkPos({ move: {}, new: null, newAt: 1 }, false)).toBe(0);
+    expect(walkPos({ new: { start: 7 }, newAt: 7 }, false)).toBe(7);
+    expect(walkPos({ new: null, newAt: 4 }, false)).toBe(4);
+    const list: OpenChange[] = [
+      { path: 'logo.png', key: 'large-1', pos: walkPos({ new: null, newAt: 1 }, true) },
+      { path: 'z.ts', key: 'z1', pos: 3 },
+    ];
+    const rank = fileRanks(['logo.png', 'z.ts']);
+    // The cursor in the binary diff (pos 0, no key): the next stop is z.ts, not logo.png again.
+    expect(nextChange(list, rank, { path: 'logo.png', pos: 0 }, 1)?.target.key).toBe('z1');
   });
 });
 

@@ -13,6 +13,14 @@ export interface OpenChange {
   pos: number;
 }
 
+/**
+ * A change's place in the walk: changes with no lines (a move, a whole-file change) sit at 0, before line 1, where a
+ * cursor in a file with no lines is too; any other at its first new line (a pure deletion: the line it sits before).
+ */
+export function walkPos(b: { move?: unknown; new: { start: number } | null; newAt: number }, whole: boolean): number {
+  return b.move || whole ? 0 : (b.new?.start ?? b.newAt);
+}
+
 /** Rank per path: `first` (deduplicated, in order) before the rest by path. */
 export function fileRanks(paths: readonly string[], first: readonly string[] = []): Map<string, number> {
   const rank = new Map<string, number>();

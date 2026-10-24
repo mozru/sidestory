@@ -226,6 +226,28 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     expect(r.findings.filter((f) => f.code === 'trivial-broad')).toEqual([]);
   });
 
+  it('covered moves are info lines, folded into one summary past 5 groups', async () => {
+    const dir = copy();
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, 'x'), { recursive: true });
+    for (let i = 1; i <= 6; i++) writeFileSync(join(dir, `x/f${i}.js`), `export const f${i} = ${i};\n`);
+    commitAll(dir, 'six files');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    // Each changes the middle of its name: six renames of their own, all covered by one glob.
+    for (let i = 1; i <= 6; i++) git(dir, 'mv', `x/f${i}.js`, `x/f${i}-v2.js`);
+    const mf = join(dir, '.sidestory/retry-jitter/manifest.json');
+    const m = JSON.parse(readFileSync(mf, 'utf8'));
+    m.trivialFiles = ['x/*.js'];
+    writeFileSync(mf, JSON.stringify(m, null, 2));
+    commitAll(dir, 'renames');
+    const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    const moved = r.findings.filter((f) => f.code === 'moved');
+    expect(moved).toHaveLength(1);
+    // Six here, and the fixture's own backoff.ts move.
+    expect(moved[0]!.message).toMatch(/^7 moves, each explained or marked trivial: .*renamed x\/f1\.js → x\/f1-v2\.js;/);
+  });
+
   it('a folder moved as a whole is one finding listing the files', async () => {
     const dir = copy();
     mkdirSync(join(dir, 'lib'), { recursive: true });

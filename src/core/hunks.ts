@@ -68,6 +68,34 @@ export interface MoveGroup {
   /** By new path. */
   readonly files: readonly { readonly path: string; readonly oldPath: string; readonly copy?: boolean }[];
   readonly inPlace?: boolean;
+  /** In-place renames sharing one transform of the name (`*.js → *.ts`): the pattern, for the label and the key. */
+  readonly transform?: string;
+}
+
+/**
+ * The transform an in-place rename applies to the file name, when it is one several files can share (§5.1): an
+ * extension change with the stem unchanged (`Button.js → Button.ts`: `*.js → *.ts`), else a substitution at the end
+ * (`auth.ts → auth.ts.disabled`: `* → *.disabled`) or at the start (`old_a.ts → new_a.ts`: `old* → new*`).
+ * Undefined for anything else (`retry.ts → retry-policy.ts` changes the middle: a rename of its own).
+ */
+export function renameTransform(oldName: string, name: string): string | undefined {
+  const split = (n: string) => {
+    const i = n.lastIndexOf('.');
+    return i > 0 ? { stem: n.slice(0, i), ext: n.slice(i + 1) } : { stem: n, ext: undefined };
+  };
+  const a = split(oldName);
+  const b = split(name);
+  const ext = (e: string | undefined) => (e === undefined ? '*' : `*.${e}`);
+  if (a.stem === b.stem && a.ext !== b.ext) return `${ext(a.ext)} → ${ext(b.ext)}`;
+  let p = 0;
+  while (p < oldName.length && p < name.length && oldName[p] === name[p]) p++;
+  let q = 0;
+  while (q < oldName.length - p && q < name.length - p && oldName[oldName.length - 1 - q] === name[name.length - 1 - q]) q++;
+  const from = oldName.slice(p, oldName.length - q);
+  const to = name.slice(p, name.length - q);
+  if (q === 0 && p > 0) return `*${from} → *${to}`;
+  if (p === 0 && q > 0) return `${from}* → ${to}*`;
+  return undefined;
 }
 
 /** A path's parent folder, '' at the root. */
@@ -87,19 +115,23 @@ export function movedPrefix(oldPath: string, path: string): { from: string; to: 
 /**
  * The moves of a comparison (§5.1): every counted rename or copy whose path changed. Files moved across folders group
  * by their moved prefix (a refactor moving 50 files from `src/a` to `src/b`, subfolders included, is one group, not
- * 50 changes); a rename within one folder is a change of its own. The caller leaves out entries already counted
+ * 50 changes); renames within one folder group by folder and shared transform (`renameTransform`: 30 `.js → .ts`
+ * renames are one change), and any other in-place rename is a change of its own. The caller leaves out entries already counted
  * otherwise (archive changes, unsupported paths). Groups are sorted by their first file's new path. Shared by the
  * checker and the extension.
  */
 export function moveGroups(entries: readonly { readonly status: string; readonly path: string; readonly oldPath?: string }[]): MoveGroup[] {
-  const groups = new Map<string, { from: string; to: string; files: { path: string; oldPath: string; copy?: boolean }[]; inPlace?: boolean }>();
+  const groups = new Map<string, { from: string; to: string; files: { path: string; oldPath: string; copy?: boolean }[]; inPlace?: boolean; transform?: string }>();
   for (const e of entries) {
     if ((e.status !== 'R' && e.status !== 'C') || e.oldPath === undefined || e.oldPath === e.path) continue;
-    const inPlace = parentFolder(e.oldPath) === parentFolder(e.path);
-    const { from, to } = inPlace ? { from: e.oldPath, to: e.path } : movedPrefix(e.oldPath, e.path);
-    const k = `${inPlace ? 'r' : 'm'}\0${from}\0${to}`;
+    const folder = parentFolder(e.oldPath);
+    const inPlace = folder === parentFolder(e.path);
+    // In place: the renames of one folder that share a transform are one group; any other is a change of its own.
+    const transform = inPlace ? renameTransform(e.oldPath.slice(folder ? folder.length + 1 : 0), e.path.slice(folder ? folder.length + 1 : 0)) : undefined;
+    const { from, to } = !inPlace ? movedPrefix(e.oldPath, e.path) : transform ? { from: folder, to: folder } : { from: e.oldPath, to: e.path };
+    const k = `${inPlace ? 'r' : 'm'}\0${from}\0${to}\0${transform ?? ''}`;
     let g = groups.get(k);
-    if (!g) groups.set(k, (g = { from, to, files: [], ...(inPlace ? { inPlace: true } : {}) }));
+    if (!g) groups.set(k, (g = { from, to, files: [], ...(inPlace ? { inPlace: true } : {}), ...(transform ? { transform } : {}) }));
     g.files.push({ path: e.path, oldPath: e.oldPath, ...(e.status === 'C' ? { copy: true } : {}) });
   }
   const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -113,7 +145,7 @@ export function moveGroups(entries: readonly { readonly status: string; readonly
  * mark or trivialFiles match (`coverage`).
  */
 export function moveChange(g: MoveGroup): ChangeBlock {
-  return { key: `move-${contentHash(g.to, [g.from], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, move: g };
+  return { key: `move-${contentHash(g.to, [g.from, g.transform ?? ''], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, move: g };
 }
 
 /**
@@ -132,6 +164,7 @@ export function moveCarriers(groups: readonly MoveGroup[], has: (path: string) =
 /** "renamed src/a.ts → src/b.ts" within a folder, "moved X → Y" for one file, "3 files moved src/a → src/b" (raw paths: display them safely). */
 export function moveLabel(g: MoveGroup): string {
   const one = g.files[0]!;
+  if (g.inPlace && g.files.length > 1) return `${g.files.length} files renamed in ${g.from || '.'} (${g.transform})`;
   if (g.inPlace) return `${one.copy ? 'copied' : 'renamed'} ${one.oldPath} → ${one.path}`;
   if (g.files.length === 1) return `${one.copy ? 'copied' : 'moved'} ${one.oldPath} → ${one.path}`;
   return `${g.files.length} files moved ${g.from || '.'} → ${g.to || '.'}`;

@@ -669,6 +669,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   };
   const many = sidestories.length > 1;
   const of = (sidestory: string) => (many ? ` of ${sidestory}` : '');
+  // Covered moves: one info line each, or one summary past 5 groups (a big refactor shouldn't flood the report).
+  const coveredMoves: { file: string; text: string; label: string }[] = [];
   result.files.forEach((f, fi) => {
     const e = counted[fi]!;
     const file = abs(f.path);
@@ -679,13 +681,13 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       if (block.move) {
         // Every move is said with its files, covered or not, so a reviewer sees what moved.
         const g = block.move;
-        const what = `${moveLabel(g)}${g.files.length > 1 ? ` (${moveFiles(g)})` : ''}`;
+        const what = `${moveLabel(g)}${g.files.length > 1 ? ` (${moveFiles(g, 50)})` : ''}`;
         if (c.state === 'unexplained') {
           const lacking = c.uncoveredFiles ?? [];
           const without = lacking.length && lacking.length < g.files.length ? ` Without cover: ${lacking.slice(0, 10).join(', ')}${lacking.length > 10 ? `, and ${lacking.length - 10} more` : ''}.` : '';
           add('warning', file, 'unexplained', `${what}: a move can switch code off, so it needs a mention. A step anchored in any of these files explains it; a trivial mark or trivialFiles match covers only its own file's move.${without}`, 1);
         } else {
-          add('info', file, 'moved', `${what}: ${c.state === 'trivial' ? 'every file marked trivial' : `explained by ${c.by.map((x) => title(x.sidestory, x.anchor) + of(x.sidestory)).join(', ')}`}.`, 1);
+          coveredMoves.push({ file, text: `${what}: ${c.state === 'trivial' ? 'every file marked trivial' : `explained by ${c.by.map((x) => title(x.sidestory, x.anchor) + of(x.sidestory)).join(', ')}`}.`, label: moveLabel(g) });
         }
         return;
       }
@@ -718,6 +720,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       }
     });
   });
+  if (coveredMoves.length > 5) add('info', root, 'moved', `${coveredMoves.length} moves, each explained or marked trivial: ${coveredMoves.slice(0, 10).map((m) => m.label).join('; ')}${coveredMoves.length > 10 ? `; and ${coveredMoves.length - 10} more` : ''} (the files of each are in --json).`);
+  else for (const m of coveredMoves) add('info', m.file, 'moved', m.text, 1);
   for (const u of result.targets) {
     if (!u.broad) continue;
     const s = sidestories.find((x) => x.folder === u.sidestory)!;

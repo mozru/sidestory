@@ -21,7 +21,7 @@ import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from '
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import { baseName, comparePaths, short, step, type ChangeEntry } from './model.ts';
 import { openTarget, type DiffContext } from './open.ts';
-import { fileRanks, nextChange, type OpenChange } from './order.ts';
+import { fileRanks, nextChange, walkPos, type OpenChange } from './order.ts';
 import { changePrompt, COPIED, explainBranchPrompt, updatePrompt } from './prompts.ts';
 import { emptySideKey, gitSideKey, vscodeGitSideKey, type SideKey } from './targets.ts';
 import { markTrivial } from './trivial.ts';
@@ -802,7 +802,7 @@ export class ChangesService implements vscode.Disposable {
       // No range: a whole file, or a move group (its first file's diff).
       const pair = this.diffUris(s, f.entry);
       if (!pair) {
-        void vscode.window.showInformationMessage(`${name(path, 100)} (${b.move ? 'moved' : WHOLE_WORDS[f.whole!]}) counts as one change; its path isn't read from disk. Cover it with a trivialFiles glob.`);
+        void vscode.window.showInformationMessage(`${plainForMessage(path, 100)} (${b.move ? 'moved' : WHOLE_WORDS[f.whole!]}) counts as one change; its path isn't read from disk. Cover it with a trivialFiles glob.`);
         return;
       }
       await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, pair.title, { preview: true, viewColumn: column });
@@ -853,8 +853,8 @@ export class ChangesService implements vscode.Disposable {
     for (const [path, f] of r.files) {
       for (const c of f.coverage?.changes ?? []) {
         const b = f.blocks.get(c.key);
-        // A move sits before the file's lines (pos 0), so a line-1 edit in the same file is its own stop.
-        if (b && !isDone(c.state)) list.push({ path, key: c.key, pos: b.move ? 0 : (b.new?.start ?? b.newAt) });
+        // Changes with no lines (a move, a whole file) sit before the file's lines, so a line-1 edit is its own stop.
+        if (b && !isDone(c.state)) list.push({ path, key: c.key, pos: walkPos(b, !!f.whole) });
       }
     }
     if (!list.length) {
@@ -1054,32 +1054,33 @@ export class ChangesService implements vscode.Disposable {
     const { s, r } = got;
     let target: { path: string; side: 'head' | 'base'; range: { start: number; end: number } } | undefined;
     const place = this.activePlace(s);
+    let groupNote: string | undefined;
     const named = arg && typeof arg === 'object' && typeof (arg as { key?: unknown }).key === 'string';
     // A change not done yet: named, at the cursor, or one the selection touches.
     const one = await this.changeFrom(s, r, arg);
     const whole = one && !one.b.move ? r?.files.get(one.path)?.whole : undefined;
     if (whole) {
-      void vscode.window.showInformationMessage(`${name(one!.path, 100)} counts as one change as a whole (${WHOLE_WORDS[whole]}): a trivial mark can't cover it. Add a narrow trivialFiles glob for it to the sidestory's manifest.`);
+      void vscode.window.showInformationMessage(`${plainForMessage(one!.path, 100)} counts as one change as a whole (${WHOLE_WORDS[whole]}): a trivial mark can't cover it. Add a narrow trivialFiles glob for it to the sidestory's manifest.`);
       return;
     }
     if (one?.b.move) {
-      // A trivial mark covers only its own file's move (§5.1). A one-file move: on the first non-blank line no change
-      // touches (so the mark explains nothing else). A group: one sentence in a step covers it, or a mark per file.
+      // A trivial mark covers only its own file's move (§5.1): mark the move of the cursor's file (else the group's
+      // first), on its first non-blank line no change touches, so the mark explains nothing else.
       const g = one.b.move;
       const prompt = 'Copy Prompt: Explain This Change asks for one sentence on the move in a step';
-      if (g.files.length > 1) {
-        void vscode.window.showInformationMessage(`${displayText(moveLabel(g), 120)}: a trivial mark covers only its own file's move, so mark each file, or (better) mention the move once: ${prompt}.`);
-        return;
-      }
-      const fr = r?.files.get(one.path);
+      const path = place && g.files.some((x) => x.path === place.entry.path) ? place.entry.path : one.path;
+      const fr = r?.files.get(path);
       const touched = [...(fr?.blocks.values() ?? [])].flatMap((b) => (b.new ? [b.new] : []));
-      const text = await this.sideText(s, { path: one.path, side: 'head' });
+      const text = await this.sideText(s, { path, side: 'head' });
       const line = text === undefined ? -1 : textLines(text).findIndex((l, i) => l.trim() !== '' && !touched.some((x) => i + 1 >= x.start && i + 1 <= x.end));
       if (line < 0) {
-        void vscode.window.showInformationMessage(`${name(one.path, 100)} has no unchanged line to put a trivial mark on. ${prompt}.`);
+        void vscode.window.showInformationMessage(`${plainForMessage(path, 100)} has no unchanged line to put a trivial mark on. ${prompt}.`);
         return;
       }
-      target = { path: one.path, side: 'head', range: { start: line + 1, end: line + 1 } };
+      target = { path, side: 'head', range: { start: line + 1, end: line + 1 } };
+      // The other files of a group still need their own mark, or one step covers them all.
+      const rest = (one.c.uncoveredFiles ?? g.files.map((x) => x.path)).filter((p) => p !== path).length;
+      if (rest) groupNote = `${rest} more ${rest === 1 ? 'file' : 'files'} of the group still ${rest === 1 ? 'needs' : 'need'} a mark, or one step covers all.`;
     } else if (one && !named && place && !place.editor.selection.isEmpty) {
       // A selection: those lines, on the side they are on.
       const sel = place.editor.selection;
@@ -1102,6 +1103,7 @@ export class ChangesService implements vscode.Disposable {
     try {
       const written = await markTrivial(s, r?.belonging ?? [], { ...target, text });
       if (written) this.scheduleCoverage(500);
+      if (written && groupNote) void vscode.window.showInformationMessage(groupNote);
     } catch (e) {
       void vscode.window.showErrorMessage(`Couldn't mark it trivial: ${plainForMessage((e as Error).message)}`);
     }
@@ -1195,7 +1197,7 @@ export class ChangesService implements vscode.Disposable {
     // Only a base that resolves here is saved: a typo or an unfetched branch is said, and the base stays as it was.
     const save = async (spec: string | undefined) => {
       if (spec && !(await resolveBase(refReader(repo), spec))) {
-        void vscode.window.showWarningMessage(`“${name(spec)}” isn't a branch, tag or commit in this repository (not fetched?). The base wasn't changed.`);
+        void vscode.window.showWarningMessage(`“${plainForMessage(spec, 60)}” isn't a branch, tag or commit in this repository (not fetched?). The base wasn't changed.`);
         return;
       }
       await this.setPick(repo, branch, spec);
@@ -1252,7 +1254,7 @@ export class ChangesService implements vscode.Disposable {
     if (!chosen || (chosen !== 'typed' && chosen.keep)) return;
     if (chosen === 'typed') {
       if (!isValidBase(typed)) {
-        void vscode.window.showWarningMessage(`“${name(typed)}” isn't a branch name Sidestory can use.`);
+        void vscode.window.showWarningMessage(`“${plainForMessage(typed, 60)}” isn't a branch name Sidestory can use.`);
         return;
       }
       await save(typed);
@@ -1326,7 +1328,7 @@ export class ChangesService implements vscode.Disposable {
       const none = paths.length - globs.length;
       if (globs.length) await vscode.env.clipboard.writeText(JSON.stringify(globs, null, 2));
       void vscode.window.showInformationMessage(
-        `${globs.length ? `Copied ${globs.length} trivialFiles ${globs.length === 1 ? 'glob' : 'globs'} (relative to ${prefix ? `${name(prefix, 60)}/, where the sidestory is` : r && r.belonging.length > 1 ? 'the repository root; for a sidestory in a subfolder, make them relative to that folder' : 'the repository root'}).` : ''}${none ? ` ${none} ${none === 1 ? 'path has' : 'paths have'} no trivialFiles glob that can match ${none === 1 ? 'it' : 'them'}: rename ${none === 1 ? 'it' : 'them'}.` : ''}`.trim(),
+        `${globs.length ? `Copied ${globs.length} trivialFiles ${globs.length === 1 ? 'glob' : 'globs'} (relative to ${prefix ? `${plainForMessage(prefix, 60)}/, where the sidestory is` : r && r.belonging.length > 1 ? 'the repository root; for a sidestory in a subfolder, make them relative to that folder' : 'the repository root'}).` : ''}${none ? ` ${none} ${none === 1 ? 'path has' : 'paths have'} no trivialFiles glob that can match ${none === 1 ? 'it' : 'them'}: rename ${none === 1 ? 'it' : 'them'}.` : ''}`.trim(),
       );
     },
     'sidestory.changes.markTrivial': (arg?: unknown) => this.markTrivialCmd(arg),
@@ -1384,6 +1386,8 @@ export class CoverageDecorations implements vscode.FileDecorationProvider, vscod
       }
       const m = fileDecoration(f.coverage, steps);
       if (m && f.move) m.tooltip = `${m.tooltip} · ${displayText(moveLabel(f.move), 120)}: ${displayText(moveFiles(f.move, 10), 2000)}`;
+      // An edited file of a group another file carries: its own changes, and where its move is counted.
+      if (m && f.movedWith) m.tooltip = `${m.tooltip} · moved with ${displayText(f.movedWith, 120)} · 1 change for the group`;
       if (m) out.set(path, m);
       else if (f.movedWith) out.set(path, { badge: '', tooltip: `moved with ${displayText(f.movedWith, 120)} · 1 change for the group` });
     }
