@@ -1,8 +1,9 @@
 // The Changes view (docs/CHANGES-PLAN.md §9.1–§9.5, §9.7–§9.9, release 1a): the branch's merge diff as a file
 // navigator, with no sidestory needed. It owns the comparison for the chosen repository, the tree, the title bar
 // (description, message, toggles), the states, and the commands: open a file's merge diff, next/previous changed
-// file, Open All Changes, the base picker, the filter. Coverage, sidestory rows and This File arrive with
-// release 1b on top of `ChangesView.snapshot` and `ChangesTree`.
+// file, Open All Changes, the base picker, the filter. Release 1b adds the coverage layer on top (§9.6): the
+// belonging sidestories' rows, coverage marks, change items, Next/Previous Unexplained Change, the copied prompts,
+// Mark as Trivial, unexplained marks in diffs (§7.3), and the comparison sessions use for steps (`diffContext`).
 import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import { AVAILABLE_KEY } from '../bootstrap-shared.ts';
@@ -15,8 +16,19 @@ import { configValue, gitApi, refReader, relPath } from './git-api.ts';
 import { ChangeDecorations, emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import type { ChangeEntry, SortKey } from './model.ts';
 import { baseName, commitsLabel, countLines, filterEntries, patchCounts, MAX_LISTED, parseFilter, short, SORT_KEYS, step } from './model.ts';
-import type { ChangesNode } from './tree.ts';
+import type { ChangesNode, Layer, LayerRow } from './tree.ts';
 import { ChangesTree } from './tree.ts';
+import { decodePair, oldToNew, type ChangeBlock } from '../../core/hunks.ts';
+import type { ChangeCoverage, FileCoverage } from '../../core/coverage.ts';
+import { changeKind, changeLabel, isDone, totalsLabel } from './coverage-labels.ts';
+import type { CoverageResult } from './coverage-service.ts';
+import { CoverageService } from './coverage-service.ts';
+import type { DiffContext } from './open.ts';
+import { openTarget } from './open.ts';
+import { changePrompt, COPIED, explainBranchPrompt, updatePrompt } from './prompts.ts';
+import type { SideKey } from './targets.ts';
+import { markTrivial } from './trivial.ts';
+import type { SessionDiffs } from '../session.ts';
 
 export const VIEW_ID = 'sidestory.changes';
 const KEYS = {
@@ -27,6 +39,8 @@ const KEYS = {
   picks: 'sidestory.changes.picks',
   recent: 'sidestory.changes.recentBases',
   repo: 'sidestory.changes.repository',
+  onlyUnexplained: 'sidestory.changes.onlyUnexplained',
+  noSuggest: 'sidestory.changes.noExplainSuggestion',
 } as const;
 const MAX_PICKS = 50;
 const MAX_RECENT = 10;
@@ -71,19 +85,46 @@ export class ChangesView implements vscode.Disposable {
   private repaintTimer: ReturnType<typeof setTimeout> | undefined;
   /** For tests and the perf smoke: how long the last render took. */
   readonly stats = { renders: 0, lastRenderMs: 0, files: 0 };
+  /** Coverage of the comparison by the sidestories that belong to it (§6). */
+  readonly coverage: CoverageService;
+  /** The workspace's sidestory folders (the index), set by the extension. */
+  sidestoryDirs: () => vscode.Uri[] = () => [];
+  private readonly diffsEmitter = new vscode.EventEmitter<void>();
+  /** Unexplained lines in diffs (§7.3), while the author's sidestory is open or the setting is on. */
+  private readonly unexplainedType = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.unexplainedBorder'),
+    borderStyle: 'dotted',
+    borderWidth: '0 0 0 3px',
+    overviewRulerColor: new vscode.ThemeColor('sidestory.unexplainedBorder'),
+    overviewRulerLane: vscode.OverviewRulerLane.Right,
+  });
+  /** The change Next/Previous Unexplained Change moved to last. */
+  private lastChange: { path: string; key: string } | undefined;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.memento = context.workspaceState;
     this.ids = new RepoIds(context.globalState);
     this.view = vscode.window.createTreeView(VIEW_ID, { treeDataProvider: this.tree, canSelectMany: false });
+    this.coverage = new CoverageService({ snapshot: () => this.snapshot, order: () => this.tree.order.map((e) => e.path), sidestoryDirs: () => this.sidestoryDirs() });
     this.subscriptions.push(
+      this.coverage,
+      this.diffsEmitter,
+      this.unexplainedType,
+      this.coverage.onDidChange(() => {
+        this.render();
+        this.paintUnexplained();
+        this.diffsEmitter.fire();
+      }),
+      vscode.window.onDidChangeVisibleTextEditors(() => this.paintUnexplained()),
       this.tree,
       this.view,
       GitFileSystem.register(this.ids),
       vscode.window.registerFileDecorationProvider(new ChangeDecorations()),
       this.view.onDidChangeVisibility(() => {
         this.updateActive();
+        this.coverage.want('view', this.view.visible);
         const snap = this.snapshot;
         if (this.view.visible && snap && this.comparison) this.countLater(snap, this.comparison.epoch);
       }),
@@ -99,11 +140,14 @@ export class ChangesView implements vscode.Disposable {
           if (this.view.visible) void this.comparison?.refresh(true);
           else this.comparison?.invalidate();
         }
+        if (e.affectsConfiguration('sidestory.changes.suggestExplain')) this.render();
+        if (e.affectsConfiguration('sidestory.changes.markUnexplained')) this.paintUnexplained();
       }),
     );
     this.filterText = this.memento.get<string>(KEYS.filter(this.mode()), '') ?? '';
     this.syncToggles();
     this.setState('loading');
+    this.coverage.want('view', this.view.visible);
     this.initializing = this.init();
   }
 
@@ -203,7 +247,14 @@ export class ChangesView implements vscode.Disposable {
       setting: () => vscode.workspace.getConfiguration('sidestory.changes').get<string>('defaultBase')?.trim() || undefined,
     });
     this.comparison = c;
-    this.comparisonSubs.push(c, c.onDidChange(() => this.render()));
+    this.comparisonSubs.push(
+      c,
+      c.onDidChange(() => {
+        this.render();
+        this.coverage.schedule();
+        this.diffsEmitter.fire();
+      }),
+    );
     this.setState('loading');
     this.updateActive();
   }
@@ -268,7 +319,20 @@ export class ChangesView implements vscode.Disposable {
     }
     const snap = st.snapshot;
     const filter = parseFilter(this.filterText);
-    const entries = filterEntries(snap.entries, filter);
+    const result = this.result(snap);
+    // Counts from the change blocks where coverage diffed the file (§5.2): exact, renames included.
+    if (result) {
+      for (const e of snap.entries) {
+        const f = result.files.get(e.path);
+        if (f && !f.diff.tooLarge && e.added === undefined) {
+          e.added = f.entry.added;
+          e.removed = f.entry.removed;
+        }
+      }
+    }
+    const layer = this.layer(snap, result);
+    let entries = filterEntries(snap.entries, filter);
+    if (layer && result?.belonging.length && this.onlyUnexplained()) entries = entries.filter((e) => (result.files.get(e.path)?.coverage?.left ?? 0) > 0);
     const multi = (this.api?.repositories.length ?? 0) > 1;
     if (this.renderedBase !== snap.mergeBase) {
       this.renderedBase = snap.mergeBase;
@@ -280,7 +344,11 @@ export class ChangesView implements vscode.Disposable {
       sort: this.sort(),
       onDisk: snap.mode === 'workingTree',
       repoLabel: multi ? baseName(snap.repo.rootUri.path) : undefined,
+      layer,
     });
+    const own = !!result?.belonging.length;
+    setContext('sidestory.changes.layer', own);
+    this.view.badge = own && result!.totals.left ? { value: result!.totals.left, tooltip: `${result!.totals.left} ${result!.totals.left === 1 ? 'change' : 'changes'} not explained yet` } : undefined;
     this.shownPaths = new Set(snap.entries.map((e) => e.path));
     this.setState(snap.entries.length ? (entries.length ? 'ready' : 'filteredOut') : snap.onBase ? 'onBase' : 'noChanges');
     setContext('sidestory.changes.hasFiles', snap.entries.length > 0);
@@ -319,6 +387,8 @@ export class ChangesView implements vscode.Disposable {
     parts.push(`vs ${name(s.base.label, 48)} @ ${short(s.mergeBase)}`);
     if (s.commits && (s.commits.count || !s.uncommitted)) parts.push(commitsLabel(s.commits.count, s.commits.capped));
     if (s.uncommitted) parts.push('+ uncommitted');
+    const cov = this.result(s);
+    if (cov?.belonging.length) parts.push(totalsLabel(cov.totals) + (cov.done < cov.total ? ` · computing ${cov.done} of ${cov.total}` : ''));
     view.description = parts.join(' · ');
     const msg: string[] = [];
     if (c.busy) msg.push('Rebase or merge in progress: showing the last state.');
@@ -344,8 +414,9 @@ export class ChangesView implements vscode.Disposable {
     const live = () => this.comparison === c && c.epoch === epoch;
     // Renames and copies: a one-path patch can't pair the two sides, so they stay uncounted here.
     // What the view shows first, then files the filter hides.
+    const covered = this.result(snap)?.files;
     const todo = [...new Set([...this.tree.order, ...snap.entries])]
-      .filter((e) => e.added === undefined && !e.noText && (e.untracked || e.status === 'A' || e.status === 'M' || e.status === 'D'))
+      .filter((e) => e.added === undefined && !e.noText && !covered?.has(e.path) && (e.untracked || e.status === 'A' || e.status === 'M' || e.status === 'D'))
       .slice(0, COUNT_LATER.files);
     if (!todo.length) return;
     for (const e of todo) e.counting = true;
@@ -426,6 +497,330 @@ export class ChangesView implements vscode.Disposable {
   private updateActiveFile(): void {
     const p = this.activePath();
     setContext('sidestory.changes.activeFileChanged', !!p && this.shownPaths.has(p));
+  }
+
+  // ---- the coverage layer (§9.6) ----
+
+  /** The coverage result for this snapshot's merge-base, if computed. */
+  private result(s: Snapshot): CoverageResult | undefined {
+    const r = this.coverage.result;
+    return r && r.mergeBase === s.mergeBase ? r : undefined;
+  }
+
+  private onlyUnexplained(): boolean {
+    return this.memento.get<boolean>(KEYS.onlyUnexplained, false) ?? false;
+  }
+
+  private branchKey(s: Snapshot): string {
+    return `${this.ids.idOf(s.repo)}\n${s.head.name ?? s.head.sha}`;
+  }
+
+  /** "Copy Prompt: Explain This Branch" is offered: the setting, and not dismissed for this branch. */
+  private suggestExplain(s: Snapshot): boolean {
+    if (!vscode.workspace.getConfiguration('sidestory.changes').get<boolean>('suggestExplain', true)) return false;
+    const off = this.memento.get<string[]>(KEYS.noSuggest) ?? [];
+    return !off.includes(this.branchKey(s));
+  }
+
+  /** "Retry with jitter › The retry loop": a sidestory's title and the step an anchor is in. */
+  private stepName(r: CoverageResult | undefined, folder: string, anchor: string): string {
+    const b = r?.belonging.find((x) => x.folder === folder);
+    if (!b) return anchor;
+    const step = b.stepOf.get(anchor) ?? anchor;
+    const title = b.steps.find((x) => x.id === step)?.title ?? step;
+    return `${displayText(b.manifest.title, 40)} › ${displayText(title, 40)}`;
+  }
+
+  private layer(s: Snapshot, r: CoverageResult | undefined): Layer | undefined {
+    const rows: LayerRow[] = [];
+    for (const b of r?.belonging ?? []) {
+      const steps = b.steps.length;
+      rows.push({
+        id: `s:${b.folder}`,
+        label: displayText(b.manifest.title, 80) || b.folder,
+        description: `${totalsLabel({ ...b.totals, left: r!.totals.left })} · ${steps} ${steps === 1 ? 'step' : 'steps'}`,
+        tooltip: `${displayText(b.manifest.title, 200)}\n${displayText(b.folder, 200)} · vs ${displayText(b.manifest.base ?? '', 60)}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${r!.totals.left} left on the branch\nClick to open`,
+        icon: 'book',
+        command: { command: 'sidestory.openAt', title: 'Open Sidestory', arguments: [{ dir: b.dir.toString(), source: 'tree' }] },
+        contextValue: 'sidestory',
+      });
+    }
+    if (r?.belonging.length && r.totals.left > 0) {
+      rows.push({
+        id: 'update',
+        label: 'Copy Prompt: Update the Sidestory for New Changes',
+        tooltip: `${r.totals.left} ${r.totals.left === 1 ? 'change isn’t' : 'changes aren’t'} explained yet. Copies a prompt for Claude Code (or your agent) to extend the sidestory.`,
+        icon: 'sparkle',
+        command: { command: 'sidestory.changes.copyUpdatePrompt', title: 'Copy Prompt: Update the Sidestory for New Changes' },
+        contextValue: 'updatePrompt',
+      });
+    }
+    if (r && !r.belonging.length && s.entries.length && !s.onBase && this.suggestExplain(s)) {
+      rows.push({
+        id: 'explain',
+        label: 'Copy Prompt: Explain This Branch',
+        tooltip: 'Copies a prompt for Claude Code (or your agent) to write a sidestory that explains this branch’s changes, step by step',
+        icon: 'sparkle',
+        command: { command: 'sidestory.changes.copyExplainPrompt', title: 'Copy Prompt: Explain This Branch' },
+        contextValue: 'explainPrompt',
+      });
+    }
+    if (!rows.length && !r?.belonging.length) return undefined;
+    const files = new Map<string, { coverage: FileCoverage | undefined; blocks: ReadonlyMap<string, ChangeBlock> }>();
+    for (const [p, f] of r?.files ?? []) files.set(p, { coverage: f.coverage, blocks: f.blocks });
+    return { rows, files, onlyUnexplained: this.onlyUnexplained(), stepName: (folder, anchor) => this.stepName(r, folder, anchor) };
+  }
+
+  /** Unexplained lines in the visible diff sides (§7.3): the right side, the left for removed lines. */
+  private paintUnexplained(): void {
+    const s = this.snapshot;
+    const r = s ? this.result(s) : undefined;
+    const on = !!r?.belonging.length && (vscode.workspace.getConfiguration('sidestory.changes').get<boolean>('markUnexplained', false) || this.coverage.wantedBySession);
+    for (const ed of vscode.window.visibleTextEditors) {
+      const key = on && s ? this.keyOf(s, ed.document.uri) : undefined;
+      const ranges: vscode.Range[] = [];
+      if (key && r) {
+        const path = key.side === 'head' ? key.path : this.entryFor(s!, key)?.path;
+        const f = path ? r.files.get(path)?.coverage : undefined;
+        const last = ed.document.lineCount - 1;
+        for (const c of f?.changes ?? []) {
+          if (isDone(c.state)) continue;
+          for (const u of c.uncovered) if (u.side === key.side) ranges.push(new vscode.Range(Math.min(u.range.start - 1, last), 0, Math.min(u.range.end - 1, last), 0));
+        }
+      }
+      ed.setDecorations(this.unexplainedType, ranges);
+    }
+  }
+
+  /** Changes that aren't done, in view order (§9.3). */
+  private openChanges(r: CoverageResult): { path: string; c: ChangeCoverage; b: ChangeBlock; fi: number; pos: number }[] {
+    const out: { path: string; c: ChangeCoverage; b: ChangeBlock; fi: number; pos: number }[] = [];
+    this.tree.order.forEach((e, fi) => {
+      const f = r.files.get(e.path);
+      for (const c of f?.coverage?.changes ?? []) {
+        const b = f!.blocks.get(c.key);
+        if (b && !isDone(c.state)) out.push({ path: e.path, c, b, fi, pos: b.new?.start ?? b.newAt });
+      }
+    });
+    return out.sort((x, y) => x.fi - y.fi || x.pos - y.pos);
+  }
+
+  private async moveUnexplained(dir: 1 | -1): Promise<void> {
+    const s = await this.current();
+    const r = s ? this.result(s) : undefined;
+    if (!s || !r?.belonging.length) {
+      vscode.window.setStatusBarMessage(r ? 'No sidestory explains this branch yet' : 'Coverage is still being computed', 3000);
+      return;
+    }
+    const list = this.openChanges(r);
+    if (!list.length) {
+      vscode.window.setStatusBarMessage('Every change is explained or marked trivial', 3000);
+      return;
+    }
+    // From the cursor in the active editor when its file is in the list, else from the change visited last.
+    let at: { fi: number; pos: number } | undefined;
+    const ed = vscode.window.activeTextEditor;
+    const key = ed ? this.keyOf(s, ed.document.uri) : undefined;
+    const fi = key ? this.tree.order.findIndex((e) => e.path === (key.side === 'head' ? key.path : this.entryFor(s, key)?.path)) : -1;
+    if (ed && key && fi >= 0) {
+      const line = ed.selection.active.line + 1;
+      const diff = r.files.get(this.tree.order[fi]!.path)?.diff;
+      at = { fi, pos: key.side === 'base' && diff ? oldToNew(diff, line) : line };
+    } else if (this.lastChange) {
+      const i = list.findIndex((x) => x.path === this.lastChange!.path && x.c.key === this.lastChange!.key);
+      if (i >= 0) at = list[i]!;
+    }
+    const cmp = (x: { fi: number; pos: number }) => (at ? x.fi - at.fi || x.pos - at.pos : dir);
+    let target = dir === 1 ? list.find((x) => cmp(x) > 0) : [...list].reverse().find((x) => cmp(x) < 0);
+    if (!target) {
+      target = dir === 1 ? list[0]! : list.at(-1)!;
+      if (at) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first unexplained change' : 'Back to the last unexplained change', 3000);
+    }
+    await this.openChange(target.path, target.c.key);
+  }
+
+  /** Opens the diff at a change (§9.6: the left side for pure deletions) and selects its row while visible. */
+  private async openChange(path: string, key: string): Promise<void> {
+    const s = this.snapshot;
+    const r = s ? this.result(s) : undefined;
+    const f = r?.files.get(path);
+    const b = f?.blocks.get(key);
+    const ctx = this.diffContext();
+    if (!s || !f || !b || !ctx) return;
+    this.lastChange = { path, key };
+    this.lastOpened = { path, at: Date.now() };
+    this.lastSelected = path;
+    const side: SideKey = b.new ? { path, side: 'head' } : { path: f.entry.oldPath ?? path, side: 'base' };
+    const range = b.new ?? b.old ?? { start: b.newAt, end: b.newAt };
+    await openTarget(ctx, { ...side, range }, undefined, { moveCursor: true, viewColumn: vscode.ViewColumn.Active, preserveFocus: false, mode: 'diff' });
+    const node = this.tree.changeNode(path, key);
+    if (node && this.view.visible) {
+      this.revealing = true;
+      try {
+        await this.view.reveal(node, { select: true, focus: false, expand: true });
+      } catch {
+        // gone meanwhile
+      } finally {
+        this.revealing = false;
+      }
+    }
+  }
+
+  /** A change from a tree node or `{ path, key }` of the current comparison; a file gives its first open change. */
+  private changeFrom(arg: unknown): { path: string; c: ChangeCoverage; b: ChangeBlock } | undefined {
+    const s = this.snapshot;
+    const r = s ? this.result(s) : undefined;
+    if (!r || !arg || typeof arg !== 'object') return undefined;
+    const a = arg as { kind?: string; path?: unknown; key?: unknown; change?: { key?: unknown }; entry?: { path?: unknown } };
+    const path = a.path ?? a.entry?.path;
+    const key = a.key ?? a.change?.key;
+    if (typeof path !== 'string') return undefined;
+    const f = r.files.get(path);
+    const c = typeof key === 'string' ? f?.coverage?.changes.find((x) => x.key === key) : f?.coverage?.changes.find((x) => !isDone(x.state));
+    const b = c ? f?.blocks.get(c.key) : undefined;
+    return c && b ? { path, c, b } : undefined;
+  }
+
+  /** Opens the step that explains a change (or, for a file, one of its changes; a quick pick when several). */
+  private async openStep(arg: unknown): Promise<void> {
+    const s = this.snapshot;
+    const r = s ? this.result(s) : undefined;
+    if (!r) return;
+    const one = this.changeFrom(arg);
+    const a = arg as { kind?: string; entry?: { path?: string } } | undefined;
+    const changes = a?.kind === 'file' && a.entry?.path ? (r.files.get(a.entry.path)?.coverage?.changes ?? []) : one ? [one.c] : [];
+    const seen = new Map<string, { dir: string; anchor: string; label: string }>();
+    for (const c of changes) {
+      if (c.state === 'trivial') continue;
+      for (const x of c.by) {
+        const b = r.belonging.find((y) => y.folder === x.sidestory);
+        if (!b) continue;
+        const step = b.stepOf.get(x.anchor) ?? x.anchor;
+        seen.set(`${b.folder}\0${step}`, { dir: b.dir.toString(), anchor: step, label: this.stepName(r, b.folder, x.anchor) });
+      }
+    }
+    const list = [...seen.values()];
+    if (!list.length) {
+      vscode.window.setStatusBarMessage('No step explains this change yet', 3000);
+      return;
+    }
+    const pick = list.length === 1 ? list[0] : await vscode.window.showQuickPick(list.map((x) => ({ label: escapeIcons(x.label), x })), { title: 'Open Explaining Step' }).then((p) => p?.x);
+    if (pick) await vscode.commands.executeCommand('sidestory.openAt', { dir: pick.dir, anchor: pick.anchor, source: 'tree' });
+  }
+
+  private async copy(text: string): Promise<void> {
+    await vscode.env.clipboard.writeText(text);
+    void vscode.window.showInformationMessage(COPIED);
+  }
+
+  private baseSpec(s: Snapshot): string {
+    return s.base.spec;
+  }
+
+  // ---- what sessions use (§7, §8, §11.4) ----
+
+  /** The comparison as steps need it: URIs, sides, entries, line maps. */
+  diffContext(): DiffContext | undefined {
+    const s = this.snapshot;
+    if (!s) return undefined;
+    return {
+      snapshot: s,
+      diffUris: (e) => this.diffUris(s, e),
+      keyOf: (uri) => this.keyOf(s, uri),
+      uriFor: (k) => {
+        try {
+          if (k.side === 'base') return gitUri(this.ids, s.repo, s.mergeBase, k.path);
+          return s.mode === 'workingTree' ? this.fileUri(s, k.path) : gitUri(this.ids, s.repo, s.head.sha, k.path);
+        } catch {
+          return undefined; // an unsafe path
+        }
+      },
+      entryFor: (k) => this.entryFor(s, k),
+      lineMap: (p) => this.result(s)?.files.get(p)?.diff,
+    };
+  }
+
+  /** For sessions of sidestories with a base (§11.4): the view's comparison when the base gives its merge-base. */
+  readonly sessionDiffs: SessionDiffs = {
+    context: async (base, who) => {
+      if (!isValidBase(base)) return undefined;
+      await this.initializing;
+      const s = await this.current();
+      if (!s) return undefined;
+      const own = await this.coverage.ownMergeBase(s, base);
+      if (own !== s.mergeBase) {
+        this.coverage.want(who, false);
+        return undefined;
+      }
+      this.coverage.want(who, true);
+      return this.diffContext();
+    },
+    release: (who) => this.coverage.want(who, false),
+    onDidChange: this.diffsEmitter.event,
+  };
+
+  private entryFor(s: Snapshot, k: SideKey): ChangeEntry | undefined {
+    return k.side === 'head' ? s.entries.find((e) => e.path === k.path && e.status !== 'D') : s.entries.find((e) => (e.oldPath ?? e.path) === k.path && e.status !== 'A');
+  }
+
+  /** A document as (repo path, side) in this comparison (§8); a commit that is neither side gives nothing. */
+  keyOf(s: Snapshot, uri: vscode.Uri): SideKey | undefined {
+    if (uri.scheme === 'file') {
+      const p = relPath(s.repo, uri);
+      return p ? { path: p, side: 'head' } : undefined;
+    }
+    if (uri.scheme !== GIT_SCHEME) return undefined;
+    const g = parseGitUri(this.ids, uri);
+    if (!g || g.repo !== s.repo) return undefined;
+    if (g.sha === s.mergeBase) return { path: g.path, side: 'base' };
+    if (g.sha === s.head.sha) return { path: g.path, side: 'head' };
+    return undefined;
+  }
+
+  /** The text of a side of a path, for Mark as Trivial: the open document, the file, or the blob. */
+  private async sideText(s: Snapshot, k: SideKey): Promise<string | undefined> {
+    const uri = this.diffContext()?.uriFor(k);
+    if (!uri) return undefined;
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+    if (doc) return doc.getText();
+    try {
+      const b = await vscode.workspace.fs.readFile(uri);
+      return decodePair(b, b).old;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async markTrivialCmd(arg: unknown): Promise<void> {
+    const s = await this.current();
+    if (!s) return;
+    const r = this.result(s);
+    let target: { path: string; side: 'head' | 'base'; range: { start: number; end: number } } | undefined;
+    const one = this.changeFrom(arg);
+    if (one) {
+      const entry = r!.files.get(one.path)!.entry;
+      target = one.b.new ? { path: one.path, side: 'head', range: one.b.new } : one.b.old ? { path: entry.oldPath ?? one.path, side: 'base', range: one.b.old } : undefined;
+    } else {
+      // The editor context menu: the selection, on the side it is on.
+      const ed = vscode.window.activeTextEditor;
+      const key = ed ? this.keyOf(s, ed.document.uri) : undefined;
+      if (ed && key && !ed.selection.isEmpty) {
+        const end = ed.selection.end.character === 0 && ed.selection.end.line > ed.selection.start.line ? ed.selection.end.line : ed.selection.end.line + 1;
+        target = { path: key.path, side: key.side, range: { start: ed.selection.start.line + 1, end } };
+      }
+    }
+    if (!target) {
+      void vscode.window.showInformationMessage('Select the changed lines in the diff of this branch (or pick a change in the Changes view), then Mark as Trivial.');
+      return;
+    }
+    const text = await this.sideText(s, target);
+    if (text === undefined) return;
+    try {
+      const written = await markTrivial(s, r?.belonging ?? [], { ...target, text });
+      if (written) this.coverage.schedule(500);
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Couldn't mark it trivial: ${plainForMessage((e as Error).message)}`);
+    }
   }
 
   // ---- URIs ----
@@ -615,6 +1010,55 @@ export class ChangesView implements vscode.Disposable {
     'sidestory.changes.pickBase': () => this.pickBase(),
     'sidestory.changes.pickRepository': () => this.pickRepository(),
     'sidestory.changes.fetch': () => this.fetch(),
+    // The coverage layer (§9.6, §9.8).
+    'sidestory.changes.openChange': async (arg?: unknown) => {
+      const c = this.changeFrom(arg);
+      if (c) await this.openChange(c.path, c.c.key);
+    },
+    'sidestory.changes.nextUnexplained': () => this.moveUnexplained(1),
+    'sidestory.changes.prevUnexplained': () => this.moveUnexplained(-1),
+    'sidestory.changes.onlyUnexplained': async () => {
+      await this.memento.update(KEYS.onlyUnexplained, true);
+      setContext('sidestory.changes.onlyUnexplained', true);
+      this.render();
+    },
+    'sidestory.changes.showAll': async () => {
+      await this.memento.update(KEYS.onlyUnexplained, false);
+      setContext('sidestory.changes.onlyUnexplained', false);
+      this.render();
+    },
+    'sidestory.changes.openStep': (arg?: unknown) => this.openStep(arg),
+    'sidestory.changes.copyExplainPrompt': async () => {
+      const s = await this.current();
+      if (!s) {
+        void vscode.window.showInformationMessage('Explaining a branch needs a git repository with a base to compare with.');
+        return;
+      }
+      await this.copy(explainBranchPrompt(this.baseSpec(s)));
+      if (!this.view.visible) await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
+    },
+    'sidestory.changes.dismissExplain': async () => {
+      const s = this.snapshot;
+      if (!s) return;
+      const off = (this.memento.get<string[]>(KEYS.noSuggest) ?? []).filter((x) => typeof x === 'string');
+      await this.memento.update(KEYS.noSuggest, [this.branchKey(s), ...off].slice(0, 200));
+      this.render();
+    },
+    'sidestory.changes.copyUpdatePrompt': async () => {
+      const s = this.snapshot;
+      const b = s ? this.result(s)?.belonging[0] : undefined;
+      if (s && b) await this.copy(updatePrompt(b.folder, b.manifest.base ?? this.baseSpec(s)));
+    },
+    'sidestory.changes.copyChangePrompt': async (arg?: unknown) => {
+      const s = this.snapshot;
+      const c = this.changeFrom(arg);
+      if (!s || !c) return;
+      const b = this.result(s)?.belonging[0];
+      const entry = this.result(s)!.files.get(c.path)!.entry;
+      const file = c.b.new ? c.path : (entry.oldPath ?? c.path);
+      await this.copy(changePrompt({ sidestory: b?.folder, base: b?.manifest.base ?? this.baseSpec(s), file, lines: changeLabel(c.b), kind: changeKind(c.b) }));
+    },
+    'sidestory.changes.markTrivial': (arg?: unknown) => this.markTrivialCmd(arg),
   };
 
   private async setMode(include: boolean): Promise<void> {
@@ -818,6 +1262,8 @@ export class ChangesView implements vscode.Disposable {
 
   dispose(): void {
     clearTimeout(this.repaintTimer);
+    this.coverage.want('view', false);
+
     this.apiSubs.forEach((d) => d.dispose());
     this.comparisonSubs.forEach((d) => d.dispose());
     this.subscriptions.forEach((d) => d.dispose());

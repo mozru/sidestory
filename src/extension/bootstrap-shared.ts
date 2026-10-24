@@ -57,4 +57,17 @@ export const COMMANDS = [
   'sidestory.changes.pickBase',
   'sidestory.changes.pickRepository',
   'sidestory.changes.fetch',
+  // Release 1b: the coverage layer (§9.6, §9.8) and Explain with Sidestory (§14.4).
+  'sidestory.changes.openChange',
+  'sidestory.changes.nextUnexplained',
+  'sidestory.changes.prevUnexplained',
+  'sidestory.changes.onlyUnexplained',
+  'sidestory.changes.showAll',
+  'sidestory.changes.openStep',
+  'sidestory.changes.copyExplainPrompt',
+  'sidestory.changes.dismissExplain',
+  'sidestory.changes.copyUpdatePrompt',
+  'sidestory.changes.copyChangePrompt',
+  'sidestory.changes.markTrivial',
+  'sidestory.explainFile',
 ] as const;

@@ -18,7 +18,8 @@ import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
-import { pickAnchor, pinAnchors, reanchorToSelection } from './pin.ts';
+import { pickAnchor, pinAnchors, reanchorToSelection, type SelectionSide } from './pin.ts';
+import { ThisFileView } from './this-file.ts';
 import { PreparedTextCache } from './prepared-cache.ts';
 import type { SessionHost, SessionOptions } from './session.ts';
 import { SymbolTables } from './code-links.ts';
@@ -69,9 +70,11 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const selectionEditor = () =>
     vscode.window.activeTextEditor ?? (lastTextEditor && vscode.window.visibleTextEditors.includes(lastTextEditor) ? lastTextEditor : undefined);
 
+  /** Where a selection in a diff's virtual side is (set once the Changes view exists, §7.6). */
+  let selectionSides: SelectionSide | undefined;
   const reanchor = async (ref: ExplainerRef, anchorId: string, confirm: boolean) => {
     try {
-      await reanchorToSelection(ref, anchorId, selectionEditor(), confirm);
+      await reanchorToSelection(ref, anchorId, selectionEditor(), confirm, selectionSides);
     } catch (e) {
       log.error(`Re-anchor failed for ${ref.name}: ${(e as Error).message}`);
       void vscode.window.showErrorMessage(`Couldn't re-anchor: ${plainForMessage((e as Error).message)}`);
@@ -180,6 +183,29 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   // The Changes view (docs/CHANGES-PLAN.md §9, release 1a): the merge diff as a file navigator, no sidestory needed.
   const changes = new ChangesView(context);
   context.subscriptions.push(changes);
+  // 1b: sessions with a base use the view's comparison (§7, §8, §11.4); coverage reads the index's sidestories (§6.1).
+  host.diffs = changes.sessionDiffs;
+  changes.sidestoryDirs = () => [...index.all()].map((e) => e.ref.dir);
+  context.subscriptions.push(index.onDidChange(() => changes.coverage.schedule()));
+  selectionSides = (uri, ref) => {
+    if (uri.scheme !== 'sidestory-git') return undefined;
+    const s = changes.snapshot;
+    const k = s ? changes.keyOf(s, uri) : undefined;
+    if (!s || !k) return 'refuse';
+    const full = vscode.Uri.joinPath(s.repo.rootUri, ...k.path.split('/'));
+    const prefix = ref.root.path.replace(/\/?$/, '/');
+    return full.path.startsWith(prefix) ? { file: full.path.slice(prefix.length), side: k.side } : 'refuse';
+  };
+  // This File (§9.10), after Sidestories.
+  const thisFile = new ThisFileView(index, here, {
+    fileOf: (uri) => {
+      const p = changes.pathOf(uri);
+      const s = changes.snapshot;
+      return p && s ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
+    },
+    baseOf: (dir) => changes.coverage.result?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
+  });
+  context.subscriptions.push(thisFile, changes.coverage.onDidChange(() => thisFile.refresh()));
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
   context.subscriptions.push(view);
@@ -412,7 +438,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (!anchorId) return;
       try {
         // Run from the editor by the user, on the section they picked: no extra confirmation.
-        await reanchorToSelection(ref, anchorId, editor, false);
+        await reanchorToSelection(ref, anchorId, editor, false, selectionSides);
       } catch (e) {
         log.error(`Re-anchor failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't re-anchor: ${plainForMessage((e as Error).message)}`);
@@ -467,7 +493,9 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         void vscode.window.showErrorMessage(`Couldn't write the widget types: ${plainForMessage((e as Error).message)}`);
       }
     },
+    'sidestory.explainFile': (arg?: unknown) => thisFile.explainFile(arg),
     'sidestory.nextStep': () => target()?.navigate(1),
+
     'sidestory.prevStep': () => target()?.navigate(-1),
     ...changes.commands,
   };
@@ -480,6 +508,12 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         return { ...index.stats(), here: here.stats() };
       }),
       vscode.commands.registerCommand('sidestory._changesStats', () => ({ ...changes.stats, description: changes.view.description, message: changes.view.message })),
+      vscode.commands.registerCommand('sidestory._focus', () => [...sessions].map((s) => s.focusInfo())),
+      vscode.commands.registerCommand('sidestory._thisFile', () => thisFile.stats()),
+      vscode.commands.registerCommand('sidestory._coverage', () => {
+        const r = changes.coverage.result;
+        return r && { totals: r.totals, belonging: r.belonging.map((b) => b.folder), files: [...r.files].map(([p, f]) => [p, f.coverage?.changes.map((c) => c.state)]) };
+      }),
     );
   }
 

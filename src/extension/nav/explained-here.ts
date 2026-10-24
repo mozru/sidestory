@@ -530,6 +530,11 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     return false;
   }
 
+  /** Every resolved item of a document, any sidestory, shown in a panel or not (This File, docs/CHANGES-PLAN.md §9.10). */
+  resolvedItems(uri: vscode.Uri): readonly HereItem[] {
+    return this.results.get(uriKey(uri))?.items ?? [];
+  }
+
   /** Every item in a document (for the lens that lists them all), by start line, tightest first within a line. */
   all(uri: vscode.Uri): HereItem[] {
     const r = this.results.get(uriKey(uri));

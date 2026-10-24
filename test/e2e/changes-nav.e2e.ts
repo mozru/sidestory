@@ -6,6 +6,7 @@ import { command, inContainer } from './helpers.ts';
 import { viewAction } from './nav-helpers.ts';
 
 const REPO = '/home/workspace/chg';
+const EXPLAIN = 'Copy Prompt: Explain This Branch';
 const mac = process.platform === 'darwin';
 const NEXT = mac ? 'Control+Meta+ArrowDown' : 'Control+Alt+PageDown';
 const PREV = mac ? 'Control+Meta+ArrowUp' : 'Control+Alt+PageUp';
@@ -58,7 +59,8 @@ test('a branch with no sidestory: the container, the merge diff as compact folde
   expect(headers.slice(0, 2).map((h) => h.trim())).toEqual(['Changes', 'Sidestories']);
   const mb = inContainer(`cd ${REPO} && git merge-base main feature`).trim().slice(0, 7);
   await expect.poll(() => description(page)).toBe(`vs main @ ${mb} · 3 commits`);
-  expect(await labels(page)).toEqual(['legacy', 'sleep.ts', 'src/retry', 'backoff.ts', 'jitter.ts', 'retry.ts', 'test', 'retry.test.ts']);
+  // From release 1b, with no sidestory for the branch, the first row offers the prompt that explains it (§9.6).
+  await expect.poll(() => labels(page)).toEqual([EXPLAIN, 'legacy', 'sleep.ts', 'src/retry', 'backoff.ts', 'jitter.ts', 'retry.ts', 'test', 'retry.test.ts']);
   // Exact with numstat against the working tree (newer VS Code); counted file by file before, where a rename stays uncounted.
   await expect.poll(async () => (await rowInfo(row(page, 'src/retry'))).description).toMatch(/^3 files · \+(25 −3|23 −1 · 1 uncounted)$/);
   await expect.poll(() => rowInfo(row(page, 'retry.ts'))).toEqual({ description: '+4 −1', letter: 'M' });
@@ -77,17 +79,17 @@ test('list mode and sort by size; the filter narrows live and Clear restores', a
   await expect(row(page, 'retry.ts').locator('.label-description')).toHaveText('src/retry · +4 −1');
   await command(page, 'Sidestory: Sort Changed Files…');
   await page.locator('.quick-input-list .monaco-list-row', { hasText: 'By Size of Change' }).click();
-  await expect.poll(() => labels(page)).toEqual(['retry.test.ts', 'sleep.ts', 'jitter.ts', 'retry.ts', 'backoff.ts']);
+  await expect.poll(() => labels(page)).toEqual([EXPLAIN, 'retry.test.ts', 'sleep.ts', 'jitter.ts', 'retry.ts', 'backoff.ts']);
   await page.screenshot({ path: info.outputPath('changes-list.png') });
 
   await viewAction(page, 'Filter Changed Files', changes(page));
   await expect(page.locator('.quick-input-widget')).toContainText('Filter Changed Files');
   await page.keyboard.type('src/**/*.ts !jitter');
-  await expect.poll(() => labels(page)).toEqual(['retry.ts', 'backoff.ts']);
+  await expect.poll(() => labels(page)).toEqual([EXPLAIN, 'retry.ts', 'backoff.ts']);
   await page.keyboard.press('Enter');
   await expect(changes(page).locator('.message')).toContainText('Filtered by “src/**/*.ts !jitter”: 2 of 5 files');
   await viewAction(page, 'Clear Filter', changes(page));
-  await expect.poll(async () => (await labels(page)).length).toBe(5);
+  await expect.poll(async () => (await labels(page)).length).toBe(6);
   await viewAction(page, 'View as Tree', changes(page));
   await expect(row(page, 'src/retry')).toBeVisible();
 });
@@ -170,4 +172,15 @@ test('the base picker: a commit on the branch narrows the diff; an unknown base 
   // On main with nothing changed: the welcome says there is nothing to compare.
   gitIn('checkout -q main');
   await expect(changes(page)).toContainText("You're on the base branch", { timeout: 20_000 });
+});
+
+test('with no sidestory, the first row copies the prompt that explains the branch; Don\'t Suggest hides it (release 1b)', async ({ page }) => {
+  const first = row(page, EXPLAIN);
+  await expect(first).toBeVisible();
+  await first.click();
+  await expect(page.locator('.notifications-toasts')).toContainText('Prompt copied. Paste it into Claude Code (or your agent).');
+  await first.hover();
+  await first.locator('.actions a[aria-label="Don\'t Suggest on This Branch"]').click();
+  await expect(first).toBeHidden();
+  await expect(row(page, 'retry.ts')).toBeVisible();
 });

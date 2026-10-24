@@ -119,6 +119,14 @@ node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .sides
 
 Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-readable report.
 
+## Explaining a branch
+
+The **Changes** view lists your branch's changes against its base, like a review. When a sidestory with a `"base"` explains the branch, its row comes first with its coverage (`9 explained · 3 trivial · 0 left`), each file says how much of it is explained (`✓`, `◐ 2/3`, `○`, `– trivial`, `!` for code that changed since its step was written), and each change is a child you can open. **Next Unexplained Change** (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> on macOS) walks what is left. With no sidestory yet, **Copy Prompt: Explain This Branch** copies a prompt for Claude Code; **Copy Prompt: Explain This Change** and **Mark as Trivial…** work on one change.
+
+Steps of such a sidestory open the branch's diff at their side: added code highlighted on the right, removed code on the left, and the cursor on either side moves the panel. **This File** lists every step, in any sidestory, that covers the file you're in.
+
+Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
+
 ## Commands
 
 | Command | What it does |
@@ -127,6 +135,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | **Sidestory: Go to Step…** | Find a step by its title or blurb, in this package or across all of them, and open the sidestory there. |
 | **Sidestory: Show Sidestories for This Code** | The sidestories that explain the code under the cursor (also in the editor's context menu). |
 | **Sidestory: Show Sidestories** | Show the Sidestories view, even in a repository with none yet. |
+| **Sidestory: Explain with Sidestory** | Open the steps that explain a file, or copy a prompt to explain it (Explorer, editor and tab context menus). |
 | **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your coding agent to write a sidestory. |
 | **Sidestory: Next Step** / **Previous Step** | Move through the sidestory (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>, or <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
 | **Sidestory: Pin Anchors to the Current Code** | Record each anchor's code so sections follow it through edits and say when it changed. |
@@ -147,6 +156,9 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
+| `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
+| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** in the Changes view when no sidestory explains the branch. |
+| `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 
 ## Requirements

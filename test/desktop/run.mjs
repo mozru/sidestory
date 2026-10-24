@@ -1,7 +1,7 @@
 // Runs the extension in real desktop VS Code (Electron) on this OS, against a copy of the sample workspace:
 // once with LF line endings and once with CRLF (as a Windows checkout gives), in a folder whose path has a
 // space and non-ASCII characters. VS Code itself is downloaded to .vscode-test/ (cached).
-// Usage: node test/desktop/run.mjs [--version 1.95.0|stable] [--only lf|crlf|changes]
+// Usage: node test/desktop/run.mjs [--version 1.95.0|stable] [--only lf|crlf|changes|diffsteps]
 import { runTests } from '@vscode/test-electron';
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
@@ -87,6 +87,30 @@ if (!only || only === 'changes') {
     });
   } catch (e) {
     console.error(`desktop tests failed (changes): ${e}`);
+    failed = true;
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+// Steps in diff editors (docs/CHANGES-PLAN.md §16.4, release 1b): the fixture with --explained, trusted.
+if (!only || only === 'diffsteps') {
+  const base = mkdtempSync(join(tmpdir(), 'cx desktop ü-'));
+  const workspace = join(base, 'Explained Repo');
+  execFileSync(process.execPath, [join(root, 'test/fixtures/git-repo.mjs'), workspace, '--explained']);
+  const userData = join(base, 'user-data');
+  mkdirSync(join(userData, 'User'), { recursive: true });
+  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never' }));
+  console.log(`\n== desktop VS Code ${version}, ${process.platform}, steps in diff editors ==`);
+  try {
+    await runTests({
+      version,
+      extensionDevelopmentPath: root,
+      extensionTestsPath: join(root, 'dist-test/desktop/index.cjs'),
+      launchArgs: [workspace, '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', `--user-data-dir=${userData}`],
+      extensionTestsEnv: { CX_WORKSPACE: workspace, CX_SUITE: 'diffsteps' },
+    });
+  } catch (e) {
+    console.error(`desktop tests failed (diffsteps): ${e}`);
     failed = true;
   } finally {
     rmSync(base, { recursive: true, force: true });
