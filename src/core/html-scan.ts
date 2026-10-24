@@ -549,10 +549,6 @@ export class OutlineScanner {
     );
   }
 
-  get finished(): boolean {
-    return this.done;
-  }
-
   /** Scans for up to `budgetMs`; true once the whole page is outlined (or the backstop stopped it). */
   feed(budgetMs: number): boolean {
     if (this.done) return true;

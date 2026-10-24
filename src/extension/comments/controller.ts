@@ -66,7 +66,6 @@ export class CommentsController implements vscode.Disposable {
   /** Lines the user selected for Comment on Selection: commentable even outside steps. */
   private expandNext: string | undefined;
   private selection: { key: string; range: vscode.Range } | undefined;
-  /** Set by Ask Claude About Selection: the next new thread has only the Ask Claude button. */
 
   constructor(service: CommentService, index: SidestoryIndex, extensionUri: vscode.Uri) {
     this.service = service;

@@ -473,19 +473,6 @@ export class Git {
     return out;
   }
 
-  /** Every file under a folder at a commit (`ls-tree -r`). */
-  async lsTreeRecursive(commit: string, folder: string): Promise<Map<string, { mode: string; id: string }>> {
-    assertSha(commit);
-    if (!isSafeRepoPath(folder)) return new Map();
-    const r = await this.run(['ls-tree', '-r', '-z', '--full-tree', '--end-of-options', commit, '--', folder]);
-    const out = new Map<string, { mode: string; id: string }>();
-    for (const rec of r.stdout.toString('utf8').split('\0')) {
-      const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t(.*)$/s.exec(rec);
-      if (m && m[2] === 'blob') out.set(m[4]!, { mode: m[1]!, id: m[3]! });
-    }
-    return out;
-  }
-
   /** Types and sizes of blobs (`cat-file --batch-check`), by hex id only. Missing ones are left out. */
   async blobInfo(ids: readonly string[]): Promise<Map<string, BlobInfo>> {
     const unique = [...new Set(ids)];

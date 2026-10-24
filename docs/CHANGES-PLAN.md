@@ -608,7 +608,7 @@ A real text box in the view would need a webview view, which would lose native t
 
 ### 9.6 The coverage layer
 
-> **Superseded (§21.1):** there is no Changes view; coverage shows as file decorations, This File rows and the status bar (§21.1).
+> **Superseded as a tree (§21.1):** there is no Changes view; the coverage marks are file decorations, and the sidestory and Copy Prompt rows live in the Sidestories view's This branch group.
 
 When at least one sidestory belongs to the comparison (§6.1), the same tree gains:
 

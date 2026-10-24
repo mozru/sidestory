@@ -238,14 +238,6 @@ export class SidestoryIndex implements vscode.Disposable {
     return p ? [...p] : [e.ref.name];
   }
 
-  /** Refs on the trail: what a panel shows. */
-  primaryTrail(e: IndexEntry): [ExplainerRef, ...ExplainerRef[]] {
-    const pkg = this.packageOf(e);
-    const refs = this.trail(e).map((n) => pkg?.byName.get(n)?.ref ?? refFromDir(vscode.Uri.joinPath(e.ref.dir, '..', n)));
-    if (refs.some((r) => !r) || refs.length === 0) return [e.ref];
-    return refs as [ExplainerRef, ...ExplainerRef[]];
-  }
-
   /** "Top › Detail": the primary path's titles; long paths keep the first and the last two (≤ 200 characters). */
   pathLabel(e: IndexEntry): string {
     const pkg = this.packageOf(e);
@@ -927,11 +919,6 @@ export class SidestoryIndex implements vscode.Disposable {
       this.fileIds.set(key, id);
     }
     return id;
-  }
-
-  /** The file key of an anchor (for resolving against a document). */
-  fileKeyOf(e: IndexEntry, i: number): string {
-    return this.fileKeys[e.file[i]!]!;
   }
 
   dispose(): void {

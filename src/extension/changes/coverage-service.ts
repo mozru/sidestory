@@ -357,7 +357,7 @@ export async function computeCoverage(
   const texts = new Map<string, { entry: ChangeEntry; diff: FileDiff; texts: Texts; whole?: WholeKind }>();
   /** Sides read before the main pass (rename pairing), by entry. */
   const pre = new Map<ChangeEntry, { ob: SideBytes; nb: SideBytes }>();
-  /** A paired rename → the untracked entry of the comparison it stands for (its counts are shown there). */
+  /** Unstaged renames paired as the checker pairs them: the deleted path → the untracked path. */
   const paired = new Map<string, string>();
   let bytes = 0;
   let incomplete = unsure;
