@@ -71,10 +71,14 @@ export class CommentsPanels implements vscode.Disposable {
   }
 
   private schedule(s: CommentsSession, ms = 50) {
+    if (!this.sessions.has(s)) return; // closed: nothing may keep the session alive
     clearTimeout(this.timers.get(s));
     this.timers.set(
       s,
-      setTimeout(() => void this.refresh(s).catch((e: unknown) => this.service.report(e, 'show the comments')), ms),
+      setTimeout(() => {
+        this.timers.delete(s);
+        void this.refresh(s).catch((e: unknown) => this.service.report(e, 'show the comments'));
+      }, ms),
     );
   }
 
@@ -107,6 +111,7 @@ export class CommentsPanels implements vscode.Disposable {
       map.set(entry.thread.id, entry);
       threads.push(await this.view(entry, step, steps));
     }
+    if (!this.sessions.has(s)) return; // closed while reading
     this.views.set(s, map);
     const route = await this.service.routeFor(s.ref.root).catch(() => ({ route: undefined, eligible: [], undetected: [] }));
     const tier = vscode.workspace.getConfiguration('sidestory.comments').get<string>('defaultLocation') === 'shared' ? 'shared' : 'local';
@@ -121,7 +126,7 @@ export class CommentsPanels implements vscode.Disposable {
     };
     // Skip a post that would change nothing (the backstop polls while a send is in flight).
     const json = JSON.stringify({ threads, context });
-    if (this.lastSent.get(s) === json) return;
+    if (!this.sessions.has(s) || this.lastSent.get(s) === json) return;
     if (s.postMessage({ type: 'threads', dir: s.ref.dir.toString(), threads, context })) this.lastSent.set(s, json);
   }
 
