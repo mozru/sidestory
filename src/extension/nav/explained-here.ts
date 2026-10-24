@@ -25,7 +25,12 @@ export const HERE_LIMITS = {
   cursorDelayMs: 100,
   sliceMs: 15,
   statusChars: 60,
+  /** Past this many changes in one edit event, hints aren't tracked: the re-resolve places the lenses. */
+  trackedChanges: 100,
 } as const;
+
+/** "Show Sidestories for This Code" with nothing to show (worded as the command's "explain"). */
+export const NO_SIDESTORY_HERE = 'No sidestory explains this code.';
 
 /** One anchor's place in one document. */
 export interface HereItem {
@@ -213,9 +218,10 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       out.push(new vscode.CodeLens(range, command));
     }
     if (lines.length > HERE_LIMITS.lensLines) {
-      const rest = new Set(lines.slice(HERE_LIMITS.lensLines).flatMap((l) => byLine.get(l)!.map((it) => this.stepKey(it)))).size;
       const line = lines[HERE_LIMITS.lensLines]!;
-      const title = `$(book) +${rest} more sidestory step${rest === 1 ? '' : 's'} in this file`;
+      // It lists every step in the file, so it counts them all, not just those past the cut.
+      const all = new Set(lines.flatMap((l) => byLine.get(l)!.map((it) => this.stepKey(it)))).size;
+      const title = `$(book) All ${all} sidestory step${all === 1 ? '' : 's'} in this file`;
       out.push(new vscode.CodeLens(new vscode.Range(line, 0, line, 0), { title, command: 'sidestory.showHere', arguments: [{ uri: doc.uri.toString(), all: true }] }));
     }
     return out;
@@ -239,7 +245,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
 
   /** Identifies an item's (sidestory, step): nested anchors fold into their step. */
   stepKey(it: HereItem): string {
-    return `${it.entry.key}\u0000${this.openArgs(it, '').anchor}`;
+    return `${it.entry.key}\u0000${anchorOf(it)}`;
   }
 
   /** Items of a document whose step keys are given (what an "and N more" lens counted), in that order. */
@@ -255,10 +261,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
   }
 
   openArgs(it: HereItem, source: string): { dir: string; anchor: string; trail: string[]; source: string } {
-    const step = it.entry.outlined ? it.entry.stepOf[it.index]! : -1;
-    // Nested anchors fold into their step: open at the step, as the panel's navigator would.
-    const anchor = step >= 0 ? it.entry.steps[step]!.id : it.id;
-    return { dir: it.entry.ref.dir.toString(), anchor, trail: this.index.primaryPath(it.entry), source };
+    return { dir: it.entry.ref.dir.toString(), anchor: anchorOf(it), trail: this.index.trail(it.entry), source };
   }
 
   // ---- resolving ----
@@ -300,10 +303,12 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const version = doc.version;
     const gen = this.gen;
     const slots = this.index.anchorsIn(key);
-    // The index replaces an entry's arrays when it re-reads it: work on old ones stops at the next check.
-    const versions = new Map(slots.map((s) => [s.entry, s.entry.version]));
+    // The index replaces an entry's arrays when it re-reads it (and then fires onDidChange, which resolves again):
+    // work on old ones stops at the next check. Not `version`: it is bumped by every event, also when the re-read
+    // finds nothing changed, and no change event then follows to restart the work.
+    const arrays = new Map(slots.map((s) => [s.entry, { ids: s.entry.ids, file: s.entry.file }]));
     const entriesSame = () => {
-      for (const [e, v] of versions) if (e.version !== v) return false;
+      for (const [e, a] of arrays) if (e.ids !== a.ids || e.file !== a.file) return false;
       return true;
     };
     const current = () => !this.disposed && !doc.isClosed && this.seq.get(key) === seq && doc.version === version && this.gen === gen && entriesSame();
@@ -445,10 +450,16 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     if (!r) return;
     // Work in flight is now on old text.
     this.seq.set(key, (this.seq.get(key) ?? 0) + 1);
-    const tails = endTails(e.document, e.contentChanges);
-    const changes = [...e.contentChanges].sort((x, y) => y.range.start.compareTo(x.range.start));
+    // A huge multi-edit (replace all): tracking every hint through every change costs more than resolving again.
+    const many = e.contentChanges.length > HERE_LIMITS.trackedChanges;
+    const tails = many ? new Map() : endTails(e.document, e.contentChanges);
+    const changes = many ? [] : [...e.contentChanges].sort((x, y) => y.range.start.compareTo(x.range.start));
     for (const it of r.items) {
       if (!it.hint) continue;
+      if (many) {
+        it.hint = undefined;
+        continue;
+      }
       let hint = it.hint;
       for (const c of changes) {
         const t = trackRange(hint, {
@@ -472,7 +483,16 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
 
   private onSelection(editor: vscode.TextEditor): void {
     if (editor.document.uri.scheme !== 'file') return;
+    // The context key now (a right-click follows the click that moved the cursor); the status bar after a pause.
+    if (editor === vscode.window.activeTextEditor) this.setCovered(this.covering(editor.document.uri, editor.selection.active.line + 1).length > 0);
     this.scheduleStatus();
+  }
+
+  /** `sidestory.coveredHere`, for "Show Sidestories for This Code" in the editor context menu. */
+  private setCovered(anyHere: boolean): void {
+    if (anyHere === this.coveredKey) return;
+    this.coveredKey = anyHere;
+    void vscode.commands.executeCommand('setContext', 'sidestory.coveredHere', anyHere);
   }
 
   private scheduleStatus(): void {
@@ -508,10 +528,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const on = vscode.workspace.getConfiguration('sidestory').get<boolean>('statusBar.enabled', true);
     const line = editor ? editor.selection.active.line + 1 : 0;
     const anyHere = editor && editor.document.uri.scheme === 'file' ? this.covering(editor.document.uri, line).length > 0 : false;
-    if (anyHere !== this.coveredKey) {
-      this.coveredKey = anyHere;
-      void vscode.commands.executeCommand('setContext', 'sidestory.coveredHere', anyHere);
-    }
+    this.setCovered(anyHere);
     if (!on) {
       this.status?.dispose();
       this.status = undefined;
@@ -611,6 +628,12 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     this.results.clear();
     this.queue.length = 0;
   }
+}
+
+/** The anchor an item opens at: nested anchors fold into their step, as the panel's navigator would. */
+function anchorOf(it: HereItem): string {
+  const step = it.entry.outlined ? it.entry.stepOf[it.index]! : -1;
+  return step >= 0 ? it.entry.steps[step]!.id : it.id;
 }
 
 function uniqueSteps(list: HereItem[], key: (it: HereItem) => string): HereItem[] {

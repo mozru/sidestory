@@ -2,7 +2,7 @@
 // date or lost. Only for nodes being shown, one sidestory at a time, within byte budgets, and paused while the
 // reader types. Computed as a fresh open would see it (no hints).
 import * as vscode from 'vscode';
-import { parseManifest } from '../../core/manifest.ts';
+import { parseManifest, type Anchor } from '../../core/manifest.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
 import { manifestUri, MAX_MANIFEST_BYTES, readInside, uriKey } from '../explainers.ts';
@@ -61,6 +61,10 @@ export class DriftQueue implements vscode.Disposable {
         this.invalidateFile(uriKey(e.document.uri));
       }),
       vscode.workspace.onDidSaveTextDocument((d) => this.invalidateFile(uriKey(d.uri))),
+      // Closed without saving: the file on disk counts again.
+      vscode.workspace.onDidCloseTextDocument((d) => {
+        if (d.uri.scheme === 'file') this.invalidateFile(uriKey(d.uri));
+      }),
       index.onDidChange(() => {
         // A manifest change shows up as a new stamp; nothing else to do.
       }),
@@ -161,18 +165,28 @@ export class DriftQueue implements vscode.Disposable {
     if (!mStat) return undefined;
     // Files' stamps: reuse the cached result while they all still match.
     const files = new Map<string, vscode.Uri>();
+    const byFile = new Map<string, Anchor[]>();
     const text = await readInside(mUri, e.ref.root, MAX_MANIFEST_BYTES);
     if (text === undefined || e.version !== version) return undefined;
     this.note(text.length);
     const parsed = parseManifest(text);
     if (!parsed.ok) return { stamp: `${e.manifestStamp}|`, drift: { outOfDate: 0, lost: 0, unchecked: 0 } };
-    for (const a of parsed.manifest.anchors.values()) files.set(a.file, vscode.Uri.joinPath(e.ref.root, a.file));
-    const stats = new Map<string, { mtime: number; size: number } | undefined>();
+    // Anchors grouped by file once.
+    for (const a of parsed.manifest.anchors.values()) {
+      const list = byFile.get(a.file);
+      if (list) list.push(a);
+      else {
+        byFile.set(a.file, [a]);
+        files.set(a.file, vscode.Uri.joinPath(e.ref.root, a.file));
+      }
+    }
+    const stats = new Map<string, FileStamp | undefined>();
     for (const [f, u] of files) {
       const s = await stat(u);
-      // An open document is read from its buffer: its version is part of the stamp, so unsaved edits count.
+      // An open document is read from its buffer: its size (for the byte budget) is the buffer's, and its version
+      // is part of the stamp, so unsaved edits count.
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === u.toString());
-      stats.set(f, s && doc?.isDirty ? { mtime: s.mtime, size: -doc.version } : s);
+      stats.set(f, s && doc?.isDirty ? { mtime: s.mtime, size: Buffer.byteLength(doc.getText()), version: doc.version } : s);
     }
     // Kept short: the manifest's stamp and a hash of every anchored file's path and stat (a manifest can name
     // hundreds of long paths, and the cache holds 2,000 entries).
@@ -183,7 +197,7 @@ export class DriftQueue implements vscode.Disposable {
     let bytes = 0;
     let slice = Date.now();
     for (const [f, u] of files) {
-      const anchors = [...parsed.manifest.anchors.values()].filter((a) => a.file === f);
+      const anchors = byFile.get(f)!;
       const s = stats.get(f);
       if (!s) {
         drift.lost += anchors.length;
@@ -241,7 +255,14 @@ export class DriftQueue implements vscode.Disposable {
   }
 }
 
-function hashStats(stats: Map<string, { mtime: number; size: number } | undefined>): string {
+/** A file's stat; `version` is an open, unsaved document's. */
+interface FileStamp {
+  mtime: number;
+  size: number;
+  version?: number;
+}
+
+function hashStats(stats: Map<string, FileStamp | undefined>): string {
   let h = 0x811c9dc5;
   const mix = (s: string) => {
     for (let i = 0; i < s.length; i++) {
@@ -249,7 +270,7 @@ function hashStats(stats: Map<string, { mtime: number; size: number } | undefine
       h = Math.imul(h, 0x01000193);
     }
   };
-  for (const [f, s] of stats) mix(`${f}\u0000${s ? `${s.mtime}:${s.size}` : '-'}\u0000`);
+  for (const [f, s] of stats) mix(`${f}\u0000${s ? `${s.mtime}:${s.size}${s.version !== undefined ? `:d${s.version}` : ''}` : '-'}\u0000`);
   return `${stats.size}:${(h >>> 0).toString(36)}`;
 }
 

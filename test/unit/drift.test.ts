@@ -119,6 +119,20 @@ describe('drift', () => {
     await waitFor(() => drift.peek(entry('b').key)?.lost === 1);
   });
 
+  it('an unsaved document counts at its real size, and closing it without saving counts the file again', async () => {
+    write(join(root, 'g.ts'), code(50));
+    story(root, '', 'c', { anchors: { x: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' }, y: { file: 'g.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    drifts.perSidestoryBytes = 400;
+    await start();
+    const doc = { uri: Uri.file(join(root, 'g.ts')), isDirty: true, version: 7, getText: () => code(50) };
+    workspace.textDocuments = [doc as never];
+    // Past the per-sidestory budget as the buffer is (a size made from the version alone slipped past it).
+    expect(await driftOf('c')).toEqual({ outOfDate: 0, lost: 0, unchecked: 1 });
+    workspace.textDocuments = [];
+    events.documentClosed.fire(doc);
+    expect(drift.get(entry('c'))).toBeUndefined(); // dirty: recomputed from the file
+  });
+
   it('prefers the live states of a sidestory open in a panel', async () => {
     await start();
     drift.live = (k) => (k === entry('b').key ? { outOfDate: 7, lost: 0, unchecked: 0 } : undefined);

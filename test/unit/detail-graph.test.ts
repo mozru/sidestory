@@ -180,11 +180,24 @@ describe('detail graph', () => {
     expect(ms).toBeLessThan(50 * 3);
     const c = buildDetailGraph(chain);
     expect(c.tops).toEqual(['c0']);
-    // Cut to the last 16 names (the trail limit), walked on demand: no path per node is kept.
-    expect(c.primaryPath('c4999')).toEqual(Array.from({ length: 16 }, (_, i) => `c${4984 + i}`));
+    // Anchored at the top and cut to 16 names, walked on demand from a kept ancestor: no path per node is kept,
+    // and a deep node costs no more than a shallow one.
+    expect(c.primaryPath('c4999')).toEqual(Array.from({ length: 16 }, (_, i) => `c${i}`));
+    expect(c.primaryPath('c4999', 17)).toEqual(Array.from({ length: 17 }, (_, i) => `c${i}`));
     expect(c.primaryPath('c4999', 5000)).toHaveLength(5000);
+    expect(c.primaryPath('c4999', 5000)!.at(-1)).toBe('c4999');
+    expect(c.primaryPath('c10')).toEqual(Array.from({ length: 11 }, (_, i) => `c${i}`));
+    expect(c.pathLength('c4999')).toBe(5000);
+    // The trail: the last 16 names, ending at the node.
+    expect(c.trailTo('c4999')).toEqual(Array.from({ length: 16 }, (_, i) => `c${4984 + i}`));
+    expect(c.trailTo('c3')).toEqual(['c0', 'c1', 'c2', 'c3']);
+    const MAX_TRAIL_PLUS_ONE = 17;
     const t1 = performance.now();
-    for (const x of chain) c.primaryPath(x.name);
+    for (const x of chain) {
+      c.primaryPath(x.name);
+      c.primaryPath(x.name, MAX_TRAIL_PLUS_ONE);
+      c.trailTo(x.name);
+    }
     expect(performance.now() - t1).toBeLessThan(200);
   });
 });

@@ -1,15 +1,15 @@
 // Open Sidestory and Go to Step (docs/NAVIGATION-PLAN.md §9, §10, §12.1).
-import { rmSync } from 'node:fs';
+import { rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { code, story, tempRoot, waitFor, write } from './nav-fixtures.ts';
-import { quickPicks, type StubQuickPick, Uri, workspace } from './vscode-stub.ts';
+import { info, quickPicks, type StubQuickPick, Uri, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
 const { SidestoryIndex, INDEX_LIMITS } = await import('../../src/extension/nav/index.ts');
 const { SidestoryWatcher } = await import('../../src/extension/nav/watcher.ts');
-const { goToStep, pickSidestory, treeOrder, PICK_LIMITS, SCOPE_KEY } = await import('../../src/extension/nav/pickers.ts');
+const { goToStep, pickSidestory, treeOrder, NO_SIDESTORIES, PICK_LIMITS, SCOPE_KEY } = await import('../../src/extension/nav/pickers.ts');
 const { uriKey } = await import('../../src/extension/explainers.ts');
 
 const limits = INDEX_LIMITS as unknown as Record<string, number>;
@@ -137,7 +137,20 @@ describe('Open Sidestory', () => {
     expect((await pickSidestory(index, []))?.ref.name).toBe('one');
     rmSync(join(root, '.sidestory'), { recursive: true });
     await index.refresh();
+    info.length = 0;
     expect(await pickSidestory(index, [])).toBeUndefined();
+    expect(info).toEqual([{ message: NO_SIDESTORIES, buttons: ['Show Sidestories', 'Read the Guide', 'Copy a Prompt for Your Agent'] }]);
+  });
+
+  it('skips recently opened strings that aren’t URIs', async () => {
+    workspaceWithTwoPackages();
+    await start();
+    await run(
+      () => pickSidestory(index, ['%%not a uri', 'http://[bad', dirStr('', 'd2')]),
+      (qp) => {
+        expect(qp.items[1]!.label).toBe('Overview › D2');
+      },
+    );
   });
 });
 
@@ -203,7 +216,9 @@ describe('Go to Step', () => {
       () => goToStep(index, { recent: [], memento: memento as never }),
       (qp) => {
         expect(qp.items).toHaveLength(3);
-        expect(qp.placeholder).toBe('Showing 3 of 8 steps; narrow with This package');
+        // No package is known, so there's no toggle to point at.
+        expect(qp.buttons).toEqual([]);
+        expect(qp.placeholder).toBe('Showing 3 of 8 steps');
       },
     );
     await run(
@@ -240,6 +255,36 @@ describe('Go to Step', () => {
         expect(qp.buttons).toEqual([]);
       },
     );
+  });
+
+  it('with no sidestories, says so as Open Sidestory does, instead of an empty list', async () => {
+    await start();
+    expect(index.state).toBe('empty');
+    info.length = 0;
+    quickPicks.length = 0;
+    expect(await goToStep(index, { recent: [], memento: memento as never })).toBeUndefined();
+    expect(quickPicks).toHaveLength(0);
+    expect(info).toEqual([{ message: NO_SIDESTORIES, buttons: ['Show Sidestories', 'Read the Guide', 'Copy a Prompt for Your Agent'] }]);
+  });
+
+  it('isn’t busy for ever because of a manifest that can’t be read', async () => {
+    const outside = tempRoot('cx-outside-');
+    try {
+      write(join(outside, 'manifest.json'), '{}');
+      workspaceWithTwoPackages();
+      rmSync(join(root, '.sidestory', 'lone', 'manifest.json'));
+      symlinkSync(join(outside, 'manifest.json'), join(root, '.sidestory', 'lone', 'manifest.json'));
+      await start();
+      await run(
+        () => goToStep(index, { recent: [], memento: memento as never }),
+        (qp) => {
+          expect(qp.busy).toBe(false);
+          expect(qp.items.length).toBeGreaterThan(0);
+        },
+      );
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('shows anchor ids as provisional items before a page is outlined', async () => {

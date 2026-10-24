@@ -158,10 +158,10 @@ The **Sidestories** view (the Sidestory icon in the activity bar, shown once a w
 - **Packages.** Each `.sidestory/` folder is a package: `services/auth/.sidestory/` and `services/billing/.sidestory/` are listed apart, and each one's anchor paths are relative to the folder that holds it. Detail links stay inside one `.sidestory/` folder. A `.sidestory/` inside another sidestory is ignored.
 - **Start here.** In each package, a sidestory named `overview`, else the only one named `*-overview`, else the only top-level sidestory with details, is pinned first.
 - **Tops and details.** A sidestory nothing links to is listed at the top level, with the details it links to nested under it in the order the page links them. A detail linked from several places appears under each. Use `group` to file top-level sidestories in folders, or `top: true` to keep a linked sidestory at the top level.
-- **Filter** (the funnel in the view's title bar) matches titles, names, summaries and groups, and shows each match once, under the first path that leads to it.
+- **Filter** (the funnel in the view's title bar) matches titles, names, summaries and groups, and shows each match once, under its shortest path from a top-level sidestory.
 - **Explained here.** A CodeLens above code that a sidestory explains names it and its step ("Overview › Detail · step 3: Title"); click it to open the sidestory there. The status bar names the sidestory for the cursor's line. **Go to Step…** finds a step by its title in the current package or all of them.
 
-Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel showing the same overview, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
+Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel you were last reading, if it's under the same overview, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](https://github.com/mozru/sidestory/blob/main/examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.
 

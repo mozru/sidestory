@@ -3,7 +3,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { code, story, tempRoot, waitFor, write } from './nav-fixtures.ts';
-import { config, events, executed, Range, StatusBarAlignment, statusItems, Uri, window, workspace } from './vscode-stub.ts';
+import { config, events, executed, Range, StatusBarAlignment, statusItems, Uri, watchers, window, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -208,6 +208,29 @@ describe('CodeLens', () => {
     expect(await lensesOf(d)).toHaveLength(1);
   });
 
+  it('a resolve running when the index re-reads a sidestory and finds it unchanged still lands', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    await start();
+    const real = index.quotesFor.bind(index);
+    index.quotesFor = async (...args) => {
+      await new Promise((r) => setTimeout(r, 200));
+      return real(...args);
+    };
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    let fired = 0;
+    here.onDidChangeCodeLenses(() => fired++);
+    const changes: unknown[] = [];
+    index.onDidChange((ev) => changes.push(ev));
+    expect(await here.provideCodeLenses(d as never, token as never)).toEqual([]);
+    // A watcher event for the manifest (an editor touching it): the entry's version moves, but the re-read finds the
+    // same stamps, so the index says nothing changed and nobody asks for a new resolve.
+    watchers.find((x) => x.pattern === '**/.sidestory/**')!.fireChange(Uri.file(join(root, '.sidestory', 'a', 'manifest.json')));
+    await waitFor(() => fired > 0, 3000);
+    expect(changes).toHaveLength(0);
+    expect(await here.provideCodeLenses(d as never, token as never)).toHaveLength(1);
+  });
+
   it('a resolve still running for an old version is followed by one for the new version', async () => {
     story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
     await start();
@@ -226,7 +249,7 @@ describe('CodeLens', () => {
     expect(lenses.map((l) => l.line)).toEqual([5]);
   });
 
-  it('shows 30 lenses, then one “+N more” on the next covered line', async () => {
+  it('shows 30 lenses, then one “All N sidestory steps” lens on the next covered line', async () => {
     const anchors: Record<string, { file: string; range: [number, number] }> = {};
     for (let i = 0; i < 40; i++) anchors[`a${i}`] = { file: 'f.ts', range: [i * 4 + 1, i * 4 + 2] };
     story(root, '', 'many', { title: 'Many', anchors });
@@ -235,7 +258,7 @@ describe('CodeLens', () => {
     show(d);
     const lenses = await lensesOf(d);
     expect(lenses).toHaveLength(HERE_LIMITS.lensLines + 1);
-    expect(lenses.at(-1)).toMatchObject({ line: 120, title: '$(book) +10 more sidestory steps in this file', command: 'sidestory.showHere', args: { uri: d.uri.toString(), all: true } });
+    expect(lenses.at(-1)).toMatchObject({ line: 120, title: '$(book) All 40 sidestory steps in this file', command: 'sidestory.showHere', args: { uri: d.uri.toString(), all: true } });
   });
 
   it('shows nothing for lost anchors, and says when code changed a lot', async () => {
@@ -342,6 +365,21 @@ describe('the status bar item', () => {
     expect(executed.some((c) => c[0] === 'setContext' && c[1] === 'sidestory.coveredHere' && c[2] === true)).toBe(true);
   });
 
+  it('sets sidestory.coveredHere as the cursor moves, without waiting (the context menu reads it next)', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 9] } } });
+    await start();
+    const d = doc(join(root, 'f.ts'));
+    show(d);
+    await lensesOf(d);
+    const covered = () => executed.filter((c) => c[0] === 'setContext' && c[1] === 'sidestory.coveredHere').at(-1)?.[2];
+    show(d, 6);
+    events.selectionChanged.fire({ textEditor: window.activeTextEditor });
+    expect(covered()).toBe(true); // synchronously
+    show(d, 0);
+    events.selectionChanged.fire({ textEditor: window.activeTextEditor });
+    expect(covered()).toBe(false);
+  });
+
   it('skips sidestories a visible panel shows, and the details it already offers', async () => {
     story(root, '', 'top', { title: 'Top', anchors: { t1: { file: 'f.ts', range: [1, 50] } }, details: ['det'] });
     story(root, '', 'det', { title: 'Det', anchors: { d1: { file: 'f.ts', range: [5, 9] } } });
@@ -393,6 +431,10 @@ describe('edits', () => {
       events.documentChanged.fire({ document: d, contentChanges: [{ range: new Range(0, 0, 0, 0), text: 'x', rangeOffset: 0, rangeLength: 0 }] });
     }
     const per = (performance.now() - t0) / n;
+    // A huge multi-edit doesn't track hints through every change: the re-resolve places the lenses.
+    const many = Array.from({ length: HERE_LIMITS.trackedChanges + 1 }, (_, i) => ({ range: new Range(i, 0, i, 0), text: 'y', rangeOffset: 0, rangeLength: 0 }));
+    events.documentChanged.fire({ document: d, contentChanges: many });
+    expect(items.every((it) => it.hint === undefined)).toBe(true);
     console.log(`keystroke fan-in, 2,000 anchors: ${per.toFixed(3)} ms per event`);
     expect(per).toBeLessThan(6);
   });

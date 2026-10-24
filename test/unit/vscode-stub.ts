@@ -154,6 +154,8 @@ export const extensions = {
   getExtension: (id: string) => (id === 'vscode.git' && extensions.git ? { isActive: true, exports: { getAPI: () => extensions.git } } : undefined),
 };
 /** What modal questions answer (the button to "click"), set by the test; and the questions asked. */
+/** Every non-modal information message, with its buttons. */
+export const info: { message: string; buttons: string[] }[] = [];
 export const modal = { answer: undefined as string | undefined, asked: [] as string[], details: [] as string[], buttons: [] as string[][] };
 
 /** Settings by full key (`sidestory.codeLens.enabled`, `files.exclude`), set by the test. */
@@ -371,7 +373,10 @@ export const window = {
   tabGroups: { all: [] as unknown[] },
   activeColorTheme: { kind: ColorThemeKind.Dark },
   createOutputChannel: () => ({ info() {}, warn() {}, error() {}, dispose() {} }),
-  showInformationMessage: async () => undefined,
+  showInformationMessage: async (message: string, ...buttons: unknown[]) => {
+    info.push({ message, buttons: buttons.filter((b): b is string => typeof b === 'string') });
+    return undefined;
+  },
   showWarningMessage: async (message: string, ...rest: unknown[]) => {
     const opts = rest[0] as { modal?: boolean; detail?: string } | undefined;
     if (!opts?.modal) return undefined;

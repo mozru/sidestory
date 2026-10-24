@@ -48,6 +48,32 @@ export function treeOrder(index: SidestoryIndex): IndexEntry[] {
   return out;
 }
 
+/** The empty state of Open Sidestory and Go to Step, worded as the Sidestories view's welcome. */
+async function noSidestories(): Promise<void> {
+  const show = 'Show Sidestories';
+  const guide = 'Read the Guide';
+  const prompt = 'Copy a Prompt for Your Agent';
+  const choice = await vscode.window.showInformationMessage(NO_SIDESTORIES, show, guide, prompt);
+  if (choice === show) void vscode.commands.executeCommand('sidestory.showSidestories');
+  if (choice === guide) void vscode.env.openExternal(vscode.Uri.parse(GUIDE_URL));
+  if (choice === prompt) void vscode.commands.executeCommand('sidestory.copyAgentPrompt');
+}
+
+export const NO_SIDESTORIES = 'No sidestories in this workspace yet. A sidestory is a folder in .sidestory/ with a page and a manifest.json, shown beside the code and linked to it.';
+
+/** Recently opened folder URI strings (from the memento) as index keys; anything that isn't a URI is skipped. */
+function recentKeysOf(recent: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const d of recent) {
+    try {
+      out.push(uriKey(vscode.Uri.parse(d)));
+    } catch {
+      // not a URI
+    }
+  }
+  return out;
+}
+
 interface SidestoryItem extends vscode.QuickPickItem {
   entry?: IndexEntry;
 }
@@ -55,11 +81,7 @@ interface SidestoryItem extends vscode.QuickPickItem {
 /** "Sidestory: Open Sidestory…": recent first, then everything in tree order; each sidestory once. */
 export async function pickSidestory(index: SidestoryIndex, recent: readonly string[]): Promise<IndexEntry | undefined> {
   if (index.state !== 'loading' && index.size === 0) {
-    const show = 'Show Sidestories';
-    const guide = 'Read the Guide';
-    const choice = await vscode.window.showInformationMessage('No sidestories found. A sidestory is a folder like .sidestory/<name>/ with a page and a manifest.json.', show, guide);
-    if (choice === show) void vscode.commands.executeCommand('sidestory.showSidestories');
-    if (choice === guide) void vscode.env.openExternal(vscode.Uri.parse(GUIDE_URL));
+    await noSidestories();
     return undefined;
   }
   if (index.state !== 'loading' && index.size === 1) return index.all().next().value;
@@ -70,7 +92,7 @@ export async function pickSidestory(index: SidestoryIndex, recent: readonly stri
   const build = () => {
     const active = qp.activeItems[0]?.entry?.key;
     const all = treeOrder(index);
-    const recentKeys = recent.map((d) => uriKey(vscode.Uri.parse(d)));
+    const recentKeys = recentKeysOf(recent);
     const byKey = new Map(all.map((e) => [e.key, e]));
     const items: SidestoryItem[] = [];
     const recentEntries = recentKeys.map((k) => byKey.get(k)).filter((e): e is IndexEntry => !!e);
@@ -111,7 +133,7 @@ function sidestoryItem(index: SidestoryIndex, e: IndexEntry): SidestoryItem {
   const pkg = index.packageOf(e);
   const parents = pkg?.graph.parents(e.ref.name).length ?? 0;
   // Places other than its primary path: every parent when it is listed at the top level, else the others.
-  const others = index.primaryPath(e).length === 1 ? parents : parents - 1;
+  const others = index.primaryPath(e, 2).length === 1 ? parents : parents - 1;
   // Folder names are repository text too (on Linux they can hold newlines and bidi controls).
   const where = displayText(`${vscode.workspace.asRelativePath(pkg?.folder ?? e.ref.dir, (vscode.workspace.workspaceFolders?.length ?? 0) > 1)}/${e.ref.name}`, 200);
   return {
@@ -141,6 +163,10 @@ export interface GoToStepContext {
 
 /** "Sidestory: Go to Step…": one item per step, scoped to this package or all (§9). */
 export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Promise<{ entry: IndexEntry; step: string } | undefined> {
+  if (!ctx.only && index.state !== 'loading' && index.size === 0) {
+    await noSidestories();
+    return undefined;
+  }
   const qp = vscode.window.createQuickPick<StepItem>();
   qp.matchOnDescription = true;
   qp.matchOnDetail = true;
@@ -169,7 +195,7 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
       total = entries.reduce((n, e) => n + (e.outlined ? e.steps.length : e.ids.length), 0);
     }
     // The current panel's sidestory first, then recent ones, then the rest.
-    const recentKeys = ctx.recent.map((d) => uriKey(vscode.Uri.parse(d)));
+    const recentKeys = recentKeysOf(ctx.recent);
     const rank = (e: IndexEntry) => (e === ctx.current ? -1 : recentKeys.indexOf(e.key) >= 0 ? recentKeys.indexOf(e.key) : Number.MAX_SAFE_INTEGER);
     const ordered = entries.map((e, i) => ({ e, i })).sort((a, b) => rank(a.e) - rank(b.e) || a.i - b.i).map((x) => x.e);
     const items: StepItem[] = [];
@@ -183,7 +209,8 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
           }
         });
       } else {
-        // Not outlined yet: anchor ids stand in, replaced when the outline arrives.
+        // Not outlined yet: anchor ids stand in, replaced when the outline arrives (every read ends outlined, even
+        // of a broken manifest or page, so this doesn't spin forever).
         busy = true;
         for (const id of e.ids) if (items.length < PICK_LIMITS.steps) items.push({ label: id, description: escapeIcons(label), entry: e, step: id });
       }
@@ -197,13 +224,15 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
     const scopeName = effective === 'one' && ctx.only ? escapeIcons(index.name(ctx.only)) : effective === 'package' ? [...pkgs].map((k) => index.packageByKey(k)?.label ?? '').filter(Boolean).map(escapeIcons).join(', ') || 'This package' : 'All packages';
     // One package: the scope needs no name.
     qp.title = !multi && !ctx.only ? 'Go to Step' : `Go to Step: ${scopeName}`;
+    // The toggle only when it can change something: several packages, one of them current, and no forced scope.
+    const toggle = !(ctx.only || !multi || !pkgs.size || forced);
+    qp.buttons = toggle ? [effective === 'package' ? { iconPath: new vscode.ThemeIcon('filter-filled'), tooltip: 'Show all packages' } : { iconPath: new vscode.ThemeIcon('filter'), tooltip: 'Show this package only' }] : [];
     qp.placeholder = forced
       ? `All packages have more than ${PICK_LIMITS.steps.toLocaleString('en-US')} steps: showing this package`
       : total > items.length
-        ? `Showing ${items.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} steps; narrow with This package`
+        ? // Past the cap with the toggle shown, This package is already forced: nothing narrower is left to offer.
+          `Showing ${items.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} steps`
         : 'Type to find a step';
-    // The toggle only when it can change something: several packages, one of them current, and no forced scope.
-    qp.buttons = ctx.only || !multi || !pkgs.size || forced ? [] : [effective === 'package' ? { iconPath: new vscode.ThemeIcon('filter-filled'), tooltip: 'Show all packages' } : { iconPath: new vscode.ThemeIcon('filter'), tooltip: 'Show this package only' }];
   };
   build();
   const subs = [

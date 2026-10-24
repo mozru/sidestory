@@ -75,7 +75,54 @@ describe('the Sidestories tree', () => {
     expect((node as { kind: string }).kind).toBe('leaf');
     const cmd = tree.getTreeItem(node).command as unknown as { arguments: [{ trail: string[] }] };
     const e = (node as { entry: Parameters<typeof index.primaryPath>[0] }).entry;
-    expect(cmd.arguments[0].trail).toEqual(index.primaryPath(e));
+    expect(cmd.arguments[0].trail).toEqual(index.trail(e));
+    expect(cmd.arguments[0].trail).toEqual(names.slice(1, 17));
     expect(cmd.arguments[0].trail.at(-1)).toBe(e.ref.name);
+  });
+
+  it('the filter shows a match nested too deep: at the depth cap, down its path from the top', async () => {
+    const names = Array.from({ length: 19 }, (_, i) => `n${i}`);
+    names.forEach((n, i) => story(root, '', n, { title: `Title ${n}`, details: i + 1 < names.length ? [names[i + 1]!] : [] }));
+    const { tree } = await build();
+    for (const [q, last] of [
+      ['n16', 'n16'], // its own place: the leaf at the cap
+      ['n18', 'n16'], // deeper: the path down to the cap
+    ] as const) {
+      tree.setFilter(q);
+      let node = tree.getChildren()[0]!;
+      expect(label(tree, node)).toBe('Title n0');
+      for (let depth = 1; depth < 17; depth++) {
+        const kids = tree.getChildren(node);
+        expect(kids, `${q} at depth ${depth}`).toHaveLength(1);
+        node = kids[0]!;
+      }
+      expect((node as { kind: string }).kind).toBe('leaf');
+      expect(label(tree, node)).toBe(`Title ${last}`);
+    }
+  });
+
+  it('reveals a sidestory nested too deep at the leaf the tree lists', async () => {
+    const names = Array.from({ length: 19 }, (_, i) => `n${i}`);
+    names.forEach((n, i) => story(root, '', n, { title: n, details: i + 1 < names.length ? [names[i + 1]!] : [] }));
+    const { tree, index } = await build();
+    const e = [...index.all()].find((x) => x.ref.name === 'n18')!;
+    // A session whose trail isn't a path from a top (the panel's trail was cut): the primary path is used.
+    const node = tree.nodeFor({ ref: e.ref, trailRefs: [e.ref] } as never)!;
+    expect((node as { kind: string }).kind).toBe('leaf');
+    expect((node as { path: string[] }).path).toEqual(names.slice(0, 17));
+    let depth = 0;
+    for (let n: unknown = node; n; n = tree.getParent(n as never)) depth++;
+    expect(depth).toBe(17);
+  });
+
+  it('a filtered group counts the members it shows', async () => {
+    story(root, '', 'a', { title: 'Alpha', group: 'Storage' });
+    story(root, '', 'b', { title: 'Beta', group: 'Storage' });
+    story(root, '', 'c', { title: 'Gamma', group: 'Storage' });
+    const { tree } = await build();
+    const group = () => tree.getChildren().find((n) => label(tree, n) === 'Storage')!;
+    expect(tree.getTreeItem(group()).description).toBe('3 sidestories');
+    tree.setFilter('alpha');
+    expect(tree.getTreeItem(group()).description).toBe('1 sidestory');
   });
 });

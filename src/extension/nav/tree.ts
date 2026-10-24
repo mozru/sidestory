@@ -101,7 +101,9 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       const hay = `${e.title}\n${e.ref.name}\n${e.summary}\n${e.group ?? ''}`.toLowerCase();
       if (!hay.includes(q)) continue;
       total++;
-      const path = this.index.primaryPath(e);
+      // Top-anchored and cut at the depth the tree shows (a leaf "nested too deep" at MAX_TRAIL + 1): a deeper
+      // match is shown by the path down to there.
+      const path = this.index.primaryPath(e, MAX_TRAIL + 1);
       if (shown + path.length > TREE_LIMITS.filteredNodes) continue;
       shown += path.length;
       matches.add(e.key);
@@ -241,7 +243,9 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       case 'group': {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Expanded);
         item.id = node.id;
-        item.description = `${node.members.length} sidestor${node.members.length === 1 ? 'y' : 'ies'}`;
+        // Filtered: the members it shows, not all of them.
+        const count = this.filtered ? node.members.filter((m) => this.wanted(this.entryByName(node.pkg, m), [m])).length : node.members.length;
+        item.description = `${count} sidestor${count === 1 ? 'y' : 'ies'}`;
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
         item.contextValue = 'group';
         return item;
@@ -255,7 +259,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
         item.contextValue = 'cycle';
         // Opening a back-link cuts the trail back to it, as diving back up does; one nested too deep opens on its
         // primary path.
-        const trail = node.reason === 'back' ? node.path.slice(0, node.path.indexOf(node.entry.ref.name) + 1) : this.index.primaryPath(node.entry);
+        const trail = node.reason === 'back' ? node.path.slice(0, node.path.indexOf(node.entry.ref.name) + 1) : this.index.trail(node.entry);
         item.command = { title: 'Open', command: 'sidestory.openAt', arguments: [{ dir: node.entry.ref.dir.toString(), trail, source: 'tree' }] };
         item.tooltip = `${this.index.pathLabel(node.entry)}\n.sidestory/${displayText(node.entry.ref.name, 64)}`;
         return item;
@@ -342,7 +346,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     const names = s.trailRefs.map((r) => r.name);
     const valid = pkg.graph.isTop(names[0]!) && names.every((n, i) => i === 0 || pkg.graph.children(names[i - 1]!).includes(n)) && new Set(names).size === names.length;
     // Start here is listed on its own at the top level, even when it is someone's detail: reveal it there.
-    const path = valid ? names : pkg.graph.startHere === e.ref.name ? [e.ref.name] : this.index.primaryPath(e);
+    const path = valid ? names : pkg.graph.startHere === e.ref.name ? [e.ref.name] : this.index.primaryPath(e, MAX_TRAIL + 1);
     return this.pathNode(pkg, path);
   }
 
@@ -362,7 +366,10 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     for (let i = 1; i < path.length; i++) {
       const e = this.entryByName(pkg, path[i]!);
       if (!e) return node;
-      node = this.sidestoryNode(e, path.slice(0, i + 1), node, false);
+      const at = path.slice(0, i + 1);
+      // Past the depth cap the tree lists a leaf, as detailChildren does.
+      if (at.length > MAX_TRAIL) return this.make({ kind: 'leaf', id: this.id('l', pkg.key, ...at), entry: e, path: at, reason: 'deep', parent: node });
+      node = this.sidestoryNode(e, at, node, false);
     }
     return node;
   }

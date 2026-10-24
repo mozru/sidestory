@@ -444,3 +444,18 @@ describe('main', () => {
     expect(err.join('\n')).toMatch(/only goes with --pin/);
   });
 });
+
+describe('the text report', () => {
+  it('prints each finding on one line, without control characters from repository text', () => {
+    const report: CheckReport = {
+      sidestory: '/r/.sidestory/x',
+      widgets: [],
+      findings: [{ severity: 'error', file: '/r/.sidestory/x/manifest.json', line: 3, code: 'bad', message: 'name “a\u001b[31mred\u001b[0m”\nnext\u009bline\u0007' }],
+      errors: 1,
+      warnings: 0,
+    };
+    const first = formatReport(report, '/r').split('\n')[0]!;
+    expect(first).toBe('.sidestory/x/manifest.json:3: error bad: name “a[31mred[0m” nextline');
+    expect(first).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  });
+});

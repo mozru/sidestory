@@ -597,13 +597,22 @@ function finish(report: CheckReport): CheckReport {
 
 const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 
+/**
+ * A finding message as one terminal line: messages quote repository text (compiler diagnostics, names), so line
+ * breaks become spaces and other C0/C1 control characters (escape sequences) are dropped.
+ */
+function plainLine(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\t\n\r\v\f]+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+}
+
 export function formatReport(report: CheckReport, cwd = process.cwd()): string {
   const shown = (file: string) => {
     const r = relative(cwd, file);
     return r && !r.startsWith('..') && !isAbsolute(r) ? r : file;
   };
   const sorted = [...report.findings].sort((a, b) => rank[a.severity] - rank[b.severity] || a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0));
-  const out = sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${f.message}`);
+  const out = sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${plainLine(f.message)}`);
   const p = report.pin;
   if (p) {
     out.push(`Pinned ${p.pinned.length} anchor(s)${p.pinned.length ? `: ${p.pinned.map((x) => x.anchor).join(', ')}` : ''}; ${p.unchanged.length} already pinned; ${p.skipped.length + p.needsConsent.length} not pinned.`);

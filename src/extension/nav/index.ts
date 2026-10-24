@@ -11,6 +11,7 @@ import { OutlineScanner, type OutlineStep } from '../../core/html-scan.ts';
 import { anchorIdSchema, anchorSpecSchema, parseManifest, type Anchor, type Quote } from '../../core/manifest.ts';
 import { quoteHash, quotePositions } from '../../core/quote-positions.ts';
 import type { ExplainerRef } from '../explainers.ts';
+import { MAX_TRAIL } from '../../shared/protocol.ts';
 import { htmlUri, manifestUri, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readSliceInside, refFromDir, uriKey } from '../explainers.ts';
 import { log } from '../log.ts';
 import { packageKeyOf, packageLabel, longestPrefixPackage } from './packages.ts';
@@ -123,6 +124,8 @@ export class SidestoryIndex implements vscode.Disposable {
   /** Per file: the anchors kept for it (fair, capped), built lazily. */
   private readonly fileTables = new Map<number, FileSlot[]>();
   private readonly dirty = new Set<string>();
+  /** Packages that lost sidestories to folder deletes, committed with the next batch. */
+  private readonly removed = new Set<string>();
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly emitter = new vscode.EventEmitter<{ packages: Set<string> }>();
   /** Fires once per batch with the packages it changed. */
@@ -211,16 +214,28 @@ export class SidestoryIndex implements vscode.Disposable {
     return e.title || displayText(e.ref.name, 120);
   }
 
-  /** Names on the primary path, top first (§4.3); just the sidestory when it is a top or unknown. */
-  primaryPath(e: IndexEntry): string[] {
-    const p = this.packageOf(e)?.graph.primaryPath(e.ref.name);
+  /**
+   * Names on the primary path, top first (§4.3); just the sidestory when it is a top or unknown. Anchored at the top:
+   * a path longer than `max` keeps its first `max` names (so it may stop short of the sidestory).
+   */
+  primaryPath(e: IndexEntry, max?: number): string[] {
+    const p = this.packageOf(e)?.graph.primaryPath(e.ref.name, max);
     return p ? [...p] : [e.ref.name];
   }
 
-  /** Refs on the primary path, top first: a trail for the panel. */
+  /**
+   * Names for a panel trail: the primary path, top first, ending at the sidestory. Past the trail limit it keeps the
+   * last MAX_TRAIL names (the panel would cut it there anyway), so the first is then not a top.
+   */
+  trail(e: IndexEntry): string[] {
+    const p = this.packageOf(e)?.graph.trailTo(e.ref.name, MAX_TRAIL);
+    return p ? [...p] : [e.ref.name];
+  }
+
+  /** Refs on the trail: what a panel shows. */
   primaryTrail(e: IndexEntry): [ExplainerRef, ...ExplainerRef[]] {
     const pkg = this.packageOf(e);
-    const refs = this.primaryPath(e).map((n) => pkg?.byName.get(n)?.ref ?? refFromDir(vscode.Uri.joinPath(e.ref.dir, '..', n)));
+    const refs = this.trail(e).map((n) => pkg?.byName.get(n)?.ref ?? refFromDir(vscode.Uri.joinPath(e.ref.dir, '..', n)));
     if (refs.some((r) => !r) || refs.length === 0) return [e.ref];
     return refs as [ExplainerRef, ...ExplainerRef[]];
   }
@@ -228,9 +243,10 @@ export class SidestoryIndex implements vscode.Disposable {
   /** "Top › Detail": the primary path's titles; long paths keep the first and the last two (≤ 200 characters). */
   pathLabel(e: IndexEntry): string {
     const pkg = this.packageOf(e);
-    const names = this.primaryPath(e);
-    const shown = names.length > 3 ? [names[0]!, '…', ...names.slice(-2)] : names;
-    const label = shown
+    const graph = pkg?.graph;
+    const length = graph?.pathLength(e.ref.name) ?? 1;
+    const names = length > 3 ? [this.primaryPath(e, 1)[0]!, '…', ...this.trail(e).slice(-2)] : this.primaryPath(e, 3);
+    const label = names
       .map((n) => {
         if (n === '…') return n;
         const x = pkg?.byName.get(n);
@@ -354,8 +370,8 @@ export class SidestoryIndex implements vscode.Disposable {
   /** Discovers everything again (startup, Refresh, folders or exclusions changed). */
   async refresh(): Promise<void> {
     const epoch = ++this.epoch;
-    // Caps are judged afresh; package labels follow the workspace folders (a single root may have become several).
-    this.capped = false;
+    // Package labels follow the workspace folders (a single root may have become several). Caps are judged afresh
+    // whenever graphs are rebuilt (below, and after the batch if anything changed).
     for (const p of this.packagesByKey.values()) p.label = packageLabel(p.root);
     this.sortedPackages = undefined;
     this.setState(this.entries.size ? this.stateValue : 'loading');
@@ -505,14 +521,17 @@ export class SidestoryIndex implements vscode.Disposable {
     for (const u of uris) {
       const key = uriKey(u);
       const prefix = key.replace(/\/?$/, '/');
-      for (const k of [...this.entries.keys()]) {
+      for (const [k, e] of [...this.entries]) {
         if (k === key || k.startsWith(prefix)) {
+          this.removed.add(e.pkg);
           this.removeEntry(k);
           removed = true;
         }
       }
     }
-    if (removed) this.commit(new Set([...this.packagesByKey.keys()]));
+    // Gone from lookups now; the graphs and the change event wait for the batch, so a checkout deleting many
+    // folders is one rebuild of the packages it touched and one event (§6.4).
+    if (removed) this.schedule();
   }
 
   /**
@@ -539,8 +558,13 @@ export class SidestoryIndex implements vscode.Disposable {
         }
       });
     }
-    for (const k of gone) this.removeEntry(k);
-    if (gone.length) this.commit(new Set([...this.packagesByKey.keys()]));
+    const touched = new Set<string>();
+    for (const k of gone) {
+      const e = this.entries.get(k);
+      if (e) touched.add(e.pkg);
+      this.removeEntry(k);
+    }
+    if (touched.size) this.commit(touched);
     if (this.dirty.size) this.schedule();
   }
 
@@ -589,7 +613,11 @@ export class SidestoryIndex implements vscode.Disposable {
     const epoch = this.epoch;
     const keys = [...this.dirty].filter((k) => this.entries.has(k));
     this.dirty.clear();
+    // Packages that lost sidestories to folder deletes since the last batch.
+    const removed = new Set(this.removed);
+    this.removed.clear();
     if (keys.length === 0) {
+      if (removed.size) this.commit(removed);
       this.setState(this.entries.size ? 'ready' : 'empty');
       return;
     }
@@ -599,7 +627,7 @@ export class SidestoryIndex implements vscode.Disposable {
       .map((k) => this.entries.get(k)!)
       .sort((a, b) => rank(a.key) - rank(b.key) || this.packageOrder(a.pkg) - this.packageOrder(b.pkg) || a.ref.name.localeCompare(b.ref.name));
     const budget: Budget = { manifestBytes: INDEX_LIMITS.manifestBytesPerBatch, pageBytes: INDEX_LIMITS.pageBytesPerBatch, scanMs: INDEX_LIMITS.scanMsPerBatch };
-    const touched = new Set<string>();
+    const touched = new Set<string>(removed);
     const skipped: IndexEntry[] = [];
     let next = 0;
     const worker = async () => {
@@ -651,8 +679,6 @@ export class SidestoryIndex implements vscode.Disposable {
   /** Rebuilds the graphs of changed packages, forgets stale file tables, and tells readers once. */
   private commit(packages: Set<string>): void {
     this.rebuildGraphs(packages);
-    // Judged afresh after every batch: a cap that no longer bites stops being reported.
-    this.capped = [...this.entries.values()].some((e) => e.capped) || this.packages().some((p) => p.graph.edgesCapped);
     this.fileTables.clear();
     this.emitter.fire({ packages });
   }
@@ -671,6 +697,9 @@ export class SidestoryIndex implements vscode.Disposable {
       }
       used += p.edges;
     }
+    // Judged afresh with every rebuild (a refresh where nothing changed too): a cap that no longer bites stops
+    // being reported, and one that still does stays reported.
+    this.capped = [...this.entries.values()].some((e) => e.capped) || sorted.some((p) => p.graph.edgesCapped);
   }
 
   /** Reads one sidestory's manifest and page if they changed. */
@@ -704,17 +733,21 @@ export class SidestoryIndex implements vscode.Disposable {
         const bytes = await readBytesInside(mUri, e.ref.root, MAX_MANIFEST_BYTES);
         if (!current()) return 'same';
         if (!bytes) {
+          // Read anyway: the page is still outlined below, so the entry ends ready (Go to Step's busy bar stops).
           e.errors = ["manifest.json can't be read (missing, outside the repository, or too large)."];
           e.manifestStamp = stamp;
+          e.noSlices = false;
           this.setAnchors(e, [], new Map());
-          return 'changed';
-        }
-        bomBytes = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-        try {
-          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        } catch {
-          text = new TextDecoder().decode(bytes);
-          slicesOk = false;
+          this.quotes.forget(e);
+          changed = true;
+        } else {
+          bomBytes = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+          try {
+            text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          } catch {
+            text = new TextDecoder().decode(bytes);
+            slicesOk = false;
+          }
         }
       }
     }
@@ -1002,6 +1035,12 @@ class QuoteStore implements vscode.Disposable {
 
   private put(key: string, q: Quote): void {
     const size = q.exact.length + q.prefix.length + q.suffix.length;
+    const prev = this.cache.get(key);
+    if (prev) {
+      // Replaced: its old size leaves the count, and it moves to the newest end.
+      this.chars -= prev.exact.length + prev.prefix.length + prev.suffix.length;
+      this.cache.delete(key);
+    }
     this.cache.set(key, q);
     this.chars += size;
     const owner = key.slice(0, key.indexOf('\u0000'));

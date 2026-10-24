@@ -233,7 +233,7 @@ The other command titles ("Pin Anchors to the Current Code", "Re-anchor Section 
   - "The explainer “x” was open, but explainers aren't reopened automatically in Restricted Mode." → "The sidestory “x” was open, but sidestories aren't reopened automatically in Restricted Mode."
   - "Open Explainer(s)" → "Open Sidestory / Open Sidestories".
   - "Not an explainer…" → "Not a sidestory: expected a folder like .sidestory/<name> inside the workspace."
-  - "No explainers found…" → "No sidestories found. A sidestory is a folder like .sidestory/<name>/ with a page and manifest.json."
+  - "No explainers found…" → "No sidestories in this workspace yet. A sidestory is a folder in .sidestory/ with a page and a manifest.json, shown beside the code and linked to it." (the Sidestories view's welcome text; Open Sidestory and Go to Step both show it).
   - "Widget consent revoked: explainers ask again…"
   - "There's no explainer called “x” next to this one."
   - "The explainer links to:".
@@ -522,7 +522,7 @@ These apply to code covered by anchors, in a `file:` document shown in an editor
 - One lens above the first line of each covered region:
   `$(book) Stream DMA engine › DMA controller · step 3: FSM states`
 - Regions starting on the same line share one lens: "… and 2 more", which opens the quick pick.
-- A file gets lenses for its first 30 covered lines, then one more lens on the 31st line: "+*N* more sidestory steps in this file", which opens the quick pick for the whole file. The count doesn't jump from 30 lenses to 1.
+- A file gets lenses for its first 30 covered lines, then one more lens on the 31st line: "All *N* sidestory steps in this file" (*N* counts every step in the file, since that is what it lists), which opens the quick pick for the whole file. The count doesn't jump from 30 lenses to 1.
 - No lens for lost anchors. Stale ones end with "(code changed a lot)".
 - **Lenses are hidden for every anchor of any sidestory shown in a visible panel**, not just its current step. The set of hidden lenses then stays fixed while the reader steps through, and lines don't jump on <kbd>Alt</kbd>+<kbd>]</kbd>. The panel already highlights that sidestory's code.
 
@@ -829,7 +829,7 @@ Once the reader types, the quick pick ranks by match.
 **Cap:**
 - at most **20,000 items**;
 - past that, This package is forced when a package is known;
-- otherwise the first 20,000 in the order above are shown, and the placeholder says "Showing 20,000 of *N* steps; narrow with This package";
+- otherwise the first 20,000 in the order above are shown, and the placeholder says "Showing 20,000 of *N* steps" (with a package known, This package is already forced, so there's nothing narrower to offer);
 - items are built once per invocation, from memory.
 
 **Accept:** `openAt({dir, anchor: stepId, trail: primary path})`.

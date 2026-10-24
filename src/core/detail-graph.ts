@@ -41,9 +41,16 @@ export interface DetailGraph {
   isTop(name: string): boolean;
   /** Ordered by title (locale, numeric-aware), then name. */
   readonly tops: readonly string[];
-  /** Top first, the node last; a top's own path is just itself. Undefined only for unknown names. */
-  /** At most the last `max` names (default 16, the trail limit), ending at `name`. */
+  /**
+   * The primary path, top first, the node last; a top's own path is just itself. Undefined only for unknown names.
+   * Anchored at the top: a path longer than `max` (default 16) keeps its first `max` names, so `[0]` is always a
+   * top. Bounded: at most ~32 steps for `max` ≤ 32, however deep the node.
+   */
   primaryPath(name: string, max?: number): readonly string[] | undefined;
+  /** The primary path's last `max` names (default 16, the trail limit), ending at `name`: a panel trail. */
+  trailTo(name: string, max?: number): readonly string[] | undefined;
+  /** Names on the primary path (a top: 1); undefined for unknown names. */
+  pathLength(name: string): number | undefined;
   readonly startHere: string | undefined;
   readonly edgeCount: number;
   /** The edge cap was reached: later links were dropped. */
@@ -53,6 +60,8 @@ export interface DetailGraph {
 export const MAX_GRAPH_EDGES = 50_000;
 /** Primary paths are cut to this many names, the panel's trail limit (MAX_TRAIL). */
 export const MAX_PRIMARY_PATH = 16;
+/** Top-anchored prefixes up to this many names are walked in O(PREFIX), not O(depth). */
+const PREFIX = 32;
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -208,11 +217,15 @@ export function buildDetailGraph(nodes: readonly GraphNodeInput[], opts: { maxEd
 
   // ---- primary paths: multi-source BFS ----
   const via = new Int32Array(V).fill(-2); // -2 unvisited, -1 a top
+  const depth = new Int32Array(V);
+  // Each node's ancestor at depth min(depth, PREFIX - 1): a top-anchored prefix is walked from there, not from the node.
+  const anc = new Int32Array(V);
   const queue = new Int32Array(V);
   let head = 0;
   let tail = 0;
   for (const t of topList) {
     via[t] = -1;
+    anc[t] = t;
     queue[tail++] = t;
   }
   while (head < tail) {
@@ -220,6 +233,8 @@ export function buildDetailGraph(nodes: readonly GraphNodeInput[], opts: { maxEd
     for (const v of kids[u]!) {
       if (via[v] !== -2) continue;
       via[v] = u;
+      depth[v] = depth[u]! + 1;
+      anc[v] = depth[v]! < PREFIX ? v : anc[u]!;
       queue[tail++] = v;
     }
   }
@@ -261,10 +276,24 @@ export function buildDetailGraph(nodes: readonly GraphNodeInput[], opts: { maxEd
     primaryPath: (name, max = MAX_PRIMARY_PATH) => {
       const i = index.get(name);
       if (i === undefined || via[i] === -2) return undefined;
-      // Walked on demand and cut to the last `max` names: a 5,000-node chain must not cost a path per node.
+      // Walked on demand from the node, or from its ancestor at depth PREFIX - 1 when the path is longer than `max`:
+      // a 5,000-node chain must not cost a path per node.
+      const from = depth[i]! < max ? i : max <= PREFIX ? anc[i]! : i;
+      const path: string[] = [];
+      for (let at = from; at >= 0; at = via[at]!) path.push(names[at]!);
+      path.reverse();
+      return path.length > max ? path.slice(0, Math.max(1, max)) : path;
+    },
+    trailTo: (name, max = MAX_PRIMARY_PATH) => {
+      const i = index.get(name);
+      if (i === undefined || via[i] === -2) return undefined;
       const path: string[] = [];
       for (let at = i; at >= 0 && path.length < max; at = via[at]!) path.push(names[at]!);
       return path.reverse();
+    },
+    pathLength: (name) => {
+      const i = index.get(name);
+      return i === undefined || via[i] === -2 ? undefined : depth[i]! + 1;
     },
     startHere,
     edgeCount,

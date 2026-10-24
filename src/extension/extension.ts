@@ -11,7 +11,7 @@ import { refFromDir, uriKey } from './explainers.ts';
 import { log } from './log.ts';
 import { shellQuote, shellSafePath } from './shell.ts';
 import { DriftQueue } from './nav/drift.ts';
-import { ExplainedHere } from './nav/explained-here.ts';
+import { ExplainedHere, NO_SIDESTORY_HERE } from './nav/explained-here.ts';
 import { SidestoryIndex } from './nav/index.ts';
 import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
@@ -252,7 +252,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   /** Where an entry opens from a list: its primary path as the trail, so Back leads to its top. */
   const openEntry = (dir: string, extra: { anchor?: string; newPanel?: boolean; source?: string } = {}) => {
     const e = index.entry(vscode.Uri.parse(dir));
-    return nav.openAt({ dir, trail: e ? index.primaryPath(e) : undefined, ...extra });
+    return nav.openAt({ dir, trail: e ? index.trail(e) : undefined, ...extra });
   };
 
   const commands: Record<string, (...args: unknown[]) => unknown> = {
@@ -285,7 +285,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     },
     'sidestory.openInNewPanel': async (node?: unknown) => {
       const dir = nodeDir(node) ?? (await pick())?.ref.dir.toString();
-      if (dir) await nav.openAt({ dir, trail: nodePath(node) ?? (index.entry(vscode.Uri.parse(dir)) ? index.primaryPath(index.entry(vscode.Uri.parse(dir))!) : undefined), newPanel: true });
+      if (dir) await nav.openAt({ dir, trail: nodePath(node) ?? (index.entry(vscode.Uri.parse(dir)) ? index.trail(index.entry(vscode.Uri.parse(dir))!) : undefined), newPanel: true });
     },
     'sidestory.goToStep': async (node?: unknown) => {
       const only = nodeDir(node) ? index.entry(vscode.Uri.parse(nodeDir(node)!)) : undefined;
@@ -297,20 +297,23 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         memento: context.workspaceState,
         only,
       });
-      if (r) await nav.openAt({ dir: r.entry.ref.dir.toString(), anchor: r.step, trail: index.primaryPath(r.entry), source: 'step' });
+      if (r) await nav.openAt({ dir: r.entry.ref.dir.toString(), anchor: r.step, trail: index.trail(r.entry), source: 'step' });
     },
     'sidestory.showHere': async (args?: unknown) => {
       const a = (args && typeof args === 'object' ? args : {}) as { uri?: unknown; line?: unknown; all?: unknown; keys?: unknown };
       const editor = vscode.window.activeTextEditor;
       const uri = typeof a.uri === 'string' ? vscode.Uri.parse(a.uri) : editor?.document.uri;
-      if (!uri) return;
+      if (!uri) {
+        vscode.window.setStatusBarMessage(NO_SIDESTORY_HERE, 3000);
+        return;
+      }
       const line = typeof a.line === 'number' ? a.line : editor && editor.document.uri.toString() === uri.toString() ? editor.selection.active.line + 1 : 1;
       const keys = Array.isArray(a.keys) && a.keys.length <= 200 && a.keys.every((k) => typeof k === 'string') ? (a.keys as string[]) : undefined;
       // The lens's own steps; if they have moved on since (a resolve landed), whatever covers the line now.
       const counted = keys ? here.byKeys(uri, keys) : [];
       const items = counted.length ? counted : a.all === true ? here.all(uri) : here.covering(uri, line);
       if (!items.length) {
-        vscode.window.setStatusBarMessage('No sidestory covers this code.', 3000);
+        vscode.window.setStatusBarMessage(NO_SIDESTORY_HERE, 3000);
         return;
       }
       // One item per (sidestory, step): nested anchors fold into their step.

@@ -1,5 +1,5 @@
 // The workspace index (docs/NAVIGATION-PLAN.md §6, §12.1): discovery, watching, budgets, caps, quote slices.
-import { rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { code, manifestText, story, tempRoot, waitFor, write } from './nav-fixtures.ts';
@@ -138,6 +138,34 @@ describe('watching', () => {
     rmSync(join(root, '.sidestory'), { recursive: true });
     fire('delete', join(root, '.sidestory'));
     expect(index.size).toBe(0);
+  });
+
+  it('coalesces folder deletes: one change event, only the packages they touched rebuilt', async () => {
+    story(root, 'p1', 'a', { title: 'A' });
+    story(root, 'p2', 'b', { title: 'B' });
+    story(root, 'p3', 'c', { title: 'C', details: ['c2'] });
+    story(root, 'p3', 'c2', { title: 'C2' });
+    story(root, 'p4', 'd', { title: 'D' });
+    await start();
+    const graphOf = (p: string) => index.packages().find((x) => x.folder.fsPath === join(root, p, '.sidestory'))?.graph;
+    const before = { p3: graphOf('p3'), p4: graphOf('p4') };
+    const fired: Set<string>[] = [];
+    index.onDidChange((ev) => fired.push(new Set(ev.packages)));
+    rmSync(join(root, 'p1', '.sidestory'), { recursive: true });
+    fire('delete', join(root, 'p1', '.sidestory'));
+    rmSync(dirOf('p3', 'c2'), { recursive: true });
+    fire('delete', dirOf('p3', 'c2'));
+    events.filesDeleted.fire({ files: [Uri.file(join(root, 'p2'))] });
+    // Gone from lookups at once; the graphs and the event come with the batch.
+    expect([...index.all()].map((e) => e.ref.name).sort()).toEqual(['c', 'd']);
+    expect(fired).toHaveLength(0);
+    await waitFor(() => fired.length > 0);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(fired).toHaveLength(1);
+    expect(fired[0]!.size).toBe(3); // p1, p2 and p3
+    expect(graphOf('p4')).toBe(before.p4);
+    expect(graphOf('p3')).not.toBe(before.p3);
+    expect(graphOf('p3')!.children('c')).toEqual([]);
   });
 
   it('removes sidestories under a folder deleted inside VS Code (an ancestor)', async () => {
@@ -292,8 +320,12 @@ describe('budgets and caps', () => {
     names.forEach((n, i) => story(root, '', n, { title: `T${i}`, details: i + 1 < names.length ? [names[i + 1]!] : [] }));
     await start();
     const last = entryOf('', 'n29')!;
-    expect(index.primaryPath(last)).toHaveLength(16);
-    expect(index.pathLabel(last)).toBe('T14 › … › T28 › T29');
+    // Anchored at the top: the label starts at the real top, and the trail is the last 16 names.
+    expect(index.primaryPath(last)).toEqual(names.slice(0, 16));
+    expect(index.trail(last)).toEqual(names.slice(14));
+    expect(index.pathLabel(last)).toBe('T0 › … › T28 › T29');
+    expect(index.pathLabel(entryOf('', 'n2')!)).toBe('T0 › T1 › T2');
+    expect(index.pathLabel(entryOf('', 'n3')!)).toBe('T0 › … › T2 › T3');
   });
 
   it('drops step ids that aren’t anchor ids', async () => {
@@ -337,6 +369,35 @@ describe('budgets and caps', () => {
     write(join(dirOf('', 'a'), 'manifest.json'), manifestText({ anchors: { x: { file: 'f.ts', range: [1, 2] } } }));
     await index.refresh();
     expect(index.capped).toBe(false);
+  });
+
+  it('keeps a cap that still bites across a refresh where nothing changed', async () => {
+    limits.anchors = 1;
+    write(join(root, 'f.ts'), code(10));
+    story(root, '', 'a', { anchors: { x: { file: 'f.ts', range: [1, 2] }, y: { file: 'f.ts', range: [3, 4] } } });
+    await start();
+    expect(index.capped).toBe(true);
+    await index.refresh(); // every read is 'same': no commit, but the cap is still there
+    expect(entryOf('', 'a')!.capped).toBe(true);
+    expect(index.capped).toBe(true);
+  });
+
+  it('a sidestory whose manifest can’t be read still ends outlined (nothing waits on it)', async () => {
+    const outside = tempRoot('cx-outside-');
+    try {
+      write(join(outside, 'manifest.json'), manifestText({ title: 'Elsewhere' }));
+      story(root, '', 'broken', { title: 'Broken' });
+      rmSync(join(dirOf('', 'broken'), 'manifest.json'));
+      symlinkSync(join(outside, 'manifest.json'), join(dirOf('', 'broken'), 'manifest.json'));
+      await start();
+      const e = entryOf('', 'broken')!;
+      expect(e.errors.join(' ')).toMatch(/can't be read/);
+      expect(e.outlined).toBe(true);
+      expect(e.state).toBe('ready');
+      expect(e.ids).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('gives each file at most 200 anchors from one sidestory, in-use sidestories first', async () => {
