@@ -8,6 +8,15 @@ import { WORKSPACE } from './setup.ts';
 
 const widget = (panel: FrameLocator) => panel.frameLocator('iframe.cx-widget-frame').first();
 
+/**
+ * Scrolls the panel so its first widget is in the middle of the view. The panel mounts only widgets near the view,
+ * and Chromium doesn't render an off-screen cross-site frame (site isolation), so Playwright's wait for a stable
+ * element inside one would never end: it checks stability before it scrolls.
+ */
+async function showWidget(panel: FrameLocator): Promise<void> {
+  await panel.frameLocator('iframe.cx-content-frame').locator('explain-widget').first().evaluate((e) => e.scrollIntoView({ block: 'center' }));
+}
+
 /** The bar offers VS Code's own trust flow in Restricted Mode; widgets wait for it without reopening the panel. */
 async function trust(page: Page, panel: FrameLocator): Promise<void> {
   await panel.locator('.cx-consent').getByRole('button', { name: 'Trust workspace…' }).click();
@@ -86,9 +95,8 @@ test.describe('widgets', () => {
     await expect(page.locator('.markers-panel')).toContainText('Three.js is not available');
     // The last good version keeps running, with a badge. The Problems panel took half the window, and the panel
     // mounts only widgets near the view: bring this one into view first.
-    const box = panel.frameLocator('iframe.cx-content-frame').locator('explain-widget').first();
-    await expect(box.locator('.cx-widget-note')).toContainText('compile error');
-    await box.scrollIntoViewIfNeeded();
+    await expect(panel.frameLocator('iframe.cx-content-frame').locator('explain-widget .cx-widget-note')).toContainText('compile error');
+    await showWidget(panel);
     await expect(widget(panel).getByTestId('backoff')).toBeVisible();
   });
 
@@ -143,7 +151,9 @@ test.describe('two panels (process model)', () => {
     const record = { renderersWithOnePanel: one, renderersWithTwoPanels: two, iframeTargets: targets };
     console.log(`[widgets] two panels: ${JSON.stringify(record)}`);
     await info.attach('process-model.json', { body: JSON.stringify(record, null, 2), contentType: 'application/json' });
-    // Both panels' widgets work, and the first panel is unaffected by the second.
+    // Both panels' widgets work, and the first panel is unaffected by the second. Side by side, each panel is
+    // narrower and the widget's button sits below the fold.
+    await showWidget(first);
     await widget(first).getByTestId('roll').click();
     await expect(widget(first).getByTestId('backoff')).toBeVisible();
     expect(two).toBeGreaterThanOrEqual(one);
