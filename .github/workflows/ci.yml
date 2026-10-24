@@ -96,6 +96,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - run: npm run lint:dead # knip: unused files, exports and dependencies
       - run: npm audit --omit=dev --audit-level=moderate
       - run: npm run package
       - name: Package contents and size

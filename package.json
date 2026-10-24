@@ -1402,7 +1402,8 @@
     "sync-skill": "node scripts/sync-skill.mjs",
     "package": "node scripts/build.mjs --production && vsce package --no-dependencies -o dist/sidestory.vsix",
     "check": "npm run typecheck && npm test && npm run build",
-    "test:desktop": "npm run build && node test/desktop/run.mjs"
+    "test:desktop": "npm run build && node test/desktop/run.mjs",
+    "lint:dead": "knip --no-progress"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -1420,6 +1421,7 @@
     "clsx": "2.1.1",
     "d3": "7.9.0",
     "esbuild": "^0.28.2",
+    "knip": "6.41.0",
     "lodash": "4.18.1",
     "lucide-react": "1.52.0",
     "mocha": "11.7.5",

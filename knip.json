@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/extension/bootstrap.ts",
+    "src/extension/extension.ts",
+    "src/extension/widgets/compile-worker.ts",
+    "src/extension/highlight/worker.ts",
+    "src/webview/main.ts",
+    "src/webview/main.css",
+    "src/cli/check-widgets.ts",
+    "src/mcp/main.ts",
+    "src/mcp/no-ajv.ts",
+    "src/widget-runtime/libs/*.{js,ts,cjs}",
+    "src/widget-runtime/ui/index.ts",
+    "src/widget-runtime/runtime/index.ts",
+    "src/widget-runtime/prelude.ts",
+    "scripts/*.{mjs,ts}",
+    "test/desktop/suite/*.ts",
+    "test/e2e/*.e2e.ts",
+    "test/e2e/fake-claude.cjs",
+    "test/fixtures/git-repo.mjs",
+    "test/webview/*.pw.ts",
+    "test/widgets/*.pw.ts",
+    "test/unit/**/*.test.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx,js,cjs,mjs}", "scripts/**/*.{mjs,ts}", "test/**/*.{ts,mjs,cjs}"],
+  "ignoreBinaries": ["mkfifo"],
+  "ignoreDependencies": ["@vscode/codicons", "@shikijs/langs"],
+  "github-actions": false,
+  "ignoreExportsUsedInFile": true,
+  "playwright": { "config": ["test/*/playwright.config.ts"] },
+  "vitest": { "config": ["vitest.config.ts"] }
+}
