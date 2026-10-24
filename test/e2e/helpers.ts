@@ -77,8 +77,10 @@ export const activeTab = (page: Page, name: string) => page.locator('.tab.active
 export async function resetWorkbench(page: Page): Promise<void> {
   // A fresh copy of the fixture for every test.
   // Also forget restored editors and panels from earlier tests (VS Code keeps them per workspace on the server).
+  // And end earlier tests' extension hosts (with their TypeScript servers): the server keeps a disconnected window's
+  // host for 5 minutes in case it reconnects, and ~40 of them (150–200 MB each) ran a Docker VM of 8 GB out of memory.
   inContainer(
-    `rm -rf ${WORKSPACE} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.fixture ${WORKSPACE} && cp /home/workspace/.settings.json ~/.openvscode-server/data/User/settings.json`,
+    `(pkill -f '[t]ype=extensionHost' || true); (pkill -f '[t]sserver' || true); rm -rf ${WORKSPACE} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.fixture ${WORKSPACE} && cp /home/workspace/.settings.json ~/.openvscode-server/data/User/settings.json`,
   );
   await openWorkbench(page);
 }
