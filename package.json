@@ -241,6 +241,11 @@
         "icon": "$(close)"
       },
       {
+        "command": "sidestory.changes.copyUnsupported",
+        "title": "Copy Unsupported Paths",
+        "category": "Sidestory"
+      },
+      {
         "command": "sidestory.changes.copyUpdatePrompt",
         "title": "Copy Prompt: Update the Sidestory for New Changes",
         "category": "Sidestory",
@@ -609,6 +614,10 @@
           "when": "false"
         },
         {
+          "command": "sidestory.changes.copyUnsupported",
+          "when": "false"
+        },
+        {
           "command": "sidestory.changes.copyUpdatePrompt",
           "when": "sidestory.changes.layer"
         },
@@ -748,12 +757,12 @@
         },
         {
           "command": "sidestory.changes.copyChangePrompt",
-          "when": "view == sidestory.thisFile && viewItem =~ /^thisFileChange:(unexplained|partly|needsLook)/",
+          "when": "view == sidestory.thisFile && viewItem =~ /^thisFileChange:(unexplained|partly|needsLook|whole)/",
           "group": "inline@1"
         },
         {
           "command": "sidestory.changes.copyChangePrompt",
-          "when": "view == sidestory.thisFile && viewItem =~ /^thisFileChange:(unexplained|partly|needsLook)/",
+          "when": "view == sidestory.thisFile && viewItem =~ /^thisFileChange:(unexplained|partly|needsLook|whole)/",
           "group": "1_explain@1"
         },
         {

@@ -14,6 +14,7 @@
 // `computeCoverage` is the core and takes a `CoverageSource` (unit tests stub it); `CoverageService` builds the
 // source from the comparison's snapshot and the git extension, caches, and fires when a result changes.
 import { createHash } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
@@ -27,7 +28,9 @@ import { isSafeFsPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
 import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.ts';
+import { localPath } from '../local-path.ts';
 import { log } from '../log.ts';
+import { realPathInside } from '../paths.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';
@@ -124,6 +127,13 @@ export interface CoverageResult {
   targets: Target[];
   /** Changed files with paths Sidestory won't read (not in `files`): each is one change in the totals. */
   unsupported: string[];
+  /** Those of `unsupported` no trivialFiles glob covers: still left, and found only through This branch. */
+  unsupportedLeft: string[];
+  /**
+   * Unstaged renames paired by content (§4.6): old path → new path. The comparison lists them as a deleted file and
+   * an untracked one; `files` has one entry for the pair, under the new path, with status R and the old path.
+   */
+  paired: Map<string, string>;
   /** A page too large to scan, or the byte budget spent: coverage is not complete. */
   incomplete: boolean;
   /** Files diffed so far / files to diff (the totals say "computing…" until they match). */
@@ -268,7 +278,7 @@ export async function computeCoverage(
   if (!isCurrent()) return undefined;
   const none: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   // No layer without a sidestory (§9.2): the navigator's own counting fills in the counts then.
-  if (!found.length) return { mergeBase: src.mergeBase, belonging: [], files: new Map(), totals: none, targets: [], unsupported: [], incomplete: unsure, done: 0, total: 0 };
+  if (!found.length) return emptyResult(src.mergeBase, unsure);
   // Every counted path is read, numstat's "no text" ones too: a binary file counts as one change, as in the checker.
   const counted = src.entries.filter((e) => countedPath(e.path));
   // Anchored files first (a step's file can't wait behind 5,000 others), then the view's order, then by path.
@@ -284,6 +294,7 @@ export async function computeCoverage(
   const pre = new Map<ChangeEntry, { ob: SideBytes; nb: SideBytes }>();
   /** A paired rename → the untracked entry of the comparison it stands for (its counts are shown there). */
   const originals = new Map<ChangeEntry, ChangeEntry>();
+  const paired = new Map<string, string>();
   let bytes = 0;
   let incomplete = unsure;
   const read = async (e: ChangeEntry) => {
@@ -335,6 +346,7 @@ export async function computeCoverage(
           const r: ChangeEntry = { path: e.path, oldPath: d.path, status: 'R', untracked: true, ...(e.unsaved ? { unsaved: true } : {}) };
           pre.set(r, { ob: pre.get(d)!.ob, nb: pre.get(e)!.nb });
           originals.set(r, e);
+          paired.set(d.path, e.path);
           d.counting = false;
           return r;
         });
@@ -491,7 +503,25 @@ export async function computeCoverage(
     }
     t.files = seen.size;
   }
-  return { mergeBase: src.mergeBase, belonging, files, totals: result.totals, targets, unsupported: unsupported.map((u) => u.path), incomplete, done: done.length + unsupported.length, total: todo.length + unsupported.length };
+  const unsupportedLeft = unsupported.filter((u) => covByPath.get(u.path)?.changes.some((c) => c.state !== 'trivial' && c.state !== 'explained') ?? true).map((u) => u.path);
+  return {
+    mergeBase: src.mergeBase,
+    belonging,
+    files,
+    totals: result.totals,
+    targets,
+    unsupported: unsupported.map((u) => u.path),
+    unsupportedLeft,
+    paired,
+    incomplete,
+    done: done.length + unsupported.length,
+    total: todo.length + unsupported.length,
+  };
+}
+
+/** A result with nothing in it (no sidestory belongs, or the run failed: then `incomplete`). */
+export function emptyResult(mergeBase: string, incomplete: boolean): CoverageResult {
+  return { mergeBase, belonging: [], files: new Map(), totals: { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 }, targets: [], unsupported: [], unsupportedLeft: [], paired: new Map(), incomplete, done: 0, total: 0 };
 }
 
 // ---- the service ----
@@ -575,6 +605,11 @@ export class CoverageService implements vscode.Disposable {
 
   get active(): boolean {
     return this.wanted.size > 0;
+  }
+
+  /** Whether `who` still wants coverage (a session that released it while its request was in flight doesn't). */
+  isWanted(who: string): boolean {
+    return this.wanted.has(who);
   }
 
   /** An open sidestory with this base wants coverage (its author's loop: unexplained marks in diffs, §7.3). */
@@ -753,11 +788,10 @@ export class CoverageService implements vscode.Disposable {
       }
     } catch (e) {
       log.warn(`coverage: ${(e as Error).message}`);
-      // Commands wait for a result for this snapshot: give them one, marked incomplete (the last result if there
-      // is one, else an empty one), rather than leave them waiting out their timeout.
+      // Commands wait for a result for this snapshot: give them one, empty and marked incomplete, rather than leave
+      // them waiting out their timeout. Never an older result: it may be another merge-base's.
       if (live()) {
-        const prev = this.result;
-        this.result = prev ? { ...prev, incomplete: true } : { mergeBase: s.mergeBase, belonging: [], files: new Map(), totals: { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 }, targets: [], unsupported: [], incomplete: true, done: 0, total: 0 };
+        this.result = emptyResult(s.mergeBase, true);
         this.resultFor = s;
         this.emitter.fire();
       }
@@ -785,11 +819,18 @@ export function isUnknownPath(e: unknown): boolean {
 }
 
 /**
- * A sidestory's page from the working tree with the checker's cap and decoding: an open document's unsaved text when
- * it is dirty, else the file's bytes (links followed only inside `root`); 'tooLarge' past COVERAGE_WORK.htmlBytes;
- * undefined when missing or outside.
+ * A sidestory's page from the working tree with the checker's cap and decoding. As the checker reads it: never a
+ * link, and only inside `root` (checked before anything else, an open document's unsaved text included); then the
+ * open document's text when it is dirty, else the file's bytes; 'tooLarge' past COVERAGE_WORK.htmlBytes; undefined
+ * when missing, a link or outside.
  */
 async function readPage(uri: vscode.Uri, root: vscode.Uri, decode: (b: Uint8Array) => string): Promise<string | 'tooLarge' | undefined> {
+  if (uri.scheme === 'file' && root.scheme === 'file') {
+    const file = localPath(uri);
+    const info = await lstat(file).catch(() => undefined);
+    if (!info || info.isSymbolicLink() || !info.isFile()) return undefined;
+    if (!(await realPathInside(file, localPath(root)))) return undefined;
+  }
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
   if (open?.isDirty) {
     const text = open.getText();

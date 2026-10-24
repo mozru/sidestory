@@ -90,15 +90,53 @@ describe('package.json', () => {
     expect(JSON.stringify(pkg.contributes)).not.toContain('view == sidestory.changes');
   });
 
-  it('every "Sidestory: …" command and sidestory.* setting the README and the guide name exists, with its title', () => {
-    const titles = new Set(pkg.contributes.commands.map((c: { title: string; category?: string }) => (c.category ? `${c.category}: ${c.title}` : c.title)));
+  it('every command, setting, colour and view the README and the guide name exists, with its title', () => {
+    const cmds = pkg.contributes.commands as { command: string; title: string; category?: string }[];
+    const titles = new Set(cmds.map((c) => (c.category ? `${c.category}: ${c.title}` : c.title)));
+    const bare = new Set(cmds.map((c) => c.title));
     const confs = Array.isArray(pkg.contributes.configuration) ? pkg.contributes.configuration : [pkg.contributes.configuration];
-    const settings = new Set(confs.flatMap((c: { properties: Record<string, unknown> }) => Object.keys(c.properties)));
+    const names = new Set<string>([
+      ...confs.flatMap((c: { properties: Record<string, unknown> }) => Object.keys(c.properties)),
+      ...pkg.contributes.colors.map((c: { id: string }) => c.id),
+      ...Object.values(pkg.contributes.views).flat().map((v) => (v as { id: string }).id),
+      ...cmds.map((c) => c.command),
+    ]);
+    // Bold words that read like a command but aren't one: a quick pick item, a shorthand in a table.
+    const notCommands = new Set(['Use the Default Base', 'Previous…']);
+    const commandLike = /^(Copy Prompt|Copy |Mark as|Re-pin|Re-anchor|Set Base|Next |Previous|Don't Suggest|Go to|Open |Show |Pin |Check |Enable |Revoke |Add Widget|Explain with)/;
     for (const doc of ['README.md', 'docs/GUIDE.md']) {
       const text = readFileSync(doc, 'utf8');
-      for (const [, cmd] of text.matchAll(/\*\*(Sidestory: [^*]+?)\*\*/g)) expect(titles, `${doc}: ${cmd}`).toContain(cmd);
-      for (const [, key] of text.matchAll(/`(sidestory\.[a-zA-Z]+\.[A-Za-z.]+|sidestory\.[a-zA-Z]+)`/g)) if (key !== 'sidestory.html') expect(settings, `${doc}: ${key}`).toContain(key);
+      for (const [, b] of text.matchAll(/\*\*([^*\n]+?)\*\*/g)) {
+        if (b!.startsWith('Sidestory: ')) expect(titles, `${doc}: ${b}`).toContain(b);
+        else if (commandLike.test(b!) && !notCommands.has(b!)) expect(bare, `${doc}: ${b}`).toContain(b);
+      }
+      for (const [, key] of text.matchAll(/`(sidestory\.[A-Za-z.]+)`/g)) if (key !== 'sidestory.html') expect(names, `${doc}: ${key}`).toContain(key);
     }
+  });
+
+  it('the guide names the Next/Previous keys package.json binds', () => {
+    const guide = readFileSync('docs/GUIDE.md', 'utf8');
+    const kbd = (chord: string) =>
+      chord
+        .split('+')
+        .map((k) => `<kbd>${({ ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', cmd: 'Cmd', pagedown: 'PageDown', pageup: 'PageUp', down: 'Down', up: 'Up' } as Record<string, string>)[k] ?? k}</kbd>`)
+        .join('+');
+    const binds = (pkg.contributes.keybindings as { command: string; key: string; mac?: string }[]).filter((k) => k.command.startsWith('sidestory.changes.'));
+    expect(binds.length).toBe(4);
+    for (const b of binds) {
+      for (const chord of [b.key, b.mac!]) {
+        if (b.command.includes('.next')) expect(guide, `${b.command}: ${chord}`).toContain(kbd(chord));
+        else {
+          // Written as the next key's pair: "<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd>".
+          expect(guide, `${b.command}: ${chord}`).toContain(`${kbd(chord.split('+').slice(0, -1).join('+'))}+`);
+          expect(guide, `${b.command}: ${chord}`).toContain(` / ${kbd(chord.split('+').at(-1)!)}`);
+        }
+      }
+    }
+  });
+
+  it('the defaultBase setting describes the order the code uses', () => {
+    const confs = Array.isArray(pkg.contributes.configuration) ? pkg.contributes.configuration : [pkg.contributes.configuration];
     // The base order the setting describes is the code's: pick, sidestory, recorded base, setting, remote default, main.
     const d = pkg.contributes.configuration.properties?.['sidestory.changes.defaultBase']?.markdownDescription ?? confs.map((c: { properties: Record<string, { markdownDescription?: string }> }) => c.properties['sidestory.changes.defaultBase']?.markdownDescription).find(Boolean);
     const at = (w: string) => d.indexOf(w);

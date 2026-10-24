@@ -320,6 +320,19 @@ describe('the coverage service', () => {
       writeFileSync(join(sd, 'sidestory.html'), Buffer.alloc(COVERAGE_WORK.htmlBytes + 1, 0x20));
       [c] = await src.candidates();
       expect(c).toMatchObject({ folder: '.sidestory/s', html: '', htmlTooLarge: true });
+      // A page that is a link is never read, as the checker refuses it: even to a file inside the repository, and
+      // even while its document is open with unsaved text.
+      writeFileSync(join(root, 'page.html'), '<p>elsewhere</p>');
+      rmSync(join(sd, 'sidestory.html'));
+      execFileSync('ln', ['-s', '../../page.html', join(sd, 'sidestory.html')]);
+      expect(await src.candidates()).toEqual([]);
+      const pageUri = vscode.Uri.file(join(sd, 'sidestory.html'));
+      vscode.workspace.textDocuments.push({ uri: pageUri, isDirty: true, getText: () => '<p>unsaved</p>' } as never);
+      try {
+        expect(await src.candidates()).toEqual([]);
+      } finally {
+        vscode.workspace.textDocuments.pop();
+      }
       svc.dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -378,6 +378,11 @@ describe('the same comparison keeps its snapshot', () => {
     expect(changes).toBe(1);
     expect(rechecks).toBe(2);
     expect(first.unsupported).toEqual([]);
+    // Counts coverage writes onto the entries aren't a change of the comparison.
+    for (const e of first.entries) Object.assign(e, { added: 999, removed: 1, counting: false, noText: true });
+    await c.refresh();
+    expect(c.snapshot).toBe(first);
+    expect(changes).toBe(1);
     // Another base: another snapshot.
     const other = new Comparison(repo, opts({ setting: () => 'main' }));
     await other.refresh();

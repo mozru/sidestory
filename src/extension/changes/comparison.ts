@@ -81,10 +81,14 @@ export function snapshotIdentity(s: Pick<Snapshot, 'mergeBase' | 'mode' | 'entri
   ]);
 }
 
-/** Everything else a snapshot says (counts, flags, ahead/behind, labels): a change of these repaints, coverage stays. */
-function snapshotDetails(s: Snapshot): string {
-  const { repo: _repo, ...rest } = s;
-  return JSON.stringify(rest);
+/**
+ * Everything else a snapshot says (flags, ahead/behind, labels): a change of these repaints, coverage stays. Not the
+ * line counts on entries (`added`, `removed`, `counting`, `noText`): coverage writes those onto the entries itself,
+ * and comparing them would make every status refresh look like a change.
+ */
+export function snapshotDetails(s: Snapshot): string {
+  const { repo: _repo, entries, ...rest } = s;
+  return JSON.stringify([rest, entries.map((e) => [e.untracked ?? false, e.unsaved ?? false])]);
 }
 
 /**

@@ -155,7 +155,8 @@ export interface StoryLatch {
   readonly dir: string;
   readonly title: string;
   readonly base: string;
-  readonly head: string;
+  /** The branch it was read on (`HEAD@<sha>` when detached): kept across commits on that branch. */
+  readonly branch: string;
   readonly pick: string | undefined;
   readonly setting: string | undefined;
 }
@@ -164,14 +165,15 @@ export interface StoryLatch {
  * One step of the sidestory-base latch, after the comparison or the index changed. "Added on this branch" is read
  * only from a snapshot whose base didn't come from a sidestory: compared with a sidestory's own base, its manifest
  * may not look added (a stacked base where it already exists, a base naming the branch itself), and reading it there
- * would toggle the base forever. From a sidestory-based snapshot the latch stands while `stillValid`, else it goes
- * (one refresh back to the default chain). A new latch refreshes the comparison at most once per (head, pick,
+ * would toggle the base forever. From a sidestory-based snapshot the latch stands while `stillValid` (the same
+ * branch, pick and setting, and the sidestory still in the index with that base: a commit doesn't reset it), else it
+ * goes (one refresh back to the default chain). A new latch refreshes the comparison at most once per (branch, pick,
  * setting, sidestory, base), and not at all under a pick (which wins anyway).
  */
 export function latchStep(
   prev: StoryLatch | undefined,
   refreshedFor: string | undefined,
-  s: { source: BaseSource; head: string },
+  s: { source: BaseSource; branch: string },
   found: { dir: string; title: string; base: string } | undefined,
   ctx: { pick: string | undefined; setting: string | undefined; stillValid: boolean },
 ): { latch: StoryLatch | undefined; refreshedFor: string | undefined; refresh: boolean } {
@@ -179,10 +181,10 @@ export function latchStep(
     if (prev && !ctx.stillValid) return { latch: undefined, refreshedFor, refresh: true };
     return { latch: prev, refreshedFor, refresh: false };
   }
-  const next: StoryLatch | undefined = found ? { dir: found.dir, title: found.title, base: found.base, head: s.head, pick: ctx.pick, setting: ctx.setting } : undefined;
+  const next: StoryLatch | undefined = found ? { dir: found.dir, title: found.title, base: found.base, branch: s.branch, pick: ctx.pick, setting: ctx.setting } : undefined;
   if (JSON.stringify(next) === JSON.stringify(prev)) return { latch: prev, refreshedFor, refresh: false };
   if (!next || s.source === 'pick') return { latch: next, refreshedFor, refresh: false };
-  const key = JSON.stringify([next.head, next.pick, next.setting, next.dir, next.base]);
+  const key = JSON.stringify([next.branch, next.pick, next.setting, next.dir, next.base]);
   if (key === refreshedFor) return { latch: next, refreshedFor, refresh: false };
   return { latch: next, refreshedFor: key, refresh: true };
 }

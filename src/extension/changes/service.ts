@@ -12,10 +12,10 @@ import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import type { ChangeCoverage } from '../../core/coverage.ts';
 import { decodePair, oldToNew, type ChangeBlock } from '../../core/hunks.ts';
-import { isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
+import { isStoryBase, isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
 import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
-import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, fileDecoration, isDone, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
-import { CoverageService, type Belonging, type CoverageResult } from './coverage-service.ts';
+import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, isDone, WHOLE_WORDS, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
+import { CoverageService, isUnknownPath, type Belonging, type CoverageResult } from './coverage-service.ts';
 import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import { baseName, comparePaths, short, step, type ChangeEntry } from './model.ts';
@@ -91,6 +91,8 @@ export class ChangesService implements vscode.Disposable {
   /** Whether another base a sidestory names resolves to another commit than the comparison's ("Use develop" row). */
   private readonly otherBases = new Map<string, 'pending' | 'differs' | 'same' | 'missing'>();
   private disposed = false;
+  /** Where Next/Previous Unexplained Change last went, and what the editor area looked like after. */
+  private lastWalk: { snapshot: Snapshot; target: OpenChange; sig: string } | undefined;
   private readonly emitter = new vscode.EventEmitter<void>();
   /** The comparison or its coverage changed: the "This branch" rows and This File repaint. */
   readonly onDidChange = this.emitter.event;
@@ -221,33 +223,78 @@ export class ChangesService implements vscode.Disposable {
     return this.picks().find(([k]) => k === this.pickKey(repo, branch))?.[1];
   }
 
-  /** The latched sidestory base while it still holds (the comparison's `sidestoryBase`). */
+  /** What a latch is kept for: the branch (a detached HEAD by its commit), so a commit on the branch keeps it. */
+  private latchBranch(repo: GitRepo): string {
+    const b = this.branchOf(repo);
+    return b === 'HEAD' ? `HEAD@${repo.state.HEAD?.commit ?? ''}` : b;
+  }
+
+  /** The latched sidestory base while it still holds (the comparison's `sidestoryBase`), checked when asked. */
   private storyBase(repo: GitRepo): string | undefined {
     const l = this.latch;
     if (!l) return undefined;
-    if (l.head !== repo.state.HEAD?.commit || l.pick !== this.pickOf(repo) || l.setting !== setting()) return undefined;
+    if (l.branch !== this.latchBranch(repo) || l.pick !== this.pickOf(repo) || l.setting !== setting()) return undefined;
     return this.host.sidestoryBases().some((x) => x.dir.toString() === l.dir && x.base === l.base) ? l.base : undefined;
   }
 
   /**
    * Re-reads the sidestory base after the comparison or the index changed (§11.4). Never from a snapshot compared
    * with a sidestory's base, so the base can't toggle (a sidestory whose manifest already exists at its own base's
-   * merge-base, a base naming the branch itself); and at most one refresh per (head, pick, setting, base).
+   * merge-base, a base naming the branch itself); and at most one refresh per (branch, pick, setting, base).
    */
   private evaluateStoryBase(c: Comparison): void {
     const s = c.snapshot;
-    if (!s) return;
+    if (!s) {
+      if (c.state.kind === 'noBase') void this.rescueStoryBase(c);
+      return;
+    }
     const first = s.base.source === 'sidestory' ? undefined : this.storyBases(s).first;
     const step = latchStep(
       this.latch,
       this.latchRefreshedFor,
-      { source: s.base.source, head: s.head.sha },
+      { source: s.base.source, branch: this.latchBranch(s.repo) },
       first && { dir: first.dir.toString(), title: first.title, base: first.base },
       { pick: this.pickOf(s.repo), setting: setting(), stillValid: this.storyBase(c.repo) !== undefined },
     );
     this.latch = step.latch;
     this.latchRefreshedFor = step.refreshedFor;
     if (step.refresh) void c.refresh();
+  }
+
+  /**
+   * No base from the default chain (no main or master), yet a sidestory names one (`develop`): there is no snapshot
+   * to read "added on this branch" from, so ask the sidestory's own merge-base whether its manifest is there. Not
+   * there (added on this branch, or not committed yet): latch its base. Once per (branch, pick, setting, sidestory).
+   */
+  private async rescueStoryBase(c: Comparison): Promise<void> {
+    const repo = c.repo;
+    const head = repo.state.HEAD?.commit;
+    if (!head || this.latch || this.pickOf(repo)) return;
+    const reader = refReader(repo);
+    const stories = this.host
+      .sidestoryBases()
+      .flatMap((x) => {
+        const folder = relPath(repo, x.dir);
+        return folder && isStoryBase(x.base) ? [{ ...x, folder }] : [];
+      })
+      .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
+    for (const x of stories) {
+      const b = await resolveBase(reader, x.base);
+      if (!b || b.sha === head) continue;
+      const mb = await reader.mergeBase(b.sha, head);
+      if (!mb) continue;
+      const there = await repo.getObjectDetails(mb, apiPath(repo, `${x.folder}/manifest.json`)).then(
+        () => true,
+        (e: unknown) => (isUnknownPath(e) ? false : undefined),
+      );
+      if (there !== false) continue;
+      if (this.comparison !== c || c.state.kind !== 'noBase' || this.latch) return;
+      const step = latchStep(undefined, this.latchRefreshedFor, { source: 'fallback', branch: this.latchBranch(repo) }, { dir: x.dir.toString(), title: x.title, base: x.base }, { pick: undefined, setting: setting(), stillValid: false });
+      this.latch = step.latch;
+      this.latchRefreshedFor = step.refreshedFor;
+      if (step.refresh) void c.refresh();
+      return;
+    }
   }
 
   /** The index changed: coverage again, and the sidestory base and "Use develop" row may have changed. */
@@ -393,9 +440,14 @@ export class ChangesService implements vscode.Disposable {
         const sub = this.coverage.onDidChange(() => {
           if (ready()) done();
         });
+        // The comparison stopped being ready (a base gone, the repository closed): nothing to wait for.
+        const left = this.onDidChange(() => {
+          if (!this.snapshot) done();
+        });
         function done() {
           clearTimeout(timer);
           sub.dispose();
+          left.dispose();
           resolve();
         }
       });
@@ -454,18 +506,31 @@ export class ChangesService implements vscode.Disposable {
     return this.keyOf(s, uri);
   }
 
+  /**
+   * The comparison's entry for a side of a path. An unstaged rename coverage paired (a deleted tracked file and an
+   * untracked one) is one renamed entry: either side of either half finds it, so it has one diff and one walk.
+   */
   entryFor(s: Snapshot, k: SideKey): ChangeEntry | undefined {
+    const paired = this.pairedEntry(s, k);
+    if (paired) return paired;
     return k.side === 'head' ? s.entries.find((e) => e.path === k.path && e.status !== 'D') : s.entries.find((e) => (e.oldPath ?? e.path) === k.path && e.status !== 'A');
+  }
+
+  private pairedEntry(s: Snapshot, k: SideKey): ChangeEntry | undefined {
+    const r = this.result(s);
+    if (!r?.paired?.size) return undefined;
+    const newPath = r.paired.get(k.path) ?? k.path;
+    const f = r.files.get(newPath);
+    return f?.entry.status === 'R' && f.entry.untracked && (r.paired.get(k.path) !== undefined || k.side === 'head') ? f.entry : undefined;
   }
 
   /** A document's head path in the current comparison: a file, either side of a diff (the left side of a rename names the new path). */
   pathOf(uri: vscode.Uri | undefined): string | undefined {
     const s = this.snapshot;
     if (!uri || !s) return undefined;
-    if (uri.scheme === EMPTY_SCHEME) return uri.path.slice(1);
-    const k = this.keyOf(s, uri);
-    if (!k) return undefined;
-    return k.side === 'head' ? k.path : (this.entryFor(s, k)?.path ?? k.path);
+    const k = uri.scheme === EMPTY_SCHEME ? this.locate(s, uri) : this.keyOf(s, uri);
+    if (!k) return uri.scheme === EMPTY_SCHEME ? uri.path.slice(1) : undefined;
+    return this.entryFor(s, k)?.path ?? k.path;
   }
 
   /** A working tree file, only for a path the file system rule passes (never a Windows device, `a.` or `a:b`). */
@@ -541,13 +606,20 @@ export class ChangesService implements vscode.Disposable {
         this.updateActive();
         return undefined;
       }
+      // Released while this was in flight (the panel closed): don't hold the comparison for it.
+      if (!this.coverage.isWanted(who)) return undefined;
       this.holders.add(who);
       return this.diffContext();
     },
     release: (who) => {
-      this.holders.delete(who);
+      const held = this.holders.delete(who);
       this.coverage.want(who, false);
       this.updateActive();
+      if (held && !this.holders.size) {
+        // The last session of this repository let go: follow the active editor again, and let other sessions ask.
+        this.followRepo();
+        this.diffsEmitter.fire();
+      }
     },
     onDidChange: this.diffsEmitter.event,
   };
@@ -649,6 +721,13 @@ export class ChangesService implements vscode.Disposable {
   private async changeAtCursor(s: Snapshot, r: CoverageResult | undefined): Promise<Found | undefined> {
     const at = this.activePlace(s);
     if (!at) return undefined;
+    // A whole-file change (a file too large to compare, say): the cursor anywhere in it is in it.
+    const whole = r?.files.get(at.entry.path);
+    if (whole?.whole) {
+      const c = whole.coverage?.changes.find((x) => !isDone(x.state));
+      const b = c && whole.blocks.get(c.key);
+      return c && b ? { path: at.entry.path, entry: whole.entry, c, b } : undefined;
+    }
     const f = await this.fileChanges(s, r, at.entry);
     if (!f) return undefined;
     const sel = at.editor.selection;
@@ -677,15 +756,36 @@ export class ChangesService implements vscode.Disposable {
     return this.changeAtCursor(s, r);
   }
 
-  /** Opens the diff at a change (§9.6: the left side for pure deletions). */
+  /**
+   * Opens the diff at a change (§9.6: the left side for pure deletions). A whole-file change (binary, link, submodule,
+   * too large) has no lines: its diff opens without a range (a binary diff has no text editor), or, when the file
+   * isn't read from disk, its place is said.
+   */
   private async openChange(s: Snapshot, r: CoverageResult, path: string, key: string, column = vscode.ViewColumn.Active): Promise<void> {
     const f = r.files.get(path);
     const b = f?.blocks.get(key);
     const ctx = this.diffContext();
     if (!f || !b || !ctx) return;
+    if (f.whole) {
+      const pair = this.diffUris(s, f.entry);
+      if (!pair) {
+        void vscode.window.showInformationMessage(`${name(path, 100)} (${WHOLE_WORDS[f.whole]}) counts as one change; its path isn't read from disk. Cover it with a trivialFiles glob.`);
+        return;
+      }
+      await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, pair.title, { preview: true, viewColumn: column });
+      return;
+    }
     const side: SideKey = b.new ? { path, side: 'head' } : { path: f.entry.oldPath ?? path, side: 'base' };
     const range = b.new ?? b.old ?? { start: b.newAt, end: b.newAt };
     await openTarget(ctx, { ...side, range }, undefined, { moveCursor: true, viewColumn: column, preserveFocus: false, mode: 'diff' });
+  }
+
+  /** What the active tab and cursor are: unchanged since the last walk means "continue after its target". */
+  private walkSignature(): string {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const input = tab?.input as { uri?: vscode.Uri; original?: vscode.Uri; modified?: vscode.Uri } | undefined;
+    const ed = vscode.window.activeTextEditor;
+    return JSON.stringify([tab?.label, input?.uri?.toString(), input?.original?.toString(), input?.modified?.toString(), ed?.document.uri.toString(), ed?.selection.active.line]);
   }
 
   // ---- next / previous ----
@@ -724,21 +824,26 @@ export class ChangesService implements vscode.Disposable {
       }
     }
     if (!list.length) {
-      vscode.window.setStatusBarMessage(`Every change is explained or marked trivial${r.incomplete ? ' · incomplete: some files weren’t counted' : ''}`, 3000);
+      vscode.window.setStatusBarMessage(everyChangeMessage(r), 5000);
       return;
     }
     const rank = fileRanks([...r.files.keys()], this.stepFiles(s, r));
     const place = this.activePlace(s);
     let at: { path: string; pos: number } | undefined;
-    if (place) {
+    const last = this.lastWalk;
+    if (last && last.snapshot === s && last.sig === this.walkSignature() && list.some((x) => x.path === last.target.path && x.key === last.target.key)) {
+      // Nothing moved since the last walk (a whole-file diff has no cursor to read): continue after its target.
+      at = { path: last.target.path, pos: last.target.pos };
+    } else if (place) {
       const line = place.editor.selection.active.line + 1;
-      const diff = r.files.get(place.entry.path)?.diff;
-      at = { path: place.entry.path, pos: place.key.side === 'base' && diff ? oldToNew(diff, line) : line };
+      const f = r.files.get(place.entry.path);
+      at = { path: place.entry.path, pos: f?.whole ? 1 : place.key.side === 'base' && f?.diff ? oldToNew(f.diff, line) : line };
     }
     const next = nextChange(list, rank, at, dir);
     if (!next) return;
     if (next.wrapped) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first unexplained change' : 'Back to the last unexplained change', 3000);
     await this.openChange(s, r, next.target.path, next.target.key, place?.editor.viewColumn);
+    this.lastWalk = { snapshot: s, target: next.target, sig: this.walkSignature() };
   }
 
   private async moveFile(dir: 1 | -1): Promise<void> {
@@ -747,8 +852,14 @@ export class ChangesService implements vscode.Disposable {
       vscode.window.setStatusBarMessage('No comparison with a base here', 3000);
       return;
     }
-    // Files whose working tree side Sidestory won't open (a Windows device name, `a.`) are skipped.
-    const order = s.entries.filter((e) => headSideReadable(s.mode, e)).sort((a, b) => comparePaths(a.path, b.path));
+    // Files whose working tree side Sidestory won't open (a Windows device name, `a.`) are skipped; an unstaged
+    // rename coverage paired is one file (its renamed entry), not a deletion and an untracked file.
+    const paired = this.result(s)?.paired;
+    const order = s.entries
+      .filter((e) => !(e.status === 'D' && paired?.has(e.path)))
+      .map((e) => (e.status === 'A' ? (this.pairedEntry(s, { path: e.path, side: 'head' }) ?? e) : e))
+      .filter((e) => headSideReadable(s.mode, e))
+      .sort((a, b) => comparePaths(a.path, b.path));
     if (!order.length) {
       vscode.window.setStatusBarMessage('No changed files', 3000);
       return;
@@ -838,6 +949,7 @@ export class ChangesService implements vscode.Disposable {
       ...(o ? { otherBase: { title: displayText(o.title, 60), base: name(o.base, 40) } } : {}),
       ...(r?.belonging.length && r.incomplete ? { incomplete: true } : {}),
       ...(problem ? { problem } : {}),
+      ...(r?.belonging.length && r.unsupportedLeft?.length ? { unsupported: r.unsupportedLeft.map((p) => displayText(p, 120)) } : {}),
     });
     // Multi-root: which repository, when more than one is open.
     const roots = new Set((this.api?.repositories ?? []).map(repoKey));
@@ -852,18 +964,19 @@ export class ChangesService implements vscode.Disposable {
   // ---- This File's view of a file's changes ----
 
   /** The changes of a file that aren't done, and the steps whose code changed since they were written (This File). */
-  changesOf(file: vscode.Uri): { path: string; open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage }[]; needsLook: Set<string> } | undefined {
+  changesOf(file: vscode.Uri): { path: string; open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean }[]; needsLook: Set<string> } | undefined {
     const s = this.snapshot;
     const r = this.result(s);
     if (!s || !r?.belonging.length) return undefined;
     const path = this.pathOf(file);
     const f = path ? r.files.get(path) : undefined;
     if (!path || !f?.coverage) return undefined;
-    const open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage }[] = [];
+    const open: { key: string; label: string; state: ChangeCoverage['state']; c: ChangeCoverage; whole?: boolean }[] = [];
     const needsLook = new Set<string>();
     for (const c of f.coverage.changes) {
       const b = f.blocks.get(c.key);
-      if (b && !isDone(c.state)) open.push({ key: c.key, label: changeLabel(b), state: c.state, c });
+      // A whole-file change is named by its kind ("binary file"), not by lines it doesn't have.
+      if (b && !isDone(c.state)) open.push({ key: c.key, label: f.whole ? WHOLE_WORDS[f.whole] : changeLabel(b), state: c.state, c, ...(f.whole ? { whole: true } : {}) });
       for (const n of c.needsLook ?? []) {
         const dir = r.belonging.find((x) => x.folder === n.sidestory)?.dir;
         if (dir) needsLook.add(`${dir.toString()}\0${n.anchor}`);
@@ -898,6 +1011,11 @@ export class ChangesService implements vscode.Disposable {
     const named = arg && typeof arg === 'object' && typeof (arg as { key?: unknown }).key === 'string';
     // A change not done yet: named, at the cursor, or one the selection touches.
     const one = await this.changeFrom(s, r, arg);
+    const whole = one ? r?.files.get(one.path)?.whole : undefined;
+    if (whole) {
+      void vscode.window.showInformationMessage(`${name(one!.path, 100)} counts as one change as a whole (${WHOLE_WORDS[whole]}): a trivial mark can't cover it. Add a narrow trivialFiles glob for it to the sidestory's manifest.`);
+      return;
+    }
     if (one && !named && place && !place.editor.selection.isEmpty) {
       // A selection: those lines, on the side they are on.
       const sel = place.editor.selection;
@@ -1117,8 +1235,18 @@ export class ChangesService implements vscode.Disposable {
       }
       const b = got.r.belonging.length ? await this.pickBelonging(got.r, 'Explain It in Which Sidestory?') : undefined;
       if (got.r.belonging.length && !b) return;
-      const file = c.b.new ? c.path : (c.entry.oldPath ?? c.path);
-      await this.copy(changePrompt({ sidestory: b?.folder, base: b?.manifest.base ?? got.s.base.spec, file, lines: changeLabel(c.b), kind: changeKind(c.b) }));
+      const whole = got.r.files.get(c.path)?.whole;
+      const file = c.b.new || whole ? c.path : (c.entry.oldPath ?? c.path);
+      const kind = whole ? (c.entry.status === 'A' ? 'added' : c.entry.status === 'D' ? 'removed' : 'replaced') : changeKind(c.b);
+      await this.copy(changePrompt({ sidestory: b?.folder, base: b?.manifest.base ?? got.s.base.spec, file, lines: whole ? `whole file, ${WHOLE_WORDS[whole]}` : changeLabel(c.b), kind, ...(whole ? { whole: true } : {}) }));
+    },
+    'sidestory.changes.copyUnsupported': async () => {
+      const r = this.result();
+      const paths = r?.unsupportedLeft ?? [];
+      if (!paths.length) return;
+      // As JSON strings: control characters stay escaped, and the list pastes into trivialFiles as it is.
+      await vscode.env.clipboard.writeText(JSON.stringify(paths, null, 2));
+      void vscode.window.showInformationMessage(`Copied ${paths.length} ${paths.length === 1 ? 'path' : 'paths'} for trivialFiles (characters * ? [ in a path match as a glob there).`);
     },
     'sidestory.changes.markTrivial': (arg?: unknown) => this.markTrivialCmd(arg),
     'sidestory.changes.repinStep': (arg?: unknown) => this.repinStep(arg),

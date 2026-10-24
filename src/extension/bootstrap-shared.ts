@@ -40,6 +40,7 @@ export const COMMANDS = [
   'sidestory.changes.openChange',
   'sidestory.changes.copyExplainPrompt',
   'sidestory.changes.dismissExplain',
+  'sidestory.changes.copyUnsupported',
   'sidestory.changes.copyUpdatePrompt',
   'sidestory.changes.copyChangePrompt',
   'sidestory.changes.markTrivial',

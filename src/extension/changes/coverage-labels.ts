@@ -44,6 +44,17 @@ export function fileDecoration(f: FileCoverage, steps: readonly string[] = []): 
   return { badge, color, tooltip: parts.join(' · ') };
 }
 
+/** Why a file counts as one change without lines (coverage's `WholeKind`), in This File's words. */
+export const WHOLE_WORDS = { binary: 'binary file', link: 'symlink', submodule: 'submodule', tooLarge: 'too large', unsupported: 'unsupported path' } as const;
+export type WholeKindWord = keyof typeof WHOLE_WORDS;
+
+/** The status bar line when Next/Previous Unexplained Change finds nothing left to open. */
+export function everyChangeMessage(r: { incomplete: boolean; unsupportedLeft?: readonly string[] }): string {
+  const n = r.unsupportedLeft?.length ?? 0;
+  const head = n ? `Every change you can open is explained or marked trivial · ${n} ${n === 1 ? 'file' : 'files'} with unsupported paths left: list ${n === 1 ? 'it' : 'them'} in trivialFiles (This branch)` : 'Every change is explained or marked trivial';
+  return `${head}${r.incomplete ? ' · incomplete: some files weren’t counted' : ''}`;
+}
+
 /** A change's place: `L40–44` on the new side, `L39–62 (removed)` for a pure deletion (old lines). */
 export function changeLabel(b: ChangeBlock): string {
   if (b.new) return `L${span(b.new)}`;
@@ -124,6 +135,8 @@ export interface BranchInputs {
   incomplete?: boolean;
   /** Why there is no comparison (a base not found, no common commit, git's error): said, with a way out. */
   problem?: BranchProblem;
+  /** Changed files whose paths Sidestory won't read, not covered by trivialFiles (display-safe): nowhere else to find them. */
+  unsupported?: readonly string[];
 }
 
 /** Why the branch has no comparison, as the comparison's state says it (display-safe strings). */
@@ -191,6 +204,18 @@ export function branchRows(i: BranchInputs): BranchRow[] {
       icon: 'sparkle',
       command: { command: 'sidestory.changes.copyExplainPrompt', title: 'Copy Prompt: Explain This Branch' },
       contextValue: 'explainPrompt',
+    });
+  }
+  if (i.unsupported?.length) {
+    const n = i.unsupported.length;
+    const shown = i.unsupported.slice(0, 20);
+    rows.push({
+      id: 'b:unsupported',
+      label: `${n} ${n === 1 ? 'file' : 'files'} with unsupported paths · list ${n === 1 ? 'it' : 'them'} in trivialFiles`,
+      tooltip: `Sidestory won't read ${n === 1 ? 'this path' : 'these paths'} (control characters, "..", ".git", a leading ":"), so each counts as one change only a trivialFiles glob covers:\n${shown.join('\n')}${n > shown.length ? `\n… and ${n - shown.length} more` : ''}\nClick to copy them.`,
+      icon: 'warning',
+      command: { command: 'sidestory.changes.copyUnsupported', title: 'Copy Unsupported Paths' },
+      contextValue: 'unsupportedPaths',
     });
   }
   if (i.otherBase) {

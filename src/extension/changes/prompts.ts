@@ -40,7 +40,7 @@ function check(v: Value): string {
     v.kind === 'path' ? safePath(v.value)
     : v.kind === 'branch' ? safeBranch(v.value)
     : v.kind === 'title' ? safeTitle(v.value)
-    : v.kind === 'lines' ? (v.value !== undefined && /^L\d{1,7}(–\d{1,7})?( \(removed\))?$/.test(v.value) ? v.value : undefined)
+    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path))$/.test(v.value) ? v.value : undefined)
     : v.value !== undefined && /^[a-z]{1,20}$/.test(v.value) ? v.value : undefined;
   return ok ?? `(${DESCRIBE[v.kind]})`;
 }
@@ -71,10 +71,19 @@ export function updatePrompt(sidestory: string, base: string): string {
   );
 }
 
-export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced' }): string {
+export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced'; whole?: boolean }): string {
   const data: [string, Value][] = [];
   if (c.sidestory) data.push(['sidestory', path(c.sidestory)]);
   data.push(['base', branch(c.base)], ['file', path(c.file)], ['lines', { kind: 'lines', value: c.lines }], ['kind', { kind: 'word', value: c.kind }]);
+  // A whole-file change (binary, link, submodule, too large): no step can explain it, only a trivialFiles glob.
+  if (c.whole) {
+    return prompt(
+      c.sidestory
+        ? 'The file below changed as a whole (it has no lines to explain): add a narrow trivialFiles glob for it to the sidestory below, then re-run --coverage.'
+        : 'The file below changed as a whole (it has no lines to explain): start a sidestory for this branch (with the base below) and add a narrow trivialFiles glob for it, then run --coverage.',
+      data,
+    );
+  }
   return prompt(
     c.sidestory
       ? 'Add a step (or extend one) in the sidestory below that explains the change below, then re-run --coverage.'
