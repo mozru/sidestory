@@ -35,7 +35,6 @@ import { log } from '../log.ts';
 import { realPathInside } from '../paths.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
-import type { GitRepo } from './git-api.ts';
 import { apiPath, refReader, relPath } from './git-api.ts';
 import type { ChangeEntry } from './model.ts';
 
@@ -291,7 +290,6 @@ export async function computeCoverage(
   const cache: DiffCache = opts.cache ?? new Map();
   const { found, incomplete: unsure } = await belongingSidestories(src);
   if (!isCurrent()) return undefined;
-  const none: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   // No layer without a sidestory (§9.2): the navigator's own counting fills in the counts then.
   if (!found.length) return emptyResult(src.mergeBase, unsure);
   // Which entries count, as the checker decides (src/cli/coverage.ts): only the two files of a sidestory complete at
@@ -359,8 +357,7 @@ export async function computeCoverage(
   const texts = new Map<string, { entry: ChangeEntry; diff: FileDiff; texts: Texts; whole?: WholeKind }>();
   /** Sides read before the main pass (rename pairing), by entry. */
   const pre = new Map<ChangeEntry, { ob: SideBytes; nb: SideBytes }>();
-  /** A paired rename → the untracked entry of the comparison it stands for (its counts are shown there). */
-  const originals = new Map<ChangeEntry, ChangeEntry>();
+  /** Unstaged renames paired as the checker pairs them: the deleted path → the untracked path. */
   const paired = new Map<string, string>();
   let bytes = 0;
   let incomplete = unsure;
@@ -412,9 +409,7 @@ export async function computeCoverage(
           if (!d) return e;
           const r: ChangeEntry = { path: e.path, oldPath: d.path, status: 'R', untracked: true, ...(e.unsaved ? { unsaved: true } : {}) };
           pre.set(r, { ob: pre.get(d)!.ob, nb: pre.get(e)!.nb });
-          originals.set(r, e);
           paired.set(d.path, e.path);
-          d.counting = false;
           return r;
         });
     }
@@ -438,7 +433,6 @@ export async function computeCoverage(
       return;
     }
     if (c.kind === 'whole') {
-      if (c.whole === 'binary' || c.whole === 'lfs') e.noText = true;
       texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: c.whole });
       return;
     }
@@ -461,19 +455,6 @@ export async function computeCoverage(
   for (const e of archived) if (!texts.has(e.path)) texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: 'archive' });
   // By path, whatever order the workers finished in: the same result for the same inputs.
   const done = [...texts.values()].sort((a, b) => byPath(a.entry.path, b.entry.path));
-
-  // Counts from the blocks (§5.2): exact, and the same for renames and untracked files.
-  for (const { entry, diff } of done) {
-    if (diff.tooLarge) continue;
-    const added = diff.changes.reduce((n, c) => n + c.added, 0);
-    const removed = diff.changes.reduce((n, c) => n + c.removed, 0);
-    for (const x of [entry, originals.get(entry)]) {
-      if (!x) continue;
-      x.added = added;
-      x.removed = removed;
-      x.counting = false;
-    }
-  }
 
   // One entry per path on each side, as the checker picks them: an added file has no merge-base side; a file's own
   // entry wins over a copy made from it; then the first by path.
@@ -939,5 +920,3 @@ async function readPage(uri: vscode.Uri, root: vscode.Uri, decode: (b: Uint8Arra
   const bytes = await readBytesInside(uri, root, COVERAGE_WORK.htmlBytes);
   return bytes ? decode(bytes) : undefined;
 }
-
-export type { GitRepo };

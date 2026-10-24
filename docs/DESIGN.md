@@ -1,6 +1,6 @@
 # Sidestory: Design Handoff
 
-> **Status: design draft.** This describes the full vision, including features that are not built yet (threads, the Claude Code integration, the PR viewer, symbol and history-based anchors). For what the extension does today, see the README. Decisions taken during implementation are in §12.
+> **Status: design draft.** This describes the full vision, including features that are not built yet (the PR viewer, symbol and history-based anchors). For what the extension does today, see the README. Decisions taken during implementation are in §12.
 
 Name: **Sidestory**.
 Written: 2026-10-21.

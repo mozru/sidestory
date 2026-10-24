@@ -6,7 +6,7 @@ import type { ThreadAnchor } from '../../core/threads/schema.ts';
 import type { Location } from '../../comments/storage.ts';
 import type { CommentsContext, CommentsFromWebview, CommentsToWebview, CommentItemView, ThreadView } from '../../shared/comments-protocol.ts';
 import type { ExplainerRef } from '../explainers.ts';
-import { claudeCommandText, copyThreadMarkdown, showHowTo } from './commands-text.ts';
+import { copyThreadMarkdown, showHowTo } from './commands-text.ts';
 import { codeAnchorLabel, type CommentService, type Entry } from './service.ts';
 
 /** What the panel host needs from a session (src/extension/session.ts). */
@@ -250,8 +250,6 @@ export class CommentsPanels implements vscode.Disposable {
         await svc.pickSession(s.ref.root, false);
         this.schedule(s, 0);
         break;
-      case 'sendCancel':
-        break;
     }
   }
 
@@ -339,5 +337,3 @@ export async function deliveryAction(svc: CommentService, e: Entry, event: strin
       break;
   }
 }
-
-export { claudeCommandText };

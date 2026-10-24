@@ -1,4 +1,4 @@
-// The Changes view's git side (docs/CHANGES-PLAN.md §4.3–§4.5, §16.1 base-resolve, changes-comparison, git-fs): the
+// Branch comparison's git side (docs/CHANGES-PLAN.md §4.3–§4.5, §16.1 base-resolve, changes-comparison, git-fs): the
 // base grammar and resolution, the merge diff against a real git fixture (read through a stand-in for the vscode.git
 // API that runs the same git commands the git extension does), the recompute rules, and the read-only provider.
 import { execFileSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import { defaultBaseCandidates, isValidBase, remoteDefault, resolveBase } from '
 import { EventEmitter, Uri } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
-const { Comparison, countCommits, headSideReadable, isSafeRepoPath, toEntries } = await import('../../src/extension/changes/comparison.ts');
+const { Comparison, headSideReadable, isSafeRepoPath, toEntries } = await import('../../src/extension/changes/comparison.ts');
 const { GitFileSystem, RepoIds, gitUri, parseGitUri } = await import('../../src/extension/changes/git-fs.ts');
 type GitRepo = import('../../src/extension/changes/git-api.ts').GitRepo;
 
@@ -200,15 +200,14 @@ describe('the merge diff of the fixture branch', () => {
     expect(s.mergeBase).toBe(mb);
     expect(mb).not.toBe(git('rev-parse', 'main').trim()); // main moved after the fork
     expect(s.base).toMatchObject({ spec: 'main', label: 'main', source: 'fallback' });
-    expect(s.entries.map((e) => `${e.status} ${e.path}${e.oldPath ? ` ← ${e.oldPath}` : ''} +${e.added} -${e.removed}`)).toEqual([
-      'D legacy/sleep.ts +0 -24',
-      'R src/retry/backoff.ts ← old/backoff.ts +2 -2',
-      'A src/retry/jitter.ts +19 -0',
-      'M src/retry/retry.ts +4 -1',
-      'M test/retry.test.ts +30 -0',
+    expect(s.entries.map((e) => `${e.status} ${e.path}${e.oldPath ? ` ← ${e.oldPath}` : ''}`)).toEqual([
+      'D legacy/sleep.ts',
+      'R src/retry/backoff.ts ← old/backoff.ts',
+      'A src/retry/jitter.ts',
+      'M src/retry/retry.ts',
+      'M test/retry.test.ts',
     ]);
     expect(s.entries.some((e) => e.path === 'main-only.ts' || e.path === 'docs/notes.md')).toBe(false);
-    expect(s.commits).toEqual({ count: 3, capped: false });
     // The list is asked for from the merge-base itself, so two-dot and three-dot agree.
     expect(calls.filter((x) => x.startsWith('diffBetween'))).toEqual([`diffBetweenWithStats ${mb} ${s.head.sha}`]);
     c.dispose();
@@ -223,20 +222,19 @@ describe('the merge diff of the fixture branch', () => {
     const c = new Comparison(repo, opts({ mode: () => 'workingTree' }));
     await c.refresh();
     const s = c.snapshot!;
-    expect(s.entries.find((e) => e.path === 'README.md')).toMatchObject({ status: 'M', added: 2, removed: 0 });
+    expect(s.entries.find((e) => e.path === 'README.md')).toMatchObject({ status: 'M' });
     expect(s.entries.find((e) => e.path === 'notes.txt')).toMatchObject({ status: 'A', untracked: true });
     git('checkout', '--', 'README.md');
     rmSync(join(dir, 'notes.txt'));
     c.dispose();
   });
 
-  it('without numstat in the API (VS Code 1.95), names only: counts are unknown', async () => {
+  it('without numstat in the API (VS Code 1.95), the same files from names only', async () => {
     const repo = cliRepo();
     delete (repo as Partial<GitRepo>).diffBetweenWithStats;
     const c = new Comparison(repo, opts());
     await c.refresh();
-    expect(c.snapshot!.countsKnown).toBe(false);
-    expect(c.snapshot!.entries.every((e) => e.added === undefined)).toBe(true);
+    expect(c.snapshot!.entries.map((e) => `${e.status} ${e.path}`)).toEqual(['D legacy/sleep.ts', 'R src/retry/backoff.ts', 'A src/retry/jitter.ts', 'M src/retry/retry.ts', 'M test/retry.test.ts']);
     c.dispose();
   });
 
@@ -349,7 +347,6 @@ describe('paths Sidestory refuses (§4.5, §5.1)', () => {
     const r = toEntries(repo, [ch(5, 'src/a.ts'), ch(1, 'x/.git/hooks/post'), ch(5, 'bad\u0007name.ts'), ch(3, 'ok.ts', 'a/../b.ts'), ch(5, 'con')]);
     expect(r.entries.map((e) => e.path)).toEqual(['src/a.ts', 'con']); // `con` is an ordinary blob
     expect(r.unsupported).toEqual([{ path: 'x/.git/hooks/post' }, { path: 'bad\u0007name.ts' }, { path: 'ok.ts', oldPath: 'a/../b.ts' }]);
-    expect(r.unsafe).toBe(0);
   });
   it('the working tree side is read from disk only for a path the file system rule passes', () => {
     for (const p of ['con', 'src/nul.txt', 'docs/a.', 'a /b', 'a.ts:stream']) {
@@ -378,11 +375,6 @@ describe('the same comparison keeps its snapshot', () => {
     expect(changes).toBe(1);
     expect(rechecks).toBe(2);
     expect(first.unsupported).toEqual([]);
-    // Counts coverage writes onto the entries aren't a change of the comparison.
-    for (const e of first.entries) Object.assign(e, { added: 999, removed: 1, counting: false, noText: true });
-    await c.refresh();
-    expect(c.snapshot).toBe(first);
-    expect(changes).toBe(1);
     // Another base: another snapshot.
     const other = new Comparison(repo, opts({ setting: () => 'main' }));
     await other.refresh();
@@ -390,21 +382,23 @@ describe('the same comparison keeps its snapshot', () => {
     other.dispose();
     c.dispose();
   });
-  it('the same files with other details (uncommitted now): the same object, updated, and a change', async () => {
-    const repo = cliRepo();
-    const c = new Comparison(repo, opts({ mode: () => 'workingTree' }));
+  it('the same files with other details (HEAD detached at the same commit): the same object, updated, and a change', async () => {
+    const c = new Comparison(cliRepo(), opts({ mode: () => 'workingTree' }));
     let changes = 0;
     c.onDidChange(() => changes++);
     await c.refresh();
     const first = c.snapshot!;
-    const touched = first.entries.find((e) => e.status === 'M')!;
-    (repo.state as { workingTreeChanges: unknown[] }).workingTreeChanges = [{ uri: Uri.file(join(dir, touched.path)), originalUri: Uri.file(join(dir, touched.path)), renameUri: undefined, status: 5 }];
-    await c.refresh();
-    expect(c.snapshot).toBe(first);
-    expect(first.uncommitted).toBe(true);
-    expect(changes).toBe(2);
-    (repo.state as { workingTreeChanges: unknown[] }).workingTreeChanges = [];
-    c.dispose();
+    expect(first.head.name).toBe('feature');
+    git('checkout', '-q', '--detach');
+    try {
+      await c.refresh();
+      expect(c.snapshot).toBe(first);
+      expect(first.head.name).toBeUndefined();
+      expect(changes).toBe(2);
+    } finally {
+      git('checkout', '-q', 'feature');
+      c.dispose();
+    }
   });
   it('an unchanged problem (a base not found) is said once', async () => {
     const c = new Comparison(cliRepo(), opts({ pick: () => 'devlop' }));
@@ -415,20 +409,6 @@ describe('the same comparison keeps its snapshot', () => {
     expect(c.state).toEqual({ kind: 'baseNotFound', spec: 'devlop' });
     expect(changes).toBe(1);
     c.dispose();
-  });
-});
-
-describe('counting commits', () => {
-  // n commits on the branch: HEAD's log lists them, then the merge-base; `mb..h` lists only them.
-  const fakeLog = (n: number) =>
-    ({
-      log: async (o: { maxEntries?: number; range?: string }) =>
-        o.range ? Array.from({ length: n }, (_, i) => ({ hash: `c${i}`, message: '', parents: [] })) : Array.from({ length: Math.min(n + 1, o.maxEntries ?? 32) }, (_, i) => ({ hash: i === n ? 'mb' : `c${i}`, message: '', parents: [] })),
-    }) as unknown as GitRepo;
-  it('exact below the cap; 1000+ when the merge-base is further back (the range would be unbounded)', async () => {
-    expect(await countCommits(fakeLog(5), 'mb', 'h')).toEqual({ count: 5, capped: false });
-    expect(await countCommits(fakeLog(5000), 'mb', 'h')).toEqual({ count: 1000, capped: true });
-    expect(await countCommits(fakeLog(5), 'h', 'h')).toEqual({ count: 0, capped: false });
   });
 });
 

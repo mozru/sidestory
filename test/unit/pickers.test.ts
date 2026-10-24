@@ -32,13 +32,6 @@ async function start() {
   await index.refresh();
 }
 
-/** The quick pick the call just showed (it appears asynchronously). */
-async function shown(): Promise<StubQuickPick> {
-  const before = quickPicks.length;
-  await waitFor(() => quickPicks.length > before - 1 && !!quickPicks.at(-1)?.shown);
-  return quickPicks.at(-1)!;
-}
-
 /** Runs a picker, lets `inspect` look at it, then accepts the item `choose` returns (or hides it). */
 async function run<T>(open: () => Promise<T>, inspect: (qp: StubQuickPick) => unknown = () => undefined): Promise<T> {
   quickPicks.length = 0;

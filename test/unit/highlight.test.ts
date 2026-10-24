@@ -1,6 +1,6 @@
 // Code block highlighting (docs/HIGHLIGHT-PLAN.md): language names, the grammar catalog built from installed
 // extensions, theme loading, the tokenizer, the host's worker manager, the protocol, and the size of what ships.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';

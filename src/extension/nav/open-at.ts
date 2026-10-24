@@ -2,7 +2,6 @@
 // Go to Step and Open Sidestory, deciding which panel shows the sidestory so tabs don't pile up and the reader
 // never loses their place. Also the recently-opened list (§10).
 import * as vscode from 'vscode';
-import { plainForMessage } from '../../core/display-text.ts';
 import { anchorIdSchema, explainerNameSchema } from '../../core/manifest.ts';
 import { MAX_TRAIL } from '../../shared/protocol.ts';
 import type { ExplainerRef } from '../explainers.ts';
@@ -131,7 +130,6 @@ export class Navigator {
     }
     const { ref, trail, anchor, newPanel, source } = args;
     const key = uriKey(ref.dir);
-    const same = (s: ExplainerSession) => uriKey(s.ref.dir) === key;
 
     // A second open of the same tree item within 500 ms is a double-click: keep the panel it opened. VS Code sends
     // both invocations at once, so the first is recorded (with its pending result) before anything is awaited.
@@ -145,7 +143,7 @@ export class Navigator {
         return s;
       }
     }
-    const pending = this.place(ref, trail, anchor, newPanel, key);
+    const pending = this.place(trail, anchor, newPanel, key);
     // A second click waits on this; a failed open must not reject it a second time.
     if (source === 'tree') this.lastTreeOpen = { key, at: Date.now(), pending: pending.catch(() => undefined) };
     const session = await pending;
@@ -154,7 +152,7 @@ export class Navigator {
   }
 
   /** Decides where the sidestory opens (§7.5) and opens it there. */
-  private async place(ref: ExplainerRef, trail: [ExplainerRef, ...ExplainerRef[]], anchor: string | undefined, newPanel: boolean, key: string): Promise<ExplainerSession | undefined> {
+  private async place(trail: [ExplainerRef, ...ExplainerRef[]], anchor: string | undefined, newPanel: boolean, key: string): Promise<ExplainerSession | undefined> {
     const same = (s: ExplainerSession) => uriKey(s.ref.dir) === key;
     let session: ExplainerSession | undefined;
     if (newPanel) {
@@ -198,6 +196,3 @@ export class Navigator {
     this.host.previewChanged?.(s);
   }
 }
-
-/** For messages: a sidestory's name, safe to show. */
-export const messageName = (ref: ExplainerRef) => plainForMessage(ref.name, 64);

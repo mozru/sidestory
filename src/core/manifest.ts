@@ -150,8 +150,6 @@ export const LIMITS = {
 } as const;
 
 const SUPPORTED_VERSIONS = [1, 2, 3] as const;
-/** The newest version this release reads and writes. */
-export const MANIFEST_VERSION = 3;
 
 /** Full commit ids: SHA-1 or SHA-256, lowercase. */
 export const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

@@ -3,7 +3,7 @@
 // Node only, no VS Code: shared by the extension, the MCP server and the checker.
 import { randomBytes } from 'node:crypto';
 import { constants, promises as fs } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, sep } from 'node:path';
 import { encodeUlid } from '../core/threads/schema.ts';
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
@@ -181,9 +181,4 @@ export async function listDir(dir: string): Promise<string[]> {
   } catch {
     return [];
   }
-}
-
-/** A path relative to `root`, with `/` separators. */
-export function relPosix(root: string, p: string): string {
-  return relative(root, p).split(sep).join('/');
 }

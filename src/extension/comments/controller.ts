@@ -66,8 +66,6 @@ export class CommentsController implements vscode.Disposable {
   /** Lines the user selected for Comment on Selection: commentable even outside steps. */
   private expandNext: string | undefined;
   private selection: { key: string; range: vscode.Range } | undefined;
-  /** Set by Ask Claude About Selection: the next new thread has only the Ask Claude button. */
-  private pendingAskOnly = false;
 
   constructor(service: CommentService, index: SidestoryIndex, extensionUri: vscode.Uri) {
     this.service = service;
@@ -120,7 +118,6 @@ export class CommentsController implements vscode.Disposable {
     const sel = ed.selection;
     const range = new vscode.Range(sel.start.line, 0, sel.end.line, 0);
     this.selection = { key: uriKey(ed.document.uri), range };
-    this.pendingAskOnly = ask;
     // Re-register the provider so VS Code asks for ranges again, then open a new thread on the selection.
     this.controller.commentingRangeProvider = { provideCommentingRanges: (doc) => this.ranges(doc) };
     const t = this.controller.createCommentThread(ed.document.uri, range, []) as OurThread;
@@ -197,7 +194,7 @@ export class CommentsController implements vscode.Disposable {
     const answered = e.thread.comments.some((c) => c.trust === 'claude');
     t.label = `${codeAnchorLabel(e.thread.anchor as CodeAnchor)}${lost}${d ? ` · ${d.text}` : answered ? ' · Claude replied' : ''}${e.location.tier === 'local' ? ' · local' : ''}`;
     t.state = e.thread.state === 'resolved' ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
-    const flags = ['sidestory', e.thread.state, e.location.tier, ...(d ? ['waiting'] : []), ...(ask ? ['asked'] : []), ...(e.location.scope.kind === 'sidestory' ? ['shareable'] : [])];
+    const flags = ['sidestory', e.thread.state, e.location.tier, ...(d ? ['waiting'] : []), ...(e.location.scope.kind === 'sidestory' ? ['shareable'] : [])];
     t.contextValue = flags.join(':');
     t.canReply = true;
     t.comments = e.thread.comments
@@ -245,7 +242,6 @@ export class CommentsController implements vscode.Disposable {
       const e = await this.service.findEntry(created.root, created.thread);
       if (e) await this.service.ask(e, created.event, text, intent);
     }
-    this.pendingAskOnly = false;
   }
 
   private async createFrom(t: vscode.CommentThread, text: string, toClaude: boolean): Promise<{ root: vscode.Uri; thread: string; event: string } | undefined> {

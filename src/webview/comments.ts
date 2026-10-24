@@ -283,10 +283,6 @@ export class CommentsPane {
     for (const stale of have.values()) stale.remove();
   }
 
-  isOpen(): boolean {
-    return this.open;
-  }
-
   show(step?: string): void {
     if (step) {
       this.following = step === this.hooks.activeStep();

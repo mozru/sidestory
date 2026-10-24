@@ -1,6 +1,6 @@
 # Diff-first sidestories and the Changes view: plan
 
-> **Status: releases 1a and 1b implemented** for 0.2.1. **Decision of 2026-10-23 (§21.1): no Changes file tree of our own.** Branch-diff navigation is left to Git Tree Compare, GitLens and Source Control; coverage shows as file decorations; §9.2–§9.5 and §9.7–§9.9's view UI are superseded (the git plumbing under them stays). §20 is what 1a built; §21 is the decision and what 1b built. Releases 2 and 3 are still a plan, to be revisited in the light of §21.1 (revision 5).
+> **Status: releases 1a and 1b implemented** for 0.2.1. **Decision of 2026-10-23 (§21.1): no Changes file tree of our own.** Branch-diff navigation is left to Git Tree Compare, GitLens and Source Control; coverage shows as file decorations; §9.1–§9.9's Changes view UI and the parts of §11 that mention it are superseded (the git plumbing under them stays). §20 is what 1a built; §21 is the decision and what 1b built. Releases 2 and 3 are still a plan, to be revisited in the light of §21.1 (revision 5).
 >
 > **Covers:**
 > - an optional `base` on any sidestory, which makes its steps open diff editors on the branch's merge diff;
@@ -479,6 +479,8 @@ The session's `onSelection` looks up anchors for `e.textEditor.document.uri`. Wi
 
 ### 9.1 One container, three views
 
+> **Superseded (§21.1):** there is no Changes view; the container holds Sidestories, This File and Comments.
+
 **(decided)** The Sidestory container holds three views, in this order, each independently collapsible and movable like any VS Code view:
 
 ```
@@ -605,6 +607,8 @@ VS Code has no stable API for a text box inside a tree view. Two pieces cover it
 A real text box in the view would need a webview view, which would lose native tree keyboard handling, accessibility, file icons and drag and drop (§17 Q15).
 
 ### 9.6 The coverage layer
+
+> **Superseded as a tree (§21.1):** there is no Changes view; the coverage marks are file decorations, and the sidestory and Copy Prompt rows live in the Sidestories view's This branch group.
 
 When at least one sidestory belongs to the comparison (§6.1), the same tree gains:
 
@@ -776,6 +780,8 @@ When `onDidChange` shows the reviewed branch's tip moved (after a fetch), the co
 
 ### 11.1 The Sidestories view
 
+> **Superseded (§21.1):** there is no Changes view; the two bullets about rows under Changes don't apply.
+
 NAVIGATION-PLAN.md §8.2's tree, with three additions at the top of each package:
 
 ```
@@ -807,11 +813,15 @@ Sidestories
 
 ### 11.3 The panel
 
+> **Superseded (§21.1):** there is no Changes view; the comparison chip was not built (§21.3).
+
 - The trail bar of a sidestory with a base shows a chip: `$(git-compare) vs main · 3f2a1c9 · 9 explained · 3 trivial · 0 left`. Clicking it focuses the Changes view on that comparison. When the view shows a different comparison (another base), the chip says so ("The Changes view shows develop").
 - Each step whose code is in the diff gets, next to "Step 3 of 7", `retry.ts +5 −1`; steps on unchanged files say "context". Both are panel chrome, not content.
 - Without git (Restricted Mode, no repository), the chip reads "vs main · diffs need git" and steps open plain editors.
 
 ### 11.4 Which comparison a sidestory uses
+
+> **Superseded (§21.1):** there is no Changes view; comparisons are shared by the sessions and the coverage layer, not a view.
 
 A comparison service (`changes/service.ts`) holds comparisons keyed by `(repo, base spec, mode)`, shared by the view and every session. An open sidestory with a base uses the view's comparison when its base resolves to the same merge-base, else its own (a merge-base and a file list, no coverage unless asked). At most 4 comparisons live at once; the least recently used is dropped.
 

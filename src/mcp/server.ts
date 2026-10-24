@@ -502,5 +502,3 @@ export function nestedSidestoryRoots(root: string, maxDepth = 4, maxDirs = 2000)
   walk(root, 1);
   return out;
 }
-
-export const _test = { newNonce, sendSchema };

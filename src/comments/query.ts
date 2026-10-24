@@ -1,16 +1,15 @@
 // What agents read about threads (docs/COMMENTS-PLAN.md §9.5, §10.2): the MCP server's get_thread and
 // list_threads, and the checker's `threads` command, from one place, with the same labels.
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { displayText } from '../core/display-text.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { parseManifest, type Anchor } from '../core/manifest.ts';
+import { type Anchor } from '../core/manifest.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { authorLabel, type Thread } from '../core/threads/reduce.ts';
 import { CAPS, type CodeAnchor } from '../core/threads/schema.ts';
 import { PreparedText } from '../core/text.ts';
 import { readSmall, realInside } from './fsx.ts';
-import { locationKey, type Location, type ThreadFiles, type ThreadRead } from './storage.ts';
+import { type Location, type ThreadFiles, type ThreadRead } from './storage.ts';
 
 export interface ThreadEntry {
   files: ThreadFiles;
@@ -126,14 +125,3 @@ export async function threadDetail(e: ThreadEntry, limit = 50, before?: string):
     ...(list.length > page.length ? { more: true, before: page[0]?.id } : {}),
   };
 }
-
-export function manifestTitle(root: string, sidestory: string): string | undefined {
-  try {
-    const p = parseManifest(readFileSync(join(root, '.sidestory', sidestory, 'manifest.json'), 'utf8'));
-    return p.ok ? displayText(p.manifest.title, 200) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export { locationKey };

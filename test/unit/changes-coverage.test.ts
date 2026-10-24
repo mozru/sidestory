@@ -109,9 +109,6 @@ describe('coverage in the extension (computeCoverage)', () => {
     expect(r.targets.find((t) => t.anchor === 'old-sleep')).toMatchObject({ side: 'base', path: 'legacy/sleep.ts', range: { start: 1, end: 24 } });
     // Sidestory files are never counted.
     expect([...r.files.keys()].some((p) => p.startsWith('.sidestory/'))).toBe(false);
-    // Counts from the blocks, renames included.
-    expect(r.files.get('src/retry/backoff.ts')!.entry).toMatchObject({ added: 2, removed: 2 });
-    expect(r.files.get('src/retry/retry.ts')!.entry).toMatchObject({ added: 4, removed: 1 });
     // The sidestory's own totals: what it explains or marks.
     expect(r.belonging[0]!.totals).toMatchObject({ explained: 3, trivial: 2, files: 4 });
     expect(r.belonging[0]!.stepOf.get('retry-loop')).toBe('retry-loop');
@@ -206,8 +203,6 @@ describe('the checker\'s rules in the extension', () => {
     expect(r.files.get('docs/new.md')!.diff.changes).toEqual([]);
     expect(r.files.get('docs/new.md')!.move).toMatchObject({ inPlace: true, files: [{ path: 'docs/new.md', oldPath: 'docs/old.md' }] });
     expect(r.files.get('docs/new.md')!.coverage!.changes.map((c) => c.state)).toEqual(['unexplained']);
-    // The comparison's own untracked entry shows the counts.
-    expect(s.entries.find((e) => e.path === 'docs/new.md')).toMatchObject({ added: 0, removed: 0 });
   });
 
   it('a base-side anchor never resolves against an added file at its old path; the rename from it does', async () => {

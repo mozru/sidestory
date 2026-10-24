@@ -7,7 +7,7 @@ import { Worker } from 'node:worker_threads';
 import { normalizeEntry } from './specifiers.ts';
 import type { CompileRequest, CompileResult, Diag, WorkerReply } from './types.ts';
 
-export type { CompileResult, Diag } from './types.ts';
+export type { CompileResult } from './types.ts';
 
 export interface WidgetCompilerOptions {
   /** The worker script. Default: compile-worker.cjs next to the extension bundle. */

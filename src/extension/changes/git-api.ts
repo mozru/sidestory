@@ -1,4 +1,4 @@
-// The parts of the vscode.git API (git.d.ts, version 1) the Changes view uses (docs/CHANGES-PLAN.md §4.2). The
+// The parts of the vscode.git API (git.d.ts, version 1) branch comparison uses (docs/CHANGES-PLAN.md §4.2). The
 // extension never runs git itself (SECURITY.md): every call here is the git extension's, which runs git only in
 // trusted workspaces. Calls newer than VS Code 1.95 are optional and feature-detected.
 import * as vscode from 'vscode';

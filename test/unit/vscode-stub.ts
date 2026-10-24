@@ -144,7 +144,7 @@ export class Diagnostic {
 /** Diagnostics published, by URI string. */
 export const diagnostics = new Map<string, Diagnostic[]>();
 /** CodeLens providers registered, in order. */
-export const codeLensProviders: unknown[] = [];
+const codeLensProviders: unknown[] = [];
 export const languages = {
   registerCodeLensProvider: (_selector: unknown, provider: unknown) => {
     codeLensProviders.push(provider);

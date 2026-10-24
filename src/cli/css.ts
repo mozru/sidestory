@@ -31,8 +31,6 @@ export interface ParsedCss {
   geometryKeyframes: Set<string>;
 }
 
-const GEOMETRY_PROPS = /^(transform|translate|rotate|scale|top|left|right|bottom|inset|width|height|margin(-\w+)?|offset(-\w+)?|zoom)$/;
-
 function stripComments(css: string): string {
   // Keep newlines so line numbers survive.
   return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (c) => c.replace(/[^\n]/g, ' '));

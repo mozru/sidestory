@@ -1,6 +1,5 @@
 // Helpers for the navigation specs (docs/NAVIGATION-PLAN.md §12.3): the Sidestories view, CodeLens, quick picks.
 import { expect, type Locator, type Page } from '@playwright/test';
-import { command } from './helpers.ts';
 
 /** The Sidestories view's pane. */
 export const sidebar = (page: Page) => page.locator('.pane', { has: page.locator('.pane-header', { hasText: /^Sidestories/ }) }).first();
@@ -67,8 +66,6 @@ export async function openFile(page: Page, path: string): Promise<void> {
   await page.keyboard.press('Enter');
   await expect(page.locator('.tab.active', { hasText: path.split('/').at(-1)! })).toBeVisible();
 }
-
-export { command };
 
 function escape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');

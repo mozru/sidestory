@@ -89,7 +89,7 @@ describe('ExplainerSession lifecycle', () => {
   });
 
   it('edits and cursor moves in other files cost nothing per anchor, and the lookup follows the explainer shown', async () => {
-    const { session, panel, lastInit, posted, send } = open('overview');
+    const { session, lastInit, posted, send } = open('overview');
     await session.load();
     send({ type: 'ready' });
     send({ type: 'dive', name: 'bit-reader' });

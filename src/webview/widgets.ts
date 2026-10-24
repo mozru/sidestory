@@ -1616,11 +1616,6 @@ export class WidgetFrames {
     w.logged.add(`once:${what}`);
     this.panel.post({ type: 'widgetLog', src: w.src, level: 'warn', message });
   }
-
-  /** For tests: what is mounted. */
-  debug(): { key: string; src: string; status: Status; mounted: boolean; height: number }[] {
-    return [...this.widgets.values()].map((w) => ({ key: w.key, src: w.src, status: w.status, mounted: !!w.frame, height: w.height }));
-  }
 }
 
 // ---- helpers ----
