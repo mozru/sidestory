@@ -1,0 +1,41 @@
+partial: false
+S param dma_csr.AW 13-13
+S param dma_csr.LW 14-14
+S port dma_csr.clk 16-16 dir=input
+S port dma_csr.rst_n 17-17 dir=input
+S port dma_csr.csr_we 18-19 dir=input
+S port dma_csr.csr_addr 20-20 dir=input
+S port dma_csr.csr_wdata 21-21 dir=input
+S port dma_csr.csr_rdata 22-22 dir=output
+S port dma_csr.start 23-24 dir=output
+S port dma_csr.src_base 25-25 dir=output
+S port dma_csr.dst_base 26-26 dir=output
+S port dma_csr.len 27-27 dir=output
+S port dma_csr.busy 28-29 dir=input
+S port dma_csr.done_set 30-30 dir=input
+S port dma_csr.err_set 31-31 dir=input
+S port dma_csr.err_code 32-32 dir=input
+S port dma_csr.irq 33-33 dir=output
+S param dma_csr.A_CTRL 36-37
+S param dma_csr.A_STATUS 36-37
+S param dma_csr.A_SRC 36-37
+S param dma_csr.A_DST 36-37
+S param dma_csr.A_LEN 36-37
+S param dma_csr.A_ERR 36-37
+S signal dma_csr.irq_en_q 39-39
+S signal dma_csr.done_q 40-40
+S signal dma_csr.err_q 40-40
+S signal dma_csr.err_code_q 41-41
+S signal dma_csr.src_q 42-42
+S signal dma_csr.dst_q 42-42
+S signal dma_csr.len_q 43-43
+S module dma_csr 12-103
+D assign dma_csr 45-46 drives=start functional=start
+D always_ff dma_csr 48-82 drives=irq_en_q,done_q,err_q,err_code_q,src_q,dst_q,len_q functional=irq_en_q,done_q,err_q,src_q,dst_q,len_q,err_code_q
+  case depth=0: A_CTRL @60-60; A_STATUS @61-64; A_SRC @65-65; A_DST @66-66; A_LEN @67-67; default @68-68
+D always_comb dma_csr 84-96 drives=csr_rdata,csr_rdata[1],csr_rdata[2 : 0],csr_rdata[AW - 1 : 0],csr_rdata[LW - 1 : 0],csr_rdata[1 : 0] functional=csr_rdata
+  case depth=0: A_CTRL @88-88; A_STATUS @89-89; A_SRC @90-90; A_DST @91-91; A_LEN @92-92; A_ERR @93-93; default @94-94
+D assign dma_csr 98-98 drives=src_base functional=src_base
+D assign dma_csr 99-99 drives=dst_base functional=dst_base
+D assign dma_csr 100-100 drives=len functional=len
+D assign dma_csr 101-101 drives=irq functional=irq

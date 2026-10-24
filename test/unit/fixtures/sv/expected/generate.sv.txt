@@ -1,0 +1,29 @@
+partial: false
+S param gen_packer.LANES 3-3
+S param gen_packer.REGISTERED 4-4
+S param gen_packer.MODE 5-5
+S port gen_packer.clk 7-7 dir=input
+S port gen_packer.lane_in 8-8 dir=input
+S port gen_packer.lane_out 9-9 dir=output
+S genvar gen_packer.i 11-11
+S signal gen_packer.g_lane.lane_q 14-14
+S signal gen_packer.g_lane.g_reg.out_q 18-18
+S block gen_packer.g_lane.g_reg 17-21
+S block gen_packer.g_lane.g_comb 21-23
+S block gen_packer.g_lane 13-24
+S signal gen_packer.g_mode0.mode_q 28-28
+S block gen_packer.g_mode0 27-30
+S signal gen_packer.g_mode_other.mode_q 32-32
+S block gen_packer.g_mode_other 31-34
+S signal gen_packer.<unlabelled>.wide 39-39
+S signal gen_packer.g_named.pair_q 45-45
+S block gen_packer.g_named 44-47
+S module gen_packer 2-48
+D always_ff gen_packer.g_lane 15-16 drives=lane_q functional=lane_q
+D always_ff gen_packer.g_lane.g_reg 19-19 drives=out_q functional=out_q
+D assign gen_packer.g_lane.g_reg 20-20 drives=lane_out[i] functional=lane_out
+D assign gen_packer.g_lane.g_comb 22-22 drives=lane_out[i] functional=lane_out
+D assign gen_packer.g_mode0 29-29 drives=mode_q functional=mode_q
+D assign gen_packer.g_mode_other 33-33 drives=mode_q functional=mode_q
+D assign gen_packer.<unlabelled> 40-40 drives=wide functional=wide
+D assign gen_packer.g_named 46-46 drives=pair_q functional=pair_q

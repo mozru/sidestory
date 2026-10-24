@@ -1,0 +1,28 @@
+partial: false
+S param misc.W 3-3
+S port misc.clk_i 4-4 dir=input
+S port misc.rst_ni 5-5 dir=input
+S port misc.din 6-6 dir=input
+S port misc.dout 7-7 dir=output
+S port misc.full 8-8 dir=output
+S signal misc.stage_q 10-10
+S signal misc.stage_d 10-10
+S signal misc.count_q 11-11
+S block misc.seq 15-17
+S block misc.pipe_reg 19-19
+S function misc.next_len 21-23
+S task misc.pulse 25-27
+S assertion misc.a_no_ovf 29-30
+S instance misc.u_fifo 32-39 type=sync_fifo
+S instance misc.u_pos 41-41 type=sync_fifo
+S module misc 3-44
+S signal packet.len 47-47
+S class packet 46-51
+S function show 53-55
+D always_ff misc label=seq 15-17 drives=dout functional=dout
+D always_comb misc label=pipe_reg 19-19 drives=stage_d functional=stage_d
+D assign misc 43-43 drives=count_q functional=count_q
+C misc u_fifo(.clk) 33-33 = clk_i
+C misc u_fifo(.rst_n) 34-34 = rst_ni
+C misc u_fifo(.wdata) 35-36 = stage_q
+C misc u_fifo(.full) 37-37 = full

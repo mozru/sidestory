@@ -1,0 +1,22 @@
+partial: false
+S port drivers.clk 3-3 dir=input
+S port drivers.arst_n 4-4 dir=input
+S port drivers.srst 5-5 dir=input
+S port drivers.a 6-6 dir=input
+S port drivers.b 6-6 dir=input
+S port drivers.cnt_max 7-7 dir=input
+S port drivers.sum 8-8 dir=output
+S port drivers.carry 9-9 dir=output
+S signal drivers.cnt_q 11-11
+S signal drivers.acc_q 11-11
+S signal drivers.word 11-11
+S signal drivers.hit_q 12-12
+S signal drivers.first_q 12-12
+S signal drivers.idx 13-13
+S module drivers 2-44
+D always_ff drivers 15-18 drives=hit_q functional=hit_q
+D assign drivers 20-20 drives=carry,sum functional=carry,sum
+D assign drivers 22-23 drives=word[7 : 4] functional=word
+D assign drivers 24-24 drives=word[3 : 0] functional=word
+D always_ff drivers 26-38 drives=cnt_q,first_q,acc_q functional=acc_q,first_q,cnt_q
+D always_comb drivers 40-43 drives=idx functional=idx

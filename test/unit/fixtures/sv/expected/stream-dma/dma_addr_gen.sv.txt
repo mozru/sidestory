@@ -1,0 +1,32 @@
+partial: false
+S param dma_addr_gen.AW 7-7
+S param dma_addr_gen.LW 8-8
+S param dma_addr_gen.MAX_BURST 9-9
+S param dma_addr_gen.BW 10-10
+S param dma_addr_gen.BLW 11-11
+S port dma_addr_gen.clk 13-13 dir=input
+S port dma_addr_gen.rst_n 14-14 dir=input
+S port dma_addr_gen.load 15-16 dir=input
+S port dma_addr_gen.base 17-17 dir=input
+S port dma_addr_gen.len 18-18 dir=input
+S port dma_addr_gen.burst_ack 19-19 dir=input
+S port dma_addr_gen.has_burst 20-20 dir=output
+S port dma_addr_gen.burst_addr 21-22 dir=output
+S port dma_addr_gen.burst_len 23-23 dir=output
+S port dma_addr_gen.total_beats 24-24 dir=output
+S signal dma_addr_gen.addr_q 27-28
+S signal dma_addr_gen.left_q 29-29
+S signal dma_addr_gen.span 31-32
+S signal dma_addr_gen.to_4k 36-37
+S signal dma_addr_gen.hit_4k 40-41
+S signal dma_addr_gen.tail 40-41
+S module dma_addr_gen 6-67
+D assign dma_addr_gen 33-33 drives=span functional=span
+D assign dma_addr_gen 34-34 drives=total_beats functional=total_beats
+D assign dma_addr_gen 38-38 drives=to_4k functional=to_4k
+D assign dma_addr_gen 42-42 drives=hit_4k functional=hit_4k
+D assign dma_addr_gen 43-43 drives=tail functional=tail
+D always_comb dma_addr_gen 45-49 drives=burst_len functional=burst_len
+D always_ff dma_addr_gen 51-62 drives=addr_q,left_q functional=addr_q,left_q
+D assign dma_addr_gen 64-64 drives=has_burst functional=has_burst
+D assign dma_addr_gen 65-65 drives=burst_addr functional=burst_addr

@@ -1,0 +1,50 @@
+partial: false
+S param dma_wr_port.AW 5-5
+S param dma_wr_port.DW 6-6
+S param dma_wr_port.BLW 7-7
+S param dma_wr_port.NB 8-8
+S port dma_wr_port.clk 10-10 dir=input
+S port dma_wr_port.rst_n 11-11 dir=input
+S port dma_wr_port.start 12-13 dir=input
+S port dma_wr_port.addr 14-14 dir=input
+S port dma_wr_port.len 15-15 dir=input
+S port dma_wr_port.busy 16-16 dir=output
+S port dma_wr_port.done 17-17 dir=output
+S port dma_wr_port.err 18-18 dir=output
+S port dma_wr_port.pk_valid 19-20 dir=input
+S port dma_wr_port.pk_ready 21-21 dir=output
+S port dma_wr_port.pk_data 22-22 dir=input
+S port dma_wr_port.pk_strb 23-23 dir=input
+S port dma_wr_port.wr_req_valid 24-25 dir=output
+S port dma_wr_port.wr_req_ready 26-26 dir=input
+S port dma_wr_port.wr_req_addr 27-27 dir=output
+S port dma_wr_port.wr_req_len 28-28 dir=output
+S port dma_wr_port.wr_dat_valid 29-30 dir=output
+S port dma_wr_port.wr_dat_ready 31-31 dir=input
+S port dma_wr_port.wr_dat_data 32-32 dir=output
+S port dma_wr_port.wr_dat_strb 33-33 dir=output
+S port dma_wr_port.wr_dat_last 34-34 dir=output
+S port dma_wr_port.wr_rsp_valid 35-36 dir=input
+S port dma_wr_port.wr_rsp_err 37-37 dir=input
+S signal dma_wr_port.req_q 40-40
+S signal dma_wr_port.rsp_q 41-41
+S signal dma_wr_port.addr_q 42-42
+S signal dma_wr_port.len_q 43-43
+S signal dma_wr_port.left_q 44-44
+S signal dma_wr_port.sending 45-45
+S signal dma_wr_port.beat 46-46
+S module dma_wr_port 4-89
+D assign dma_wr_port 48-49 drives=sending functional=sending
+D assign dma_wr_port 50-50 drives=wr_dat_valid functional=wr_dat_valid
+D assign dma_wr_port 51-51 drives=pk_ready functional=pk_ready
+D assign dma_wr_port 52-52 drives=beat functional=beat
+D assign dma_wr_port 54-55 drives=wr_dat_data functional=wr_dat_data
+D assign dma_wr_port 56-56 drives=wr_dat_strb functional=wr_dat_strb
+D assign dma_wr_port 57-57 drives=wr_dat_last functional=wr_dat_last
+D assign dma_wr_port 59-59 drives=wr_req_valid functional=wr_req_valid
+D assign dma_wr_port 60-60 drives=wr_req_addr functional=wr_req_addr
+D assign dma_wr_port 61-61 drives=wr_req_len functional=wr_req_len
+D always_ff dma_wr_port 63-83 drives=req_q,rsp_q,addr_q,len_q,left_q functional=req_q,addr_q,len_q,left_q,rsp_q
+D assign dma_wr_port 85-85 drives=busy functional=busy
+D assign dma_wr_port 86-86 drives=done functional=done
+D assign dma_wr_port 87-87 drives=err functional=err

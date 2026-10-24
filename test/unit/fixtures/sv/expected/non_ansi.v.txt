@@ -1,0 +1,13 @@
+partial: false
+S port counter.clk 3-3 dir=input
+S port counter.rst 4-4 dir=input
+S port counter.en 5-5 dir=input
+S port counter.load 5-5 dir=input
+S port counter.d 6-6 dir=input
+S port counter.q 7-7 dir=output
+S port counter.wrap 8-8 dir=output
+S signal counter.q 9-9
+S signal counter.wrap 10-10
+S module counter 2-21
+D net counter 10-10 drives=wrap functional=wrap
+D always counter 12-20 drives=q functional=q
