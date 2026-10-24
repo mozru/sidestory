@@ -37,7 +37,7 @@ export function diffStepsTests(): void {
       this.timeout(90_000);
       await vscode.workspace.getConfiguration('diffEditor').update('useInlineViewWhenSpaceIsLimited', false, vscode.ConfigurationTarget.Global);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-      await vscode.commands.executeCommand('sidestory.showChanges');
+      // A sidestory with a base is in the workspace: coverage computes with nothing else asking.
       await until('coverage', async () => (await vscode.commands.executeCommand<{ belonging: string[] } | undefined>('sidestory._coverage'))?.belonging.length, 60_000);
     });
 
@@ -51,6 +51,25 @@ export function diffStepsTests(): void {
         'src/retry/retry.ts': ['explained'],
         'test/retry.test.ts': ['unexplained'],
       });
+    });
+
+    it('decorates the changed files and lists the sidestory under This branch', async () => {
+      const c = await until('the marks', async () => {
+        const v = await vscode.commands.executeCommand<{ marks: Record<string, { badge: string; tooltip: string }>; branch: { rows: { label: string; description?: string }[] } }>('sidestory._changes');
+        return Object.keys(v.marks).length === 5 ? v : undefined;
+      });
+      assert.deepEqual(Object.fromEntries(Object.entries(c.marks).map(([p, m]) => [p, m.badge])), {
+        'legacy/sleep.ts': '✓',
+        'src/retry/backoff.ts': '–',
+        'src/retry/jitter.ts': '✓',
+        'src/retry/retry.ts': '✓',
+        'test/retry.test.ts': '○',
+      });
+      assert.match(c.marks['src/retry/retry.ts']!.tooltip, /^1 of 1 change explained · Step \d of Retry with jitter$/);
+      assert.deepEqual(c.branch.rows.map((r) => [r.label, r.description]), [
+        ['Retry with jitter', 'vs main · 3 explained · 1 trivial · 1 left'],
+        ['Copy Prompt: Update the Sidestory for New Changes', undefined],
+      ]);
     });
 
     it('a head-side step opens the merge diff and highlights its right side, undimmed', async () => {
@@ -78,7 +97,7 @@ export function diffStepsTests(): void {
 
     it('This File follows a diff side to its repository path', async () => {
       await vscode.commands.executeCommand('sidestory.thisFile.focus');
-      await vscode.commands.executeCommand('sidestory.changes.open', { path: 'src/retry/retry.ts' });
+      await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
       const s = await until('This File on retry.ts', async () => {
         const t = await vscode.commands.executeCommand<{ description?: string; rows: string[] }>('sidestory._thisFile');
         return t.description === 'retry.ts' && t.rows.length ? t : undefined;

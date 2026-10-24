@@ -1,7 +1,7 @@
-// Desktop VS Code: the Changes view (docs/CHANGES-PLAN.md §16.4, release 1a) on the git fixture plus 1,500 generated
-// changed files, through the real git extension. Also records the plan's (verify) answers that need a running
-// VS Code: the provider's language and read-only state, `vscode.changes`, multi-diff editors in
-// visibleTextEditors, and the default keybindings for the Next/Previous chords.
+// Desktop VS Code: a branch's comparison with no sidestory (docs/CHANGES-PLAN.md §4.6, §9.3, §16.4) on the git fixture
+// plus 1,500 generated changed files, through the real git extension: nothing is compared until a command asks, then
+// Next/Previous Changed File opens merge diffs in path order. Also records the plan's (verify) answers that need a
+// running VS Code: the provider's language and read-only state, and the default keybindings for the chords.
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as vscode from 'vscode';
@@ -9,14 +9,12 @@ import * as vscode from 'vscode';
 const workspace = process.env.CX_WORKSPACE!;
 const generated = Number(process.env.CX_GENERATED ?? 0);
 
-interface Stats {
-  renders: number;
-  lastRenderMs: number;
-  files: number;
-  description?: string;
-  message?: string;
+interface Changes {
+  mergeBase?: string;
+  branch: { description?: string; rows: { label: string }[] };
 }
-const stats = () => vscode.commands.executeCommand<Stats>('sidestory._changesStats');
+// Undefined until the full extension is loaded (the bootstrap loads it once the probe sees the branch).
+const state = () => Promise.resolve(vscode.commands.executeCommand<Changes>('sidestory._changes')).catch(() => undefined);
 const gitOut = (...args: string[]) => execFileSync('git', args, { cwd: workspace, encoding: 'utf8' }).trim();
 
 async function until<T>(what: string, check: () => Promise<T | undefined | false> | T | undefined | false, timeout = 30_000): Promise<T> {
@@ -34,31 +32,37 @@ const activeDiff = () => {
 };
 
 export function changesTests(): void {
-  describe(`The Changes view on desktop VS Code ${vscode.version} (${process.platform})`, () => {
-    let shownIn = 0;
+  describe(`A branch's comparison on desktop VS Code ${vscode.version} (${process.platform})`, () => {
     before(async () => {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-      const t0 = Date.now();
-      await vscode.commands.executeCommand('sidestory.showChanges');
-      await until('the changed files', async () => (await stats())?.files === 5 + generated, 60_000);
-      shownIn = Date.now() - t0;
-      console.log(`      Changes: ${5 + generated} files listed ${shownIn} ms after Show Changes (activation and the git extension's first status included)`);
     });
 
-    it('describes the three-dot comparison and lists only the branch side', async () => {
-      const s = await stats();
-      const mb = gitOut('merge-base', 'main', 'feature');
-      assert.equal(s.description, `vs main @ ${mb.slice(0, 7)} · 3 commits`);
-      assert.ok(s.lastRenderMs < 200, `a render took ${s.lastRenderMs} ms`);
+    it('compares nothing while nothing asks, and offers to explain the branch', async () => {
+      // No sidestory with a base here: no comparison until a command runs (§4.6); the probe still sees the branch.
+      const s = await until(
+        'the This branch group',
+        async () => {
+          const v = await state();
+          return v?.branch.rows.length ? v : undefined;
+        },
+        60_000,
+      );
+      assert.equal(s.mergeBase, undefined);
+      assert.deepEqual(s.branch.rows.map((r) => r.label), ['Copy Prompt: Explain This Branch']);
     });
 
-    it('Next Changed File opens the merge diff: the old side read-only from git, in the file’s language', async () => {
+    it('Next Changed File opens the merge diff: the old side read-only from git, in the file’s language', async function () {
+      this.timeout(120_000);
       const t0 = Date.now();
       await vscode.commands.executeCommand('sidestory.changes.nextFile');
-      await until('a diff tab', () => activeDiff());
-      console.log(`      Next Changed File: diff tab in ${Date.now() - t0} ms`);
-      // A modified file: both sides have content.
-      await vscode.commands.executeCommand('sidestory.changes.open', { path: 'src/retry/retry.ts' });
+      await until('a diff tab', () => activeDiff(), 60_000);
+      console.log(`      Next Changed File: first diff tab in ${Date.now() - t0} ms (${5 + generated} files compared)`);
+      assert.equal((await state())?.mergeBase, gitOut('merge-base', 'main', 'feature'));
+      // Path order: from a modified file, back and forth lands on it again.
+      const retry = await vscode.workspace.openTextDocument(vscode.Uri.file(`${workspace}/src/retry/retry.ts`));
+      await vscode.window.showTextDocument(retry);
+      await vscode.commands.executeCommand('sidestory.changes.prevFile');
+      await vscode.commands.executeCommand('sidestory.changes.nextFile');
       const diff = await until('the diff of retry.ts', () => (activeDiff()?.original.path.endsWith('retry.ts') ? activeDiff() : undefined));
       assert.equal(diff.original.scheme, 'sidestory-git');
       assert.match(diff.original.query, /^[0-9a-f]{40}$/);
@@ -68,7 +72,7 @@ export function changesTests(): void {
       const path = diff.original.path.slice(1);
       assert.equal(doc.getText(), gitOut('show', `${diff.original.query}:${path}`) + '\n');
       if (path.endsWith('.ts')) assert.equal(doc.languageId, 'typescript');
-      // Both sides of a side-by-side diff are visible text editors (decorations need that in release 1b).
+      // Both sides of a side-by-side diff are visible text editors (decorations need that).
       await until('both sides visible', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === diff.original.toString()));
     });
 
@@ -76,27 +80,16 @@ export function changesTests(): void {
       const seen: string[] = [];
       const t0 = Date.now();
       for (let i = 0; i < 6; i++) {
+        const before = activeDiff()?.modified.toString();
         await vscode.commands.executeCommand('sidestory.changes.nextFile');
-        const d = await until('a diff tab', () => activeDiff());
+        const d = await until('the next diff tab', () => {
+          const now = activeDiff();
+          return now && now.modified.toString() !== before && vscode.window.activeTextEditor?.document.uri.toString() === now.modified.toString() ? now : undefined;
+        });
         seen.push((d.modified.scheme === 'file' ? d.modified : d.original).path.split('/').pop()!);
       }
       console.log(`      6 × Next Changed File: ${Date.now() - t0} ms; ${seen.join(', ')}`);
       assert.equal(new Set(seen).size, 6);
-    });
-
-    it('Open All Changes opens the multi-diff editor through vscode.changes', async () => {
-      assert.ok((await vscode.commands.getCommands(true)).includes('vscode.changes'));
-      await vscode.commands.executeCommand('sidestory.changes.openAll');
-      const tab = await until('the multi-diff tab', () => {
-        const t = vscode.window.tabGroups.activeTabGroup.activeTab;
-        return t?.label.startsWith('Changes vs main') ? t : undefined;
-      });
-      assert.match(tab.label, /^Changes vs main \(500 files\)$/); // VS Code adds the count; 500 is the cap
-      await new Promise((r) => setTimeout(r, 1500));
-      // (verify) §9.3: are a multi-diff editor's inner editors visible text editors?
-      const inner = vscode.window.visibleTextEditors.filter((e) => e.document.uri.scheme === 'sidestory-git');
-      console.log(`      multi-diff inner editors in visibleTextEditors: ${inner.length}`);
-      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     });
 
     it('records the default keybindings for the Next/Previous chords (§17 Q14)', async () => {

@@ -437,13 +437,19 @@ export class ChangesService implements vscode.Disposable {
 
   // ---- the active editor's place ----
 
-  /** The active editor's file in the comparison and its cursor (or selection) on that file's side. */
+  /**
+   * The active editor's file in the comparison and its cursor (or selection) on that file's side. With focus in a
+   * panel or a view (no active text editor), the visible editor of a changed file, so the commands work from there.
+   */
   private activePlace(s: Snapshot | undefined = this.snapshot): { key: SideKey; entry: ChangeEntry; editor: vscode.TextEditor } | undefined {
-    const ed = vscode.window.activeTextEditor;
-    if (!ed || !s) return undefined;
-    const key = this.keyOf(s, ed.document.uri);
-    const entry = key && this.entryFor(s, key);
-    return key && entry ? { key, entry, editor: ed } : undefined;
+    if (!s) return undefined;
+    const active = vscode.window.activeTextEditor;
+    for (const ed of active ? [active] : vscode.window.visibleTextEditors) {
+      const key = this.keyOf(s, ed.document.uri);
+      const entry = key && this.entryFor(s, key);
+      if (key && entry) return { key, entry, editor: ed };
+    }
+    return undefined;
   }
 
   /** The change at the cursor, or the first one the selection touches (open ones first), in the active editor. */
@@ -479,14 +485,14 @@ export class ChangesService implements vscode.Disposable {
   }
 
   /** Opens the diff at a change (§9.6: the left side for pure deletions). */
-  private async openChange(s: Snapshot, r: CoverageResult, path: string, key: string): Promise<void> {
+  private async openChange(s: Snapshot, r: CoverageResult, path: string, key: string, column = vscode.ViewColumn.Active): Promise<void> {
     const f = r.files.get(path);
     const b = f?.blocks.get(key);
     const ctx = this.diffContext();
     if (!f || !b || !ctx) return;
     const side: SideKey = b.new ? { path, side: 'head' } : { path: f.entry.oldPath ?? path, side: 'base' };
     const range = b.new ?? b.old ?? { start: b.newAt, end: b.newAt };
-    await openTarget(ctx, { ...side, range }, undefined, { moveCursor: true, viewColumn: vscode.ViewColumn.Active, preserveFocus: false, mode: 'diff' });
+    await openTarget(ctx, { ...side, range }, undefined, { moveCursor: true, viewColumn: column, preserveFocus: false, mode: 'diff' });
   }
 
   // ---- next / previous ----
@@ -539,7 +545,7 @@ export class ChangesService implements vscode.Disposable {
     const next = nextChange(list, rank, at, dir);
     if (!next) return;
     if (next.wrapped) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first unexplained change' : 'Back to the last unexplained change', 3000);
-    await this.openChange(s, r, next.target.path, next.target.key);
+    await this.openChange(s, r, next.target.path, next.target.key, place?.editor.viewColumn);
   }
 
   private async moveFile(dir: 1 | -1): Promise<void> {
@@ -553,12 +559,13 @@ export class ChangesService implements vscode.Disposable {
       vscode.window.setStatusBarMessage('No changed files', 3000);
       return;
     }
-    const from = this.activePlace(s)?.entry.path;
+    const place = this.activePlace(s);
+    const from = place?.entry.path;
     const r = step(order.length, from ? order.findIndex((e) => e.path === from) : -1, dir);
     if (!r) return;
     if (r.wrapped && order.length > 1) vscode.window.setStatusBarMessage(dir === 1 ? 'Back to the first changed file' : 'Back to the last changed file', 3000);
     const { left, right, title } = this.diffUris(s, order[r.index]!);
-    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
+    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, ...(place?.editor.viewColumn ? { viewColumn: place.editor.viewColumn } : {}) });
   }
 
   // ---- the "This branch" group (§9.6) ----
