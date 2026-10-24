@@ -2,7 +2,7 @@
   "name": "sidestory",
   "displayName": "Sidestory",
   "description": "Rich sidestories beside your code: diagrams, live React widgets and prose linked both ways to the code. Written by you or any AI agent.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "paperkite",
   "license": "MIT",
   "repository": {
