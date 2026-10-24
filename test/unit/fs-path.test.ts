@@ -10,6 +10,7 @@ const REVIEWED: Record<string, number> = {
   'changes/comparison.ts': 1,
   'changes/git-api.ts': 1,
   'changes/git-fs.ts': 1,
+  'changes/probe.ts': 1,
   'explainers.ts': 11,
   'extension.ts': 3,
   'highlight/service.ts': 4,

@@ -22,8 +22,8 @@ export const targetKey = (k: SideKey): string => `${k.side}\0${k.path}`;
  * of the same repository the head side. Keys never hold a commit, so a tab opened at an older head commit (before
  * the last commit, in committed mode) still maps to the head side.
  */
-export function gitSideKey<R>(g: { repo: R; sha: string; path: string } | undefined, s: { repo: R; mergeBase: string }): SideKey | undefined {
-  if (!g || g.repo !== s.repo) return undefined;
+export function gitSideKey<R>(g: { repo: R; sha: string; path: string } | undefined, s: { repo: R; mergeBase: string }, same: (a: R, b: R) => boolean = (a, b) => a === b): SideKey | undefined {
+  if (!g || !same(g.repo, s.repo)) return undefined;
   return { path: g.path, side: g.sha === s.mergeBase ? 'base' : 'head' };
 }
 
@@ -61,13 +61,18 @@ export function emptySideKey(path: string, entries: readonly { path: string; old
 
 /**
  * VS Code's own `git:` documents (the left side of Source Control and Git Tree Compare diffs): the query is JSON with
- * the file's `path` and a `ref`; the merge-base's ref is the base side, any other the head side.
+ * the file's `path` and a `ref`. Only the comparison's own commits are sides: the merge-base is the base side, and in
+ * committed mode (`headSha` given) HEAD's commit is the head side. Anything else (`~` and `''` for the index, `HEAD`,
+ * another commit) is a different version of the file than either side: undefined.
  */
-export function vscodeGitSideKey(query: string, rel: (fsPath: string) => string | undefined, mergeBase: string): SideKey | undefined {
+export function vscodeGitSideKey(query: string, rel: (fsPath: string) => string | undefined, mergeBase: string, headSha?: string): SideKey | undefined {
   try {
     const q = JSON.parse(query) as { path?: unknown; ref?: unknown };
     const p = typeof q.path === 'string' ? rel(q.path) : undefined;
-    return p ? { path: p, side: q.ref === mergeBase ? 'base' : 'head' } : undefined;
+    if (!p || typeof q.ref !== 'string') return undefined;
+    if (q.ref === mergeBase) return { path: p, side: 'base' };
+    if (headSha && q.ref === headSha) return { path: p, side: 'head' };
+    return undefined;
   } catch {
     return undefined;
   }

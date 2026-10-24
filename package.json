@@ -358,7 +358,7 @@
         "sidestory.changes.defaultBase": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The branch, tag or commit a branch is compared with when none was set with **Sidestory: Set Base…** and no sidestory added on the branch gives a `base` (for example `develop` or `origin/main`). Empty: the branch base the Git extension recorded, then the remote's default branch, then `main` or `master`."
+          "markdownDescription": "The branch, tag or commit to compare branches with (for example `develop` or `origin/main`). The base is, in order: the one picked with **Sidestory: Set Base…** for the branch; the `base` of a sidestory added on the branch; the branch base the Git extension recorded (`branch.<name>.vscode-merge-base`); this setting; the remote's default branch; then `main` or `master`."
         },
         "sidestory.changes.includeUncommitted": {
           "type": "boolean",

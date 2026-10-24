@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChangeCoverage, FileCoverage } from '../../src/core/coverage.ts';
 import { diffTexts } from '../../src/core/hunks.ts';
 import { codeColumnFor } from '../../src/extension/columns.ts';
-import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, fileDecoration, stateWords } from '../../src/extension/changes/coverage-labels.ts';
+import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, fileDecoration, problemRow, stateWords } from '../../src/extension/changes/coverage-labels.ts';
+import { latchStep, sameBaseName, storyBasesOf, type StoryLatch } from '../../src/extension/changes/base.ts';
 import { changePrompt, explainBranchPrompt, explainFilePrompt, safePath, updatePrompt } from '../../src/extension/changes/prompts.ts';
 import { anchorAtSide, emptySideKey, gitSideKey, mapOldRange, vscodeGitSideKey, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
 import { addTrivialAnchor, branchSlug } from '../../src/extension/changes/trivial.ts';
@@ -137,6 +138,76 @@ describe('the "This branch" group (§9.6)', () => {
     expect(branchRows({ belonging: [], totals: undefined, hasChanges: true, suggest: false })).toEqual([]);
     expect(branchRows({ belonging: [], totals: undefined, hasChanges: false, suggest: true })).toEqual([]);
   });
+  it('says why there is no comparison, first, with Set Base… to get out of it', () => {
+    const rows = branchRows({ belonging: [], totals: undefined, hasChanges: false, suggest: true, problem: { kind: 'baseNotFound', spec: 'devlop' } });
+    expect(rows.map((r) => [r.label, r.command.command])).toEqual([['Base devlop not found · Set Base…', 'sidestory.changes.setBase']]);
+    expect(problemRow({ kind: 'noMergeBase', base: 'main' }).label).toBe('No common commit with main · Set Base…');
+    expect(problemRow({ kind: 'noBase' }).label).toBe('No base to compare with · Set Base…');
+    const err = problemRow({ kind: 'error', message: 'fatal: bad object' });
+    expect([err.label, err.icon, err.command.command]).toEqual(["Couldn't compare: fatal: bad object", 'error', 'sidestory.changes.setBase']);
+  });
+  it('says when coverage is incomplete, in the row and its tooltip', () => {
+    const rows = branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1 }), hasChanges: true, suggest: true, incomplete: true });
+    expect(rows[0]!.description).toBe('vs main · 3 explained · 1 trivial · 0 left · incomplete');
+    expect(rows[0]!.tooltip).toMatch(/\nIncomplete: /);
+  });
+});
+
+describe('the base a sidestory added on the branch gives (§11.4)', () => {
+  const stories = [
+    { folder: 'b/.sidestory/x', title: 'X', base: 'develop' },
+    { folder: '.sidestory/a', title: 'A', base: 'main' },
+    { folder: '.sidestory/sha', title: 'Sha', base: 'a'.repeat(40) },
+    { folder: '.sidestory/old', title: 'Old', base: 'main' },
+  ];
+  it('counts a manifest added or renamed in, by folder; never a commit id; never one already on the base', () => {
+    const entries = [
+      { path: 'b/.sidestory/x/manifest.json', status: 'R' },
+      { path: '.sidestory/a/manifest.json', status: 'A' },
+      { path: '.sidestory/sha/manifest.json', status: 'A' },
+      { path: '.sidestory/old/manifest.json', status: 'M' },
+    ];
+    const r = storyBasesOf(stories, entries, 'main', ['origin']);
+    expect(r.first?.title).toBe('A');
+    expect(r.other?.title).toBe('X');
+  });
+  it('another base under a remote is the same base: no "Use origin/main" while on main', () => {
+    expect(sameBaseName('origin/main', 'main', ['origin'])).toBe(true);
+    expect(sameBaseName('main', 'upstream/main', ['origin', 'upstream'])).toBe(true);
+    expect(sameBaseName('origin/main', 'develop', ['origin'])).toBe(false);
+    expect(storyBasesOf([{ folder: '.sidestory/a', title: 'A', base: 'origin/main' }], [{ path: '.sidestory/a/manifest.json', status: 'A' }], 'main', ['origin']).other).toBeUndefined();
+  });
+
+  /**
+   * A comparison that, compared with a sidestory's base, no longer shows its manifest as added (a stacked base where
+   * the manifest already exists at that merge-base): the old rule toggled the base on every recompute.
+   */
+  it("doesn't toggle: read only from a snapshot whose base didn't come from a sidestory, latched, one refresh", () => {
+    const found = { dir: 'file:///r/.sidestory/a', title: 'A', base: 'stack' };
+    let latch: StoryLatch | undefined;
+    let refreshedFor: string | undefined;
+    let refreshes = 0;
+    // What each recompute yields: with the latched base, a sidestory-based snapshot where the manifest isn't added.
+    const recompute = () => (latch ? { source: 'sidestory' as const, found: undefined } : { source: 'fallback' as const, found });
+    for (let i = 0; i < 10; i++) {
+      const snap = recompute();
+      const step = latchStep(latch, refreshedFor, { source: snap.source, head: 'h1' }, snap.found, { pick: undefined, setting: undefined, stillValid: !!latch });
+      latch = step.latch;
+      refreshedFor = step.refreshedFor;
+      if (step.refresh) refreshes++;
+    }
+    expect(latch?.base).toBe('stack');
+    expect(refreshes).toBe(1);
+    // The sidestory leaves the index: back to the default chain, once.
+    const gone = latchStep(latch, refreshedFor, { source: 'sidestory', head: 'h1' }, undefined, { pick: undefined, setting: undefined, stillValid: false });
+    expect([gone.latch, gone.refresh]).toEqual([undefined, true]);
+    // The base doesn't resolve (falls back to the default chain each time): the same latch, no refresh loop.
+    const again = latchStep(latch, refreshedFor, { source: 'fallback', head: 'h1' }, found, { pick: undefined, setting: undefined, stillValid: true });
+    expect(again.refresh).toBe(false);
+    // A new commit: one more refresh for the new head. A pick wins: latched, no refresh.
+    expect(latchStep(latch, refreshedFor, { source: 'fallback', head: 'h2' }, found, { pick: undefined, setting: undefined, stillValid: false }).refresh).toBe(true);
+    expect(latchStep(undefined, undefined, { source: 'pick', head: 'h1' }, found, { pick: 'main', setting: undefined, stillValid: false }).refresh).toBe(false);
+  });
 });
 
 describe('copied prompts (§14.3)', () => {
@@ -186,6 +257,13 @@ describe('sidestory-git: documents as sides (§8)', () => {
     expect(gitSideKey({ repo: {}, sha: 'c'.repeat(40), path: 'src/a.ts' }, s)).toBeUndefined();
     expect(gitSideKey(undefined, s)).toBeUndefined();
   });
+  it('compares repositories by root: the git API hands out a new wrapper each time', async () => {
+    const { sameRepo } = await import('../../src/extension/changes/comparison.ts');
+    const root = (p: string) => ({ rootUri: { toString: () => p } });
+    const s2 = { repo: root('file:///r'), mergeBase: 'b'.repeat(40) };
+    expect(gitSideKey({ repo: root('file:///r'), sha: 'c'.repeat(40), path: 'a.ts' }, s2, sameRepo)).toEqual({ path: 'a.ts', side: 'head' });
+    expect(gitSideKey({ repo: root('file:///other'), sha: 'c'.repeat(40), path: 'a.ts' }, s2, sameRepo)).toBeUndefined();
+  });
 });
 
 describe('other documents as sides (§8)', () => {
@@ -199,12 +277,17 @@ describe('other documents as sides (§8)', () => {
     expect(emptySideKey('src/new.ts', entries)).toEqual({ path: 'src/new.ts', side: 'head' });
     expect(emptySideKey('src/a.ts', entries)).toBeUndefined();
   });
-  it('maps VS Code git: documents by their ref', () => {
+  it('maps VS Code git: documents by their ref: only the merge-base, and HEAD’s commit in committed mode', () => {
     const rel = (p: string) => (p.startsWith('/r/') ? p.slice(3) : undefined);
     const mb = 'b'.repeat(40);
-    expect(vscodeGitSideKey(JSON.stringify({ path: '/r/src/a.ts', ref: mb }), rel, mb)).toEqual({ path: 'src/a.ts', side: 'base' });
-    expect(vscodeGitSideKey(JSON.stringify({ path: '/r/src/a.ts', ref: '~' }), rel, mb)).toEqual({ path: 'src/a.ts', side: 'head' });
-    expect(vscodeGitSideKey(JSON.stringify({ path: '/elsewhere/a.ts', ref: 'HEAD' }), rel, mb)).toBeUndefined();
+    const head = 'c'.repeat(40);
+    const q = (ref: string, path = '/r/src/a.ts') => JSON.stringify({ path, ref });
+    expect(vscodeGitSideKey(q(mb), rel, mb)).toEqual({ path: 'src/a.ts', side: 'base' });
+    expect(vscodeGitSideKey(q(head), rel, mb, head)).toEqual({ path: 'src/a.ts', side: 'head' });
+    // The index, HEAD by name, another commit, or HEAD's commit in working tree mode: none of the comparison's sides.
+    for (const ref of ['~', '', 'HEAD', 'd'.repeat(40)]) expect(vscodeGitSideKey(q(ref), rel, mb, head), ref).toBeUndefined();
+    expect(vscodeGitSideKey(q(head), rel, mb)).toBeUndefined();
+    expect(vscodeGitSideKey(q(mb, '/elsewhere/a.ts'), rel, mb)).toBeUndefined();
     expect(vscodeGitSideKey('not json', rel, mb)).toBeUndefined();
   });
 });

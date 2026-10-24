@@ -24,7 +24,7 @@ Sidestories are free-form HTML and CSS, so they can hold anything a page can: in
 
 ## Big systems: an overview, then the details
 
-Write one sidestory per piece and an overview that ties them together. The **Sidestories** view in the activity bar lists them by package and group, with each overview's details under it; a **CodeLens** above explained code names the sidestory and step, and **Go to Step** finds any step by name. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
+Write one sidestory per piece and an overview that ties them together. The **Sidestories** view in the activity bar lists them by package and group, with each overview's details under it; a **CodeLens** above explained code names the sidestory and step, and **Go to Step…** finds any step by name. Readers skip a piece, **peek** at its one-line summary in place, or **dive** into its own sidestory in the same panel, with a trail at the top to come back to the step they left. Details can have details of their own.
 
 ![From the DMA overview, peek at dma_ctrl, dive into its sidestory and its state graph widget, then return through the trail](media/marketplace/dive.gif)
 
@@ -58,7 +58,7 @@ code --install-extension paperkite.sidestory
 
 ### 2. Open an example
 
-Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory** from the Command Palette and pick **dma-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
+Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory…** from the Command Palette and pick **dma-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
 
 ### 3. Write your first sidestory
 
@@ -92,7 +92,7 @@ A sidestory is a folder under `.sidestory/` in your repository; file paths in it
 }
 ```
 
-Open it with **Sidestory: Open Sidestory**, then run **Sidestory: Pin Anchors to the Current Code** so the anchors follow the code through edits. The [guide](docs/GUIDE.md) covers every attribute, the manifest, overviews and details, styling and limits.
+Open it with **Sidestory: Open Sidestory…**, then run **Sidestory: Pin Anchors to the Current Code** so the anchors follow the code through edits. The [guide](docs/GUIDE.md) covers every attribute, the manifest, overviews and details, styling and limits.
 
 ### 4. Or ask your agent
 
@@ -129,7 +129,7 @@ A sidestory with a `"base"` in its manifest explains a branch: its steps cover t
 - **This File** lists every step, in any sidestory, that covers the file you're in, and for a changed file the changes not explained yet.
 - **One change at a time:** with the cursor in a change (in its diff or the changed file), the editor's context menu has **Copy Prompt: Explain This Change**, **Mark as Trivial…** (asks why, and writes it into the sidestory), and **Re-pin This Step** for a step whose code grew, once you've updated its prose.
 
-The base: **Sidestory: Set Base…** when you picked one for the branch, else the `"base"` of a sidestory added on the branch, else the branch base Git recorded, the `sidestory.changes.defaultBase` setting, or the merge-base with `main`. When sidestories on the branch name different bases, **This branch** offers to switch.
+The base: **Sidestory: Set Base…** when you picked one for the branch, else the `"base"` of a sidestory added on the branch, else the branch base Git recorded, the `sidestory.changes.defaultBase` setting, the remote's default branch, or `main` (then `master`). When sidestories on the branch name different bases, **This branch** offers to switch.
 
 Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
 
@@ -157,7 +157,7 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | **Sidestory: Copy Prompt: Explain This Change** | Copy a prompt for the change at the cursor (editor context menu, This File). |
 | **Sidestory: Mark as Trivial…** | Mark the change at the cursor, or the selected lines, as needing no explanation, with a reason. |
 | **Sidestory: Re-pin This Step** | Pin a step whose code grew since it was written, once its prose covers the new lines. |
-| **Sidestory: Set Base…** | Pick the branch to compare this branch with when no sidestory gives one. |
+| **Sidestory: Set Base…** | Pick the branch to compare this branch with, kept per repository and branch. It wins over a sidestory's `base`; **Use the Default Base** goes back. |
 
 ## Settings
 
@@ -171,7 +171,7 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
 | `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
 | `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under **This branch** when no sidestory explains the branch. |
-| `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…** and no sidestory on the branch gives one (empty: the recorded branch base, the remote's default branch, then `main` or `master`). |
+| `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…**, no sidestory on the branch gives one, and Git recorded no base for the branch (empty: the remote's default branch, then `main` or `master`). |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |
 | `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |

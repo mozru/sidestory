@@ -79,10 +79,12 @@ export interface SessionHost {
 /** What a session with a `base` needs from the Changes view. */
 export interface SessionDiffs {
   /**
-   * The comparison when `base` gives the view's merge-base (§11.4); undefined when there is none here (Restricted
-   * Mode, no git, another base): the sidestory then opens as a plain file story. `who` keeps coverage computing.
+   * The comparison when `base` gives its merge-base and the sidestory folder `dir` is in its repository (§11.4);
+   * undefined when there is none here (Restricted Mode, no git, another base, another repository of a multi-root
+   * workspace): the sidestory then opens as a plain file story. `who` keeps coverage computing, and keeps the
+   * comparison on this repository while it holds a context.
    */
-  context(base: string, who: string): Promise<DiffContext | undefined>;
+  context(base: string, who: string, dir: vscode.Uri): Promise<DiffContext | undefined>;
   release(who: string): void;
   readonly onDidChange: vscode.Event<void>;
 }
@@ -264,7 +266,7 @@ export class ExplainerSession implements vscode.Disposable {
     const mine = ++this.diffSeq;
     const generation = this.generation;
     const base = this.manifest?.base;
-    const ctx = base && this.host.diffs ? await this.host.diffs.context(base, this.diffWho) : undefined;
+    const ctx = base && this.host.diffs ? await this.host.diffs.context(base, this.diffWho, this.ref.dir) : undefined;
     if (this.disposed || mine !== this.diffSeq || generation !== this.generation) return false;
     if (!base) this.host.diffs?.release(this.diffWho);
     const was = this.diff;

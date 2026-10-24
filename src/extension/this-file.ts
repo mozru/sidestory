@@ -164,7 +164,7 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
    * its first row. False when there was nothing to reveal yet.
    */
   async revealQuietly(): Promise<boolean> {
-    if (!this.top.length) this.rebuild(true);
+    if (!this.top.length && this.wouldHaveRows()) this.rebuild(true);
     const first = this.top[0];
     if (!first) return false;
     try {
@@ -173,6 +173,13 @@ export class ThisFileView implements vscode.TreeDataProvider<Node>, vscode.Dispo
     } catch {
       return false;
     }
+  }
+
+  /** Whether the followed file has rows to show (changes not explained yet, or steps), without building them. */
+  wouldHaveRows(): boolean {
+    const f = this.file;
+    if (!f) return false;
+    return !!this.host.changesOf?.(f)?.open.length || this.index.isAnchored(uriKey(f));
   }
 
   /** Rebuilds (a sidestory's base became known). */

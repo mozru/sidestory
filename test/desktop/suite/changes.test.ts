@@ -92,6 +92,15 @@ export function changesTests(): void {
       assert.equal(new Set(seen).size, 6);
     });
 
+    it('Set Base refuses a base that resolves nowhere, and keeps the comparison', async () => {
+      const before = (await state())?.mergeBase;
+      assert.ok(before);
+      await vscode.commands.executeCommand('sidestory.changes.setBase', 'devlop');
+      const after = await state();
+      assert.equal(after?.mergeBase, before);
+      assert.ok(!after?.branch.rows.some((r) => r.label.startsWith('Base devlop not found')));
+    });
+
     it('records the default keybindings for the Next/Previous chords (§17 Q14)', async () => {
       await vscode.commands.executeCommand('workbench.action.openDefaultKeybindingsFile');
       const doc = await until('the default keybindings', () => vscode.window.activeTextEditor?.document);

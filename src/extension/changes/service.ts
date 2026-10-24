@@ -12,11 +12,11 @@ import * as vscode from 'vscode';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import type { ChangeCoverage } from '../../core/coverage.ts';
 import { decodePair, oldToNew, type ChangeBlock } from '../../core/hunks.ts';
-import { isValidBase } from './base.ts';
-import { chooseRepository, Comparison, type Snapshot } from './comparison.ts';
-import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, fileDecoration, isDone, type BranchRow, type CoverageMark } from './coverage-labels.ts';
+import { isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
+import { chooseRepository, Comparison, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
+import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, fileDecoration, isDone, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
 import { CoverageService, type Belonging, type CoverageResult } from './coverage-service.ts';
-import { apiPath, gitApi, relPath, type GitApi, type GitRepo } from './git-api.ts';
+import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import { baseName, comparePaths, short, step, type ChangeEntry } from './model.ts';
 import { openTarget, type DiffContext } from './open.ts';
@@ -25,10 +25,10 @@ import { changePrompt, COPIED, explainBranchPrompt, updatePrompt } from './promp
 import { emptySideKey, gitSideKey, vscodeGitSideKey, type SideKey } from './targets.ts';
 import { markTrivial } from './trivial.ts';
 import type { SessionDiffs } from '../session.ts';
-import { branchDiffersFromBase } from './probe.ts';
+import { branchDiffersFromBase, PICKS_KEY, watchBranches } from './probe.ts';
 
 const KEYS = {
-  picks: 'sidestory.changes.picks',
+  picks: PICKS_KEY,
   recent: 'sidestory.changes.recentBases',
   noSuggest: 'sidestory.changes.noExplainSuggestion',
 } as const;
@@ -40,6 +40,7 @@ const COMMAND_WAIT_MS = 30_000;
 const setContext = (key: string, value: unknown) => void vscode.commands.executeCommand('setContext', key, value);
 const name = (s: string, max = 60) => displayText(s, max);
 const config = () => vscode.workspace.getConfiguration('sidestory.changes');
+const setting = () => config().get<string>('defaultBase')?.trim() || undefined;
 
 /** A change of the comparison with its file. */
 interface Found {
@@ -75,8 +76,21 @@ export class ChangesService implements vscode.Disposable {
   private probeSeq = 0;
   private repoTimer: ReturnType<typeof setTimeout> | undefined;
   private commandTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The base of a sidestory added on this branch, as the comparison last used it. */
-  private ownBase: string | undefined;
+  /**
+   * The base of a sidestory added on this branch (§11.4), latched: read only from a snapshot whose base didn't come
+   * from a sidestory (compared with that sidestory's own base, its manifest may not look added), and kept while that
+   * sidestory is in the index with that base and HEAD, the pick and the setting are unchanged.
+   */
+  private latch: StoryLatch | undefined;
+  /** The last (head, pick, setting, base) a latch refreshed the comparison for: at most one refresh each. */
+  private latchRefreshedFor: string | undefined;
+  /** The snapshot coverage was last asked to run for (a command doesn't ask again while that run is pending). */
+  private coverageAskedFor: Snapshot | undefined;
+  /** Sessions holding this comparison (§11.4): the comparison doesn't follow the active editor into another repository meanwhile. */
+  private readonly holders = new Set<string>();
+  /** Whether another base a sidestory names resolves to another commit than the comparison's ("Use develop" row). */
+  private readonly otherBases = new Map<string, 'pending' | 'differs' | 'same' | 'missing'>();
+  private disposed = false;
   private readonly emitter = new vscode.EventEmitter<void>();
   /** The comparison or its coverage changed: the "This branch" rows and This File repaint. */
   readonly onDidChange = this.emitter.event;
@@ -132,6 +146,8 @@ export class ChangesService implements vscode.Disposable {
     );
     this.initializing = this.init();
     void this.probe();
+    // The probe again when a HEAD or the uncommitted state moves (a new branch, a first commit after startup).
+    void watchBranches(() => void this.probe()).then((d) => (this.disposed ? d.dispose() : this.subscriptions.push(d)));
   }
 
   // ---- who needs the comparison ----
@@ -154,7 +170,9 @@ export class ChangesService implements vscode.Disposable {
   /** Asks the probe again (a HEAD change, a setting): one merge-base per candidate base, no file list. */
   async probe(): Promise<void> {
     const mine = ++this.probeSeq;
-    const answer = await branchDiffersFromBase(10_000);
+    const answer = await branchDiffersFromBase(10_000, {
+      pick: (root, branch) => this.picks().find(([k]) => k === `${this.ids.idOfPath(root)}\n${branch}`)?.[1],
+    });
     if (mine !== this.probeSeq) return; // a newer probe started meanwhile
     const was = this.probed;
     this.probed = answer;
@@ -162,32 +180,87 @@ export class ChangesService implements vscode.Disposable {
     if (was !== this.probed) this.emitter.fire();
   }
 
-  /** Multi-root: follows the active editor into another open repository (debounced). */
+  /** The probe's last answer: the branch has work of its own (full turns `sidestory.available` on with it). */
+  get branchHasWork(): boolean {
+    return !!this.probed;
+  }
+
+  /**
+   * Multi-root: follows the active editor into another open repository (debounced). Not while a session holds this
+   * comparison (an open sidestory of this repository): switching would take its diffs away; the session's repository
+   * stays until its panels close.
+   */
   private followRepo(): void {
     clearTimeout(this.repoTimer);
     this.repoTimer = setTimeout(() => {
       const api = this.api;
       const uri = vscode.window.activeTextEditor?.document.uri;
-      if (!api || !uri || uri.scheme !== 'file') return;
+      if (!api || !uri || uri.scheme !== 'file' || this.holders.size) return;
       const repo = api.getRepository(uri);
-      if (repo && repo !== this.comparison?.repo && api.repositories.includes(repo)) this.useRepo(repo);
+      if (repo && !sameRepo(repo, this.comparison?.repo)) this.useRepo(repo);
     }, 500);
   }
 
   /**
-   * The base of a sidestory added on this branch (its manifest is an added file in the comparison), the first by
+   * The sidestories added on this branch (their manifest is added or renamed in, in the comparison), the first by
    * folder; and one that names another base than the comparison's (This branch offers to switch).
    */
-  private storyBases(s: Snapshot | undefined = this.snapshot): { first?: string; other?: { title: string; base: string } } {
-    if (!s) return {};
-    const added = new Set(s.entries.filter((e) => e.status === 'A').map((e) => e.path));
-    const found = this.host
-      .sidestoryBases()
-      .map((x) => ({ ...x, folder: relPath(s.repo, x.dir) }))
-      .filter((x): x is typeof x & { folder: string } => !!x.folder && added.has(`${x.folder}/manifest.json`) && isValidBase(x.base))
-      .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
-    const other = found.find((x) => x.base !== s.base.spec);
-    return { first: found[0]?.base, ...(other ? { other: { title: other.title, base: other.base } } : {}) };
+  private storyBases(s: Snapshot): { first?: { dir: vscode.Uri; title: string; base: string }; other?: { title: string; base: string } } {
+    const stories = this.host.sidestoryBases().flatMap((x) => {
+      const folder = relPath(s.repo, x.dir);
+      return folder ? [{ ...x, folder }] : [];
+    });
+    return storyBasesOf(stories, s.entries, s.base.spec, refReader(s.repo).remotes());
+  }
+
+  private branchOf(repo: GitRepo): string {
+    const name = repo.state.HEAD?.name;
+    return name && isValidBase(name) ? name : 'HEAD';
+  }
+  private pickOf(repo: GitRepo, branch = this.branchOf(repo)): string | undefined {
+    return this.picks().find(([k]) => k === this.pickKey(repo, branch))?.[1];
+  }
+
+  /** The latched sidestory base while it still holds (the comparison's `sidestoryBase`). */
+  private storyBase(repo: GitRepo): string | undefined {
+    const l = this.latch;
+    if (!l) return undefined;
+    if (l.head !== repo.state.HEAD?.commit || l.pick !== this.pickOf(repo) || l.setting !== setting()) return undefined;
+    return this.host.sidestoryBases().some((x) => x.dir.toString() === l.dir && x.base === l.base) ? l.base : undefined;
+  }
+
+  /**
+   * Re-reads the sidestory base after the comparison or the index changed (§11.4). Never from a snapshot compared
+   * with a sidestory's base, so the base can't toggle (a sidestory whose manifest already exists at its own base's
+   * merge-base, a base naming the branch itself); and at most one refresh per (head, pick, setting, base).
+   */
+  private evaluateStoryBase(c: Comparison): void {
+    const s = c.snapshot;
+    if (!s) return;
+    const first = s.base.source === 'sidestory' ? undefined : this.storyBases(s).first;
+    const step = latchStep(
+      this.latch,
+      this.latchRefreshedFor,
+      { source: s.base.source, head: s.head.sha },
+      first && { dir: first.dir.toString(), title: first.title, base: first.base },
+      { pick: this.pickOf(s.repo), setting: setting(), stillValid: this.storyBase(c.repo) !== undefined },
+    );
+    this.latch = step.latch;
+    this.latchRefreshedFor = step.refreshedFor;
+    if (step.refresh) void c.refresh();
+  }
+
+  /** The index changed: coverage again, and the sidestory base and "Use develop" row may have changed. */
+  indexChanged(): void {
+    this.scheduleCoverage();
+    if (this.comparison) this.evaluateStoryBase(this.comparison);
+    this.emitter.fire();
+  }
+
+  /** Coverage soon, noting the snapshot it is for. */
+  private scheduleCoverage(delay?: number): void {
+    this.coverageAskedFor = this.snapshot;
+    this.coverage.schedule(delay);
   }
 
   // ---- the git API and the repository ----
@@ -208,7 +281,7 @@ export class ChangesService implements vscode.Disposable {
       s.api.onDidOpenRepository(() => this.pickRepo()),
       s.api.onDidCloseRepository((r) => {
         this.ids.forget(r);
-        if (this.comparison?.repo === r) this.useRepo(undefined);
+        if (sameRepo(this.comparison?.repo, r)) this.useRepo(undefined);
         this.pickRepo();
       }),
       s.api.onDidChangeState(() => this.pickRepo()),
@@ -219,7 +292,8 @@ export class ChangesService implements vscode.Disposable {
   private pickRepo(): void {
     const api = this.api;
     if (!api) return;
-    if (this.comparison && api.repositories.includes(this.comparison.repo)) return;
+    // By root: every call and event of the git API hands out new wrapper objects. The same root keeps its comparison.
+    if (this.comparison && api.repositories.some((r) => sameRepo(r, this.comparison?.repo))) return;
     this.useRepo(chooseRepository(api, undefined));
   }
 
@@ -227,35 +301,43 @@ export class ChangesService implements vscode.Disposable {
     this.comparisonSubs.forEach((d) => d.dispose());
     this.comparisonSubs = [];
     this.comparison = undefined;
-    this.ownBase = undefined;
+    this.latch = undefined;
+    this.latchRefreshedFor = undefined;
+    this.coverageAskedFor = undefined;
+    this.otherBases.clear();
+    this.holders.clear(); // sessions that still belong say so again when they ask (diffsEmitter below)
     setContext('sidestory.changes.repo', !!repo);
+    setContext('sidestory.changes.activeFileChanged', false);
     // The old repository's marks and rows go (repository closed, git turned off, another repository followed).
     this.coverage.clear();
     this.decorations.update();
+    // Sessions ask again: their comparison is gone (or is another repository's now).
+    this.diffsEmitter.fire();
     if (!repo) {
       this.emitter.fire();
       return;
     }
     const c = new Comparison(repo, {
-      pick: (branch) => this.picks().find(([k]) => k === this.pickKey(repo, branch))?.[1],
+      pick: (branch) => this.pickOf(repo, branch),
       mode: () => (config().get<boolean>('includeUncommitted', true) ? 'workingTree' : 'committed'),
-      setting: () => config().get<string>('defaultBase')?.trim() || undefined,
-      sidestoryBase: () => this.ownBase,
+      setting,
+      sidestoryBase: () => this.storyBase(repo),
     });
     this.comparison = c;
     this.comparisonSubs.push(
       c,
       c.onDidChange(() => {
         // A sidestory added on the branch gives the base (§11.4): compare again when that changes.
-        const own = this.storyBases(c.snapshot).first;
-        if (c.snapshot && own !== this.ownBase) {
-          this.ownBase = own;
-          void c.refresh();
-        }
-        this.coverage.schedule();
+        this.evaluateStoryBase(c);
+        // Coverage for a new snapshot only: the same one (new details, git busy) keeps its run (onDidRecheck re-reads files).
+        if (c.snapshot && c.snapshot !== this.coverageAskedFor) this.scheduleCoverage();
         this.updateActiveFile();
         this.diffsEmitter.fire();
         this.emitter.fire();
+      }),
+      // The same snapshot, but in working tree mode files may have changed on disk: coverage reads them again.
+      c.onDidRecheck(() => {
+        if (c.snapshot?.mode === 'workingTree' && this.coverage.active) this.scheduleCoverage();
       }),
     );
     this.updateActive();
@@ -285,19 +367,27 @@ export class ChangesService implements vscode.Disposable {
   /** For a command: the comparison and its coverage, computed now (and kept computing from here on, §4.6). */
   private async withCoverage(): Promise<{ s: Snapshot; r: CoverageResult | undefined } | undefined> {
     // Wanted for a minute after the last command (repeated Next Unexplained stays quick), then let go.
+    const wasActive = this.coverage.active;
     this.coverage.want('command', true);
+    // Becoming wanted starts a run at once (for the snapshot there is, if any).
+    if (!wasActive) this.coverageAskedFor = this.snapshot;
     clearTimeout(this.commandTimer);
     this.commandTimer = setTimeout(() => {
       this.coverage.want('command', false);
       this.updateActive();
     }, 60_000);
     this.updateActive();
-    const s = await this.current();
-    if (!s) return undefined;
-    // Ready once a run for this snapshot drained its queue (files skipped as unreadable or over budget included).
-    const ready = () => (this.coverage.resultFor === s ? this.result(s) : undefined);
+    const first = await this.current();
+    if (!first) return undefined;
+    // Ready once a run for the live snapshot drained its queue (files skipped as unreadable or over budget included).
+    // The live one: a status refresh may have replaced the snapshot since (a recompute that changes nothing keeps it).
+    const ready = () => {
+      const live = this.snapshot;
+      return live && this.coverage.resultFor === live ? this.result(live) : undefined;
+    };
     if (!ready()) {
-      this.coverage.schedule(0);
+      // Not again while a run for this snapshot is pending or in flight: that would run it twice.
+      if (this.coverageAskedFor !== this.snapshot) this.scheduleCoverage(0);
       await new Promise<void>((resolve) => {
         const timer = setTimeout(done, COMMAND_WAIT_MS);
         const sub = this.coverage.onDidChange(() => {
@@ -310,6 +400,7 @@ export class ChangesService implements vscode.Disposable {
         }
       });
     }
+    const s = this.snapshot ?? first;
     return { s, r: this.result(s) };
   }
 
@@ -341,18 +432,26 @@ export class ChangesService implements vscode.Disposable {
 
   // ---- URIs and sides ----
 
-  /** A document as (repo path, side) in this comparison (§8). Keys never hold a commit: any commit but the merge-base is the head side. */
+  /**
+   * A document as (repo path, side) in this comparison (§8), for what reads its lines: unexplained marks and session
+   * cursor-follow. Keys never hold a commit: any commit of ours but the merge-base is the head side. Never the empty
+   * side of an added or deleted file (its lines are nobody's); `locate` finds that one for commands.
+   */
   keyOf(s: Snapshot, uri: vscode.Uri): SideKey | undefined {
     if (uri.scheme === 'file') {
       const p = relPath(s.repo, uri);
       return p ? { path: p, side: 'head' } : undefined;
     }
-    // The empty side of an added or deleted file: its other side, so commands still know where they are.
-    if (uri.scheme === EMPTY_SCHEME) return emptySideKey(uri.path.slice(1), s.entries);
-    // VS Code's own git documents (Source Control, Git Tree Compare).
-    if (uri.scheme === 'git') return vscodeGitSideKey(uri.query, (p) => relPath(s.repo, vscode.Uri.file(p)), s.mergeBase);
+    // VS Code's own git documents (Source Control, Git Tree Compare): only at the merge-base, or HEAD in committed mode.
+    if (uri.scheme === 'git') return vscodeGitSideKey(uri.query, (p) => relPath(s.repo, vscode.Uri.file(p)), s.mergeBase, s.mode === 'committed' ? s.head.sha : undefined);
     if (uri.scheme !== GIT_SCHEME) return undefined;
-    return gitSideKey(parseGitUri(this.ids, uri), s);
+    return gitSideKey(parseGitUri(this.ids, uri), s, sameRepo);
+  }
+
+  /** Where a document is, for commands: `keyOf`, and the empty side of an added or deleted file as its other side. */
+  locate(s: Snapshot, uri: vscode.Uri): SideKey | undefined {
+    if (uri.scheme === EMPTY_SCHEME) return emptySideKey(uri.path.slice(1), s.entries);
+    return this.keyOf(s, uri);
   }
 
   entryFor(s: Snapshot, k: SideKey): ChangeEntry | undefined {
@@ -422,20 +521,25 @@ export class ChangesService implements vscode.Disposable {
 
   /** For sessions of sidestories with a base (§11.4): the comparison when the base gives its merge-base. */
   readonly sessionDiffs: SessionDiffs = {
-    context: async (base, who) => {
+    context: async (base, who, dir) => {
       if (!isValidBase(base)) return undefined;
       // Wanted first: the comparison computes for this session from here on.
       this.coverage.want(who, true);
       const s = await this.current();
-      const own = s ? await this.coverage.ownMergeBase(s, base) : undefined;
-      if (!s || own !== s.mergeBase) {
+      // Only a sidestory of this comparison's repository (multi-root: another repository's sidestory opens as a file story).
+      const inRepo = !!s && relPath(s.repo, dir) !== undefined;
+      const own = s && inRepo ? await this.coverage.ownMergeBase(s, base) : undefined;
+      if (!s || !inRepo || own !== this.snapshot?.mergeBase) {
+        this.holders.delete(who);
         this.coverage.want(who, false);
         this.updateActive();
         return undefined;
       }
+      this.holders.add(who);
       return this.diffContext();
     },
     release: (who) => {
+      this.holders.delete(who);
       this.coverage.want(who, false);
       this.updateActive();
     },
@@ -512,7 +616,7 @@ export class ChangesService implements vscode.Disposable {
     if (!s) return undefined;
     const active = vscode.window.activeTextEditor;
     for (const ed of active ? [active] : vscode.window.visibleTextEditors) {
-      const key = this.keyOf(s, ed.document.uri);
+      const key = this.locate(s, ed.document.uri);
       const entry = key && this.entryFor(s, key);
       if (key && entry) return { key, entry, editor: ed };
     }
@@ -614,7 +718,7 @@ export class ChangesService implements vscode.Disposable {
       }
     }
     if (!list.length) {
-      vscode.window.setStatusBarMessage('Every change is explained or marked trivial', 3000);
+      vscode.window.setStatusBarMessage(`Every change is explained or marked trivial${r.incomplete ? ' · incomplete: some files weren’t counted' : ''}`, 3000);
       return;
     }
     const rank = fileRanks([...r.files.keys()], this.stepFiles(s, r));
@@ -665,22 +769,74 @@ export class ChangesService implements vscode.Disposable {
     return !off.includes(this.branchKey(s));
   }
 
-  /** The rows of the Sidestories view's "This branch" group, with the group's description; none: no group. */
+  /**
+   * "Use develop": a sidestory added on the branch names another base, and it resolves to another commit than the
+   * comparison's (`origin/main` and `main` at one commit are the same base). Resolved once per (base, commit).
+   */
+  private otherBase(s: Snapshot | undefined): { title: string; base: string } | undefined {
+    if (!s) return undefined;
+    const o = this.storyBases(s).other;
+    if (!o) return undefined;
+    const key = `${o.base}\n${s.base.sha}`;
+    const known = this.otherBases.get(key);
+    if (!known) {
+      if (this.otherBases.size > 100) this.otherBases.clear();
+      this.otherBases.set(key, 'pending');
+      void resolveBase(refReader(s.repo), o.base).then(
+        (b) => {
+          this.otherBases.set(key, !b ? 'missing' : b.sha === s.base.sha ? 'same' : 'differs');
+          this.emitter.fire();
+        },
+        () => this.otherBases.set(key, 'missing'),
+      );
+      return undefined;
+    }
+    return known === 'differs' ? o : undefined;
+  }
+
+  /** Why there is no snapshot, said in the group (a base not found, no merge-base, no base, git's error). */
+  private problemOf(st: ComparisonState): BranchProblem | undefined {
+    switch (st.kind) {
+      case 'baseNotFound':
+        return { kind: 'baseNotFound', spec: name(st.spec, 40) };
+      case 'noMergeBase':
+        return { kind: 'noMergeBase', base: name(st.base.label, 40) };
+      case 'noBase':
+        return { kind: 'noBase' };
+      case 'error':
+        return { kind: 'error', message: displayText(st.message, 120) };
+      default:
+        return undefined;
+    }
+  }
+
+  /** The rows of the Sidestories view's "This branch" group, with the group's description; no rows: no group. */
   branchGroup(): { description: string | undefined; rows: BranchRow[] } {
+    const c = this.comparison;
+    if (!c) return { description: undefined, rows: [] };
     const s = this.snapshot;
     const r = this.result(s);
-    const hasChanges = s ? s.entries.length > 0 && !s.onBase : !!this.probed;
+    const problem = s ? undefined : this.problemOf(c.state);
+    const hasChanges = s ? s.entries.length > 0 && !s.onBase : !!this.probed && !problem;
+    // Coverage is on its way for this snapshot: no "Explain This Branch" flash on a branch a sidestory explains.
+    const pending = !!s && this.coverage.active && !r;
+    const o = this.otherBase(s);
     const rows = branchRows({
       belonging: (r?.belonging ?? []).map((b) => ({ folder: displayText(b.folder, 120), title: displayText(b.manifest.title, 80), base: name(b.manifest.base ?? '', 40), dir: b.dir.toString(), totals: b.totals })),
       totals: r?.totals,
       hasChanges,
-      suggest: this.suggestExplain(s),
-      ...(() => {
-        const o = this.storyBases(s).other;
-        return o ? { otherBase: { title: displayText(o.title, 60), base: name(o.base, 40) } } : {};
-      })(),
+      suggest: this.suggestExplain(s) && !pending,
+      ...(o ? { otherBase: { title: displayText(o.title, 60), base: name(o.base, 40) } } : {}),
+      ...(r?.belonging.length && r.incomplete ? { incomplete: true } : {}),
+      ...(problem ? { problem } : {}),
     });
-    const description = s ? `${s.head.name ? name(s.head.name, 40) : `detached ${short(s.head.sha)}`} vs ${name(s.base.label, 40)}` : undefined;
+    // Multi-root: which repository, when more than one is open.
+    const roots = new Set((this.api?.repositories ?? []).map(repoKey));
+    const where = roots.size > 1 ? `${name(c.repo.rootUri.path.split('/').filter(Boolean).pop() ?? '', 30)}: ` : '';
+    const head = c.repo.state.HEAD;
+    const branch = s ? s.head : head?.commit ? { name: head.name, sha: head.commit } : undefined;
+    const headWords = branch ? (branch.name ? name(branch.name, 40) : `detached ${short(branch.sha)}`) : undefined;
+    const description = s ? `${where}${headWords} vs ${name(s.base.label, 40)}` : problem && headWords ? `${where}${headWords}` : undefined;
     return { description, rows };
   }
 
@@ -749,7 +905,7 @@ export class ChangesService implements vscode.Disposable {
     if (text === undefined) return;
     try {
       const written = await markTrivial(s, r?.belonging ?? [], { ...target, text });
-      if (written) this.coverage.schedule(500);
+      if (written) this.scheduleCoverage(500);
     } catch (e) {
       void vscode.window.showErrorMessage(`Couldn't mark it trivial: ${plainForMessage((e as Error).message)}`);
     }
@@ -788,7 +944,7 @@ export class ChangesService implements vscode.Disposable {
       const known = !!r && [...r.files.values()].some((f) => f.coverage?.changes.some((c) => c.needsLook?.some((n) => n.anchor === anchor && r.belonging.find((b) => b.folder === n.sidestory)?.dir.toString() === dir)));
       if (known) {
         await this.host.repin(vscode.Uri.parse(dir), anchor);
-        this.coverage.schedule(500);
+        this.scheduleCoverage(500);
         return;
       }
     }
@@ -807,10 +963,28 @@ export class ChangesService implements vscode.Disposable {
     const pick = items.length === 1 ? items[0] : await vscode.window.showQuickPick(items, { title: 'Re-pin Which Step?' });
     if (!pick) return;
     await this.host.repin(pick.b.dir, pick.anchor);
-    this.coverage.schedule(500);
+    this.scheduleCoverage(500);
   }
 
-  /** Set Base… (§9.4): a branch, tag or remote branch to compare this branch with, remembered per branch. */
+  /** How the comparison came by its base, for Set Base…'s first item. */
+  private sourceWords(source: BaseSource): string {
+    switch (source) {
+      case 'pick':
+        return 'set for this branch';
+      case 'sidestory':
+        return this.latch ? `from “${escapeIcons(name(this.latch.title, 40))}”` : 'from a sidestory on this branch';
+      case 'git-config':
+        return 'the branch’s recorded base';
+      case 'setting':
+        return 'the defaultBase setting';
+      case 'remote-default':
+        return 'the remote’s default branch';
+      default:
+        return 'the default';
+    }
+  }
+
+  /** Set Base… (§9.4): a branch, tag or remote branch to compare this branch with, remembered per repository and branch. */
   private async setBase(arg?: unknown): Promise<void> {
     await this.initializing;
     const c = this.comparison;
@@ -820,17 +994,34 @@ export class ChangesService implements vscode.Disposable {
     }
     const repo = c.repo;
     const head = repo.state.HEAD;
-    const branch = head?.name && isValidBase(head.name) ? head.name : 'HEAD';
+    const branch = this.branchOf(repo);
+    // Only a base that resolves here is saved: a typo or an unfetched branch is said, and the base stays as it was.
+    const save = async (spec: string | undefined) => {
+      if (spec && !(await resolveBase(refReader(repo), spec))) {
+        void vscode.window.showWarningMessage(`“${name(spec)}” isn't a branch, tag or commit in this repository (not fetched?). The base wasn't changed.`);
+        return;
+      }
+      await this.setPick(repo, branch, spec);
+      await c.refresh(true);
+    };
     // From the This branch row "Use develop": that base, no picker.
     if (typeof arg === 'string' && isValidBase(arg)) {
-      await this.setPick(repo, branch, arg);
-      await c.refresh(true);
+      await save(arg);
       return;
     }
-    const current = this.picks().find(([k]) => k === this.pickKey(repo, branch))?.[1];
-    type Item = vscode.QuickPickItem & { spec?: string; clear?: boolean };
-    const def = await c.defaultBase().catch(() => undefined);
-    const items: Item[] = [{ label: `$(git-compare) Merge-base with ${escapeIcons(name(def?.label ?? 'main'))}`, description: current ? 'the default' : 'the default · current', clear: true }];
+    const current = this.pickOf(repo, branch);
+    type Item = vscode.QuickPickItem & { spec?: string; clear?: boolean; keep?: boolean };
+    const items: Item[] = [];
+    // First, the base in use and where it came from (the pick, a sidestory, the recorded base, the setting, a default).
+    const st = c.state;
+    if (st.kind === 'ready') items.push({ label: `$(git-compare) Merge-base with ${escapeIcons(name(st.snapshot.base.label))}`, description: `${this.sourceWords(st.snapshot.base.source)} · current`, keep: true });
+    else if (st.kind === 'baseNotFound') items.push({ label: `$(warning) ${escapeIcons(name(st.spec))} not found`, description: 'set for this branch · current', keep: true });
+    if (current) {
+      const story = this.storyBase(repo);
+      const def = story ? undefined : await c.defaultBase().catch(() => undefined);
+      const back = story ? `${name(story, 40)} (from “${name(this.latch?.title ?? '', 40)}”)` : (def?.label ?? 'main');
+      items.push({ label: '$(discard) Use the Default Base', description: `back to ${escapeIcons(name(back))}`, clear: true });
+    }
     const recent = (this.memento.get<string[]>(KEYS.recent) ?? []).filter((x) => typeof x === 'string' && isValidBase(x));
     const refs = repo.getRefs ? await repo.getRefs({ pattern: 'refs/heads/', count: 300, sort: 'committerdate' }).catch(() => []) : repo.state.refs.filter((x) => x.type === 0);
     const remotes = repo.getRefs ? await repo.getRefs({ pattern: 'refs/remotes/', count: 300, sort: 'committerdate' }).catch(() => []) : repo.state.refs.filter((x) => x.type === 1);
@@ -859,17 +1050,16 @@ export class ChangesService implements vscode.Disposable {
     });
     const typed = qp.value.trim();
     qp.dispose();
-    if (!chosen) return;
-    let spec: string | undefined;
+    if (!chosen || (chosen !== 'typed' && chosen.keep)) return;
     if (chosen === 'typed') {
       if (!isValidBase(typed)) {
         void vscode.window.showWarningMessage(`“${name(typed)}” isn't a branch name Sidestory can use.`);
         return;
       }
-      spec = typed;
-    } else spec = chosen.clear ? undefined : chosen.spec;
-    await this.setPick(repo, branch, spec);
-    await c.refresh(true);
+      await save(typed);
+      return;
+    }
+    await save(chosen.clear ? undefined : chosen.spec);
   }
 
   readonly commands: Record<string, (...args: unknown[]) => unknown> = {
@@ -921,6 +1111,7 @@ export class ChangesService implements vscode.Disposable {
   };
 
   dispose(): void {
+    this.disposed = true;
     clearTimeout(this.repoTimer);
     clearTimeout(this.commandTimer);
     this.apiSubs.forEach((d) => d.dispose());

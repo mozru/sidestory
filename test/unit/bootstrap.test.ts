@@ -47,9 +47,9 @@ describe('bootstrap', () => {
     const imports = [...src.matchAll(/^import (?!type )[^;]*? from '([^']+)'/gm)].map((m) => m[1]);
     expect(imports.sort()).toEqual(['../core/glob.ts', './bootstrap-shared.ts', './changes/probe.ts', 'vscode'].sort());
     for (const dep of ['src/core/glob.ts', 'src/extension/bootstrap-shared.ts']) expect(readFileSync(dep, 'utf8')).not.toMatch(/^import (?!type )/m);
-    // The probe (docs/CHANGES-PLAN.md §9.1) imports vscode and nothing else.
+    // The probe (docs/CHANGES-PLAN.md §9.1) imports vscode and Node built-ins (the repository id of Set Base's picks).
     const probe = [...readFileSync('src/extension/changes/probe.ts', 'utf8').matchAll(/^import (?!type )[^;]*? from '([^']+)'/gm)].map((m) => m[1]);
-    expect(probe).toEqual(['vscode']);
+    expect(probe.sort()).toEqual(['node:crypto', 'node:fs', 'vscode']);
   });
 
   it('in a workspace without sidestories: one watcher, nothing loaded, and fast', async () => {
@@ -81,6 +81,28 @@ describe('bootstrap', () => {
     await tick();
     expect(loads).toBe(0);
     expect(memory['sidestory.available']).toBeUndefined();
+  });
+
+  it('asks again when HEAD moves: `git checkout -b feat` and a commit after startup load it without a reload', async () => {
+    const boot = await fresh();
+    let differs = false;
+    let onChange: (() => void) | undefined;
+    let disposed = false;
+    boot.probe.branchDiffers = async () => differs;
+    boot.probe.watch = async (cb) => {
+      onChange = cb;
+      return { dispose: () => void (disposed = true) } as never;
+    };
+    boot.activate(context() as never);
+    await tick();
+    expect(loads).toBe(0);
+    expect(onChange).toBeDefined();
+    differs = true;
+    onChange!();
+    await tick();
+    expect(loads).toBe(1);
+    expect(memory['sidestory.available']).toBe('shown');
+    expect(disposed).toBe(true); // its job is done
   });
 
   it('a manifest created in a sidestory folder wakes the full extension and remembers it', async () => {

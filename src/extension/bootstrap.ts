@@ -1,11 +1,12 @@
 // The bootstrap (dist/extension.cjs, docs/NAVIGATION-PLAN.md §8.1): what runs in every workspace after startup.
-// It is one small module and, in a workspace with no sidestories, one file watcher. Everything else (the index,
+// It is one small module and, in a workspace with no sidestories, one file watcher and the branch probe
+// (docs/CHANGES-PLAN.md §9.1), asked again when a repository's HEAD or uncommitted state changes. Everything else (the index,
 // the sidebar, CodeLens, zod, the resolver, the widget host) is in dist/full.cjs, loaded only once a sidestory
 // exists or a command or the panel serializer needs it. It requires nothing but `vscode` and, lazily, full.cjs.
 import * as vscode from 'vscode';
 import { excludePatterns, globMatcher, joinGlobs } from '../core/glob.ts';
 import { AVAILABLE_KEY, COMMANDS, PANEL_VIEW_TYPE } from './bootstrap-shared.ts';
-import { branchDiffersFromBase } from './changes/probe.ts';
+import { branchDiffersFromBase, picksFrom, watchBranches } from './changes/probe.ts';
 import type { FullApi } from './extension.ts';
 
 /** How full.cjs is loaded; tests replace it. */
@@ -45,8 +46,11 @@ async function loadWithProgress(context: vscode.ExtensionContext): Promise<FullA
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Loading Sidestory…' }, () => load(context));
 }
 
-/** The branch probe (docs/CHANGES-PLAN.md §9.1); tests replace it. */
-export const probe = { branchDiffers: () => branchDiffersFromBase() };
+/** The branch probe (docs/CHANGES-PLAN.md §9.1) and what asks it again; tests replace them. */
+export const probe = {
+  branchDiffers: (context: vscode.ExtensionContext) => branchDiffersFromBase(30_000, { pick: picksFrom(context.globalState, context.workspaceState) }),
+  watch: (onChange: () => void): Promise<vscode.Disposable> => watchBranches(onChange),
+};
 
 export function activate(context: vscode.ExtensionContext): void {
   for (const id of COMMANDS) {
@@ -82,9 +86,22 @@ export function activate(context: vscode.ExtensionContext): void {
   const exclude = globMatcher(patterns);
   const watcher = vscode.workspace.createFileSystemWatcher('**/.sidestory/*/manifest.json', false, true, true);
   context.subscriptions.push(watcher);
+  let branches: vscode.Disposable | undefined;
+  let woken = false;
   const wake = () => {
+    woken = true;
     watcher.dispose();
+    branches?.dispose();
     void load(context);
+  };
+  /** No sidestory yet, but a branch with work of its own: "This branch" offers to explain it (docs/CHANGES-PLAN.md §9.1). */
+  const askBranch = async () => {
+    if (full || woken) return;
+    if ((await probe.branchDiffers(context)) && !full && !woken) {
+      void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+      void vscode.commands.executeCommand('setContext', 'sidestory.available', true);
+      wake();
+    }
   };
   watcher.onDidCreate((uri) => {
     if (full || !looksLikeSidestory(uri) || exclude(vscode.workspace.asRelativePath(uri, false))) return;
@@ -96,12 +113,15 @@ export function activate(context: vscode.ExtensionContext): void {
     async (found) => {
       if (full) return;
       if (found.some(looksLikeSidestory)) return wake();
-      // No sidestory yet, but a branch with commits of its own: the Changes view navigates its merge diff
-      // (docs/CHANGES-PLAN.md §9.1).
-      if ((await probe.branchDiffers()) && !full) {
-        void context.workspaceState.update(AVAILABLE_KEY, 'shown');
-        void vscode.commands.executeCommand('setContext', 'sidestory.available', true);
-        wake();
+      await askBranch();
+      if (full || woken) return;
+      // Asked again, cheaply, when HEAD or the uncommitted state changes: `git checkout -b feat` and a commit after
+      // startup show the group without a reload.
+      const d = await probe.watch(() => void askBranch());
+      if (full || woken) d.dispose();
+      else {
+        branches = d;
+        context.subscriptions.push(d);
       }
     },
     () => {},

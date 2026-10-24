@@ -4,14 +4,14 @@
 // cached by blob id because a URI's content never changes. `sidestory-empty:/<path>` is the empty side of an
 // added or deleted file. The git extension's own `git:` URIs aren't used: their query format is internal, other
 // extensions decorate and lint them as the user's files, and they can't serve workspace.fs reads (release 2).
-import { createHash, randomBytes } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { SizeLru } from '../widgets/lru.ts';
 import { FULL_SHA } from './base.ts';
-import { isSafeRepoPath } from './comparison.ts';
+import { isSafeRepoPath, repoKey } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';
 import { apiPath } from './git-api.ts';
+import { repoIdFor, SALT_KEY } from './probe.ts';
 
 export const GIT_SCHEME = 'sidestory-git';
 export const EMPTY_SCHEME = 'sidestory-empty';
@@ -19,13 +19,16 @@ export const EMPTY_SCHEME = 'sidestory-empty';
 /** One cap for every reader: the provider can't know who asks (callers apply their own smaller caps). */
 export const MAX_BLOB_BYTES = 10 * 1024 * 1024;
 const READONLY_MESSAGE = 'Read-only: a version of this file from git';
-const SALT_KEY = 'sidestory.changes.repoSalt';
 
-/** Repository ids: a salted hash of the root's real path, stable across reloads, revealing no path. */
+/**
+ * Repository ids: a salted hash of the root's real path, stable across reloads, revealing no path. Keyed by root, not
+ * by object: the git API hands out a new wrapper for the same repository on every call and event. The first wrapper
+ * seen for a root is the one `repo(id)` returns (any of them reads the same repository).
+ */
 export class RepoIds {
   private readonly salt: string;
   private readonly byId = new Map<string, GitRepo>();
-  private readonly ids = new Map<GitRepo, string>();
+  private readonly ids = new Map<string, string>();
 
   constructor(globalState: vscode.Memento) {
     let salt = globalState.get<string>(SALT_KEY);
@@ -37,29 +40,35 @@ export class RepoIds {
   }
 
   idOf(repo: GitRepo): string {
-    let id = this.ids.get(repo);
+    const root = repoKey(repo);
+    let id = this.ids.get(root);
     if (!id) {
-      let real = repo.rootUri.fsPath;
-      try {
-        real = realpathSync.native(real);
-      } catch {
-        // keep the path as given
-      }
-      id = createHash('sha256').update(`${this.salt}\n${real}`).digest('hex').slice(0, 16);
-      this.ids.set(repo, id);
-      this.byId.set(id, repo);
+      id = repoIdFor(this.salt, repo.rootUri.fsPath);
+      this.ids.set(root, id);
     }
+    if (!this.byId.has(id)) this.byId.set(id, repo);
     return id;
+  }
+
+  /** The id a repository rooted at `fsPath` gets (Set Base's picks are keyed by it). */
+  idOfPath(fsPath: string): string {
+    return repoIdFor(this.salt, fsPath);
   }
 
   repo(id: string): GitRepo | undefined {
     return this.byId.get(id);
   }
 
+  /** How many repositories have ids (for tests: one per root, however many wrappers). */
+  get size(): number {
+    return this.ids.size;
+  }
+
   forget(repo: GitRepo): void {
-    const id = this.ids.get(repo);
-    this.ids.delete(repo);
-    if (id && this.byId.get(id) === repo) this.byId.delete(id);
+    const root = repoKey(repo);
+    const id = this.ids.get(root);
+    this.ids.delete(root);
+    if (id) this.byId.delete(id);
   }
 }
 

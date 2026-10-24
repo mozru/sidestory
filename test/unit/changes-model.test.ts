@@ -90,6 +90,21 @@ describe('package.json', () => {
     expect(JSON.stringify(pkg.contributes)).not.toContain('view == sidestory.changes');
   });
 
+  it('every "Sidestory: …" command and sidestory.* setting the README and the guide name exists, with its title', () => {
+    const titles = new Set(pkg.contributes.commands.map((c: { title: string; category?: string }) => (c.category ? `${c.category}: ${c.title}` : c.title)));
+    const confs = Array.isArray(pkg.contributes.configuration) ? pkg.contributes.configuration : [pkg.contributes.configuration];
+    const settings = new Set(confs.flatMap((c: { properties: Record<string, unknown> }) => Object.keys(c.properties)));
+    for (const doc of ['README.md', 'docs/GUIDE.md']) {
+      const text = readFileSync(doc, 'utf8');
+      for (const [, cmd] of text.matchAll(/\*\*(Sidestory: [^*]+?)\*\*/g)) expect(titles, `${doc}: ${cmd}`).toContain(cmd);
+      for (const [, key] of text.matchAll(/`(sidestory\.[a-zA-Z]+\.[A-Za-z.]+|sidestory\.[a-zA-Z]+)`/g)) if (key !== 'sidestory.html') expect(settings, `${doc}: ${key}`).toContain(key);
+    }
+    // The base order the setting describes is the code's: pick, sidestory, recorded base, setting, remote default, main.
+    const d = pkg.contributes.configuration.properties?.['sidestory.changes.defaultBase']?.markdownDescription ?? confs.map((c: { properties: Record<string, { markdownDescription?: string }> }) => c.properties['sidestory.changes.defaultBase']?.markdownDescription).find(Boolean);
+    const at = (w: string) => d.indexOf(w);
+    expect([at('Set Base'), at('sidestory added'), at('vscode-merge-base'), at('this setting'), at("remote's default"), at('`main`')].every((x, i, a) => x >= 0 && (i === 0 || x > a[i - 1]!))).toBe(true);
+  });
+
   it('registers the decoration colours, and hides the writing commands in read-only mode', () => {
     const colors = pkg.contributes.colors.map((c: { id: string }) => c.id);
     expect(colors).toEqual(expect.arrayContaining(['sidestory.coverageDoneForeground', 'sidestory.coverageLeftForeground']));

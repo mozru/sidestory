@@ -30,7 +30,6 @@ import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
-import { branchDiffersFromBase } from './changes/probe.ts';
 import { ChangesService, CoverageDecorations } from './changes/service.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
@@ -204,7 +203,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   context.subscriptions.push(
     index.onDidChange(() => {
       syncWants();
-      changes.coverage.schedule();
+      changes.indexChanged();
     }),
   );
   syncWants();
@@ -242,14 +241,18 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   );
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
-  // This File starts collapsed; the first time a sidestory explains the branch here, it opens once (no focus taken),
-  // so its "Not explained yet" list is found. Never again after that: the user's layout wins.
-  const THIS_FILE_OPENED = 'sidestory.thisFile.openedForBranch';
+  // This File starts collapsed; the first time a sidestory explains a branch in this workspace, it opens once (no
+  // focus taken), so its "Not explained yet" list is found. Never again in this workspace: the user's layout wins.
+  // Tried only when This File would have rows for the active file: no rebuild on every changes event before that.
+  const THIS_FILE_OPENED_HERE = 'sidestory.thisFile.openedInWorkspace';
+  let revealing = false;
   context.subscriptions.push(
     changes.onDidChange(() => {
-      if (context.workspaceState.get(THIS_FILE_OPENED) || !view.visible || !changes.result()?.belonging.length) return;
+      if (revealing || context.workspaceState.get(THIS_FILE_OPENED_HERE) || !view.visible || !changes.result()?.belonging.length || !thisFile.wouldHaveRows()) return;
+      revealing = true;
       void thisFile.revealQuietly().then((done) => {
-        if (done) void context.workspaceState.update(THIS_FILE_OPENED, true);
+        revealing = false;
+        if (done) void context.workspaceState.update(THIS_FILE_OPENED_HERE, true);
       });
     }),
   );
@@ -266,9 +269,9 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown') {
       // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view, or the branch has changes for
       // the "This branch" group's prompt (docs/CHANGES-PLAN.md §9.1), which takes git a moment to answer.
-      void branchDiffersFromBase().then((branch) => {
+      void changes.probe().then(() => {
         if (index.state !== 'empty' || context.workspaceState.get(AVAILABLE_KEY) === 'shown') return;
-        if (branch) {
+        if (changes.branchHasWork) {
           void context.workspaceState.update(AVAILABLE_KEY, 'shown');
           return;
         }
@@ -278,14 +281,23 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     }
   };
   context.subscriptions.push(index.onDidChangeState(onState));
+  // The probe says yes later (a new branch, a first commit after startup): the container shows, with the group's
+  // "Copy Prompt: Explain This Branch" (docs/CHANGES-PLAN.md §9.1).
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      if (!changes.branchHasWork || context.workspaceState.get(AVAILABLE_KEY)) return;
+      setAvailable(true);
+      void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+    }),
+  );
   void vscode.commands.executeCommand('setContext', 'sidestory.indexState', 'loading');
   void index.refresh().then(() => onState(index.state));
 
-  // Reconcile on a git HEAD change (deletes the watcher can't see), and mark drift dirty.
+  // Reconcile on a git HEAD change (deletes the watcher can't see), and mark drift dirty. (The changes service asks
+  // its branch probe again on its own.)
   void watchHead(context, () => {
     void index.reconcile(true);
     drift.invalidateAll();
-    void changes.probe();
   });
 
   /** The panel showing this explainer now: the active one if it does, else any. */
@@ -631,32 +643,49 @@ async function watchHead(context: vscode.ExtensionContext, onChange: () => void)
     const ext = vscode.extensions.getExtension<{ getAPI(v: 1): GitLike }>('vscode.git');
     if (!ext) return;
     const api = (ext.isActive ? ext.exports : await ext.activate()).getAPI(1);
-    const heads = new Map<unknown, string | undefined>();
+    // By root: the git API hands out a new wrapper object for the same repository on every call and event, so a
+    // repository is subscribed to once, and again only after it closed.
+    const heads = new Map<string, string | undefined>();
+    const subs = new Map<string, vscode.Disposable>();
     const watch = (repo: GitRepoLike) => {
-      heads.set(repo, repo.state.HEAD?.commit);
-      context.subscriptions.push(
+      const root = repo.rootUri.toString();
+      if (subs.has(root)) return;
+      heads.set(root, repo.state.HEAD?.commit);
+      subs.set(
+        root,
         repo.state.onDidChange(() => {
           const head = repo.state.HEAD?.commit;
-          if (head !== heads.get(repo)) {
-            heads.set(repo, head);
+          if (head !== heads.get(root)) {
+            heads.set(root, head);
             onChange();
           }
         }),
       );
     };
     api.repositories.forEach(watch);
-    context.subscriptions.push(api.onDidOpenRepository(watch));
+    context.subscriptions.push(
+      api.onDidOpenRepository(watch),
+      api.onDidCloseRepository((repo) => {
+        const root = repo.rootUri.toString();
+        subs.get(root)?.dispose();
+        subs.delete(root);
+        heads.delete(root);
+      }),
+      { dispose: () => subs.forEach((d) => d.dispose()) },
+    );
   } catch {
     // No git extension (or disabled): focus reconciliation still runs.
   }
 }
 
 interface GitRepoLike {
+  rootUri: vscode.Uri;
   state: { HEAD?: { commit?: string }; onDidChange: vscode.Event<void> };
 }
 interface GitLike {
   repositories: GitRepoLike[];
   onDidOpenRepository: vscode.Event<GitRepoLike>;
+  onDidCloseRepository: vscode.Event<GitRepoLike>;
 }
 
 /**

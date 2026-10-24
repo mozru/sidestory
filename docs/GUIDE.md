@@ -37,7 +37,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 
 ## Reading a sidestory
 
-Open one with **Sidestory: Open Sidestory** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
+Open one with **Sidestory: Open Sidestory…** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
 
 - **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote).
 - **Move your cursor in the code** and the sidestory jumps to the section about it. Boxes and links that point at the code under the cursor get a ring, wherever they are in the page; only code a section covers changes the step.
@@ -55,7 +55,7 @@ A sidestory is a folder in your repository:
     assets/          optional: images, fonts, stylesheets
 ```
 
-Open it with **Sidestory: Open Sidestory**.
+Open it with **Sidestory: Open Sidestory…**.
 
 ### Link sections to code
 
@@ -438,10 +438,10 @@ Files that aren't counted (binary files, the sidestory's own files, line endings
 The mark is per file; for the changes inside one, open it:
 
 - **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor that aren't done yet (unexplained, partly explained, or changed since their step was written), each with its state: click one to go to its lines (the diff for a removed line). It offers **Copy Prompt: Explain This Change** for your agent, and **Mark as Trivial…** for a change that needs no explanation (it asks for the `why`).
-- The **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left; when none counts yet, or some changes are left, it offers a prompt to copy for your agent.
-- **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. Bind them to keys if you review this way.
+- The **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left; when none counts yet, or some changes are left, it offers a prompt to copy for your agent. When the branch can't be compared (the base set for it isn't found, it shares no commit with its base, there's no `main` or `master`, or git failed), the group says so, and clicking the row opens **Sidestory: Set Base…**.
+- **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. In a diff or a changed file they have keys: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the unexplained changes and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the files (on macOS <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> and <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd>).
 
-The base is, in order: the one you picked with **Sidestory: Set Base…** (kept per workspace); else the `base` of a sidestory added on this branch; else the branch's `branch.<name>.vscode-merge-base` git setting (the one VS Code's own Source Control uses); else the `sidestory.changes.defaultBase` setting; else the remote's default branch, then `main`, then `master`. Which sidestories count is decided as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
+The base is, in order: the one you picked with **Sidestory: Set Base…** (kept per repository and branch; its first item says which base is in use and where it came from, and a base is saved only once it resolves); else the `base` of a sidestory added on this branch; else the branch's `branch.<name>.vscode-merge-base` git setting (the one VS Code's own Source Control uses); else the `sidestory.changes.defaultBase` setting; else the remote's default branch, then `main`, then `master`. Which sidestories count is decided as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
 
 ### Checking coverage
 
@@ -503,7 +503,7 @@ Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
 | `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
-| `sidestory.changes.defaultBase` | `""` | The branch, tag or commit a branch is compared with when no sidestory gives a `base` and none was set with **Sidestory: Set Base…** (`develop`, `origin/develop`); empty means the remote's default branch, then `main`, then `master`. |
+| `sidestory.changes.defaultBase` | `""` | The branch, tag or commit a branch is compared with (`develop`, `origin/develop`) when none was set with **Sidestory: Set Base…**, no sidestory added on the branch gives a `base`, and Git recorded no base for the branch (`branch.<name>.vscode-merge-base`, which VS Code's Source Control sets); empty means the remote's default branch, then `main`, then `master`. |
 | `sidestory.changes.includeUncommitted` | `true` | Compare the working tree (staged, unstaged and untracked changes) rather than the last commit, for coverage, its decorations and the diffs steps open. Turn it off to see what CI sees. |
 | `sidestory.changes.openStepsIn` | `"diff"` | Where the steps of a sidestory that explains a branch open: `diff` (the branch's diff of the file) or `editor` (the file itself). |
 | `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under "This branch" in the Sidestories view when the branch has changes and no sidestory explains it yet. |

@@ -120,6 +120,32 @@ export interface BranchInputs {
   suggest: boolean;
   /** A sidestory added on the branch that compares with another base than the one in use. */
   otherBase?: { title: string; base: string };
+  /** Coverage stopped at a limit (a page too large to scan, the byte budget, git unsure): the totals are a floor. */
+  incomplete?: boolean;
+  /** Why there is no comparison (a base not found, no common commit, git's error): said, with a way out. */
+  problem?: BranchProblem;
+}
+
+/** Why the branch has no comparison, as the comparison's state says it (display-safe strings). */
+export type BranchProblem =
+  | { kind: 'baseNotFound'; spec: string }
+  | { kind: 'noMergeBase'; base: string }
+  | { kind: 'noBase' }
+  | { kind: 'error'; message: string };
+
+/** The row that says a problem, opening Set Base… (pure, for the tests). */
+export function problemRow(p: BranchProblem): BranchRow {
+  const setBase = { command: 'sidestory.changes.setBase', title: 'Set Base…' };
+  switch (p.kind) {
+    case 'baseNotFound':
+      return { id: 'b:problem', label: `Base ${p.spec} not found · Set Base…`, tooltip: `The base set for this branch, “${p.spec}”, isn't a branch, tag or commit here (deleted, or not fetched). Click to choose another.`, icon: 'warning', command: setBase, contextValue: 'branchProblem' };
+    case 'noMergeBase':
+      return { id: 'b:problem', label: `No common commit with ${p.base} · Set Base…`, tooltip: `This branch and ${p.base} share no history (or a shallow clone hides it). Click to choose another base.`, icon: 'warning', command: setBase, contextValue: 'branchProblem' };
+    case 'noBase':
+      return { id: 'b:problem', label: 'No base to compare with · Set Base…', tooltip: 'No main or master branch here, and no base set. Click to choose the branch this one is compared with.', icon: 'warning', command: setBase, contextValue: 'branchProblem' };
+    case 'error':
+      return { id: 'b:problem', label: `Couldn't compare: ${p.message}`, tooltip: `Git couldn't compute this branch's changes: ${p.message}\nClick to choose another base.`, icon: 'error', command: setBase, contextValue: 'branchProblem' };
+  }
 }
 
 /**
@@ -129,15 +155,18 @@ export interface BranchInputs {
  */
 export function branchRows(i: BranchInputs): BranchRow[] {
   const rows: BranchRow[] = [];
+  if (i.problem) rows.push(problemRow(i.problem));
   const t = i.totals;
+  const partial = i.incomplete ? ' · incomplete' : '';
+  const partialLine = i.incomplete ? '\nIncomplete: a page too large to scan, or files too large or unreadable, weren’t counted' : '';
   // "left" is branch-wide (a change no one explains has no sidestory): said so when several sidestories share it.
   const leftWords = i.belonging.length > 1 ? ' on the branch' : '';
   for (const b of i.belonging) {
     rows.push({
       id: `b:${b.folder}`,
       label: b.title || b.folder,
-      description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}${leftWords}`,
-      tooltip: `${b.title}\n${b.folder} · vs ${b.base}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${t?.left ?? 0} left on the branch\nClick to open`,
+      description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}${leftWords}${partial}`,
+      tooltip: `${b.title}\n${b.folder} · vs ${b.base}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${t?.left ?? 0} left on the branch${partialLine}\nClick to open`,
       icon: 'book',
       command: { command: 'sidestory.openAt', title: 'Open Sidestory', arguments: [{ dir: b.dir, source: 'tree' }] },
       contextValue: 'branchSidestory',

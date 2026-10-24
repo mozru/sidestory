@@ -123,3 +123,66 @@ export async function remoteDefault(reader: RefReader, remote: string, others: (
 
 /** The "Commit…" input (§9.4): 4–64 hex digits, before anything reaches git. */
 export const COMMIT_INPUT = /^[0-9a-fA-F]{4,64}$/;
+
+/** A sidestory's `base` the comparison may take (§11.4): a symbolic name, never a commit id that could hide most of the branch. */
+export const isStoryBase = (spec: string): boolean => isValidBase(spec) && !FULL_SHA.test(spec);
+
+/** Two base names for the same branch: equal, or one is the other on a remote (`origin/main` and `main`). */
+export function sameBaseName(a: string, b: string, remotes: readonly string[]): boolean {
+  if (a === b) return true;
+  return remotes.some((r) => a === `${r}/${b}` || b === `${r}/${a}`);
+}
+
+/**
+ * The sidestories added on the branch (their manifest is added, or renamed or copied in, in the comparison), by
+ * folder, with a usable base; `first` gives the comparison its base, `other` is the first that names another base
+ * than `current` (This branch offers to switch).
+ */
+export function storyBasesOf<T extends { folder: string; base: string }>(
+  stories: readonly T[],
+  entries: readonly { path: string; status: string }[],
+  current: string | undefined,
+  remotes: readonly string[] = [],
+): { first?: T; other?: T } {
+  const added = new Set(entries.filter((e) => e.status === 'A' || e.status === 'R' || e.status === 'C').map((e) => e.path));
+  const found = stories.filter((x) => added.has(`${x.folder}/manifest.json`) && isStoryBase(x.base)).sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
+  const other = found.find((x) => current === undefined || !sameBaseName(x.base, current, remotes));
+  return { ...(found[0] ? { first: found[0] } : {}), ...(other ? { other } : {}) };
+}
+
+/** A sidestory's base, latched (§11.4): where it came from and what it holds for. */
+export interface StoryLatch {
+  readonly dir: string;
+  readonly title: string;
+  readonly base: string;
+  readonly head: string;
+  readonly pick: string | undefined;
+  readonly setting: string | undefined;
+}
+
+/**
+ * One step of the sidestory-base latch, after the comparison or the index changed. "Added on this branch" is read
+ * only from a snapshot whose base didn't come from a sidestory: compared with a sidestory's own base, its manifest
+ * may not look added (a stacked base where it already exists, a base naming the branch itself), and reading it there
+ * would toggle the base forever. From a sidestory-based snapshot the latch stands while `stillValid`, else it goes
+ * (one refresh back to the default chain). A new latch refreshes the comparison at most once per (head, pick,
+ * setting, sidestory, base), and not at all under a pick (which wins anyway).
+ */
+export function latchStep(
+  prev: StoryLatch | undefined,
+  refreshedFor: string | undefined,
+  s: { source: BaseSource; head: string },
+  found: { dir: string; title: string; base: string } | undefined,
+  ctx: { pick: string | undefined; setting: string | undefined; stillValid: boolean },
+): { latch: StoryLatch | undefined; refreshedFor: string | undefined; refresh: boolean } {
+  if (s.source === 'sidestory') {
+    if (prev && !ctx.stillValid) return { latch: undefined, refreshedFor, refresh: true };
+    return { latch: prev, refreshedFor, refresh: false };
+  }
+  const next: StoryLatch | undefined = found ? { dir: found.dir, title: found.title, base: found.base, head: s.head, pick: ctx.pick, setting: ctx.setting } : undefined;
+  if (JSON.stringify(next) === JSON.stringify(prev)) return { latch: prev, refreshedFor, refresh: false };
+  if (!next || s.source === 'pick') return { latch: next, refreshedFor, refresh: false };
+  const key = JSON.stringify([next.head, next.pick, next.setting, next.dir, next.base]);
+  if (key === refreshedFor) return { latch: next, refreshedFor, refresh: false };
+  return { latch: next, refreshedFor: key, refresh: true };
+}

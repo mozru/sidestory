@@ -47,6 +47,25 @@ export type ComparisonState =
 // Paths Sidestory refuses to read or open (§4.5): one rule with the checker (src/core/repo-path.ts).
 export { isSafeRepoPath };
 
+/**
+ * A repository's identity. The git API hands out a new wrapper object on every `repositories`, `getRepository` and
+ * event, so repositories are never compared with `===`: by root, always.
+ */
+export const repoKey = (repo: { readonly rootUri: { toString(): string } }): string => repo.rootUri.toString();
+export const sameRepo = (a: { readonly rootUri: { toString(): string } } | undefined | null, b: { readonly rootUri: { toString(): string } } | undefined | null): boolean =>
+  !!a && !!b && repoKey(a) === repoKey(b);
+
+/** What makes two snapshots the same comparison for coverage: merge-base, head, mode, base and the files' identities. */
+export function snapshotIdentity(s: Pick<Snapshot, 'mergeBase' | 'mode' | 'entries'> & { base: { spec: string; sha: string; source: string }; head: { sha: string } }): string {
+  return JSON.stringify([s.mergeBase, s.head.sha, s.mode, s.base.spec, s.base.sha, s.base.source, s.entries.map((e) => [e.path, e.oldPath ?? null, e.status])]);
+}
+
+/** Everything else a snapshot says (counts, flags, ahead/behind, labels): a change of these repaints, coverage stays. */
+function snapshotDetails(s: Snapshot): string {
+  const { repo: _repo, ...rest } = s;
+  return JSON.stringify(rest);
+}
+
 /** The git API's changes as entries; `untracked` marks them all as untracked. Unsafe paths are dropped. */
 export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffChange)[], untracked = false): { entries: ChangeEntry[]; unsafe: number } {
   const entries: ChangeEntry[] = [];
@@ -113,7 +132,14 @@ export class Comparison implements vscode.Disposable {
   /** Set while git is rebasing or merging: the last result stays, marked. */
   busy = false;
   private readonly emitter = new vscode.EventEmitter<void>();
+  /** The state changed. A recompute that finds the same comparison keeps its Snapshot object and doesn't fire. */
   readonly onDidChange = this.emitter.event;
+  private readonly recheckEmitter = new vscode.EventEmitter<void>();
+  /**
+   * A recompute found the same snapshot (kept as the same object). In working tree mode files may still have changed
+   * on disk (a status refresh after an agent wrote them): coverage reads them again.
+   */
+  readonly onDidRecheck = this.recheckEmitter.event;
   private readonly subscriptions: vscode.Disposable[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private firstEventAt = 0;
@@ -142,6 +168,7 @@ export class Comparison implements vscode.Disposable {
     this.opts = opts;
     this.subscriptions.push(
       this.emitter,
+      this.recheckEmitter,
       repo.state.onDidChange(() => this.schedule()),
       vscode.workspace.onDidChangeTextDocument((e) => this.noteDocument(e.document)),
       vscode.workspace.onDidSaveTextDocument((d) => this.noteDocument(d)),
@@ -244,6 +271,23 @@ export class Comparison implements vscode.Disposable {
   }
 
   private set(state: ComparisonState): void {
+    const was = this.current;
+    if (state.kind === 'ready' && was.kind === 'ready') {
+      // The same comparison: the same Snapshot object, so whatever waits for a result "for this snapshot" (commands,
+      // coverage runs) isn't starved by status refreshes that change nothing.
+      const prev = was.snapshot;
+      const next = state.snapshot;
+      if (snapshotIdentity(prev) === snapshotIdentity(next)) {
+        if (snapshotDetails(prev) === snapshotDetails(next)) {
+          this.recheckEmitter.fire();
+          return;
+        }
+        Object.assign(prev as { -readonly [K in keyof Snapshot]: Snapshot[K] }, next, { repo: prev.repo });
+        this.emitter.fire();
+        this.recheckEmitter.fire();
+        return;
+      }
+    } else if (state.kind !== 'ready' && was.kind === state.kind && JSON.stringify(was) === JSON.stringify(state)) return;
     this.current = state;
     this.emitter.fire();
   }
@@ -300,8 +344,11 @@ export class Comparison implements vscode.Disposable {
     if (!baseEntry || baseEntry.key !== baseKey || Date.now() - baseEntry.at > ttl) {
       // An explicit pick that no longer resolves is said, not silently replaced by a default.
       const picked = pick ? await resolveBase(reader, pick) : undefined;
-      // A sidestory's base that doesn't resolve here (not fetched) falls back to the default chain.
-      const fromStory = own ? await resolveBase(reader, own) : undefined;
+      // A sidestory's base that doesn't resolve here (not fetched) falls back to the default chain. Only a symbolic
+      // name (never a commit id, which could hide most of the branch), and never HEAD's own commit (`base: "feat"` on
+      // feat): an empty comparison.
+      const story = own && !FULL_SHA.test(own) ? await resolveBase(reader, own) : undefined;
+      const fromStory = story && story.sha !== headSha ? story : undefined;
       const value = pick
         ? picked && { ...picked, source: 'pick' as const }
         : fromStory
