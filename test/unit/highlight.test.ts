@@ -162,6 +162,17 @@ describe('grammar catalog', () => {
     expect(await loadGrammarSet(evil, 'source.evil', diskReader)).toBeUndefined();
   });
 
+  it('matches injectTo on dotted prefixes, as VS Code does, and skips scopes the worker has', async () => {
+    const c = new GrammarCatalog([builtin, { id: 'me.all', root: 'file:///ext/all', builtin: false, contributes: { grammars: [{ scopeName: 'all.injection', path: 'a.json', injectTo: ['source'] }] } }]);
+    expect(c.injectorsOf('source.python')).toEqual(['all.injection']);
+    expect(c.injectorsOf('text.html.basic')).toEqual([]);
+    const full = (await loadGrammarSet(catalog, 'text.html.markdown', diskReader))!;
+    const have = new Set(['source.python', 'source.ts']);
+    const less = (await loadGrammarSet(catalog, 'text.html.markdown', diskReader, undefined, have))!;
+    expect(less.files.map((f) => f.scopeName)).toEqual(full.files.map((f) => f.scopeName).filter((s) => !have.has(s)));
+    expect(less.bytes).toBeLessThan(full.bytes!);
+  });
+
   it('collects injections into the scopes it loads', async () => {
     const dir = join(out, 'inject');
     mkdirSync(dir, { recursive: true });
@@ -379,7 +390,27 @@ describe('tokenizer', () => {
     const scopes = LANGS.map((l) => catalog.scopeFor(l)!);
     const t = await tokenizerFor(scopes);
     t.setTheme(theme);
-    for (const s of scopes) expect(t.tokenize('module x; // a "b" 1\nfn main() {}\n', s, theme.key), s).not.toBeNull();
+    for (const s of scopes) {
+      const r = t.tokenize('# h\nmodule x; // a "b" 1\n<b class="c">fn main() {}</b>\n', s, theme.key);
+      expect(r, s).not.toBeNull();
+      expect(r!.runs.some((v, i) => i % 2 === 1 && v !== 0), `${s} colors something`).toBe(true);
+    }
+  });
+
+  it('tokenizes empty lines too, so a blank line ends what it ends (markdown HTML blocks)', async () => {
+    const theme = await fallback('dark');
+    const t = await tokenizerFor(['text.html.markdown']);
+    t.setTheme(theme);
+    const md = '<div>\nx\n\n# Heading';
+    const p = pieces(md, t.tokenize(md, 'text.html.markdown', theme.key)!.runs, t.palette(theme.key));
+    expect(p.find(([x]) => x.includes('Heading'))?.[1]).toBeDefined();
+  });
+
+  it('covers a lone \\r at the very end', async () => {
+    const theme = await fallback('dark');
+    const t = await tokenizerFor(['source.python']);
+    t.setTheme(theme);
+    for (const code of ['x = 1\r', 'x = 1\r\n', '\n\nx', '']) pieces(code, t.tokenize(code, 'source.python', theme.key)!.runs, t.palette(theme.key));
   });
 
   it("leaves a grammar that doesn't parse unloaded", async () => {
@@ -464,6 +495,21 @@ describe('highlighter (host, with the worker)', () => {
     h.setTheme(await fallback('dark'));
     expect((await h.request(h.newRequester(), [{ id: 1, lang: 'go', code: 'package main' }]))!.blocks[0]!.runs).toBeNull();
     expect(logs.join()).toMatch(/couldn't read the grammar source\.go/);
+    h.dispose();
+  });
+
+  it('replaces a worker that holds too many grammars, and new grammars arriving mid-job', async () => {
+    const h = make({ workerGrammarBudget: 1 });
+    h.setTheme(await fallback('dark'));
+    const who = h.newRequester();
+    for (const [id, lang] of ['py', 'go', 'rs', 'ts'].entries()) expect((await h.request(who, [{ id, lang, code: 'x = 1' }]))!.blocks[0]!.runs, lang).not.toBeNull();
+    expect(h.workersStarted).toBeGreaterThan(2);
+    // New grammars while a block is being loaded: the answer comes under the new ones.
+    const p = h.request(who, [{ id: 9, lang: 'markdown', code: '# x' }]);
+    h.setGrammars(sourceOf(new GrammarCatalog([builtin, { id: 'x.y', root: 'file:///nowhere', builtin: false, contributes: { grammars: [{ scopeName: 'x.y', path: 'x.json' }] } }])));
+    const r = (await p)!;
+    expect(r.theme).toBe(h.themeKey);
+    expect(r.blocks[0]!.runs).not.toBeNull();
     h.dispose();
   });
 

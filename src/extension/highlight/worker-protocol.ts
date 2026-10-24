@@ -19,6 +19,8 @@ export type WorkerReply =
     cold?: boolean;
     /** `load`: whether the grammar loaded, and the regex engine in use. */
     loaded?: boolean;
+    /** `load`: this worker already knows the scope as missing; a new worker can load it. */
+    stale?: boolean;
     engine?: EngineName;
     /** `load`: why VS Code's wasm wasn't used, when it wasn't. */
     engineNote?: string;

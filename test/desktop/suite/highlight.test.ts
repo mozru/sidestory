@@ -47,7 +47,11 @@ export function highlightTests(): void {
       const md = '# Title\n\n```python\ndef f(): pass\n```\n';
       const r = (await vscode.commands.executeCommand<Result>('sidestory._highlight', 'md', md))!;
       assert.ok(r.runs);
+      // Python's keyword color inside the fence, where a fence of an unknown language leaves `def` as plain code.
+      const unknown = md.replace('python', 'klingon');
+      const plain = (await vscode.commands.executeCommand<Result>('sidestory._highlight', 'md', unknown))!;
       assert.ok(colorOf(md, r, 'def'), 'python inside markdown is colored');
+      assert.notEqual(colorOf(md, r, 'def'), colorOf(unknown, plain, 'def'), 'the fence uses the python grammar');
       const none = (await vscode.commands.executeCommand<Result>('sidestory._highlight', 'klingon', 'x'))!;
       assert.equal(none.runs, null);
     });

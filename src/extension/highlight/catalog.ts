@@ -36,10 +36,12 @@ export interface GrammarFile {
 export interface GrammarSet {
   files: GrammarFile[];
   injections: [string, string[]][];
+  /** Text sent (UTF-16 code units). */
+  bytes?: number;
 }
 
 export const MAX_GRAMMAR_FILE = 4 * 1024 * 1024;
-export const MAX_GRAMMAR_SET_BYTES = 12 * 1024 * 1024;
+export const MAX_GRAMMAR_SET_BYTES = 8 * 1024 * 1024;
 export const MAX_GRAMMAR_SET_FILES = 128;
 const MAX_SCOPE = 256;
 const MAX_NAMES_PER_LANGUAGE = 200;
@@ -144,9 +146,21 @@ export class GrammarCatalog {
     return this.grammars.get(scope);
   }
 
-  injectorsOf(scope: string): readonly string[] {
-    return this.injectors.get(scope) ?? [];
+  /** Scopes injected into `scope`: `injectTo` names a scope or any dotted prefix of it (`source` covers `source.js`), as in VS Code. */
+  injectorsOf(scope: string): string[] {
+    const out: string[] = [];
+    const parts = scope.split('.');
+    for (let i = 1; i <= parts.length; i++) for (const s of this.injectors.get(parts.slice(0, i).join('.')) ?? []) if (!out.includes(s)) out.push(s);
+    return out;
   }
+
+  /** The extension a scope's grammar comes from, for messages. */
+  origin(scope: string): string | undefined {
+    return this.grammars.get(scope)?.extension;
+  }
+
+  /** Scopes each grammar includes, once read (so a scope the worker already has needn't be read again). */
+  readonly includes = new Map<string, string[]>();
 
   get size(): number {
     return this.grammars.size;
@@ -168,34 +182,44 @@ export function includedScopes(text: string, format: GrammarEntry['format']): st
 
 /**
  * Reads one scope's grammar and everything it needs (includes and injections, breadth first, within the caps:
- * what doesn't fit is left out and stays uncolored). Undefined when the scope's own grammar can't be read.
+ * what doesn't fit is left out and stays uncolored). Scopes in `have` (the worker has them already) aren't sent
+ * again; their includes are still followed. Undefined when the scope's own grammar can't be read.
  */
-export async function loadGrammarSet(catalog: GrammarCatalog, scope: string, reader: ThemeReader, log?: (m: string) => void): Promise<GrammarSet | undefined> {
+export async function loadGrammarSet(catalog: GrammarCatalog, scope: string, reader: ThemeReader, log?: (m: string) => void, have: ReadonlySet<string> = new Set()): Promise<GrammarSet | undefined> {
   if (!catalog.grammar(scope)) return undefined;
   const files: GrammarFile[] = [];
   const injections = new Map<string, string[]>();
   const seen = new Set<string>([scope]);
   const queue = [scope];
   let bytes = 0;
-  while (queue.length && files.length < MAX_GRAMMAR_SET_FILES) {
+  let visited = 0;
+  while (queue.length && visited < MAX_GRAMMAR_SET_FILES) {
     const s = queue.shift()!;
     const g = catalog.grammar(s);
     if (!g) continue;
-    const text = (await reader.inside(g.uri, g.root)) ? await reader.read(g.uri, MAX_GRAMMAR_FILE) : undefined;
-    if (text === undefined || text.length > MAX_GRAMMAR_FILE || bytes + text.length > MAX_GRAMMAR_SET_BYTES) {
-      if (s === scope) return undefined;
-      log?.(`Code block colors: skipped the grammar ${s} from ${g.extension} (unreadable, outside its extension, or over the size limits).`);
-      continue;
+    visited++;
+    let included = have.has(s) ? catalog.includes.get(s) : undefined;
+    if (!included) {
+      const text = (await reader.inside(g.uri, g.root)) ? await reader.read(g.uri, MAX_GRAMMAR_FILE) : undefined;
+      if (text === undefined || text.length > MAX_GRAMMAR_FILE || bytes + text.length > MAX_GRAMMAR_SET_BYTES) {
+        if (s === scope) return undefined;
+        log?.(`Code block colors: skipped the grammar ${s} from ${g.extension} (unreadable, outside its extension, or over the size limits).`);
+        continue;
+      }
+      included = includedScopes(text, g.format);
+      catalog.includes.set(s, included);
+      if (!have.has(s)) {
+        bytes += text.length;
+        files.push({ scopeName: s, format: g.format, text });
+      }
     }
-    bytes += text.length;
-    files.push({ scopeName: s, format: g.format, text });
     const injectors = catalog.injectorsOf(s).filter((i) => catalog.grammar(i));
     if (injectors.length) injections.set(s, [...injectors]);
-    for (const next of [...includedScopes(text, g.format), ...injectors]) {
+    for (const next of [...included, ...injectors]) {
       if (seen.has(next) || !catalog.grammar(next)) continue;
       seen.add(next);
       queue.push(next);
     }
   }
-  return { files, injections: [...injections] };
+  return { files, injections: [...injections], bytes };
 }

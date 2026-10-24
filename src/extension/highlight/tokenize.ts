@@ -32,13 +32,17 @@ const FOREGROUND_OFFSET = 15;
 const FOREGROUND_MASK = 0b111111111 << FOREGROUND_OFFSET;
 
 /**
- * The regex engine: Oniguruma from the first of `wasmFiles` that loads and answers a smoke test (VS Code ships
- * onig.wasm; we ship only vscode-oniguruma's JS for it), else the JavaScript engine.
+ * The regex engine: Oniguruma from the first of `wasmFiles` if it loads and answers a smoke test (VS Code ships
+ * onig.wasm; we ship only vscode-oniguruma's JS for it), else the JavaScript engine. Only the first file is tried:
+ * vscode-oniguruma loads one wasm per process and answers every later call with that first attempt.
  */
 export async function createOnigLib(wasmFiles: readonly string[], log?: (m: string) => void): Promise<{ lib: IOnigLib; engine: EngineName }> {
-  for (const file of wasmFiles) {
+  for (const file of wasmFiles.slice(0, 1)) {
     try {
-      if (statSync(file).size > MAX_WASM) continue;
+      if (statSync(file).size > MAX_WASM) {
+        log?.(`onig.wasm at ${file} is over ${MAX_WASM / 1024 / 1024} MB`);
+        continue;
+      }
       const data = readFileSync(file);
       await onig.loadWASM({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer, print: () => {} });
       const lib: IOnigLib = { createOnigScanner: (p) => new onig.OnigScanner(p), createOnigString: (s) => new onig.OnigString(s) };
@@ -73,6 +77,9 @@ export class Tokenizer {
   private readonly registry: InstanceType<typeof Registry>;
   /** Grammar texts the host sent, by scope; parsed when vscode-textmate asks for them. */
   private readonly files = new Map<string, GrammarSet['files'][number]>();
+  /** Scopes vscode-textmate has asked for (it keeps the answer, a grammar or none, for good), and those it got none for. */
+  private readonly asked = new Set<string>();
+  private readonly missing = new Set<string>();
   private readonly injections = new Map<string, string[]>();
   private readonly loaded = new Map<string, IGrammar>();
   /** Theme key → palette (style index → style), built as tokens are seen. Index 0 is "no style". */
@@ -88,13 +95,17 @@ export class Tokenizer {
   }
 
   private parse(scope: string): IRawGrammar | null {
+    this.asked.add(scope);
     const f = this.files.get(scope);
-    if (!f) return null;
+    if (!f) {
+      this.missing.add(scope);
+      return null;
+    }
     try {
       // The file name only picks the parser (vscode-textmate: .json is JSON, anything else plist).
       return parseRawGrammar(f.text, f.format === 'json' ? `${scope}.json` : `${scope}.tmLanguage`);
     } catch {
-      return null;
+      return null; // broken for good (not "missing"): a new worker wouldn't do better
     } finally {
       // Parsed once: the registry keeps the grammar.
       this.files.delete(scope);
@@ -127,13 +138,21 @@ export class Tokenizer {
     return this.loaded.has(scope);
   }
 
-  /** Loads a scope's grammar from the files the host read, then tokenizes a line so the first block is fast. */
-  async load(scope: string, set: GrammarSet): Promise<boolean> {
+  /**
+   * Loads a scope's grammar from the files the host read, then tokenizes a line so the first block is fast.
+   * 'stale': vscode-textmate already answered "no grammar" for this scope (it was left out of an earlier set by
+   * the caps); only a new worker can load it.
+   */
+  async load(scope: string, set: GrammarSet): Promise<boolean | 'stale'> {
     if (this.loaded.has(scope)) return true;
-    for (const f of set.files) if (!this.files.has(f.scopeName)) this.files.set(f.scopeName, f);
+    if (this.missing.has(scope)) return 'stale';
+    // Scopes already asked for are parsed (or known missing) for good: their text isn't kept again.
+    for (const f of set.files) if (!this.asked.has(f.scopeName)) this.files.set(f.scopeName, f);
     for (const [s, inj] of set.injections) this.injections.set(s, inj);
     // A grammar that's missing or doesn't parse is reported by throwing.
     const g = await this.registry.loadGrammar(scope).catch(() => null);
+    // Texts the grammar didn't need (an injection target never loaded) aren't kept either.
+    this.files.clear();
     if (!g) return false;
     this.loaded.set(scope, g);
     g.tokenizeLine2('x', INITIAL, LINE_TIME_MS);
@@ -162,10 +181,12 @@ export class Tokenizer {
     while (start <= code.length) {
       const nl = code.indexOf('\n', start);
       const end = nl < 0 ? code.length : nl;
-      const lineEnd = end > start && code.charCodeAt(end - 1) === 13 ? end - 1 : end;
+      // \r\n counts as the line break; a lone \r (at the very end) stays part of the line.
+      const lineEnd = nl >= 0 && end > start && code.charCodeAt(end - 1) === 13 ? end - 1 : end;
       const line = code.slice(start, lineEnd);
       if (line.length > MAX_LINE_CHARS) push(line.length, 0); // plain, state carried over (as VS Code does)
-      else if (line.length) {
+      else {
+        // Empty lines too: `while` rules and `^$` patterns end blocks there.
         const r = g.tokenizeLine2(line, state, LINE_TIME_MS);
         if (r.stoppedEarly) push(line.length, 0);
         else {

@@ -1193,7 +1193,7 @@ The same card serves the part switcher (§1.3).
   - It goes below the element, flipped above when there's no room, and clamped 8 px inside the panel.
   - Maximum width is `min(panel − 16 px, 640 px)`.
 - **What's in it:** code text only, set with `textContent`.
-  - It's colored with highlight runs when the highlight host (HIGHLIGHT-PLAN.md, Shiki in the extension host) is available; the same run format becomes spans built with DOM APIs.
+  - It's colored with highlight runs when the highlight host (HIGHLIGHT-PLAN.md §10: vscode-textmate with the installed grammars, in the extension host) is available; the same run format becomes spans built with DOM APIs.
   - Otherwise it's plain monospace.
 - **Data:** the panel asks with `peekCode {ref | link, part?}`. The extension resolves the target exactly as for a click: the same validation and real-path containment.
   - **Non-SV symbols are previewed only if their document is already open.** Otherwise the card says "Click to open". Resolving a non-SV symbol calls `executeDocumentSymbolProvider`, which opens the document and wakes language servers and linters; hovering shouldn't do that to any file the pointer passes over.

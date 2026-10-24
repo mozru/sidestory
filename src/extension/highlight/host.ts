@@ -19,7 +19,9 @@ export interface GrammarSource {
   /** The scope a block's language name picks, or undefined (the block stays plain). */
   scopeFor(lang: string): string | undefined;
   /** A scope's grammar files (its includes and injections with it), or undefined when it can't be read. */
-  load(scope: string): Promise<GrammarSet | undefined>;
+  load(scope: string, have?: ReadonlySet<string>): Promise<GrammarSet | undefined>;
+  /** The extension a scope's grammar comes from, for messages. */
+  origin?(scope: string): string | undefined;
 }
 
 export interface HighlighterOptions {
@@ -41,7 +43,11 @@ export interface HighlighterOptions {
   slowJobMs?: number;
   /** Result cache, in bytes (default 4 MB). */
   cacheBytes?: number;
+  /** Grammar text a worker may hold before it's replaced (default 12 MB). */
+  workerGrammarBudget?: number;
   log?: (message: string) => void;
+  /** News that isn't a problem (default: `log`). */
+  info?: (message: string) => void;
 }
 
 export interface BlockRequest {
@@ -78,7 +84,12 @@ export const BREAKER_BUDGET_MS = 20_000;
 /** Jobs up to this long aren't charged; longer ones are charged the excess. */
 export const SLOW_JOB_MS = 250;
 
+/** Grammar text (UTF-16 code units) a worker may hold before it's replaced: ~8 bytes of heap per unit parsed. */
+export const WORKER_GRAMMAR_BUDGET = 12 * 1024 * 1024;
+
 interface Job {
+  /** Only for this worker (its grammar set leaves out what that worker had); another answers "cold". */
+  forWorker?: number;
   req: WorkerRequest;
   timeoutMs: number;
   resolve: (r: WorkerReply | 'timeout' | 'crashed') => void;
@@ -93,6 +104,11 @@ export class Highlighter {
   private worker: Worker | undefined;
   /** What the current worker has: grammars loaded and warmed, themes sent. */
   private warm = new Set<string>();
+  /** Grammar scopes sent to the current worker, and their text's size. */
+  private sent = new Set<string>();
+  private sentBytes = 0;
+  /** Counts workers started: a job can be tied to one. */
+  private workerGen = 0;
   private themesSent = new Set<string>();
   private readonly queue: Job[] = [];
   private current: Job | undefined;
@@ -236,29 +252,53 @@ export class Highlighter {
     // Two rounds: a worker replaced between loading and tokenizing (another job's timeout) answers "cold".
     for (let round = 0; round < 2; round++) {
       for (let tries = 0; !this.warm.has(scope); tries++) {
-        if (tries >= 2 || who.tripped || this.failed.has(scope)) return null;
+        if (tries >= 3 || who.tripped || this.failed.has(scope)) return null;
         const grammars = this.grammars;
-        const set = await grammars?.load(scope).catch(() => undefined);
+        if (!grammars) return null;
+        // A worker holding many grammars is replaced before it loads more (its heap is capped).
+        if (this.sentBytes > (this.opts.workerGrammarBudget ?? WORKER_GRAMMAR_BUDGET)) this.restartWorker = true;
+        // What the current worker already has isn't sent again; such a set only fits that worker.
+        const have = this.restartWorker || !this.worker ? new Set<string>() : new Set(this.sent);
+        const forWorker = have.size ? this.workerGen : undefined;
+        const set = await grammars.load(scope, have).catch(() => undefined);
         if (grammars !== this.grammars) return null; // changed while reading: the result is made again anyway
+        const from = grammars.origin?.(scope);
+        const name = `${scope}${from ? ` (from ${from})` : ''}`;
         if (!set) {
           this.failed.add(scope);
-          this.opts.log?.(`Code block colors: couldn't read the grammar ${scope}; its blocks stay plain.`);
+          this.opts.log?.(`Code block colors: couldn't read the grammar ${name}; its blocks stay plain.`);
           return null;
         }
-        const r = await this.job({ id: 0, type: 'load', scope, set }, this.opts.loadTimeoutMs ?? 10_000, theme); // loading grammars isn't charged: it happens once per worker
-        if (r === 'timeout') this.timedOut(who);
-        else if (typeof r === 'object' && r.ok) {
-          this.noteEngine(r);
-          if (!r.loaded) {
+        const fresh = this.restartWorker || !this.worker || this.sent.size === 0;
+        // Charged to the requester like tokenizing (beyond the free time), so naming every language costs it.
+        const r = await this.job({ id: 0, type: 'load', scope, set }, this.opts.loadTimeoutMs ?? 10_000, theme, who, forWorker);
+        if (grammars !== this.grammars) return null;
+        if (r === 'timeout' || r === 'crashed') {
+          // On a worker with nothing else loaded, this grammar alone is to blame: it stays plain. Otherwise the worker
+          // may have been full of others' grammars: try again on a fresh one, without charging this requester.
+          if (fresh) {
+            this.timedOut(who);
             this.failed.add(scope);
-            this.opts.log?.(`Code block colors: the grammar ${scope} didn't load; its blocks stay plain.`);
+            this.opts.log?.(`Code block colors: loading the grammar ${name} ${r === 'timeout' ? 'took too long' : 'stopped the highlighter'}; its blocks stay plain.`);
             return null;
           }
-          this.warm.add(scope);
-        } else {
-          if (r === 'crashed') this.timedOut(who);
-          return null; // crashed or failed: give up on this block for now
+          continue;
         }
+        if (!r.ok) return null;
+        this.noteEngine(r);
+        if (r.cold) continue; // the worker was replaced before the job ran: read the set again
+        if (r.stale) {
+          this.restartWorker = true;
+          continue;
+        }
+        for (const f of set.files) this.sent.add(f.scopeName);
+        this.sentBytes += set.bytes ?? 0;
+        if (!r.loaded) {
+          this.failed.add(scope);
+          this.opts.log?.(`Code block colors: the grammar ${name} didn't load; its blocks stay plain.`);
+          return null;
+        }
+        this.warm.add(scope);
       }
       if (who.tripped) return null;
       const limit = Math.max(this.opts.blockTimeoutMs ?? 1000, Math.ceil((code.length / 1024) * (this.opts.msPerKb ?? 30)));
@@ -288,9 +328,8 @@ export class Highlighter {
   private noteEngine(r: { engine?: EngineName; engineNote?: string }): void {
     if (!r.engine || r.engine === this.engineName) return;
     this.engineName = r.engine;
-    this.opts.log?.(r.engine === 'oniguruma'
-      ? "Code block colors: using VS Code's Oniguruma regex engine."
-      : `Code block colors: VS Code's Oniguruma regex engine isn't available here${r.engineNote ? ` (${r.engineNote})` : ''}; using a JavaScript one, which may leave a few patterns uncolored.`);
+    if (r.engine === 'oniguruma') (this.opts.info ?? this.opts.log)?.("Code block colors: using VS Code's Oniguruma regex engine.");
+    else this.opts.log?.(`Code block colors: VS Code's Oniguruma regex engine isn't available here${r.engineNote ? ` (${r.engineNote})` : ''}; using a JavaScript one, which may leave a few patterns uncolored.`);
   }
 
   /** Worker palette indexes → the host's stable ones. */
@@ -336,12 +375,13 @@ export class Highlighter {
   }
 
   /** Runs a job in the worker; resolves with its outcome and the worker time it took (`ms`). */
-  private job(req: WorkerRequest, timeoutMs: number, theme: HighlightTheme, who?: Requester): Promise<WorkerReply | 'timeout' | 'crashed'> {
+  private job(req: WorkerRequest, timeoutMs: number, theme: HighlightTheme, who?: Requester, forWorker?: number): Promise<WorkerReply | 'timeout' | 'crashed'> {
     if (this.disposed) return Promise.resolve('crashed');
     return new Promise((resolve) => {
       const job: Job = {
         req: { ...req, id: this.nextId++ },
         timeoutMs,
+        forWorker,
         resolve: (r) => {
           if (who && job.startedAt !== undefined) this.spend(who, Date.now() - job.startedAt);
           resolve(r);
@@ -374,6 +414,12 @@ export class Highlighter {
       this.pump();
       return;
     }
+    if (job.forWorker !== undefined && job.forWorker !== this.workerGen) {
+      // Made for a worker that's gone: the new one lacks what the set left out.
+      job.resolve({ id: job.req.id, ok: true, cold: true });
+      this.pump();
+      return;
+    }
     this.current = job;
     job.startedAt = Date.now();
     const req = { ...job.req };
@@ -401,11 +447,12 @@ export class Highlighter {
     if (!file || !existsSync(file)) throw new Error('The highlight worker is missing from this build.');
     const w = new Worker(resolve(file), {
       workerData: { wasmFiles: this.opts.wasmFiles ?? [] },
-      resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
+      resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
       stdout: false,
       stderr: false,
     });
     this.workersStarted++;
+    this.workerGen++;
     w.unref();
     w.on('message', (msg: WorkerReply) => {
       if (w !== this.worker) return;
@@ -437,6 +484,8 @@ export class Highlighter {
     // A new worker starts cold: the next block loads its grammars (on their own clock) first.
     this.warm.clear();
     this.themesSent.clear();
+    this.sent.clear();
+    this.sentBytes = 0;
     void w?.terminate();
   }
 

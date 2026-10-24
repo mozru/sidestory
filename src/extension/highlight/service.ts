@@ -1,7 +1,7 @@
 // Syntax highlighting for sidestory code blocks, VS Code side (docs/HIGHLIGHT-PLAN.md §3, §10): works out the
 // active color theme and the installed grammars, loads them, follows changes, and owns the shared Highlighter.
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import * as vscode from 'vscode';
 import { log } from '../log.ts';
@@ -36,8 +36,11 @@ const reader: ThemeReader = {
     try {
       const u = vscode.Uri.parse(uri, true);
       if (u.scheme === 'file') {
-        if ((await stat(u.fsPath)).size > maxBytes) return undefined;
-        return await readFile(u.fsPath, 'utf8');
+        // The real file (what `inside` checked), and only a regular file: a FIFO would block the read for good.
+        const real = await realpath(u.fsPath);
+        const st = await stat(real);
+        if (!st.isFile() || st.size > maxBytes) return undefined;
+        return await readFile(real, 'utf8');
       }
       const st = await vscode.workspace.fs.stat(u);
       if (st.size > maxBytes) return undefined;
@@ -112,8 +115,12 @@ class CatalogSource implements GrammarSource {
     return this.catalog.scopeFor(lang);
   }
 
-  load(scope: string) {
-    return loadGrammarSet(this.catalog, scope, reader, this.logOnce);
+  load(scope: string, have?: ReadonlySet<string>) {
+    return loadGrammarSet(this.catalog, scope, reader, this.logOnce, have);
+  }
+
+  origin(scope: string): string | undefined {
+    return this.catalog.origin(scope);
   }
 }
 
@@ -131,7 +138,7 @@ export class HighlightService implements vscode.Disposable {
 
   constructor(extensionUri: vscode.Uri) {
     this.fallbackDir = vscode.Uri.joinPath(extensionUri, 'dist', 'highlight', 'themes');
-    this.highlighter = new Highlighter({ log: (m) => log.warn(m), wasmFiles: onigWasmCandidates(vscode.env.appRoot) });
+    this.highlighter = new Highlighter({ log: (m) => log.warn(m), info: (m) => log.info(m), wasmFiles: onigWasmCandidates(vscode.env.appRoot) });
     const changed = () => {
       if (this.ready) this.ready = this.refresh();
     };

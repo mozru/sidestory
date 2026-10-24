@@ -18,7 +18,7 @@ async function handle(m: WorkerRequest): Promise<WorkerReply> {
     if (m.type === 'load') {
       const loaded = await tokenizer.load(m.scope, m.set);
       const e = await engine;
-      return { id: m.id, ok: true, loaded, engine: e.engine, ...(notes.length ? { engineNote: notes.join('; ').slice(0, 500) } : {}) };
+      return { id: m.id, ok: true, loaded: loaded === true, ...(loaded === 'stale' ? { stale: true } : {}), engine: e.engine, ...(notes.length ? { engineNote: notes.join('; ').slice(0, 500) } : {}) };
     }
     if (!tokenizer.isWarm(m.scope) || !tokenizer.hasTheme(m.themeKey)) return { id: m.id, ok: true, cold: true };
     const r = tokenizer.tokenize(m.code, m.scope, m.themeKey);

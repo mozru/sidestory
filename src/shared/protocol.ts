@@ -182,7 +182,7 @@ export type FromWebview =
   | { type: 'focusAnswer'; id: number; legit: boolean }
   /** A widget took focus while the panel didn't have it (from the editor): give focus back to the editor. */
   | { type: 'focusTheft' }
-  /** Code blocks to color (text from the sanitized content; languages from the fixed table). */
+  /** Code blocks to color (text from the sanitized content; `lang` is a name the host looks up in the installed grammars). */
   | { type: 'highlight'; blocks: { id: number; lang: string; code: string }[] }
   /**
    * A `data-explain-code` link was clicked, or activated with Enter or Space (docs/AUTHORING-PLAN.md §8.1). Posted only
