@@ -156,13 +156,14 @@ export function diffStepsTests(): void {
     it('in committed mode, Sidestory’s own Open File goes back from a diff whose right side is from git', async function () {
       this.timeout(60_000);
       const conf = vscode.workspace.getConfiguration('sidestory.changes');
+      // No open file: an open working tree file of a changed path gets the button in committed mode too (its HEAD diff).
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await conf.update('includeUncommitted', false, vscode.ConfigurationTarget.Global);
       try {
         await until('the committed comparison', async () => {
           const c = await vscode.commands.executeCommand<{ comparable: string[] }>('sidestory._changes');
           return c.comparable.includes('/src/retry/retry.ts') && !c.comparable.includes(vscode.Uri.file(`${workspace}/src/retry/retry.ts`).fsPath);
         });
-        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
         await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
         const f = await until('the step in HEAD’s retry.ts', async () => {
           const v = await focus();

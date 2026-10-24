@@ -144,7 +144,10 @@ export class ChangesService implements vscode.Disposable {
       }),
       GitFileSystem.register(this.ids),
       vscode.window.registerFileDecorationProvider(this.decorations),
-      vscode.window.onDidChangeVisibleTextEditors(() => this.paintUnexplained()),
+      vscode.window.onDidChangeVisibleTextEditors(() => {
+        this.paintUnexplained();
+        this.updateComparable();
+      }),
       vscode.window.onDidChangeActiveTextEditor(() => {
         this.updateActiveFile();
         this.followRepo();
@@ -950,22 +953,40 @@ export class ChangesService implements vscode.Disposable {
   private updateComparable(): void {
     const s = this.snapshot;
     const paired = s && this.result(s)?.paired;
-    if (this.comparableFor.s === s && this.comparableFor.paired === paired) return;
-    this.comparableFor = { s, paired };
-    const keys: string[] = [];
-    for (const e of s?.entries ?? []) {
-      const entry = e.status === 'A' && s ? (this.pairedEntry(s, { path: e.path, side: 'head' }) ?? e) : e;
-      if (!s || !hasTwoSides(entry)) continue;
-      try {
-        const pair = this.diffUris(s, entry);
-        if (!pair) continue;
-        if (this.entryFor(s, { path: entry.oldPath ?? entry.path, side: 'base' }) === entry) keys.push(resourcePath(pair.left));
-        if (this.entryFor(s, { path: entry.path, side: 'head' }) === entry) keys.push(resourcePath(pair.right));
-      } catch {
-        // an unsafe path: no button
+    if (this.comparableFor.s !== s || this.comparableFor.paired !== paired) {
+      this.comparableFor = { s, paired };
+      const keys: string[] = [];
+      for (const e of s?.entries ?? []) {
+        const entry = e.status === 'A' && s ? (this.pairedEntry(s, { path: e.path, side: 'head' }) ?? e) : e;
+        if (!s || !hasTwoSides(entry)) continue;
+        try {
+          const pair = this.diffUris(s, entry);
+          if (!pair) continue;
+          if (this.entryFor(s, { path: entry.oldPath ?? entry.path, side: 'base' }) === entry) keys.push(resourcePath(pair.left));
+          if (this.entryFor(s, { path: entry.path, side: 'head' }) === entry) keys.push(resourcePath(pair.right));
+        } catch {
+          // an unsafe path: no button
+        }
+      }
+      this.comparableKeys = keys;
+      this.comparableBaseSig = keys.join('\0');
+    }
+    // The open files too, as their editors spell them: a root git spells otherwise (case on Windows, a symlink) still
+    // resolves through `keyOf`, as the command does.
+    const shown = new Set(this.comparableKeys);
+    const extra: string[] = [];
+    for (const ed of s ? vscode.window.visibleTextEditors : []) {
+      const k = resourcePath(ed.document.uri);
+      if (shown.has(k)) continue;
+      const key = this.keyOf(s!, ed.document.uri);
+      const entry = key && this.entryFor(s!, key);
+      if (entry && hasTwoSides(entry)) {
+        shown.add(k);
+        extra.push(k);
       }
     }
-    const sig = keys.join('\0');
+    const keys = extra.length ? [...this.comparableKeys, ...extra] : this.comparableKeys;
+    const sig = `${this.comparableBaseSig}\0${extra.join('\0')}`;
     if (sig === this.comparableSig) return;
     this.comparableSig = sig;
     this.comparable = keys;
@@ -974,6 +995,8 @@ export class ChangesService implements vscode.Disposable {
 
   /** What `comparable` was computed from: a new snapshot, or coverage pairing an unstaged rename, computes it again. */
   private comparableFor: { s: Snapshot | undefined; paired: unknown } = { s: undefined, paired: undefined };
+  private comparableKeys: readonly string[] = [];
+  private comparableBaseSig = '';
   private comparableSig = '';
   /** The `sidestory.changes.comparable` keys (tests). */
   comparable: readonly string[] = [];
@@ -1007,7 +1030,12 @@ export class ChangesService implements vscode.Disposable {
     const entry = s && key ? this.entryFor(s, key) : undefined;
     const pair = s && entry && hasTwoSides(entry) ? this.diffUris(s, entry) : undefined;
     if (!key || !pair) {
-      vscode.window.setStatusBarMessage('This file has no changes from the base to compare', 3000);
+      if (!doc) {
+        vscode.window.setStatusBarMessage('Open Changes with Base: click into the file’s editor first', 3000);
+        return;
+      }
+      const why = entry?.status === 'A' ? 'the branch added this file: its diff would be all new lines' : entry?.status === 'D' ? 'the branch deleted this file' : 'this file has no changes from the base';
+      vscode.window.setStatusBarMessage(`Nothing to compare: ${why}`, 3000);
       return;
     }
     const { left, right, title } = pair;
@@ -1022,7 +1050,7 @@ export class ChangesService implements vscode.Disposable {
     }
     // The left side of an inline diff has no editor: the old line's place on the right.
     const map = s && entry ? this.result(s)?.files.get(entry.path)?.diff : undefined;
-    const onRight = selection && map ? await editorFor(right, 300, { left, right }) : undefined;
+    const onRight = key.side === 'base' && selection && map ? await editorFor(right, 300, { left, right }) : undefined;
     if (onRight && selection && map) {
       const line = oldToNew(map, selection.active.line + 1) - 1;
       onRight.selection = new vscode.Selection(line, 0, line, 0);
