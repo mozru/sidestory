@@ -26,7 +26,10 @@ export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   if (!name || parts.at(-2) !== '.sidestory') return undefined;
   const root = vscode.Uri.joinPath(dir, '..', '..');
   const folder = vscode.workspace.getWorkspaceFolder(dir);
-  if (!folder || !(root.path + '/').startsWith(folder.uri.path.replace(/\/?$/, '/'))) return undefined;
+  // Compared as the file system does: on Windows VS Code's own URIs disagree on the drive letter's case (a folder
+  // opened from `D:\x` is `/D:/x`, while findFiles answers `/d:/x/...`, built from the lowercased fsPath).
+  const fold = (p: string) => (caseInsensitive && dir.scheme === 'file' ? p.toLowerCase() : p);
+  if (!folder || !fold(root.path + '/').startsWith(fold(folder.uri.path.replace(/\/?$/, '/')))) return undefined;
   // Only below the workspace folder: a workspace that itself sits under some `.sidestory` folder still works.
   const inside = parts.slice(folder.uri.path.split('/').filter(Boolean).length, -2);
   if (inside.includes('.sidestory')) return undefined;

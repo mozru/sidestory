@@ -243,12 +243,15 @@ export const workspace = {
       return { mtime: Math.floor(s.mtimeMs), size: s.size, ctime: Math.floor(s.ctimeMs), type: s.isDirectory() ? 2 : 1 };
     },
   },
+  // As VS Code does, ignoring path case on Windows and macOS (where its URIs may disagree on a drive letter's case).
   getWorkspaceFolder: (uri: Uri) => {
+    const fold = (p: string) => (win || process.platform === 'darwin' ? p.toLowerCase() : p);
+    const under = (base: Uri) => fold(uri.path) === fold(base.path) || fold(uri.path).startsWith(`${fold(base.path)}/`);
     if (workspace.folders) {
-      const f = workspace.folders.find((x) => uri.path === x.uri.path || uri.path.startsWith(`${x.uri.path}/`));
+      const f = workspace.folders.find((x) => under(x.uri));
       return f ? { ...f, index: workspace.folders.indexOf(f) } : undefined;
     }
-    return workspace.root && uri.path.startsWith(`${workspace.root.path}/`) ? { uri: workspace.root, name: workspace.root.path.split('/').at(-1)!, index: 0 } : undefined;
+    return workspace.root && fold(uri.path).startsWith(`${fold(workspace.root.path)}/`) ? { uri: workspace.root, name: workspace.root.path.split('/').at(-1)!, index: 0 } : undefined;
   },
   getConfiguration: (section?: string, _scope?: unknown) => ({
     get: <T>(key: string, fallback?: T) => {
