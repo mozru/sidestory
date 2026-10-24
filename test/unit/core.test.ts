@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseManifest } from '../../src/core/manifest.ts';
+import { anchorParts, parseManifest, partKey, type Anchor } from '../../src/core/manifest.ts';
 import type { Resolution } from '../../src/core/resolve.ts';
 import { anchorAtLine } from '../../src/core/sections.ts';
 import { contentSimilarity, lcsRatio } from '../../src/core/similarity.ts';
@@ -289,5 +289,26 @@ describe('group and top', () => {
     const r = parseManifest(JSON.stringify({ ...base, top: 'yes' }));
     expect(r.ok && r.manifest.top).toBeUndefined();
     expect(r.ok && r.diagnostics[0]?.message).toBe('top: must be true or false; ignored');
+  });
+});
+
+describe('Anchor.parts (docs/AUTHORING-PLAN.md §1.1, release 1: the type only)', () => {
+  it('every parsed anchor is normalized to one part equal to its own code fields', () => {
+    const r = parseManifest(JSON.stringify({ version: 2, title: 't', anchors: { a: { file: 'x.sv', range: [3, 5], highlight: ['q'], color: 'charts.red' } } }));
+    if (!r.ok) throw new Error(r.error);
+    const a = r.manifest.anchors.get('a')!;
+    expect(a.parts).toEqual([{ file: 'x.sv', range: { start: 3, end: 5 }, quote: undefined, snippet: undefined, highlight: ['q'] }]);
+    expect(anchorParts(a)).toBe(a.parts);
+  });
+  it('an anchor built without parts reads as its own single part', () => {
+    const a: Anchor = { id: 'b', file: 'y.ts', range: { start: 1, end: 2 }, highlight: [] };
+    expect(anchorParts(a)).toEqual([{ file: 'y.ts', range: { start: 1, end: 2 }, quote: undefined, snippet: undefined, highlight: [] }]);
+  });
+  it('partKey: part 1 is the id itself, later parts can never collide with an id', () => {
+    expect(partKey('done')).toBe('done');
+    expect(partKey('done', 0)).toBe('done');
+    expect(partKey('done', 1)).toBe('done:2');
+    const r = parseManifest(JSON.stringify({ version: 2, title: 't', anchors: { 'done:2': { file: 'x', range: [1, 1] } } }));
+    expect(r.ok && r.manifest.anchors.has('done:2')).toBe(false);
   });
 });
