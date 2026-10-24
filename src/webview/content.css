@@ -158,6 +158,13 @@ html, body {
   from { outline-color: transparent; }
 }
 
+/* In SVG, a halo that follows the shape: an outline would box an L-shaped wire in its bounding rectangle. */
+:where(svg .cx-here) {
+  outline: none;
+  filter: drop-shadow(0 0 1px var(--cx-here)) drop-shadow(0 0 1.5px var(--cx-here)) drop-shadow(0 0 1.5px var(--cx-here));
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :where([data-explain-diagram] *, svg *, [data-explain-on]) { transition: none; }
   :where(.cx-here) { animation: none; }

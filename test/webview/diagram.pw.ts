@@ -370,6 +370,10 @@ test.describe('linked elements', () => {
     await send(page, { type: 'here', link: 'rtl/bit_reader.sv#driver(count_q)' });
     await expect(frame(page).locator('.cx-here')).toHaveCount(1);
     await expect(el(page, 'svg-code')).toHaveClass(/cx-here/);
+    // in SVG the ring is a halo that follows the shape, not an outline around its bounding box
+    await el(page, 'svg-code').evaluate((e) => (e as SVGElement).blur()); // its focus ring is an outline of its own
+    await expect(el(page, 'svg-code')).toHaveCSS('outline-style', 'none');
+    await expect(el(page, 'svg-code')).toHaveCSS('filter', /drop-shadow/);
     await frame(page).locator('body').evaluate((b) => b.ownerDocument.getAnimations().forEach((a) => a.finish()));
     await send(page, { type: 'content', title: MANIFEST.title, html: LINKS.replace('<p>Refill.</p>', '<p>Refill, edited.</p>') });
     await expect(frame(page).getByText('Refill, edited.')).toBeVisible();
