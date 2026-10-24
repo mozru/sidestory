@@ -14,6 +14,7 @@ import { CodeHighlighter } from './highlight.ts';
 import { sanitize } from './sanitize.ts';
 import { staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
+import { CommentsPane } from './comments.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -37,6 +38,8 @@ interface SavedState extends Place {
   trail?: string[];
   /** Widget state (`useWidgetState`), last heights, hints shown. */
   widgets?: SavedWidgets;
+  /** Comment drafts, the Comments pane's height and scope (docs/COMMENTS-PLAN.md §6.2). */
+  comments?: { drafts?: Record<string, string>; height?: number; all?: boolean };
 }
 
 interface Step {
@@ -169,7 +172,8 @@ app.innerHTML = staticHtml`
 </header>
 <div class="cx-banner" role="alert" hidden><span class="codicon codicon-warning" aria-hidden="true"></span><span class="cx-banner-text"></span><button class="cx-banner-open" type="button" hidden>Open manifest.json</button></div>
 <div class="cx-consent" role="region" aria-label="Interactive widgets" hidden></div>
-<main class="cx-scroll" tabindex="0" aria-label="Sidestory"><div class="cx-frame"><div class="cx-widget-layer"></div></div></main>
+<main class="cx-scroll" tabindex="0" aria-label="Sidestory"><div class="cx-frame"><div class="cx-widget-layer"></div><div class="cx-comment-layer"></div></div></main>
+<section class="cx-comments" role="region" aria-label="Comments" hidden></section>
 <div class="cx-pill" hidden>
   <button class="cx-pill-show" type="button"></button>
   <button class="cx-pill-close" type="button" aria-label="Dismiss"><span class="codicon codicon-close" aria-hidden="true"></span></button>
@@ -206,6 +210,32 @@ const backEl = $<HTMLButtonElement>('.cx-back');
 const previewEl = $('.cx-preview');
 /** Widget frames live here, over the content, scrolling with it (docs/WIDGETS-PLAN.md §3). */
 const layerEl = $('.cx-widget-layer');
+/** Comment badges over each section (docs/COMMENTS-PLAN.md §6.1): host chrome over the content frame. */
+const commentLayerEl = $('.cx-comment-layer');
+const comments = new CommentsPane($('.cx-comments'), commentLayerEl, {
+  post: (m) => vscode.postMessage(m as FromWebview),
+  steps: () => steps,
+  activeStep: () => activeStepId(),
+  goToStep: (id) => {
+    hidePill();
+    setActive(id, 'click');
+    scrollToSection(id);
+  },
+  stepButton: (id) => stepsEl.querySelector<HTMLElement>(`.cx-step[data-anchor="${CSS.escape(id)}"]`),
+  contentFrame: () => frame?.el ?? $('.cx-frame'),
+  announce: (t) => announce(t),
+  keepPlace: (f) => {
+    const p = initialized ? readingPosition() : undefined;
+    f();
+    if (p) requestAnimationFrame(() => restorePosition(p));
+  },
+  reducedMotion: () => reducedMotion(),
+  load: () => state.comments,
+  save: (c) => {
+    state = { ...state, comments: c };
+    vscode.setState(state);
+  },
+});
 
 /*
  * Explainer content lives in a sandboxed iframe: no scripts run in it (only this script, from
@@ -234,7 +264,7 @@ async function buildFrame(): Promise<void> {
   el.title = 'Sidestory content';
   el.setAttribute('sandbox', 'allow-same-origin');
   el.srcdoc = staticHtml`<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body></body></html>` as unknown as string;
-  $('.cx-frame').replaceChildren(el, layerEl);
+  $('.cx-frame').replaceChildren(el, layerEl, commentLayerEl);
   await new Promise<void>((resolve) => el.addEventListener('load', () => resolve(), { once: true }));
   const d = el.contentDocument!;
   frame = {
@@ -301,6 +331,7 @@ function fitFrame(): void {
   if (frame.el.style.height !== h) frame.el.style.height = h;
   if (Date.now() - resizedAt < 1000) holdPlace();
   widgets?.schedule();
+  comments?.placeBadges();
 }
 
 /*
@@ -442,6 +473,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   // window.parent, so the origin is the check.)
   if (e.origin !== window.origin) return;
   const m = e.data;
+  if ((m.type === 'threads' || m.type === 'commentsShow') && comments?.onMessage(m)) return;
   switch (m.type) {
     case 'init': {
       const entering = m.dir !== state.dir;
@@ -904,6 +936,7 @@ function decorate(): void {
   markActive();
   widgets?.refresh();
   widgets?.onAnchors();
+  comments?.decorate();
 }
 
 /** The shared rule (src/core/step-title.ts): an empty title falls through, as in the workspace index. */
@@ -1018,6 +1051,7 @@ function markActive(): void {
     b.disabled = steps.length === 0 || (b.dataset.delta === '-1' ? index <= 0 : index === steps.length - 1);
   }
   widgets?.onActive(active);
+  comments?.onActive();
 }
 
 /** The step containing the active anchor (which may be nested inside a step). */
@@ -1492,9 +1526,11 @@ function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') hidePill();
     return;
   }
-  // Escape dismisses the pill; with nothing to dismiss, it goes back up the trail.
+  // Escape closes the comment composer, then the Comments pane, then dismisses the pill; with nothing to dismiss,
+  // it goes back up the trail.
   if (e.key === 'Escape') {
     const selection = frame.getSelection();
+    if (comments?.escape()) return;
     if (!pillEl.hidden) hidePill();
     else if (selection && !selection.isCollapsed) selection.removeAllRanges();
     else if (trail.length > 1) goTo(trail.length - 2);
@@ -1503,6 +1539,13 @@ function onKey(e: KeyboardEvent): void {
   if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) readerInput();
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
+  // Comments (docs/COMMENTS-PLAN.md §11.3).
+  else if (e.key.toLowerCase() === 'c' && e.isTrusted) comments?.compose('comment');
+  else if (e.key.toLowerCase() === 'a' && e.isTrusted) comments?.compose('ask');
+  else if (e.key.toLowerCase() === 't' && e.isTrusted) comments?.toggle();
+  else if ((e.key === 'n' || e.key === 'N') && e.isTrusted) comments?.next(e.shiftKey ? -1 : 1);
+  else return;
+  if (/^[cantN]$/i.test(e.key)) e.preventDefault();
 }
 
 // ---- keeping the reader's place ----

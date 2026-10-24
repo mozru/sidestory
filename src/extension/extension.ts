@@ -32,6 +32,9 @@ import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
 import { isSafeFsPath } from '../core/repo-path.ts';
 import { ChangesService, CoverageDecorations } from './changes/service.ts';
+import { activateComments } from './comments/index.ts';
+import { localPath } from './local-path.ts';
+import { realPathInside } from './paths.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -135,6 +138,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png'); // marks the tab, so its title is just the sidestory's
     const s = new ExplainerSession(trail, panel, context.extensionUri, decorations, host, opts);
     sessions.add(s);
+    const commentsAttached = host.comments ? comments.attach(s) : undefined;
+    s.onDidDispose(() => commentsAttached?.dispose());
     current = s;
     navigator?.attach(s);
     here.attach(s);
@@ -173,6 +178,20 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     previewChanged: (s) => setPreviewIcon(s),
   });
   navigator = nav;
+
+  // ---- comments (docs/COMMENTS-PLAN.md) ----
+  const comments = activateComments(context, {
+    index,
+    sessions: () => [...sessions],
+    current: () => current,
+    openAt: (args) => nav.openAt(args),
+    openCode: async (root, file, lines) => {
+      const uri = vscode.Uri.joinPath(root, ...file.split('/'));
+      if (uri.scheme !== 'file' || !(await realPathInside(localPath(uri), localPath(root)))) return;
+      await vscode.window.showTextDocument(uri, { preview: true, ...(lines ? { selection: new vscode.Range(lines[0] - 1, 0, lines[1] - 1, 0) } : {}) });
+    },
+  });
+  host.comments = comments;
   // Sidestories in use first: open panels, then recently opened (§6.1, §6.5).
   // Cheap: the index calls it once per key per sort (open panels are few; recent ranks are cached).
   index.priority = (key) => {
@@ -580,6 +599,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       }),
     );
   }
+
+  Object.assign(commands, comments.commands);
 
   // The widget watchdog's recovery: a fresh panel in the same column, at the same place.
   widgets.recreate = (port) => {

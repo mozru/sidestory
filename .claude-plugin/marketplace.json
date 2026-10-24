@@ -9,6 +9,11 @@
       "name": "sidestory",
       "source": "./plugins/sidestory",
       "description": "Write sidestories: step-by-step walkthroughs of code with diagrams and interactive widgets, beside the code in VS Code."
+    },
+    {
+      "name": "sidestory-comments",
+      "source": "./plugins/sidestory-comments",
+      "description": "Read and answer Sidestory comment threads, and receive the comments you send with Ask Claude in VS Code (needs Node 20 or later)."
     }
   ]
 }

@@ -280,6 +280,194 @@
         "title": "Explain with Sidestory",
         "category": "Sidestory",
         "icon": "$(book)"
+      },
+      {
+        "command": "sidestory.commentOnSelection",
+        "title": "Comment on Selection",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.askClaudeAboutSelection",
+        "title": "Ask Claude About Selection",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.show",
+        "title": "Show Comments",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.nextComment",
+        "title": "Next Comment for You",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.previousComment",
+        "title": "Previous Comment for You",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.copyClaudeCommand",
+        "title": "Copy Claude Command with Comments",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.copyMcpConfig",
+        "title": "Copy MCP Server Config",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.howTo",
+        "title": "How to Turn On Ask Claude",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.openThread",
+        "title": "Open Thread",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.refresh",
+        "title": "Refresh",
+        "category": "Sidestory",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sidestory.comments.filter",
+        "title": "Filter Comments…",
+        "category": "Sidestory",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sidestory.comments.markAllRead",
+        "title": "Mark All Read",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.copyWaitingPrompt",
+        "title": "Copy Prompt: Answer Waiting Comments",
+        "category": "Sidestory",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "sidestory.comments.view.copyPrompt",
+        "title": "Copy Prompt",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.view.resolve",
+        "title": "Resolve",
+        "category": "Sidestory",
+        "icon": "$(check)"
+      },
+      {
+        "command": "sidestory.comments.view.reopen",
+        "title": "Reopen",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.view.share",
+        "title": "Share",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.view.makeLocal",
+        "title": "Make Local",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.view.delete",
+        "title": "Delete Thread",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.view.stopWaiting",
+        "title": "Stop Waiting",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.reply",
+        "title": "Comment",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.replyAsk",
+        "title": "Ask Claude",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.replyAskEdit",
+        "title": "Ask Claude and Let It Edit",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.resolve",
+        "title": "Resolve",
+        "category": "Sidestory",
+        "icon": "$(check)"
+      },
+      {
+        "command": "sidestory.comments.reopen",
+        "title": "Reopen",
+        "category": "Sidestory",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "sidestory.comments.share",
+        "title": "Share",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.makeLocal",
+        "title": "Make Local",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.copyPrompt",
+        "title": "Copy Prompt",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.deleteThread",
+        "title": "Delete Thread",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.editComment",
+        "title": "Edit",
+        "category": "Sidestory",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "sidestory.comments.saveComment",
+        "title": "Save",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.cancelEdit",
+        "title": "Cancel",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.deleteComment",
+        "title": "Delete",
+        "category": "Sidestory",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "sidestory.comments.sendAgain",
+        "title": "Send to Claude Again",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.chooseSession",
+        "title": "Choose a Session…",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.comments.showInSidestory",
+        "title": "Show in Sidestory",
+        "category": "Sidestory"
       }
     ],
     "keybindings": [
@@ -392,6 +580,59 @@
           "type": "boolean",
           "default": false,
           "description": "Mark unexplained changes in the gutter of the branch’s diffs, also when no sidestory with this base is open."
+        },
+        "sidestory.comments.defaultLocation": {
+          "type": "string",
+          "enum": [
+            "local",
+            "shared"
+          ],
+          "enumDescriptions": [
+            "Only on this machine, in .sidestory/.local (git ignores it)",
+            "Committed with the sidestory, in .sidestory/<name>/threads"
+          ],
+          "default": "local",
+          "scope": "application",
+          "description": "Where new comment threads are kept. Share or Make Local moves a thread later."
+        },
+        "sidestory.comments.authorName": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "The name on your comments. Empty: git's user.name in trusted workspaces. Never an email address."
+        },
+        "sidestory.comments.ranges": {
+          "type": "string",
+          "enum": [
+            "steps",
+            "everywhere"
+          ],
+          "enumDescriptions": [
+            "Lines a sidestory step covers",
+            "Every line of every file (overlaps the GitHub Pull Requests extension, which asks which provider to use)"
+          ],
+          "default": "steps",
+          "description": "Where the editor's comment + appears for Sidestory comments."
+        },
+        "sidestory.comments.stateDir": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Folder for comment delivery records and presence, shared with the Sidestory comments plugin. Empty: the default per-user folder."
+        },
+        "sidestory.claude.channelFlag": {
+          "type": "string",
+          "enum": [
+            "dev",
+            "channels"
+          ],
+          "enumDescriptions": [
+            "--dangerously-load-development-channels (needed while Sidestory is not on the channel allowlist)",
+            "--channels (when your organization allowlists the plugin in allowedChannelPlugins)"
+          ],
+          "default": "dev",
+          "scope": "application",
+          "description": "The flag the copied Claude command uses to turn on Sidestory's channel."
         }
       }
     },
@@ -636,6 +877,118 @@
         {
           "command": "sidestory.changes.setBase",
           "when": "sidestory.changes.repo"
+        },
+        {
+          "command": "sidestory.comments.openThread",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.refresh",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.filter",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.markAllRead",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.copyWaitingPrompt",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.copyPrompt",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.resolve",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.reopen",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.share",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.makeLocal",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.delete",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.view.stopWaiting",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.reply",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.replyAsk",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.replyAskEdit",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.resolve",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.reopen",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.share",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.makeLocal",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.copyPrompt",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.deleteThread",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.editComment",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.cancelEdit",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.deleteComment",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.sendAgain",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.chooseSession",
+          "when": "false"
+        },
+        {
+          "command": "sidestory.comments.showInSidestory",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -668,6 +1021,16 @@
           "command": "sidestory.explainFile",
           "when": "sidestory.available && resourceScheme == file",
           "group": "sidestory@4"
+        },
+        {
+          "command": "sidestory.commentOnSelection",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "sidestory@5"
+        },
+        {
+          "command": "sidestory.askClaudeAboutSelection",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "sidestory@6"
         }
       ],
       "explorer/context": [
@@ -702,6 +1065,31 @@
           "command": "sidestory.tree.refresh",
           "when": "view == sidestory.tree",
           "group": "navigation@4"
+        },
+        {
+          "command": "sidestory.comments.filter",
+          "when": "view == sidestory.comments",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sidestory.comments.refresh",
+          "when": "view == sidestory.comments",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sidestory.comments.markAllRead",
+          "when": "view == sidestory.comments",
+          "group": "1_more@1"
+        },
+        {
+          "command": "sidestory.comments.copyClaudeCommand",
+          "when": "view == sidestory.comments",
+          "group": "1_more@2"
+        },
+        {
+          "command": "sidestory.comments.copyMcpConfig",
+          "when": "view == sidestory.comments",
+          "group": "1_more@3"
         }
       ],
       "view/item/context": [
@@ -789,6 +1177,139 @@
           "command": "sidestory.changes.setBase",
           "when": "view == sidestory.tree && viewItem == branch",
           "group": "inline@1"
+        },
+        {
+          "command": "sidestory.comments.copyWaitingPrompt",
+          "when": "view == sidestory.comments && viewItem == sidestory.commentGroup.waiting",
+          "group": "inline"
+        },
+        {
+          "command": "sidestory.comments.view.resolve",
+          "when": "view == sidestory.comments && viewItem =~ /^sidestory\\.commentThread\\.(forYou|waiting|open)/",
+          "group": "inline"
+        },
+        {
+          "command": "sidestory.comments.view.copyPrompt",
+          "when": "view == sidestory.comments && viewItem =~ /^sidestory\\.commentThread/",
+          "group": "1_thread@1"
+        },
+        {
+          "command": "sidestory.comments.view.stopWaiting",
+          "when": "view == sidestory.comments && viewItem =~ /^sidestory\\.commentThread\\.waiting/",
+          "group": "1_thread@2"
+        },
+        {
+          "command": "sidestory.comments.view.reopen",
+          "when": "view == sidestory.comments && viewItem =~ /^sidestory\\.commentThread\\.resolved/",
+          "group": "1_thread@3"
+        },
+        {
+          "command": "sidestory.comments.view.share",
+          "when": "view == sidestory.comments && viewItem =~ /\\.local$/",
+          "group": "2_tier@1"
+        },
+        {
+          "command": "sidestory.comments.view.makeLocal",
+          "when": "view == sidestory.comments && viewItem =~ /\\.shared$/",
+          "group": "2_tier@2"
+        },
+        {
+          "command": "sidestory.comments.view.delete",
+          "when": "view == sidestory.comments && viewItem =~ /\\.local$/",
+          "group": "3_delete@1"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "sidestory.comments.reply",
+          "group": "inline@1",
+          "when": "commentController == sidestory && !(commentThread =~ /askOnly/)"
+        },
+        {
+          "command": "sidestory.comments.replyAsk",
+          "group": "inline@2",
+          "when": "commentController == sidestory"
+        },
+        {
+          "command": "sidestory.comments.replyAskEdit",
+          "group": "inline@3",
+          "when": "commentController == sidestory && !(commentThread =~ /askOnly/)"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "sidestory.comments.resolve",
+          "group": "inline@1",
+          "when": "commentController == sidestory && commentThread =~ /^sidestory:open/"
+        },
+        {
+          "command": "sidestory.comments.reopen",
+          "group": "inline@1",
+          "when": "commentController == sidestory && commentThread =~ /^sidestory:resolved/"
+        },
+        {
+          "command": "sidestory.comments.share",
+          "group": "more@1",
+          "when": "commentController == sidestory && commentThread =~ /:local/ && commentThread =~ /shareable/"
+        },
+        {
+          "command": "sidestory.comments.makeLocal",
+          "group": "more@2",
+          "when": "commentController == sidestory && commentThread =~ /:shared/"
+        },
+        {
+          "command": "sidestory.comments.copyPrompt",
+          "group": "more@3",
+          "when": "commentController == sidestory && commentThread =~ /^sidestory:/"
+        },
+        {
+          "command": "sidestory.comments.deleteThread",
+          "group": "more@4",
+          "when": "commentController == sidestory && commentThread =~ /:local/"
+        },
+        {
+          "command": "sidestory.comments.chooseSession",
+          "group": "more@5",
+          "when": "commentController == sidestory && commentThread =~ /waiting/"
+        },
+        {
+          "command": "sidestory.comments.showInSidestory",
+          "group": "more@6",
+          "when": "commentController == sidestory && commentThread =~ /^sidestory:(open|resolved)/"
+        },
+        {
+          "command": "sidestory.comments.howTo",
+          "group": "more@7",
+          "when": "commentController == sidestory && commentThread =~ /waiting/"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "sidestory.comments.editComment",
+          "group": "inline@1",
+          "when": "commentController == sidestory && comment =~ /^mine/"
+        },
+        {
+          "command": "sidestory.comments.deleteComment",
+          "group": "inline@2",
+          "when": "commentController == sidestory && comment =~ /^mine/"
+        },
+        {
+          "command": "sidestory.comments.sendAgain",
+          "group": "more@1",
+          "when": "commentController == sidestory && comment =~ /sent/"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "sidestory.comments.saveComment",
+          "group": "inline@1",
+          "when": "commentController == sidestory"
+        },
+        {
+          "command": "sidestory.comments.cancelEdit",
+          "group": "inline@2",
+          "when": "commentController == sidestory"
         }
       ],
       "editor/title/context": [
@@ -824,6 +1345,14 @@
           "icon": "media/sidestory.svg",
           "contextualTitle": "Sidestory",
           "visibility": "collapsed"
+        },
+        {
+          "id": "sidestory.comments",
+          "name": "Comments",
+          "when": "sidestory.available",
+          "visibility": "collapsed",
+          "icon": "media/sidestory.svg",
+          "contextualTitle": "Sidestory"
         }
       ]
     },
@@ -872,6 +1401,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/browser": "4.3.3",
     "@types/mocha": "10.0.10",

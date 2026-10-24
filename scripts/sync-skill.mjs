@@ -22,4 +22,9 @@ export function skillCopy(markdown) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const name of GUIDES) writeFileSync(`${SKILL_REFERENCES}/${name}`, skillCopy(readFileSync(`docs/${name}`, 'utf8')));
   console.log(`Updated ${GUIDES.map((n) => `${SKILL_REFERENCES}/${n}`).join(', ')}`);
+  // The sidestory-comments plugin's server: one committed bundle, since plugins are installed without a build step.
+  const esbuild = await import('esbuild');
+  const { mcpServerBuild, PLUGIN_SERVER } = await import('./mcp-build.mjs');
+  await esbuild.build({ ...mcpServerBuild(PLUGIN_SERVER), minify: true, legalComments: 'eof', logLevel: 'warning' });
+  console.log(`Updated ${PLUGIN_SERVER}`);
 }

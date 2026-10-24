@@ -34,6 +34,7 @@ import type { AnchorStates } from './pin.ts';
 import type { PreparedTextCache } from './prepared-cache.ts';
 import type { PanelWidgets, WidgetHost, WidgetSessionPort } from './widgets/host.ts';
 import { ourModal } from './widgets/watchdog.ts';
+import { isCommentsMessage, type CommentsFromWebview, type CommentsToWebview } from '../shared/comments-protocol.ts';
 
 const RELOAD_DELAY = 120;
 const RESOLVE_DELAY = 150;
@@ -74,6 +75,8 @@ export interface SessionHost {
   symbols?: SymbolTables;
   /** The branch's comparison, for sidestories with a `base` (docs/CHANGES-PLAN.md §7, §8); without it, file stories. */
   diffs?: SessionDiffs;
+  /** Comment threads (docs/COMMENTS-PLAN.md §6); without it, the panel shows none. */
+  comments?: { handle(s: ExplainerSession, m: CommentsFromWebview): boolean; onInit(s: ExplainerSession): void };
 }
 
 /** What a session with a `base` needs from the Changes view. */
@@ -479,6 +482,7 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
     if (this.previewing) this.post({ type: 'preview', on: true });
     this.widgets?.onInit();
+    this.host.comments?.onInit(this);
   }
 
   /** Title, summary and size of detail explainers, for the parent's "peek" and "+N steps". */
@@ -507,6 +511,26 @@ export class ExplainerSession implements vscode.Disposable {
   /** Anchor states as the panel shows them, and the active section. */
   anchorStates(): AnchorStates {
     return { states: new Map(this.anchorViews().map((a) => [a.id, a.state])), active: this.active };
+  }
+
+  /** Posts to the page (comments, docs/COMMENTS-PLAN.md §6.6). Whether it was handed to the page. */
+  postMessage(m: CommentsToWebview): boolean {
+    return this.post(m);
+  }
+
+  /** The manifest's anchor ids (the steps a comment can be on). */
+  stepIds(): string[] {
+    return [...(this.manifest?.anchors.keys() ?? [])];
+  }
+
+  /** Where each anchor's code is now, for placing code comments under steps. */
+  anchorSpans(): { id: string; file: string; range: { start: number; end: number } | null }[] {
+    return [...(this.manifest?.anchors.values() ?? [])].map((a) => ({ id: a.id, file: a.file, range: this.resolutions.get(a.id)?.range ?? a.range }));
+  }
+
+  /** The manifest as written (for its stable `id`). */
+  manifestRaw(): Record<string, unknown> | undefined {
+    return this.manifest?.raw;
   }
 
   /** Where live tracking last saw an anchor's code (only trusted positions are kept). */
@@ -914,6 +938,10 @@ export class ExplainerSession implements vscode.Disposable {
       this.navigateEmitter.fire();
     }
     if (this.widgets?.handle(m)) return;
+    if (isCommentsMessage(m)) {
+      this.host.comments?.handle(this, m);
+      return;
+    }
     switch (m.type) {
       case 'keepOpen':
         this.preview = false;

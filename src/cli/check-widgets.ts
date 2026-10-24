@@ -40,6 +40,7 @@ import { anchorsRead } from '../extension/widgets/html.ts';
 import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-files.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
+import { threadsMain } from './threads.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 import { manifestDiagnosticFindings, newUlid, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
@@ -732,6 +733,7 @@ const USAGE = [
   'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]] [--accept <anchor>[,…]]',
   '                      [--coverage [--base <ref>] [--committed | --head <sha>]]',
   '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--json]',
+  '       node check.cjs threads [<root>] [--waiting] [--all] [--json]',
   'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial',
 ].join('\n');
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
@@ -748,6 +750,8 @@ export interface MainHooks {
 }
 
 export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types'), hooks: MainHooks = {}): Promise<number> {
+  // `check.cjs threads …`: comment threads for agents (docs/COMMENTS-PLAN.md §10.2), unless a folder is named "threads".
+  if (argv[0] === 'threads' && !(await stat('threads').then((s) => s.isDirectory(), () => false))) return threadsMain(argv.slice(1), io);
   const flags = new Set<string>();
   const values = new Map<string, string>();
   const args: string[] = [];
