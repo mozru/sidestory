@@ -30,7 +30,7 @@ Look at existing sidestories in `.sidestory/` and match their style.
 The checker ships inside the extension. Find it once and reuse the path:
 
 ```bash
-CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs ~/.cursor*/extensions/paperkite.sidestory-*/dist/check.cjs 2>/dev/null | tail -n 1)"
+CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs ~/.cursor*/extensions/paperkite.sidestory-*/dist/check.cjs 2>/dev/null | sort -V | tail -n 1)"
 ```
 
 If none is found, the extension isn't installed here: tell the user to install `paperkite.sidestory` (in VS Code, **Sidestory: Pin Anchors to the Current Code** pins without it).
@@ -49,7 +49,7 @@ If none is found, the extension isn't installed here: tell the user to install `
    - **A sidestory already belongs to this branch** (listed in `coverage.sidestories`): this is an **update**, not a new sidestory. Keep its steps and their order, and add steps or widen anchors only for the changes listed as `unexplained` or `partly`. For `needsLook` changes (`changed-since-pinned`), read the step, update its prose to cover the new lines, and only then accept them (step 5). After review fixes or a rebase this is the normal case.
 2. **Read the merge diff:** `git diff <base>...HEAD` for committed changes, plus `git diff $(git merge-base <base> HEAD)` when there are uncommitted edits. Read the changed files whole where a change can't be understood from the diff alone.
 3. **Plan the steps in reviewer order:** what the change is for and its shape first (a small before/after diagram helps), then the core change, then how callers and data flow change, then tests, config and migrations last. **One step per logical change, not per file:** a step may anchor code in several files (nested `data-explain-ref` anchors).
-4. **Write `.sidestory/<branch-slug>/`** (the branch name with `/` turned into `-`) with `"version": 3` and `"base": "<base>"` in `manifest.json`, and the page as in file mode (steps 3–4 of the workflow below).
+4. **Write `.sidestory/<branch-slug>/`** (the branch name with each `/` turned into `-`: `alice/retry` → `alice-retry`; any other character but letters, digits, `.`, `_` and `-` becomes `-` too) with `"version": 3` and `"base": "<base>"` in `manifest.json`, and the page as in file mode (steps 3–4 of the workflow below).
    - Anchor added code on the current side (no `side`). Anchor removed code a step talks about with `"side": "base"`: its `file` and `range` are in the merge-base's version of the file (`git show $(git merge-base <base> HEAD):<old path>`). A larger deletion (over 20 lines) needs one; a replacement is explained by one anchor over all its new lines.
    - Mark mechanical changes trivial, with a `why` a reviewer can check: `trivialFiles` for whole files (lockfiles, generated files, snapshots: specific paths or narrow globs, never `**`), `"trivial": true` with `"why"` for ranges (import order, formatting, a rename), named `trivial-1`, `trivial-2`, …, with no section in the page.
    - **Never mark a change trivial to reach 100%** when a reviewer would want to know about it: explain it, even briefly. **Never add an anchor no prose refers to**: an anchor the page doesn't use (a section, a `data-explain-ref`, a `data-explain-on`) explains nothing.

@@ -21,6 +21,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Base, side and trivial marks](#base-side-and-trivial-marks)
   - [The coverage rule](#the-coverage-rule)
   - [Which sidestories count](#which-sidestories-count)
+  - [Coverage in VS Code](#coverage-in-vs-code)
   - [Checking coverage](#checking-coverage)
   - [Coverage in CI](#coverage-in-ci)
 - [Settings](#settings)
@@ -425,10 +426,28 @@ Binary files, submodules, symlinks, mode-only changes, Git LFS pointers and the 
 
 A sidestory counts toward a branch when it was **added on that branch** (its `manifest.json` isn't there at the merge-base) and its `base` gives the same merge-base. So once a branch lands, its sidestory sits on `main` and never counts for a later branch, even one that edits it. **A follow-up PR on a landed sidestory needs its own sidestory**: write a new one for the follow-up, and link the old one with `data-explain-detail` if it helps.
 
+### Coverage in VS Code
+
+Sidestory doesn't add a file tree of its own for the branch: use the one you already have. [Git Tree Compare](https://marketplace.visualstudio.com/items?itemName=letmaik.git-tree-compare) is the one we recommend (it lists every file the branch changes against its base, committed or not); GitLens and the Source Control view work too. Sidestory marks the files in all of them, and in the Explorer, with **file decorations**:
+
+- a **badge**: `✓` every change explained (some may be trivial), `–` every change marked trivial, `◐` partly, `○` none yet, `!` code added inside a step since it was written;
+- a **colour**: one for done, one for changes left;
+- a **tooltip** with the counts and the steps that explain the file ("2 of 3 changes explained · 1 marked trivial · Step 2 of Retry with jitter").
+
+Files that aren't counted (binary files, the sidestory's own files, line endings only) get no mark.
+
+The mark is per file; for the changes inside one, open it:
+
+- **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor, each with its state and the step that explains it: click one to go to its lines (the diff for a removed line), or to the step. It also offers to copy a prompt for your agent, and **Mark as Trivial** for a change that needs no explanation (it asks for the `why`).
+- The **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left; when none counts yet, or some changes are left, it offers a prompt to copy for your agent.
+- **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. Bind them to keys if you review this way.
+
+The base is the one you picked with **Sidestory: Set Base…** (kept per workspace), else the branch's `vscode-merge-base` git setting (the one VS Code's own Source Control uses), else the `sidestory.changes.defaultBase` setting, else the remote's default branch, `main` or `master`. A sidestory's own `base` decides which sidestories count, as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
+
 ### Checking coverage
 
 ```bash
-CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs | tail -n 1)"
+CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs | sort -V | tail -n 1)"
 node "$CHECK" --coverage --base main              # every change of this branch, and what explains it
 node "$CHECK" .sidestory/retry-jitter --pin --coverage
 ```
@@ -485,6 +504,7 @@ Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
 | `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
+| `sidestory.changes.defaultBase` | `""` | The branch a branch is compared with when no sidestory of it names a `base` (`main`, `origin/develop`); empty means the repository's default branch. **Sidestory: Set Base…** overrides it per workspace. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ## Troubleshooting
