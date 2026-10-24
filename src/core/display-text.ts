@@ -26,6 +26,15 @@ export function displayText(s: string, max: number): string {
   return `${clean.slice(0, cut).trimEnd()}…`;
 }
 
+/**
+ * Repository text as one terminal line, not cut or trimmed: line breaks and tabs become a space, and everything
+ * `displayText` removes (other controls, escape sequences' ESC and CSI, bidirectional and invisible characters,
+ * lone surrogates) is dropped.
+ */
+export function plainLine(s: string): string {
+  return s.replace(/[\t\n\r\v\f\u2028\u2029]+/g, ' ').replace(REMOVE, '').replace(LONE_SURROGATE, '');
+}
+
 /** For surfaces that render `$(icon)` syntax (quick picks, the status bar, CodeLens titles): shown literally. */
 export function escapeIcons(s: string): string {
   return s.replace(/\$\(/g, '\\$(');

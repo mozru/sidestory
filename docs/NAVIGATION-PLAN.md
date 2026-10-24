@@ -587,8 +587,9 @@ These apply to code covered by anchors, in a `file:` document shown in an editor
 5. Re-resolve 400 ms after the last edit, if the document is still visible.
 6. Fire `onDidChangeCodeLenses` only when a start line or a state changed.
 
-**`onDidChangeTextEditorSelection`** (debounced 100 ms):
+**`onDidChangeTextEditorSelection`** (the status item debounced 100 ms):
 
+- the `sidestory.coveredHere` context key is set right away, on every selection and active-editor change (an allocation-free check that stops at the first covering step), so the context menu that follows a click reads it; only the status item waits for the 100 ms debounce;
 - interval lookup, then the choice: tightest, not stale, not shown in a panel (§7.1);
 - the status item is updated only when its text changes;
 - no I/O. Until results exist, the item stays hidden.
@@ -706,6 +707,8 @@ Sidestories
 - label: the group name;
 - description: "*N* sidestories";
 - icon: `symbol-namespace`.
+
+While a filter is active, package and group counts reflect it: the matches in the package, the members the group shows.
 
 **Sidestory node:**
 - **label:** the title, else the folder name;
@@ -834,6 +837,8 @@ Once the reader types, the quick pick ranks by match.
 
 **Accept:** `openAt({dir, anchor: stepId, trail: primary path})`.
 
+**Empty:** with no sidestories, the same message as Open Sidestory (§10).
+
 ---
 
 ## 10. Open Sidestory
@@ -858,7 +863,7 @@ Each sidestory appears once.
 **Opening:**
 - `openAt({dir, trail: primary path})`, so a detail opens with its top on the trail and Back leads to the top (§13, Q5);
 - the Explorer's context menu (`sidestory.open` with a `dir`) keeps today's behaviour: just that sidestory;
-- with one sidestory, it opens directly; with none, the message points to "Show Sidestories" and the guide.
+- with one sidestory, it opens directly; with none, a message (shared with Go to Step, §9) offers "Show Sidestories", "Read the Guide" and "Copy a Prompt for Your Agent".
 
 ---
 

@@ -95,7 +95,11 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
       vscode.workspace.onDidCloseTextDocument((d) => this.drop(d.uri)),
       vscode.window.onDidChangeVisibleTextEditors(() => this.onVisible()),
       vscode.window.onDidChangeTextEditorSelection((e) => this.onSelection(e.textEditor)),
-      vscode.window.onDidChangeActiveTextEditor(() => this.scheduleStatus()),
+      vscode.window.onDidChangeActiveTextEditor((ed) => {
+        // The context key right away, as on a selection change; the status bar after the pause.
+        this.setCovered(!!ed && ed.document.uri.scheme === 'file' && this.anyCovering(ed.document.uri, ed.selection.active.line + 1));
+        this.scheduleStatus();
+      }),
       index.onDidChange(() => this.reresolveVisible()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.codeLens.enabled')) this.lensEmitter.fire();
@@ -484,7 +488,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
   private onSelection(editor: vscode.TextEditor): void {
     if (editor.document.uri.scheme !== 'file') return;
     // The context key now (a right-click follows the click that moved the cursor); the status bar after a pause.
-    if (editor === vscode.window.activeTextEditor) this.setCovered(this.covering(editor.document.uri, editor.selection.active.line + 1).length > 0);
+    if (editor === vscode.window.activeTextEditor) this.setCovered(this.anyCovering(editor.document.uri, editor.selection.active.line + 1));
     this.scheduleStatus();
   }
 
@@ -515,7 +519,18 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     return order.map((c) => byKey.get(c.id)!);
   }
 
-  /** Every item in a document (for "+N more"), tightest first within each line. */
+  /** Whether `covering(uri, line)` would return anything: the first hit returns, nothing is allocated. */
+  anyCovering(uri: vscode.Uri, line: number): boolean {
+    const r = this.results.get(uriKey(uri));
+    if (!r) return false;
+    for (const it of r.items) {
+      if (!it.range || line < it.range.start || line > it.range.end) continue;
+      if (it.state !== 'lost' && it.state !== 'pending' && this.isSection(it)) return true;
+    }
+    return false;
+  }
+
+  /** Every item in a document (for the lens that lists them all), by start line, tightest first within a line. */
   all(uri: vscode.Uri): HereItem[] {
     const r = this.results.get(uriKey(uri));
     if (!r) return [];
@@ -527,7 +542,7 @@ export class ExplainedHere implements vscode.CodeLensProvider, vscode.Disposable
     const editor = vscode.window.activeTextEditor;
     const on = vscode.workspace.getConfiguration('sidestory').get<boolean>('statusBar.enabled', true);
     const line = editor ? editor.selection.active.line + 1 : 0;
-    const anyHere = editor && editor.document.uri.scheme === 'file' ? this.covering(editor.document.uri, line).length > 0 : false;
+    const anyHere = editor && editor.document.uri.scheme === 'file' ? this.anyCovering(editor.document.uri, line) : false;
     this.setCovered(anyHere);
     if (!on) {
       this.status?.dispose();

@@ -124,13 +124,23 @@ describe('drift', () => {
     story(root, '', 'c', { anchors: { x: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' }, y: { file: 'g.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
     drifts.perSidestoryBytes = 400;
     await start();
-    const doc = { uri: Uri.file(join(root, 'g.ts')), isDirty: true, version: 7, getText: () => code(50) };
+    const doc = { uri: Uri.file(join(root, 'g.ts')), isDirty: true, version: 7, lineCount: 51, offsetAt: () => code(50).length, getText: () => code(50) };
     workspace.textDocuments = [doc as never];
     // Past the per-sidestory budget as the buffer is (a size made from the version alone slipped past it).
     expect(await driftOf('c')).toEqual({ outOfDate: 0, lost: 0, unchecked: 1 });
     workspace.textDocuments = [];
     events.documentClosed.fire(doc);
     expect(drift.get(entry('c'))).toBeUndefined(); // dirty: recomputed from the file
+  });
+
+  it('an unsaved document over the file limit is not copied to be measured', async () => {
+    story(root, '', 'd', { anchors: { x: { file: 'f.ts', range: [5, 6], quote: 'line 5\nline 6' } } });
+    drifts.fileBytes = 100;
+    await start();
+    const getText = vi.fn(() => code(50));
+    workspace.textDocuments = [{ uri: Uri.file(join(root, 'f.ts')), isDirty: true, version: 3, lineCount: 51, offsetAt: () => code(50).length, getText } as never];
+    expect(await driftOf('d')).toEqual({ outOfDate: 0, lost: 0, unchecked: 1 });
+    expect(getText).not.toHaveBeenCalled();
   });
 
   it('prefers the live states of a sidestory open in a panel', async () => {

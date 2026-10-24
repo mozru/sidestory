@@ -380,6 +380,25 @@ describe('the status bar item', () => {
     expect(covered()).toBe(false);
   });
 
+  it('sets sidestory.coveredHere right away when another editor becomes active', async () => {
+    story(root, '', 'a', { title: 'A', anchors: { a1: { file: 'f.ts', range: [5, 9] } } });
+    write(join(root, 'g.ts'), code(20));
+    await start();
+    const d = doc(join(root, 'f.ts'));
+    const g = doc(join(root, 'g.ts'));
+    show(d);
+    await lensesOf(d);
+    const covered = () => executed.filter((c) => c[0] === 'setContext' && c[1] === 'sidestory.coveredHere').at(-1)?.[2];
+    events.activeEditorChanged.fire(show(d, 6));
+    expect(covered()).toBe(true); // synchronously
+    events.activeEditorChanged.fire(show(g, 6));
+    expect(covered()).toBe(false);
+    events.activeEditorChanged.fire(undefined);
+    expect(covered()).toBe(false);
+    events.activeEditorChanged.fire(show(d, 7));
+    expect(covered()).toBe(true);
+  });
+
   it('skips sidestories a visible panel shows, and the details it already offers', async () => {
     story(root, '', 'top', { title: 'Top', anchors: { t1: { file: 'f.ts', range: [1, 50] } }, details: ['det'] });
     story(root, '', 'det', { title: 'Det', anchors: { d1: { file: 'f.ts', range: [5, 9] } } });

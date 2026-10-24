@@ -181,12 +181,14 @@ export class DriftQueue implements vscode.Disposable {
       }
     }
     const stats = new Map<string, FileStamp | undefined>();
+    // Open documents by URI, once per computation.
+    const open = new Map(vscode.workspace.textDocuments.map((d) => [d.uri.toString(), d] as const));
     for (const [f, u] of files) {
       const s = await stat(u);
       // An open document is read from its buffer: its size (for the byte budget) is the buffer's, and its version
       // is part of the stamp, so unsaved edits count.
-      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === u.toString());
-      stats.set(f, s && doc?.isDirty ? { mtime: s.mtime, size: Buffer.byteLength(doc.getText()), version: doc.version } : s);
+      const doc = open.get(u.toString());
+      stats.set(f, s && doc?.isDirty ? { mtime: s.mtime, size: bufferBytes(doc), version: doc.version } : s);
     }
     // Kept short: the manifest's stamp and a hash of every anchored file's path and stat (a manifest can name
     // hundreds of long paths, and the cache holds 2,000 entries).
@@ -281,4 +283,13 @@ async function stat(uri: vscode.Uri): Promise<{ mtime: number; size: number } | 
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A dirty buffer's size in UTF-8 bytes, for the byte budgets. Its length in UTF-16 units (a lower bound on the
+ * bytes) comes without copying the text: a buffer already over the file limit is never copied just to be measured.
+ */
+function bufferBytes(doc: vscode.TextDocument): number {
+  const units = doc.offsetAt(new vscode.Position(doc.lineCount, 0));
+  return units > DRIFT_LIMITS.fileBytes ? units : Buffer.byteLength(doc.getText());
 }

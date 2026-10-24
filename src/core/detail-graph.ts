@@ -60,8 +60,12 @@ export interface DetailGraph {
 export const MAX_GRAPH_EDGES = 50_000;
 /** Primary paths are cut to this many names, the panel's trail limit (MAX_TRAIL). */
 export const MAX_PRIMARY_PATH = 16;
-/** Top-anchored prefixes up to this many names are walked in O(PREFIX), not O(depth). */
-const PREFIX = 32;
+/**
+ * Top-anchored prefixes up to this many names are walked in O(PREFIX), not O(depth). `primaryPath`'s `max` must be
+ * at most this for the walk to stay bounded: a larger `max` walks the whole chain from the node.
+ */
+export const PRIMARY_PATH_PREFIX = 32;
+const PREFIX = PRIMARY_PATH_PREFIX;
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

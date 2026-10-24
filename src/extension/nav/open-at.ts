@@ -34,6 +34,8 @@ export interface NavigatorHost {
 export const RECENT_KEY = 'sidestory.recent';
 const MAX_RECENT = 30;
 const DOUBLE_OPEN_MS = 500;
+/** Longest trail argument looked at (4 × MAX_TRAIL); a longer one falls back to the sidestory alone. */
+const MAX_TRAIL_IN = 64;
 
 /** Checks arguments that other extensions may pass (§7.5); undefined when they aren't a sidestory. */
 export function validateOpenAt(raw: unknown): { ref: ExplainerRef; trail: [ExplainerRef, ...ExplainerRef[]]; anchor?: string; newPanel: boolean; source?: OpenAtArgs['source'] } | undefined {
@@ -49,8 +51,10 @@ export function validateOpenAt(raw: unknown): { ref: ExplainerRef; trail: [Expla
   const ref = refFromDir(dir);
   if (!ref) return undefined;
   const anchor = typeof a.anchor === 'string' && anchorIdSchema.safeParse(a.anchor).success ? a.anchor : undefined;
-  let names = Array.isArray(a.trail) ? a.trail.filter((n): n is string => typeof n === 'string' && explainerNameSchema.safeParse(n).success) : [];
-  if (names.length !== (Array.isArray(a.trail) ? a.trail.length : 0)) names = []; // any bad name: just the sidestory
+  // A trail longer than any the extension makes isn't parsed name by name: just the sidestory.
+  const trailIn = Array.isArray(a.trail) && a.trail.length <= MAX_TRAIL_IN ? a.trail : [];
+  let names = trailIn.filter((n): n is string => typeof n === 'string' && explainerNameSchema.safeParse(n).success);
+  if (names.length !== trailIn.length) names = []; // any bad name: just the sidestory
   // Each name once, ending at the sidestory shown.
   const seen = new Set<string>();
   names = names.filter((n) => n !== ref.name && !seen.has(n) && seen.add(n));

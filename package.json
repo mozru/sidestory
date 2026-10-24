@@ -368,6 +368,10 @@
           "when": "false"
         },
         {
+          "command": "sidestory.showHere",
+          "when": "editorIsOpen"
+        },
+        {
           "command": "sidestory.tree.filter",
           "when": "false"
         },

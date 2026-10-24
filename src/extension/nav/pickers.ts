@@ -133,7 +133,7 @@ function sidestoryItem(index: SidestoryIndex, e: IndexEntry): SidestoryItem {
   const pkg = index.packageOf(e);
   const parents = pkg?.graph.parents(e.ref.name).length ?? 0;
   // Places other than its primary path: every parent when it is listed at the top level, else the others.
-  const others = index.primaryPath(e, 2).length === 1 ? parents : parents - 1;
+  const others = (pkg?.graph.isTop(e.ref.name) ?? true) ? parents : parents - 1;
   // Folder names are repository text too (on Linux they can hold newlines and bidi controls).
   const where = displayText(`${vscode.workspace.asRelativePath(pkg?.folder ?? e.ref.dir, (vscode.workspace.workspaceFolders?.length ?? 0) > 1)}/${e.ref.name}`, 200);
   return {
@@ -230,7 +230,8 @@ export async function goToStep(index: SidestoryIndex, ctx: GoToStepContext): Pro
     qp.placeholder = forced
       ? `All packages have more than ${PICK_LIMITS.steps.toLocaleString('en-US')} steps: showing this package`
       : total > items.length
-        ? // Past the cap with the toggle shown, This package is already forced: nothing narrower is left to offer.
+        ? // Past the cap and not forced: no package is known (nothing narrower to offer), or This package was chosen
+          // and is over the cap on its own.
           `Showing ${items.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} steps`
         : 'Type to find a step';
   };

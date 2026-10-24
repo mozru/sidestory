@@ -142,7 +142,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
-| `sidestory.codeLens.enabled` | `true` | A CodeLens above code a sidestory explains, naming it and its step (at most 30 per file; hidden while that sidestory is open). Can be set per language. |
+| `sidestory.codeLens.enabled` | `true` | A CodeLens above code a sidestory explains, naming it and its step (at most 30 per file, then one that lists them all; hidden while a visible panel shows that sidestory). Can be set per language. |
 | `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |

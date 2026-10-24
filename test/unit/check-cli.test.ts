@@ -458,4 +458,17 @@ describe('the text report', () => {
     expect(first).toBe('.sidestory/x/manifest.json:3: error bad: name “a[31mred[0m” nextline');
     expect(first).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
+
+  it('drops bidirectional overrides and isolates and line separators, from messages and file names', () => {
+    const report: CheckReport = {
+      sidestory: '/r/.sidestory/x',
+      widgets: [],
+      findings: [{ severity: 'warning', file: '/r/.sidestory/x/a\u202egnp.js\u2028b.ts', code: 'odd', message: 'name \u2066evil\u2069 \u202bx\u202c\u2029y' }],
+      errors: 0,
+      warnings: 1,
+    };
+    const first = formatReport(report, '/r').split('\n')[0]!;
+    expect(first).toBe('.sidestory/x/agnp.js b.ts: warning odd: name evil x y');
+    expect(first).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u2028\u2029]/);
+  });
 });

@@ -302,7 +302,12 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     'sidestory.showHere': async (args?: unknown) => {
       const a = (args && typeof args === 'object' ? args : {}) as { uri?: unknown; line?: unknown; all?: unknown; keys?: unknown };
       const editor = vscode.window.activeTextEditor;
-      const uri = typeof a.uri === 'string' ? vscode.Uri.parse(a.uri) : editor?.document.uri;
+      let uri: vscode.Uri | undefined;
+      try {
+        uri = typeof a.uri === 'string' ? vscode.Uri.parse(a.uri) : editor?.document.uri;
+      } catch {
+        uri = undefined; // not a URI
+      }
       if (!uri) {
         vscode.window.setStatusBarMessage(NO_SIDESTORY_HERE, 3000);
         return;

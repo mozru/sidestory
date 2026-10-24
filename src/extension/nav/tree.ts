@@ -234,7 +234,9 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       case 'package': {
         const item = new vscode.TreeItem(node.pkg.label, this.index.packageCount <= TREE_LIMITS.expandPackages ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
         item.id = node.id;
-        item.description = `${node.pkg.entries.size} sidestor${node.pkg.entries.size === 1 ? 'y' : 'ies'}`;
+        // Filtered: its matches, as a group counts the members it shows.
+        const count = this.filtered ? [...node.pkg.entries.keys()].filter((k) => this.filtered!.matches.has(k)).length : node.pkg.entries.size;
+        item.description = `${count} sidestor${count === 1 ? 'y' : 'ies'}`;
         item.iconPath = new vscode.ThemeIcon('folder-library');
         item.tooltip = `${node.pkg.label}\n${displayText(vscode.workspace.asRelativePath(node.pkg.folder, true), 300)}`;
         item.contextValue = 'package';

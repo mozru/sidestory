@@ -109,6 +109,12 @@ describe('validateOpenAt', () => {
     expect(v.trail.at(-1)!.name).toBe('n19');
     expect(v.trail[0]!.name).toBe('n4');
   });
+  it('a trail argument longer than 64 is not parsed: just the sidestory', () => {
+    const ok = Array.from({ length: 64 }, (_, i) => `n${i}`);
+    expect(validateOpenAt(args('n63', { trail: ok }))!.trail).toHaveLength(16);
+    const tooLong = Array.from({ length: 65 }, (_, i) => `n${i}`);
+    expect(validateOpenAt(args('n64', { trail: tooLong }))!.trail.map((r) => r.name)).toEqual(['n64']);
+  });
   it('accepts only known sources and a boolean newPanel', () => {
     expect(validateOpenAt(args('a', { source: 'evil', newPanel: 'yes' }))).toMatchObject({ source: undefined, newPanel: false });
     expect(validateOpenAt(args('a', { source: 'tree', newPanel: true }))).toMatchObject({ source: 'tree', newPanel: true });

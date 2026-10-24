@@ -125,4 +125,19 @@ describe('the Sidestories tree', () => {
     tree.setFilter('alpha');
     expect(tree.getTreeItem(group()).description).toBe('1 sidestory');
   });
+
+  it('a filtered package counts its matches', async () => {
+    story(root, 'one', 'a', { title: 'Alpha' });
+    story(root, 'one', 'b', { title: 'Alpine' });
+    story(root, 'one', 'c', { title: 'Gamma' });
+    story(root, 'two', 'd', { title: 'Delta' });
+    const { tree } = await build();
+    const one = () => tree.getChildren().find((n) => (n as { kind: string }).kind === 'package' && (n as { pkg: { entries: Map<string, unknown> } }).pkg.entries.size === 3)!;
+    expect(tree.getTreeItem(one()).description).toBe('3 sidestories');
+    tree.setFilter('alp');
+    expect(tree.getChildren()).toHaveLength(1);
+    expect(tree.getTreeItem(one()).description).toBe('2 sidestories');
+    tree.setFilter('alpha');
+    expect(tree.getTreeItem(one()).description).toBe('1 sidestory');
+  });
 });

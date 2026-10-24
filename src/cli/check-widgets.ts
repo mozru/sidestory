@@ -18,6 +18,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
 import { simple } from 'acorn-walk';
+import { plainLine } from '../core/display-text.ts';
 import { outlineHtml } from '../core/html-scan.ts';
 import { explainerNameSchema, parseGroup, parseManifest, type Anchor, type LineRange, type Manifest } from '../core/manifest.ts';
 import { pinQuote, trimBlankLines } from '../core/pin.ts';
@@ -597,19 +598,12 @@ function finish(report: CheckReport): CheckReport {
 
 const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 
-/**
- * A finding message as one terminal line: messages quote repository text (compiler diagnostics, names), so line
- * breaks become spaces and other C0/C1 control characters (escape sequences) are dropped.
- */
-function plainLine(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/[\t\n\r\v\f]+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
-}
-
 export function formatReport(report: CheckReport, cwd = process.cwd()): string {
+  // Messages and file names quote repository text (compiler diagnostics, names, paths): each prints as one plain
+  // line, without control, bidirectional or invisible characters.
   const shown = (file: string) => {
     const r = relative(cwd, file);
-    return r && !r.startsWith('..') && !isAbsolute(r) ? r : file;
+    return plainLine(r && !r.startsWith('..') && !isAbsolute(r) ? r : file);
   };
   const sorted = [...report.findings].sort((a, b) => rank[a.severity] - rank[b.severity] || a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0));
   const out = sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${plainLine(f.message)}`);
@@ -618,7 +612,7 @@ export function formatReport(report: CheckReport, cwd = process.cwd()): string {
     out.push(`Pinned ${p.pinned.length} anchor(s)${p.pinned.length ? `: ${p.pinned.map((x) => x.anchor).join(', ')}` : ''}; ${p.unchanged.length} already pinned; ${p.skipped.length + p.needsConsent.length} not pinned.`);
     if (p.widgetsMayRead.length) {
       out.push('Widgets in this sidestory may now read (once the quotes are committed, or confirmed in VS Code):');
-      for (const e of p.widgetsMayRead) out.push(`  ${e.file} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`);
+      for (const e of p.widgetsMayRead) out.push(`  ${plainLine(e.file)} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`);
     }
   }
   const n = report.widgets.length;

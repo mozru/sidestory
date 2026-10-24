@@ -161,7 +161,7 @@ The **Sidestories** view (the Sidestory icon in the activity bar, shown once a w
 - **Filter** (the funnel in the view's title bar) matches titles, names, summaries and groups, and shows each match once, under its shortest path from a top-level sidestory.
 - **Explained here.** A CodeLens above code that a sidestory explains names it and its step ("Overview › Detail · step 3: Title"); click it to open the sidestory there. The status bar names the sidestory for the cursor's line. **Go to Step…** finds a step by its title in the current package or all of them.
 
-Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel you were last reading, if it's under the same overview, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
+Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel you were last reading, if it's under the same top-level sidestory, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](https://github.com/mozru/sidestory/blob/main/examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.
 

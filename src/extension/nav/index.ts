@@ -4,7 +4,7 @@
 // Sidestory read from it. It only reads repository text, never runs it, and every read and scan is bounded
 // (§6.5, §11.1), so it runs in Restricted Mode too.
 import * as vscode from 'vscode';
-import { buildDetailGraph, MAX_GRAPH_EDGES, mergeGroups, type DetailGraph } from '../../core/detail-graph.ts';
+import { buildDetailGraph, MAX_GRAPH_EDGES, mergeGroups, PRIMARY_PATH_PREFIX, type DetailGraph } from '../../core/detail-graph.ts';
 import { displayText, middleTruncate } from '../../core/display-text.ts';
 import { excludePatterns, globMatcher, joinGlobs } from '../../core/glob.ts';
 import { OutlineScanner, type OutlineStep } from '../../core/html-scan.ts';
@@ -216,9 +216,11 @@ export class SidestoryIndex implements vscode.Disposable {
 
   /**
    * Names on the primary path, top first (§4.3); just the sidestory when it is a top or unknown. Anchored at the top:
-   * a path longer than `max` keeps its first `max` names (so it may stop short of the sidestory).
+   * a path longer than `max` keeps its first `max` names (so it may stop short of the sidestory). `max` must be at
+   * most PRIMARY_PATH_PREFIX (32), or the walk is no longer bounded (every caller here passes 17 or less).
    */
   primaryPath(e: IndexEntry, max?: number): string[] {
+    console.assert(max === undefined || max <= PRIMARY_PATH_PREFIX, `primaryPath: max ${max} > ${PRIMARY_PATH_PREFIX} is an unbounded walk`);
     const p = this.packageOf(e)?.graph.primaryPath(e.ref.name, max);
     return p ? [...p] : [e.ref.name];
   }
