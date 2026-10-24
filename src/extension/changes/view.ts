@@ -11,7 +11,7 @@ import { COMMIT_INPUT, FULL_SHA, isValidBase } from './base.ts';
 import type { Mode, Snapshot } from './comparison.ts';
 import { chooseRepository, Comparison } from './comparison.ts';
 import type { ApiState, GitApi, GitRepo } from './git-api.ts';
-import { configValue, gitApi, relPath } from './git-api.ts';
+import { configValue, gitApi, refReader, relPath } from './git-api.ts';
 import { ChangeDecorations, emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import type { ChangeEntry, SortKey } from './model.ts';
 import { baseName, commitsLabel, countLines, filterEntries, patchCounts, MAX_LISTED, parseFilter, short, SORT_KEYS, step } from './model.ts';
@@ -64,6 +64,10 @@ export class ChangesView implements vscode.Disposable {
   private counted: { comparison: Comparison; epoch: number } | undefined;
   /** The last path opened because the selection moved (openOnSelect): a refresh re-selecting it opens nothing. */
   private lastSelected: string | undefined;
+  /** Counts of files on disk by (merge-base, path, size, time): kept while a file doesn't change. */
+  private readonly diskCounts = new Map<string, { added?: number; removed?: number; noText?: boolean }>();
+  /** The merge-base rendered last: a new one starts expanded again after Collapse All. */
+  private renderedBase: string | undefined;
   private repaintTimer: ReturnType<typeof setTimeout> | undefined;
   /** For tests and the perf smoke: how long the last render took. */
   readonly stats = { renders: 0, lastRenderMs: 0, files: 0 };
@@ -78,7 +82,11 @@ export class ChangesView implements vscode.Disposable {
       this.view,
       GitFileSystem.register(this.ids),
       vscode.window.registerFileDecorationProvider(new ChangeDecorations()),
-      this.view.onDidChangeVisibility(() => this.updateActive()),
+      this.view.onDidChangeVisibility(() => {
+        this.updateActive();
+        const snap = this.snapshot;
+        if (this.view.visible && snap && this.comparison) this.countLater(snap, this.comparison.epoch);
+      }),
       this.view.onDidChangeSelection((e) => this.onSelect(e.selection)),
       vscode.window.onDidChangeActiveTextEditor(() => this.updateActiveFile()),
       vscode.window.tabGroups.onDidChangeTabs(() => this.updateActiveFile()),
@@ -87,6 +95,7 @@ export class ChangesView implements vscode.Disposable {
         if (e.affectsConfiguration('sidestory.changes.defaultBase') || e.affectsConfiguration('sidestory.changes.includeUncommitted')) {
           this.syncToggles();
           if (this.view.visible) void this.comparison?.refresh(true);
+          else this.comparison?.invalidate();
         }
       }),
     );
@@ -259,6 +268,10 @@ export class ChangesView implements vscode.Disposable {
     const filter = parseFilter(this.filterText);
     const entries = filterEntries(snap.entries, filter);
     const multi = (this.api?.repositories.length ?? 0) > 1;
+    if (this.renderedBase !== snap.mergeBase) {
+      this.renderedBase = snap.mergeBase;
+      this.tree.resetExpansion();
+    }
     this.tree.set({
       entries,
       listMode: this.listMode(),
@@ -276,7 +289,7 @@ export class ChangesView implements vscode.Disposable {
     }
     this.updateTitle();
     this.updateActiveFile();
-    this.countLater(snap, c.epoch);
+    if (this.view.visible) this.countLater(snap, c.epoch);
     this.stats.renders++;
     this.stats.files = snap.entries.length;
     this.stats.lastRenderMs = Date.now() - t0;
@@ -336,7 +349,9 @@ export class ChangesView implements vscode.Disposable {
     for (const e of todo) e.counting = true;
     const repo = snap.repo;
     // A per-file `git diff` runs the user's diff.external: never in the background then (§20.2).
-    const external = Promise.all([configValue(repo, 'diff.external'), repo.getGlobalConfig?.('diff.external').catch(() => '')]).then((v) => v.some((x) => !!x?.trim()));
+    const external = Promise.all([configValue(repo, 'diff.external'), repo.getGlobalConfig?.('diff.external').catch(() => '')]).then(
+      (v) => !!process.env.GIT_EXTERNAL_DIFF || v.some((x) => !!x?.trim()),
+    );
     let next = 0;
     const work = async () => {
       while (next < todo.length && live()) {
@@ -344,25 +359,36 @@ export class ChangesView implements vscode.Disposable {
         e.counting = false;
         try {
           const uri = vscode.Uri.joinPath(repo.rootUri, ...e.path.split('/'));
+          // A file on disk (working tree mode): its count is reused while its size and time stay the same.
+          const onDisk = snap.mode === 'workingTree' && e.status !== 'D';
+          const st = onDisk ? await vscode.workspace.fs.stat(uri) : undefined;
+          const diskKey = st ? `${snap.mergeBase}\n${e.path}\n${st.size}\n${st.mtime}` : '';
+          const known = st && this.diskCounts.get(diskKey);
+          if (known) {
+            Object.assign(e, known);
+            continue;
+          }
           if (e.untracked) {
-            const st = await vscode.workspace.fs.stat(uri);
-            if (st.type !== vscode.FileType.File || st.size > COUNT_LATER.bytes) continue;
+            if (!st || st.type !== vscode.FileType.File || st.size > COUNT_LATER.bytes) continue;
             const bytes = await vscode.workspace.fs.readFile(uri);
             if (bytes.subarray(0, 8000).includes(0)) e.noText = true;
             else e.added = countLines(bytes);
             e.removed = 0;
           } else {
             if (await external) continue;
-            // At most 2 MB on the side that has the file: a patch is read whole.
-            const size = snap.mode === 'workingTree' && e.status !== 'D'
-              ? (await vscode.workspace.fs.stat(uri)).size
-              : (await repo.getObjectDetails(e.status === 'D' ? snap.mergeBase : snap.head.sha, uri.fsPath)).size;
-            if (size > COUNT_LATER.bytes) continue;
+            // At most 2 MB on both sides: a patch is read whole.
+            const newSize = e.status === 'D' ? 0 : st ? st.size : (await repo.getObjectDetails(snap.head.sha, uri.fsPath)).size;
+            const oldSize = e.status === 'A' ? 0 : (await repo.getObjectDetails(snap.mergeBase, uri.fsPath)).size;
+            if (newSize > COUNT_LATER.bytes || oldSize > COUNT_LATER.bytes) continue;
             const patch = snap.mode === 'workingTree' ? await repo.diffWith(snap.mergeBase, uri.fsPath) : await repo.diffBetween(snap.mergeBase, snap.head.sha, uri.fsPath);
             if (!live()) return;
             Object.assign(e, patchCounts(patch));
           }
-          if (!e.unsaved) c.remember(e.path, { added: e.added, removed: e.removed, noText: e.noText });
+          const counted = { added: e.added, removed: e.removed, noText: e.noText };
+          if (st) {
+            if (this.diskCounts.size > 5000) this.diskCounts.clear();
+            if (!e.unsaved) this.diskCounts.set(diskKey, counted);
+          } else c.remember(e.path, counted);
           this.scheduleRepaint();
         } catch {
           // gone or unreadable: no count
@@ -433,6 +459,7 @@ export class ChangesView implements vscode.Disposable {
     if (!s) return;
     const { left, right, title } = this.diffUris(s, e);
     this.lastOpened = { path: e.path, at: Date.now() };
+    this.lastSelected = e.path;
     await vscode.commands.executeCommand('vscode.diff', left, right, title, {
       preview: opts.preview ?? true,
       preserveFocus: opts.preserveFocus ?? false,
@@ -769,14 +796,15 @@ export class ChangesView implements vscode.Disposable {
     this.useRepo(pick.repo);
   }
 
-  /** Fetch, on a click only (§9.9): the default remote, through the git extension. */
+  /** Fetch, on a click only (§9.9): the base's remote, else the default one, through the git extension. */
   private async fetch(): Promise<void> {
     const repo = this.comparison?.repo;
     if (!repo?.fetch) return;
     try {
       const st = this.comparison?.state;
-      const spec = st?.kind === 'baseNotFound' ? st.spec : st?.kind === 'ready' ? st.snapshot.base.spec : undefined;
-      const remote = spec && repo.state.remotes.find((r) => spec.startsWith(`${r.name}/`))?.name;
+      // The base's remote when it is a remote branch (or names one), else the default remote.
+      const via = st?.kind === 'ready' ? st.snapshot.base.via : st?.kind === 'baseNotFound' ? `refs/remotes/${st.spec}` : '';
+      const remote = refReader(repo).remotes().find((r) => via.startsWith(`refs/remotes/${r}/`));
       await vscode.window.withProgress({ location: { viewId: VIEW_ID }, title: 'Fetching…' }, () => repo.fetch!(remote ? { remote } : {}));
     } catch (e) {
       void vscode.window.showErrorMessage(`Fetch failed: ${plainForMessage((e as Error).message ?? String(e))}`);

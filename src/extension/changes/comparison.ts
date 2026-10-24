@@ -104,6 +104,8 @@ export interface ComparisonOptions {
 
 const DEBOUNCE_MS = 300;
 const MAX_DEBOUNCE_MS = 2000;
+/** Working tree mode lists the whole branch on each recompute: at most one a second. */
+const MIN_GAP_MS = 1000;
 
 export class Comparison implements vscode.Disposable {
   readonly repo: GitRepo;
@@ -131,6 +133,7 @@ export class Comparison implements vscode.Disposable {
   private readonly dirty = new Set<string>();
   /** Bumped by Refresh: a run that started before it doesn't write its caches back. */
   private generation = 0;
+  private lastRunAt = 0;
   /** Counts found later (per-file patches, untracked files), kept across recomputes of the same merge-base and head. */
   private readonly counts = new Map<string, { added?: number; removed?: number; noText?: boolean }>();
   private countsKey = '';
@@ -212,11 +215,20 @@ export class Comparison implements vscode.Disposable {
     if (!this.timer) this.firstEventAt = now;
     clearTimeout(this.timer);
     // A burst (a rebase, a checkout) extends the wait up to 2 s from its first event, then runs once.
-    const wait = Math.max(0, Math.min(delay, this.firstEventAt + MAX_DEBOUNCE_MS - now));
+    let wait = Math.max(0, Math.min(delay, this.firstEventAt + MAX_DEBOUNCE_MS - now));
+    if (this.opts.mode() === 'workingTree') wait = Math.max(wait, this.lastRunAt + MIN_GAP_MS - now);
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.run();
     }, wait);
+  }
+
+  /** Drops the caches and marks the comparison stale without running (a setting changed while the view is hidden). */
+  invalidate(): void {
+    this.base = this.mergeBase = this.commits = this.committedList = undefined;
+    this.counts.clear();
+    this.generation++;
+    this.schedule();
   }
 
   private run(): Promise<void> {
@@ -266,6 +278,7 @@ export class Comparison implements vscode.Disposable {
   }
 
   private async compute(): Promise<void> {
+    this.lastRunAt = Date.now();
     const repo = this.repo;
     const s = repo.state;
     const wasBusy = this.busy;
@@ -382,10 +395,13 @@ export class Comparison implements vscode.Disposable {
       }
       for (const e of entries) if (e.unsaved) touched.add(e.path);
     }
+    // A file that is changing now may differ from what was counted (and after a revert or stash it stops being
+    // "touched" with an old count): forget those; the view re-counts them, keyed by the file's size and time.
+    for (const t of touched) this.counts.delete(t);
     for (const e of entries) {
       if (e.added !== undefined || e.noText) continue;
       const c = this.counts.get(e.path);
-      if (c && !touched.has(e.path)) Object.assign(e, c);
+      if (c) Object.assign(e, c);
     }
     entries.sort((a, b) => comparePaths(a.path, b.path));
     const total = entries.length;

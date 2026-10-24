@@ -353,13 +353,13 @@
         "command": "sidestory.changes.nextFile",
         "key": "ctrl+alt+pagedown",
         "mac": "ctrl+cmd+down",
-        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.hasFilesFileChanged)"
+        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
       },
       {
         "command": "sidestory.changes.prevFile",
         "key": "ctrl+alt+pageup",
         "mac": "ctrl+cmd+up",
-        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.hasFilesFileChanged)"
+        "when": "sidestory.changes.hasFiles && (isInDiffEditor || focusedView == 'sidestory.changes' || sidestory.changes.activeFileChanged)"
       }
     ],
     "configuration": {
@@ -970,12 +970,12 @@
       {
         "view": "sidestory.changes",
         "when": "sidestory.changes.state == filteredOut",
-        "contents": "No changed file matches the filter.\n[Clear Filter](command:sidestory.changes.clearFilter)"
+        "contents": "[Clear Filter](command:sidestory.changes.clearFilter)"
       },
       {
         "view": "sidestory.changes",
         "when": "sidestory.changes.state == error",
-        "contents": "Couldn't compare with the base.\n[Refresh](command:sidestory.changes.refresh)"
+        "contents": "[Refresh](command:sidestory.changes.refresh)"
       }
     ]
   },
