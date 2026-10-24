@@ -84,8 +84,11 @@ test.describe('widgets', () => {
     await expect(page.locator('#status\\.problems')).toContainText('1', { timeout: 20_000 });
     await command(page, 'View: Toggle Problems');
     await expect(page.locator('.markers-panel')).toContainText('Three.js is not available');
-    // The last good version keeps running, with a badge.
-    await expect(panel.frameLocator('iframe.cx-content-frame').locator('explain-widget .cx-widget-note')).toContainText('compile error');
+    // The last good version keeps running, with a badge. The Problems panel took half the window, and the panel
+    // mounts only widgets near the view: bring this one into view first.
+    const box = panel.frameLocator('iframe.cx-content-frame').locator('explain-widget').first();
+    await expect(box.locator('.cx-widget-note')).toContainText('compile error');
+    await box.scrollIntoViewIfNeeded();
     await expect(widget(panel).getByTestId('backoff')).toBeVisible();
   });
 
