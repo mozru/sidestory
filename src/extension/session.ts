@@ -2,7 +2,14 @@
 // webview in sync. The panel can dive into detail explainers and come back (the trail).
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
-import { explainerNameSchema, parseManifest } from '../core/manifest.ts';
+import { explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
+import { decodePair } from '../core/hunks.ts';
+import type { DiffContext } from './changes/open.ts';
+import { isDiffSide, openStepsIn, openTarget } from './changes/open.ts';
+import type { SideKey } from './changes/targets.ts';
+import { anchorAtSide, mapOldRange, targetKey } from './changes/targets.ts';
+import { relPath } from './changes/git-api.ts';
+import { GIT_SCHEME } from './changes/git-fs.ts';
 import type { Resolution } from '../core/resolve.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { displayText, plainForMessage } from '../core/display-text.ts';
@@ -65,7 +72,22 @@ export interface SessionHost {
   opened?(ref: ExplainerRef): void;
   /** SV symbol tables shared by every panel (docs/AUTHORING-PLAN.md §8.2); without it, the session keeps its own. */
   symbols?: SymbolTables;
+  /** The branch's comparison, for sidestories with a `base` (docs/CHANGES-PLAN.md §7, §8); without it, file stories. */
+  diffs?: SessionDiffs;
 }
+
+/** What a session with a `base` needs from the Changes view. */
+export interface SessionDiffs {
+  /**
+   * The comparison when `base` gives the view's merge-base (§11.4); undefined when there is none here (Restricted
+   * Mode, no git, another base): the sidestory then opens as a plain file story. `who` keeps coverage computing.
+   */
+  context(base: string, who: string): Promise<DiffContext | undefined>;
+  release(who: string): void;
+  readonly onDidChange: vscode.Event<void>;
+}
+
+let sessionSeq = 0;
 
 /** What the page links to, from its last `codeTargets` (docs/AUTHORING-PLAN.md §8.2). */
 interface CodeTargets {
@@ -131,7 +153,10 @@ export class ExplainerSession implements vscode.Disposable {
   private assetRequests = 0;
   private readonly assetQueue: (() => void)[] = [];
   /** Anchors by their file's URI, for the manifest loaded: looked up on every edit and cursor move in any file. */
-  private byFile: { manifest: Manifest | undefined; anchors: Map<string, Anchor[]> } = { manifest: undefined, anchors: new Map() };
+  private byFile: { manifest: Manifest | undefined; diff: DiffContext | undefined; anchors: Map<string, Anchor[]>; sides: Map<string, Anchor[]> } = { manifest: undefined, diff: undefined, anchors: new Map(), sides: new Map() };
+  /** The branch's comparison for a sidestory with `base` (§7): base-side anchors resolve against the merge-base. */
+  private diff: DiffContext | undefined;
+  private readonly diffWho = `session:${++sessionSeq}`;
   /** Bumped per file on every resolve, so a slower, older resolve can't overwrite a newer one. */
   private readonly fileSeq = new Map<string, number>();
   private active: string | undefined;
@@ -215,6 +240,30 @@ export class ExplainerSession implements vscode.Disposable {
         if (e.affectsConfiguration('sidestory.followCursorInDiagrams') && !this.lightingOn()) this.postHere({});
       }),
     );
+    if (host.diffs) {
+      this.subscriptions.push(
+        host.diffs.onDidChange(() =>
+          this.debounce('diff', RESOLVE_DELAY, () => {
+            const generation = this.generation;
+            void this.updateDiff().then((changed) => {
+              if (changed && generation === this.generation && !this.disposed) void this.resolveAll();
+            });
+          }),
+        ),
+      );
+    }
+  }
+
+  /** Looks up the comparison for this sidestory's base; true when what anchors resolve against changed (a rebase). */
+  private async updateDiff(): Promise<boolean> {
+    const base = this.manifest?.base;
+    const ctx = base && this.host.diffs ? await this.host.diffs.context(base, this.diffWho) : undefined;
+    if (!base) this.host.diffs?.release(this.diffWho);
+    if (this.disposed) return false;
+    const was = this.diff;
+    this.diff = ctx;
+    const sig = (c: DiffContext | undefined) => (c ? `${c.snapshot.mergeBase}\0${c.snapshot.head.sha}\0${c.snapshot.mode}` : '');
+    return sig(was) !== sig(ctx);
   }
 
   /** The explainer shown now. */
@@ -553,6 +602,8 @@ export class ExplainerSession implements vscode.Disposable {
       this.post({ type: 'content', title: this.title, html: this.html });
       void this.widgets?.refreshGate();
     }
+    await this.updateDiff();
+    if (this.disposed || generation !== this.generation) return;
     this.watchAnchorFiles();
     if ([...parsed.manifest.anchors.values()].some((a) => !a.quote)) this.noteUnpinned();
     await this.resolveAll();
@@ -586,7 +637,7 @@ export class ExplainerSession implements vscode.Disposable {
     for (const w of this.fileWatchers) w.dispose();
     this.fileWatchers = [];
     // Paths are validated to contain no glob syntax, so each pattern matches exactly one file.
-    for (const file of new Set(this.anchorList().map((a) => a.file))) {
+    for (const file of new Set(this.anchorList().filter((a) => sideOf(a) === 'head').map((a) => a.file))) {
       const w = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(this.ref.root, file));
       const uri = this.fileUri(file).toString();
       const changed = () => this.scheduleResolve(uri);
@@ -604,23 +655,79 @@ export class ExplainerSession implements vscode.Disposable {
     return vscode.Uri.joinPath(this.ref.root, file);
   }
 
-  private anchorsIn(uri: string): Anchor[] {
-    if (this.byFile.manifest !== this.manifest) {
-      const anchors = new Map<string, Anchor[]>();
-      for (const a of this.anchorList()) {
-        const key = uriKey(this.fileUri(a.file));
-        const list = anchors.get(key);
-        if (list) list.push(a);
-        else anchors.set(key, [a]);
-      }
-      this.byFile = { manifest: this.manifest, anchors };
+  /** An anchor's file relative to the repository of the comparison (head: new path, base: merge-base path). */
+  private repoPath(a: Anchor): string | undefined {
+    return this.diff ? relPath(this.diff.snapshot.repo, this.fileUri(a.file)) : undefined;
+  }
+
+  /**
+   * The document an anchor resolves against and is highlighted in (§6.2): head side, the working tree file (HEAD's
+   * blob in committed-only mode); base side, the merge-base blob of the old path. Undefined for a base-side anchor
+   * without a comparison (Restricted Mode, no git): it stays pending ("needs git"), never lost.
+   */
+  private targetUri(a: Anchor): vscode.Uri | undefined {
+    const p = this.repoPath(a);
+    if (sideOf(a) === 'head') return (p && this.diff?.uriFor({ path: p, side: 'head' })) || this.fileUri(a.file);
+    return p ? this.diff?.uriFor({ path: p, side: 'base' }) : undefined;
+  }
+
+  private buildTables(): void {
+    if (this.byFile.manifest === this.manifest && this.byFile.diff === this.diff) return;
+    const anchors = new Map<string, Anchor[]>();
+    const sides = new Map<string, Anchor[]>();
+    const add = (m: Map<string, Anchor[]>, key: string, a: Anchor) => {
+      const list = m.get(key);
+      if (list) list.push(a);
+      else m.set(key, [a]);
+    };
+    for (const a of this.anchorList()) {
+      const uri = this.targetUri(a);
+      if (uri) add(anchors, uriKey(uri), a);
+      const p = this.repoPath(a);
+      if (p) add(sides, targetKey({ path: p, side: sideOf(a) }), a);
     }
+    this.byFile = { manifest: this.manifest, diff: this.diff, anchors, sides };
+  }
+
+  private anchorsIn(uri: string): Anchor[] {
+    this.buildTables();
     return this.byFile.anchors.get(uriKey(uri)) ?? [];
+  }
+
+  /** Anchors keyed by (repo path, side), never by a URI with a commit in it (§8). */
+  private anchorsAt(key: SideKey): Anchor[] {
+    this.buildTables();
+    return this.byFile.sides.get(targetKey(key)) ?? [];
+  }
+
+  /**
+   * `targetsAt(editor)` (§8): the anchors cursor-follow considers in a document. On the base side of a diff, the
+   * head-side anchors of the file too (a line with no base-side target follows the matching new lines).
+   */
+  private targetsAt(doc: vscode.TextDocument): Anchor[] {
+    const key = this.diff?.keyOf(doc.uri);
+    if (!key) return this.anchorsIn(doc.uri.toString());
+    if (key.side === 'head') return this.anchorsAt(key);
+    const entry = this.diff!.entryFor(key);
+    return [...this.anchorsAt(key), ...(entry && entry.status !== 'D' ? this.anchorsAt({ path: entry.path, side: 'head' }) : [])];
+  }
+
+  /** The anchor the cursor is in, through the shared helper (and the old → new map on the base side). */
+  private cursorAnchor(doc: vscode.TextDocument, line: number, ids: Set<string>): string | undefined {
+    const sections = this.targets?.sections;
+    const key = this.diff?.keyOf(doc.uri);
+    if (!key || !this.diff) return anchorForCursor([...this.resolutions].filter(([k]) => ids.has(k)), line, { sections });
+    const entry = key.side === 'base' ? this.diff.entryFor(key) : undefined;
+    return anchorAtSide({ ids: (k) => this.anchorsAt(k).map((a) => a.id), resolution: (id) => this.resolutions.get(id) }, key, line, {
+      sections,
+      diff: entry ? this.diff.lineMap(entry.path) : undefined,
+      headPath: entry?.path,
+    });
   }
 
   private async resolveAll(): Promise<void> {
     const generation = this.generation;
-    const files = new Set(this.anchorList().map((a) => this.fileUri(a.file).toString()));
+    const files = new Set(this.anchorList().map((a) => this.targetUri(a)?.toString()).filter((u): u is string => !!u));
     for (const f of files) {
       await this.resolveFile(f, false);
       if (generation !== this.generation || this.disposed) return;
@@ -638,7 +745,9 @@ export class ExplainerSession implements vscode.Disposable {
     const generation = this.generation;
     const stillCurrent = () => !this.disposed && this.generation === generation && this.fileSeq.get(uri) === seq;
 
-    const source = await readInside(vscode.Uri.parse(uri), this.ref.root, MAX_CODE_BYTES);
+    const parsedUri = vscode.Uri.parse(uri);
+    // A merge-base blob (base-side anchors, §6.2) through the provider: immutable, read-only, never on disk.
+    const source = parsedUri.scheme === GIT_SCHEME ? await readGit(parsedUri) : await readInside(parsedUri, this.ref.root, MAX_CODE_BYTES);
     if (!stillCurrent()) return;
     // An open document's text is shared with the index (one PreparedText per document version, §7.2).
     const doc = source !== undefined && this.host.prepared ? vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri) : undefined;
@@ -732,7 +841,7 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.reveal.running || this.opening > 0) return;
     const doc = e.textEditor.document;
     const uri = doc.uri.toString();
-    const ids = new Set(this.anchorsIn(uri).map((a) => a.id));
+    const ids = new Set(this.targetsAt(doc).map((a) => a.id));
     // Code a detail explainer covers: when none of this explainer's sections do, offer to dive.
     const detail = [...this.detailFiles].find(([, d]) => d.files.has(uri));
     const linked = this.targets?.files.has(uriKey(uri)) ?? false;
@@ -769,7 +878,7 @@ export class ExplainerSession implements vscode.Disposable {
       // The shared cursor helper (cursor.ts). Only sections steer the step (docs/AUTHORING-PLAN.md §0, §8.2): an
       // anchor used only by `data-explain-ref` lights its boxes instead. Until the page has said which ids are
       // sections (first render, hidden panel), every anchor counts, as before.
-      const id = ids.size ? anchorForCursor([...this.resolutions].filter(([k]) => ids.has(k)), line, { sections: this.targets?.sections }) : undefined;
+      const id = ids.size ? this.cursorAnchor(doc, line, ids) : undefined;
       if (!id) {
         // Remembered only once the page got it: a hidden panel gets the hint next time.
         if (detail && detail[0] !== this.lastHint && this.post({ type: 'childHint', name: detail[0], title: detail[1].title })) {
@@ -1138,11 +1247,27 @@ export class ExplainerSession implements vscode.Disposable {
   private decorateActive(dim: boolean): void {
     const a = this.active ? this.manifest?.anchors.get(this.active) : undefined;
     const r = a ? this.resolutions.get(a.id) : undefined;
-    if (!a || !r?.range) {
+    const uri = a ? this.targetUri(a) : undefined;
+    if (!a || !r?.range || !uri) {
       this.decorations.set(undefined);
       return;
     }
-    this.decorations.set({ uri: this.fileUri(a.file), range: r.range, color: a.color, highlight: a.highlight, dim });
+    const visible = (u: vscode.Uri) => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === u.toString());
+    if (sideOf(a) === 'base' && this.diff && !visible(uri)) {
+      // An inline diff has no editor for the old side (§7.5): a note where the removed lines were, on the right.
+      const p = this.repoPath(a);
+      const entry = p ? this.diff.entryFor({ path: p, side: 'base' }) : undefined;
+      const map = entry ? this.diff.lineMap(entry.path) : undefined;
+      const right = entry && entry.status !== 'D' ? this.diff.diffUris(entry).right : undefined;
+      if (map && right && visible(right)) {
+        const at = mapOldRange(map, r.range).start;
+        const n = r.range.end - r.range.start + 1;
+        this.decorations.set({ uri: right, range: { start: at, end: at }, color: a.color, highlight: [], dim: false, note: `▾ ${n} removed ${n === 1 ? 'line' : 'lines'}: widen the diff or switch it to side by side to see ${n === 1 ? 'it' : 'them'}` });
+        return;
+      }
+    }
+    // No dimming in a diff editor's sides (§7.3): fading on top of the diff's colours makes it hard to read.
+    this.decorations.set({ uri, range: r.range, color: a.color, highlight: a.highlight, dim: dim && !isDiffSide(uri) });
   }
 
   /** Reveals one anchor at a time; while one is opening, only the latest request waits. */
@@ -1175,38 +1300,52 @@ export class ExplainerSession implements vscode.Disposable {
     const highContrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
     // No fading in high contrast themes, where it would cut contrast below what the theme promises.
     const dim = !moveCursor && !highContrast && vscode.workspace.getConfiguration('sidestory').get<boolean>('dimUnfocused', true);
-    const uri = this.fileUri(a.file);
-    const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
+    const uri = this.targetUri(a);
+    if (!uri) {
+      // A base-side anchor without git (§15): nothing to open.
+      vscode.window.setStatusBarMessage('This step is about removed code: it needs git, which is off here (Restricted Mode or no repository).', 5000);
+      return;
+    }
     try {
-      const editor = await vscode.window.showTextDocument(uri, {
-        viewColumn: this.codeColumn(uri),
+      // `openTarget` (§7.1): the merge diff when the file is in the comparison, else a plain editor. `reveal.running`
+      // stays set throughout, so the selection changes the diff causes aren't taken for the reader's (§8).
+      const p = this.repoPath(a);
+      const key = p ? { path: p, side: sideOf(a) } : undefined;
+      const entry = key && this.diff ? this.diff.entryFor(key) : undefined;
+      const pair = entry && openStepsIn() === 'diff' ? this.diff!.diffUris(entry) : undefined;
+      const opened = await openTarget(key ? this.diff : undefined, { path: p ?? a.file, side: sideOf(a), range: r.range }, uri, {
+        moveCursor,
+        viewColumn: this.codeColumn(uri, pair ? { original: pair.left.toString(), modified: pair.right.toString() } : undefined),
         preserveFocus: !moveCursor,
-        preview: true,
-        selection: moveCursor ? new vscode.Range(range.start, range.start) : undefined,
+        mode: openStepsIn(),
       });
-      if (this.disposed) return;
-      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-      // Vertically only: a long line (the cursor's, or one in the range) can leave the editor scrolled
-      // sideways, cutting off the start of every line. Revealing the first line's start scrolls back.
-      editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
-      if (moveCursor) this.decorations.flash(editor, new vscode.Range(range.start, new vscode.Position(r.range.end - 1, 0)));
-      else if (this.active === id) this.decorateActive(dim); // unless the reader moved on while the file opened
+      if (this.disposed || !opened) return;
+      if (moveCursor && opened.editor) this.decorations.flash(opened.editor, new vscode.Range(opened.range.start - 1, 0, opened.range.end - 1, 0));
+      else if (this.active === id) this.decorateActive(dim && !opened.inDiff); // unless the reader moved on while the file opened
+
     } catch (e) {
       void vscode.window.showWarningMessage(`Can't open ${a.file}: ${(e as Error).message}`);
     }
   }
 
   /** An editor column for code that never covers a visible explainer panel, this one or another. */
-  private codeColumn(uri: vscode.Uri): vscode.ViewColumn {
+  private codeColumn(uri: vscode.Uri, diff?: { original: string; modified: string }): vscode.ViewColumn {
     const groups = vscode.window.tabGroups.all.map((g): GroupView => {
       const input = g.activeTab?.input;
       let shows: GroupView['shows'];
       if (input instanceof vscode.TabInputText) shows = { kind: 'text', uri: input.uri.toString() };
+      else if (input instanceof vscode.TabInputTextDiff) shows = { kind: 'diff', original: input.original.toString(), modified: input.modified.toString() };
       else if (input instanceof vscode.TabInputWebview && input.viewType.endsWith(VIEW_TYPE)) shows = { kind: 'explainer' };
       else if (g.activeTab) shows = { kind: 'other' };
       return { column: g.viewColumn, shows };
     });
-    return codeColumnFor(groups, this.panel.viewColumn, uri.toString());
+    return codeColumnFor(groups, this.panel.viewColumn, uri.toString(), diff);
+  }
+
+  /** For tests (`sidestory._focus`): the highlight this panel set, and the step it shows. */
+  focusInfo(): { active: string | undefined; uri?: string; range?: LineRange; dim?: boolean; note?: string } {
+    const f = this.decorations.focus;
+    return { active: this.active, ...(f ? { uri: f.uri.toString(), range: f.range, dim: f.dim, note: f.note } : {}) };
   }
 
   /** Whether the message was handed to the page. */
@@ -1234,6 +1373,7 @@ export class ExplainerSession implements vscode.Disposable {
     for (const d of [...this.subscriptions, ...this.explainerWatchers, ...this.fileWatchers]) d.dispose();
     this.widgets?.dispose();
     this.ownSymbols?.dispose();
+    this.host.diffs?.release(this.diffWho);
     if (this.highlightRequester) this.highlightRequester.who.disposed = true;
     this.decorations.set(undefined);
     this.onDisposeEmitter.fire();
@@ -1241,8 +1381,19 @@ export class ExplainerSession implements vscode.Disposable {
   }
 }
 
+/** A merge-base blob's text through the `sidestory-git:` provider, decoded as the diff decodes it (§5.2). */
+async function readGit(uri: vscode.Uri): Promise<string | undefined> {
+  try {
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return bytes.length > MAX_CODE_BYTES ? undefined : decodePair(bytes, bytes).old;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Reader actions that end a preview panel's status (§7.5): a step change, a dive or Back, a widget input, or a
+
  * scroll that moved the active section. A cursor sync from the code isn't one (the panel posts nothing for it).
  */
 function endsPreview(m: FromWebview): boolean {

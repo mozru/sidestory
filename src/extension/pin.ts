@@ -9,7 +9,7 @@
 // now or at the lines its `range` gives (so editing `range` by hand repairs a lost anchor).
 // "Re-anchor Section to Selection" points one anchor at whatever code the author selects.
 import * as vscode from 'vscode';
-import type { Anchor, LineRange, Quote } from '../core/manifest.ts';
+import type { Anchor, LineRange, Quote, Side } from '../core/manifest.ts';
 import { isSafeRelativePath, parseManifest } from '../core/manifest.ts';
 import { pinQuote, trimBlankLines } from '../core/pin.ts';
 import type { AnchorState, Resolution } from '../core/resolve.ts';
@@ -290,18 +290,29 @@ async function readManifestAnchors(ref: ExplainerRef): Promise<Anchor[] | undefi
 }
 
 /**
+ * Where a selection in a virtual document is (docs/CHANGES-PLAN.md §7.6): the left side of the branch's diff gives the
+ * old path on the base side; a document at another commit is refused. Undefined: an ordinary file.
+ */
+export type SelectionSide = (uri: vscode.Uri, ref: ExplainerRef) => { file: string; side: Side } | 'refuse' | undefined;
+
+/**
  * Pins one anchor to the lines selected in `editor` (file and lines; the file must be inside the
  * explainer's repository). `confirm` asks first: needed when the request came from the panel, whose
  * content is untrusted.
  */
-export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, editor: vscode.TextEditor | undefined, confirm: boolean): Promise<void> {
+export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, editor: vscode.TextEditor | undefined, confirm: boolean, sides?: SelectionSide): Promise<void> {
   const sel = editor?.selection;
   if (!editor || !sel || sel.isEmpty || editor.document.getText(sel).trim() === '') {
     void vscode.window.showInformationMessage(`To re-anchor “${anchorId}”, first select its code in an editor, then try again.`);
     return;
   }
   const doc = editor.document;
-  const file = await relativeInside(doc.uri, ref.root);
+  const mapped = sides?.(doc.uri, ref);
+  if (mapped === 'refuse') {
+    void vscode.window.showWarningMessage("Select the code in the diff of this branch's changes.");
+    return;
+  }
+  const file = mapped ? mapped.file : await relativeInside(doc.uri, ref.root);
   if (!file) {
     void vscode.window.showWarningMessage(`Can't anchor to ${vscode.workspace.asRelativePath(doc.uri)}: it isn't inside the repository that holds ${ref.name}.`);
     return;
@@ -333,7 +344,9 @@ export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, e
   }
   const quote = pinQuote(splitLines(doc.getText()), pin.range, anchor.quote?.norm);
   if (!quote) return;
-  await writeManifest(ref, manifestText, patchManifest(manifestText, new Map([[anchorId, { file: file === anchor.file ? undefined : file, range: pin.range, quote }]])));
+  // The base side writes `side: "base"` (and version 3 by the writer rule); a head-side selection makes a base-side anchor head again.
+  const side: Side | undefined = mapped ? mapped.side : anchor.side === 'base' ? 'head' : undefined;
+  await writeManifest(ref, manifestText, patchManifest(manifestText, new Map([[anchorId, { file: file === anchor.file ? undefined : file, range: pin.range, quote, ...(side ? { side } : {}) }]])));
   const unsaved = doc.isDirty ? ' (from unsaved changes)' : '';
   vscode.window.setStatusBarMessage(`Re-anchored “${anchorId}” to ${where}${unsaved}.`, 5000);
 }

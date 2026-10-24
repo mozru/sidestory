@@ -8,8 +8,10 @@ export interface Focus {
   /** Theme color id for the left bar and scrollbar marker. */
   color?: string;
   highlight: readonly string[];
-  /** Fade the rest of the file. */
+  /** Fade the rest of the file (never in a diff editor's side, docs/CHANGES-PLAN.md §7.3). */
   dim: boolean;
+  /** A note before the first line: removed code shown at its place on the right of an inline diff (§7.5). */
+  note?: string;
 }
 
 /** Lines (and identifiers) a widget highlights inside the current step's anchor (docs/WIDGETS-PLAN.md §5.3). */
@@ -29,6 +31,9 @@ export class Decorations implements vscode.Disposable {
     borderRadius: '3px',
   });
   private readonly dim = vscode.window.createTextEditorDecorationType({ opacity: '0.5' });
+  private readonly noteType = vscode.window.createTextEditorDecorationType({
+    before: { color: new vscode.ThemeColor('editorCodeLens.foreground'), fontStyle: 'italic', margin: '0 1em 0 0' },
+  });
   private readonly flashType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
     backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
@@ -75,8 +80,14 @@ export class Decorations implements vscode.Disposable {
     this.refresh();
   }
 
+  /** The current highlight (tests: which document, which lines, whether dimmed). */
+  get focus(): Focus | undefined {
+    return this.current;
+  }
+
   /** Whether the current highlight fades the rest of the file. */
   isDimmed(): boolean {
+
     return this.current?.dim ?? false;
   }
 
@@ -104,6 +115,7 @@ export class Decorations implements vscode.Disposable {
     if (!mine || !f || !focusType) {
       editor.setDecorations(this.chip, []);
       editor.setDecorations(this.dim, []);
+      editor.setDecorations(this.noteType, []);
       return;
     }
     const doc = editor.document;
@@ -112,6 +124,7 @@ export class Decorations implements vscode.Disposable {
     const endLine = Math.min(f.range.end - 1, last);
     editor.setDecorations(focusType, [new vscode.Range(startLine, 0, endLine, doc.lineAt(endLine).text.length)]);
     editor.setDecorations(this.chip, identifierRanges(doc, f.highlight));
+    editor.setDecorations(this.noteType, f.note ? [{ range: new vscode.Range(startLine, 0, startLine, 0), renderOptions: { before: { contentText: f.note } } }] : []);
     const outside: vscode.Range[] = [];
     if (f.dim) {
       if (startLine > 0) outside.push(new vscode.Range(0, 0, startLine - 1, doc.lineAt(startLine - 1).text.length));
@@ -142,7 +155,9 @@ export class Decorations implements vscode.Disposable {
     clearTimeout(this.flashTimer);
     this.chip.dispose();
     this.dim.dispose();
+    this.noteType.dispose();
     this.flashType.dispose();
+
     this.widgetType.dispose();
     this.widgetIds.dispose();
   }

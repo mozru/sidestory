@@ -2,7 +2,7 @@
 // date or lost. Only for nodes being shown, one sidestory at a time, within byte budgets, and paused while the
 // reader types. Computed as a fresh open would see it (no hints).
 import * as vscode from 'vscode';
-import { parseManifest, type Anchor } from '../../core/manifest.ts';
+import { parseManifest, sideOf, type Anchor } from '../../core/manifest.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
 import { manifestUri, MAX_MANIFEST_BYTES, readInside, uriKey } from '../explainers.ts';
@@ -173,6 +173,9 @@ export class DriftQueue implements vscode.Disposable {
     if (!parsed.ok) return { stamp: `${e.manifestStamp}|`, drift: { outOfDate: 0, lost: 0, unchecked: 0 } };
     // Anchors grouped by file once.
     for (const a of parsed.manifest.anchors.values()) {
+      // Base-side anchors (docs/CHANGES-PLAN.md §3.2) point at the merge-base, not the working tree: the Changes
+      // view's coverage checks them; here they would read as lost.
+      if (sideOf(a) === 'base') continue;
       const list = byFile.get(a.file);
       if (list) list.push(a);
       else {
