@@ -582,7 +582,7 @@ describe('the text report', () => {
       warnings: 0,
     };
     const first = formatReport(report, '/r').split('\n')[0]!;
-    expect(first).toBe('.sidestory/x/manifest.json:3: error bad: name “a[31mred[0m” nextline');
+    expect(first).toBe(join('.sidestory', 'x', 'manifest.json') + ':3: error bad: name “a[31mred[0m” nextline');
     expect(first).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
 
@@ -595,7 +595,7 @@ describe('the text report', () => {
       warnings: 1,
     };
     const first = formatReport(report, '/r').split('\n')[0]!;
-    expect(first).toBe('.sidestory/x/agnp.js b.ts: warning odd: name evil x y');
+    expect(first).toBe(join('.sidestory', 'x', 'agnp.js b.ts') + ': warning odd: name evil x y');
     expect(first).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u2028\u2029]/);
   });
 });

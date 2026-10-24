@@ -16,8 +16,9 @@ const { OpenCodeGate, checkCodePath, matchProviderSymbol, resolveLink, SymbolTab
 let root = '';
 let outside = '';
 beforeAll(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'cx-codemap-')));
-  outside = realpathSync(mkdtempSync(join(tmpdir(), 'cx-outside-')));
+  // The native real path: on Windows the temp folder may be an 8.3 short name (RUNNER~1) that only it expands.
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cx-codemap-')));
+  outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'cx-outside-')));
   cpSync('fixtures/sample-workspace', root, { recursive: true });
   workspace.root = Uri.file(root);
   writeFileSync(join(outside, 'leak.sv'), 'module leak; endmodule\n');
@@ -157,7 +158,7 @@ describe('openCode (§8.1)', () => {
     send({ type: 'codeTargets', sections: [], refs: [], links: ['rtl/bit_reader.sv#driver(cnt_q)'] });
     send({ type: 'openCode', path: 'rtl/bit_reader.sv', target: 'driver(cnt_q)' });
     await vi.waitFor(() => expect(shown).toHaveLength(1));
-    expect(shown[0]!.document.uri.fsPath).toBe(join(root, 'rtl/bit_reader.sv'));
+    expect(shown[0]!.document.uri.fsPath).toBe(Uri.file(join(root, 'rtl/bit_reader.sv')).fsPath);
     expect((shown[0]!.options.selection as { start: { line: number } }).start.line).toBe(22);
     await vi.waitFor(() => expect(lastHere(posted)).toEqual({ type: 'here', link: 'rtl/bit_reader.sv#driver(cnt_q)' }));
   });
