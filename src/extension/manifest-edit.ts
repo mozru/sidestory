@@ -3,13 +3,24 @@
 // No VS Code API here, so scripts/pin.ts and the unit tests can use it too.
 import type { Node } from 'jsonc-parser';
 import { getNodeValue, parseTree } from 'jsonc-parser';
-import type { LineRange, Quote } from '../core/manifest.ts';
+import type { LineRange, Quote, Side } from '../core/manifest.ts';
+import { requiredVersion } from '../core/manifest.ts';
 
 export interface AnchorPatch {
   /** A new file for the anchor (re-anchoring to code in another file); omitted keeps the old one. */
   file?: string;
   range: LineRange;
   quote: Quote;
+  /**
+   * The side the code is on (docs/CHANGES-PLAN.md §3.2): `'base'` writes `"side": "base"`, `'head'` removes a
+   * `side` (head is the default); omitted keeps what is written.
+   */
+  side?: Side;
+}
+
+export interface ManifestPatchOptions {
+  /** A top-level `id` (a ULID, docs/COMMENTS-PLAN.md §3.1) to add when the manifest has none; an existing one is kept. */
+  id?: string;
 }
 
 interface TextEdit {
@@ -19,24 +30,37 @@ interface TextEdit {
 }
 
 /**
- * The manifest with each patched anchor's `range` and `quote` (and `file`) set, its v1 `snippet`
- * removed, and `version` set to 2. Edits are made in place; if the result doesn't parse back to
- * exactly what was asked for (an odd layout we didn't foresee), the whole file is rewritten instead.
+ * The manifest with each patched anchor's `range` and `quote` (and `file`, `side`) set, its v1 `snippet` removed,
+ * and `version` set by the writer rule `max(current, required, 2)` (docs/AUTHORING-PLAN.md §1.2; a base-side anchor
+ * requires 3, docs/CHANGES-PLAN.md §3.5), so a v3 manifest is never downgraded. Edits are made in place; if the
+ * result doesn't parse back to exactly what was asked for (an odd layout we didn't foresee), the whole file is
+ * rewritten instead.
  */
-export function patchManifest(text: string, patches: ReadonlyMap<string, AnchorPatch>): string {
-  const expected = JSON.parse(text.replace(/^\uFEFF/, '')) as { version: number; anchors: Record<string, Record<string, unknown>> };
+export function patchManifest(text: string, patches: ReadonlyMap<string, AnchorPatch>, options: ManifestPatchOptions = {}): string {
+  const expected = JSON.parse(text.replace(/^\uFEFF/, '')) as { version: number; id?: unknown; anchors: Record<string, Record<string, unknown>> };
   for (const [id, p] of patches) {
     const entry = expected.anchors[id];
     if (!entry) throw new Error(`no anchor "${id}" in manifest.json`);
     if (p.file !== undefined) entry.file = p.file;
     entry.range = [p.range.start, p.range.end];
     entry.quote = p.quote;
+    if (p.side === 'base') entry.side = 'base';
+    else if (p.side === 'head') delete entry.side;
     delete entry.snippet;
   }
-  expected.version = 2;
+  const current = typeof expected.version === 'number' && Number.isFinite(expected.version) ? expected.version : 2;
+  const version = Math.max(current, requiredVersion(expected), 2);
+  expected.version = version;
+  const addId = options.id !== undefined && expected.id === undefined ? options.id : undefined;
+  if (addId !== undefined) {
+    // Right after "version", as a person would write it.
+    const { version: v, ...rest } = expected;
+    for (const k of Object.keys(expected)) delete (expected as Record<string, unknown>)[k];
+    Object.assign(expected, { version: v, id: addId }, rest);
+  }
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   try {
-    const edited = applyEdits(text, editsFor(text, patches, eol));
+    const edited = applyEdits(text, editsFor(text, patches, eol, version, addId));
     if (canonical(JSON.parse(edited.replace(/^\uFEFF/, ''))) === canonical(expected)) return edited;
   } catch {
     // fall through to a full rewrite
@@ -44,12 +68,18 @@ export function patchManifest(text: string, patches: ReadonlyMap<string, AnchorP
   return JSON.stringify(expected, null, 2).replace(/\n/g, eol) + eol;
 }
 
-function editsFor(text: string, patches: ReadonlyMap<string, AnchorPatch>, eol: string): TextEdit[] {
+function editsFor(text: string, patches: ReadonlyMap<string, AnchorPatch>, eol: string, toVersion: number, addId: string | undefined): TextEdit[] {
   const root = parseTree(text);
   if (root?.type !== 'object') throw new Error('not an object');
   const edits: TextEdit[] = [];
   const version = property(root, 'version');
-  if (version?.children?.[1] && version.children[1].value !== 2) edits.push(replace(version.children[1], '2'));
+  if (version?.children?.[1] && version.children[1].value !== toVersion) edits.push(replace(version.children[1], String(toVersion)));
+  if (addId !== undefined) {
+    if (!version) throw new Error('no version');
+    const compact = !/[\r\n]/.test(text.slice(root.offset, root.offset + root.length));
+    const sep = compact ? ' ' : eol + lineIndent(text, version.offset);
+    edits.push({ offset: version.offset + version.length, length: 0, content: `,${sep}"id": ${JSON.stringify(addId)}` });
+  }
   const anchors = property(root, 'anchors')?.children?.[1];
   if (anchors?.type !== 'object') throw new Error('no anchors object');
   for (const [id, p] of patches) {
@@ -70,9 +100,14 @@ function editsFor(text: string, patches: ReadonlyMap<string, AnchorPatch>, eol: 
       edits.push({ offset: last.offset + last.length, length: 0, content: `,${compact ? ' ' : eol + indent}${JSON.stringify(key)}: ${value}` });
     };
     const snippet = property(obj, 'snippet');
-    // Insert new properties after the last one that stays (never next to a removed snippet).
-    const kept = obj.children.filter((c) => c !== snippet);
+    const side = property(obj, 'side');
+    const dropSide = p.side === 'head' && side ? side : undefined;
+    // Insert new properties after the last one that stays (never next to a removed snippet or side).
+    const kept = obj.children.filter((c) => c !== snippet && c !== dropSide);
+    if (!kept.length) throw new Error('nothing to insert after');
     if (p.file !== undefined) set('file', JSON.stringify(p.file), kept);
+    if (p.side === 'base') set('side', '"base"', kept);
+    if (dropSide) edits.push(removal(obj, dropSide));
     const range = property(obj, 'range')?.children?.[1];
     if (range?.type === 'array' && range.children?.length === 2 && range.children.every((c) => c.type === 'number')) {
       // Keep the array's own layout: just the numbers change.

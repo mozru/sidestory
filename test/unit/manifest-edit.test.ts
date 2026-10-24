@@ -67,6 +67,38 @@ describe('patchManifest', () => {
     expect(out.anchors.a).toEqual({ file: 'f', range: [4, 4], quote });
   });
 
+  it('the writer rule: version = max(current, required, 2), never a downgrade', () => {
+    const v3 = '{\n  "version": 3,\n  "title": "T",\n  "base": "main",\n  "anchors": {\n    "a": { "file": "f", "range": [1, 1] }\n  }\n}\n';
+    expect(JSON.parse(patchManifest(v3, patch())).version).toBe(3);
+    const v2 = v3.replace('"version": 3', '"version": 2');
+    expect(JSON.parse(patchManifest(v2, patch())).version).toBe(2);
+    // A base-side anchor needs 3 (docs/CHANGES-PLAN.md §3.5).
+    const out = patchManifest(v2, patch({ side: 'base' }));
+    expect(JSON.parse(out)).toMatchObject({ version: 3, anchors: { a: { file: 'f', side: 'base', range: [4, 4], quote } } });
+    expect(out).toContain('"version": 3,\n  "title": "T"');
+    expect(out).toContain('    "a": { "file": "f", "range": [4, 4], "quote": ');
+  });
+
+  it('side: base writes it, head removes it, omitted keeps it', () => {
+    const text = '{"version":3,"title":"T","base":"main","anchors":{"a":{"file":"f","side":"base","range":[1,1]},"b":{"file":"g","range":[1,1],"side":"base"}}}';
+    expect(JSON.parse(patchManifest(text, patch())).anchors.a.side).toBe('base');
+    const head = JSON.parse(patchManifest(text, patch({ side: 'head' })));
+    expect(head.anchors.a).toEqual({ file: 'f', range: [4, 4], quote });
+    expect(head.version).toBe(3);
+    const b = JSON.parse(patchManifest(text, new Map([['b', { range: { start: 2, end: 2 }, quote, side: 'head' as const }]])));
+    expect(b.anchors.b).toEqual({ file: 'g', range: [2, 2], quote });
+  });
+
+  it('adds an id after version when there is none, and keeps an existing one', () => {
+    const ID = '01JC0RETRYJ1TTER000000000A';
+    const text = '{\n  "version": 2,\n  "title": "T",\n  "anchors": {}\n}\n';
+    const out = patchManifest(text, new Map(), { id: ID });
+    expect(out).toBe(`{\n  "version": 2,\n  "id": "${ID}",\n  "title": "T",\n  "anchors": {}\n}\n`);
+    expect(patchManifest(out, new Map(), { id: '01JC0000000000000000000000' })).toBe(out);
+    const compact = '{"version":2,"title":"T","anchors":{}}';
+    expect(JSON.parse(patchManifest(compact, new Map(), { id: ID })).id).toBe(ID);
+  });
+
   it('refuses an anchor that isn\'t there', () => {
     expect(() => patchManifest('{"version":1,"title":"T","anchors":{}}', patch())).toThrow(/no anchor/);
   });
