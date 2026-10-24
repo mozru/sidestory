@@ -87,6 +87,14 @@ export function editorFor(uri: vscode.Uri, ms = 1000, diff?: { left: vscode.Uri;
   });
 }
 
+/** Whether some group shows this diff (left ↔ right) as its active tab. */
+export function diffShown(pair: { left: vscode.Uri; right: vscode.Uri }): boolean {
+  return vscode.window.tabGroups.all.some((g) => {
+    const input = g.activeTab?.input;
+    return input instanceof vscode.TabInputTextDiff && input.original.toString() === pair.left.toString() && input.modified.toString() === pair.right.toString();
+  });
+}
+
 /** Whether `uri` is shown as a side of a diff editor in some group (§7.3: no dimming there). */
 export function isDiffSide(uri: vscode.Uri): boolean {
   const key = uri.toString();

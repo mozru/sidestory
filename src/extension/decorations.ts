@@ -69,7 +69,7 @@ export class Decorations implements vscode.Disposable {
     borderStyle: 'solid',
     borderWidth: '0 0 0 4px',
     overviewRulerColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
-    overviewRulerLane: vscode.OverviewRulerLane.Full,
+    overviewRulerLane: vscode.OverviewRulerLane.Left,
   });
   private readonly diffTop = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,

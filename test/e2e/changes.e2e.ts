@@ -50,7 +50,7 @@ test.afterEach(async ({}, info) => {
 async function openRepo(page: Page, prepare = '', extra: Record<string, unknown> = {}): Promise<void> {
   // Side-by-side diffs beside the panel (the README's tip), so the left side has an editor.
   const settings = { ...JSON.parse(inContainer('cat /home/workspace/.settings.json')), 'diffEditor.useInlineViewWhenSpaceIsLimited': false, ...extra };
-  inContainer(`rm -rf ${REPO} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.chg-explained ${REPO} && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/User/settings.json && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/Machine/settings.json${prepare ? ` && cd ${REPO} && ${prepare}` : ''}`);
+  inContainer(`rm -rf ${REPO} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.chg-explained ${REPO} && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/User/settings.json && mkdir -p ~/.openvscode-server/data/Machine && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/Machine/settings.json${prepare ? ` && cd ${REPO} && ${prepare}` : ''}`);
   await page.goto(`/?folder=${REPO}`);
   await page.locator('.monaco-workbench').waitFor({ timeout: 60_000 });
   const yes = page.getByRole('button', { name: 'Yes, I trust the authors' });

@@ -48,8 +48,12 @@ const setting = () => config().get<string>('defaultBase')?.trim() || undefined;
 
 /** A file whose merge diff has two sides worth comparing: modified, renamed or copied (not added or deleted). */
 const hasTwoSides = (e: ChangeEntry) => e.status === 'M' || e.status === 'R' || e.status === 'C';
-/** A URI as the `resourcePath` context key holds it (VS Code sets it from `fsPath`, for every scheme): a key to match, never read from disk. */
-const resourcePath = (u: vscode.Uri) => u.fsPath;
+/**
+ * A URI as the `resourcePath` context key holds it, a key to match, never read from disk: VS Code's workbench sets it
+ * to `fsPath` for a `file:` URI and to `path` for any other scheme. In a remote window the workbench sees the file as
+ * `vscode-remote:` (so `path`) while this extension host sees `file:`.
+ */
+const resourcePath = (u: vscode.Uri) => (u.scheme === 'file' && !vscode.env.remoteName ? u.fsPath : u.path);
 
 /** A change of the comparison with its file. */
 interface Found {
@@ -937,17 +941,26 @@ export class ChangesService implements vscode.Disposable {
    * `sidestory.changes.comparable`, for **Open Changes with Base** in the editor's title bar (as the git extension's
    * Open Changes): the documents (by `resourcePath`, as the title bar's context has it) whose file has a merge diff
    * worth opening: modified or renamed, both sides. Not a file the branch added or deleted: its diff is one colour.
-   * Keyed by resource, not by the active editor, so the button stays while the focus is in a panel.
+   * A side counts only when the command resolves it to that entry too (`entryFor`), so the button never shows where
+   * the command would refuse. VS Code evaluates the title bar for the focused editor, so, as git's Open Changes, the
+   * button shows while the file's editor has focus; the palette command also finds the step's editor from a panel.
+   * (A `sidestory-git:` document at another commit has the same path and gets the button too; the command then opens
+   * the comparison's diff of that file.)
    */
   private updateComparable(): void {
     const s = this.snapshot;
+    const paired = s && this.result(s)?.paired;
+    if (this.comparableFor.s === s && this.comparableFor.paired === paired) return;
+    this.comparableFor = { s, paired };
     const keys: string[] = [];
     for (const e of s?.entries ?? []) {
       const entry = e.status === 'A' && s ? (this.pairedEntry(s, { path: e.path, side: 'head' }) ?? e) : e;
       if (!s || !hasTwoSides(entry)) continue;
       try {
         const pair = this.diffUris(s, entry);
-        if (pair) keys.push(resourcePath(pair.left), resourcePath(pair.right));
+        if (!pair) continue;
+        if (this.entryFor(s, { path: entry.oldPath ?? entry.path, side: 'base' }) === entry) keys.push(resourcePath(pair.left));
+        if (this.entryFor(s, { path: entry.path, side: 'head' }) === entry) keys.push(resourcePath(pair.right));
       } catch {
         // an unsafe path: no button
       }
@@ -959,14 +972,24 @@ export class ChangesService implements vscode.Disposable {
     setContext('sidestory.changes.comparable', Object.fromEntries(keys.map((k) => [k, true])));
   }
 
+  /** What `comparable` was computed from: a new snapshot, or coverage pairing an unstaged rename, computes it again. */
+  private comparableFor: { s: Snapshot | undefined; paired: unknown } = { s: undefined, paired: undefined };
   private comparableSig = '';
   /** The `sidestory.changes.comparable` keys (tests). */
   comparable: readonly string[] = [];
 
-  /** The editor showing `uri` (the title bar's resource): the active one when it does, else a visible plain one. */
+  /**
+   * The editor showing `uri` (the title bar's resource): the active one when it does, else a visible plain one. With
+   * no `uri` (the palette): the active editor, or from a panel, the one visible plain editor of a comparable file.
+   */
   private editorOf(uri: vscode.Uri | undefined): vscode.TextEditor | undefined {
     const active = vscode.window.activeTextEditor;
-    if (!uri) return active;
+    if (!uri) {
+      if (active) return active;
+      const keys = new Set(this.comparable);
+      const plain = vscode.window.visibleTextEditors.filter((e) => !inDiffEditor(e) && keys.has(resourcePath(e.document.uri)));
+      return plain.length === 1 ? plain[0] : undefined;
+    }
     const key = uri.toString();
     if (active?.document.uri.toString() === key) return active;
     return vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key && !inDiffEditor(e));
@@ -992,9 +1015,19 @@ export class ChangesService implements vscode.Disposable {
     const top = ed?.visibleRanges[0];
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, viewColumn: ed?.viewColumn ?? vscode.ViewColumn.Active });
     const side = await editorFor(key.side === 'base' ? left : right, 1000, { left, right });
-    if (!side) return; // the left side of an inline diff has no editor
-    if (selection) side.selection = selection;
-    if (top) side.revealRange(top, vscode.TextEditorRevealType.AtTop);
+    if (side) {
+      if (selection) side.selection = selection;
+      if (top) side.revealRange(top, vscode.TextEditorRevealType.AtTop);
+      return;
+    }
+    // The left side of an inline diff has no editor: the old line's place on the right.
+    const map = s && entry ? this.result(s)?.files.get(entry.path)?.diff : undefined;
+    const onRight = selection && map ? await editorFor(right, 300, { left, right }) : undefined;
+    if (onRight && selection && map) {
+      const line = oldToNew(map, selection.active.line + 1) - 1;
+      onRight.selection = new vscode.Selection(line, 0, line, 0);
+      onRight.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
   }
 
   /**
@@ -1008,7 +1041,10 @@ export class ChangesService implements vscode.Disposable {
     const active = vscode.window.activeTextEditor;
     const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
     const target = uri ?? (tab instanceof vscode.TabInputTextDiff && tab.modified.scheme !== EMPTY_SCHEME ? tab.modified : undefined);
-    if (!target) return;
+    if (!target) {
+      vscode.window.setStatusBarMessage('No file to open here (a file the branch deleted has none)', 3000);
+      return;
+    }
     let selection: vscode.Selection | undefined;
     let top: vscode.Range | undefined;
     if (active?.document.uri.toString() === target.toString()) {
@@ -1019,10 +1055,9 @@ export class ChangesService implements vscode.Disposable {
       const key = this.keyOf(s, active.document.uri);
       const entry = key?.side === 'base' ? this.entryFor(s, key) : undefined;
       const map = entry ? this.result(s)?.files.get(entry.path)?.diff : undefined;
-      if (map) {
-        const line = oldToNew(map, active.selection.active.line + 1) - 1;
-        selection = new vscode.Selection(line, 0, line, 0);
-      }
+      // Without coverage's line map (no sidestory counts on the branch), the same line number.
+      const line = map ? oldToNew(map, active.selection.active.line + 1) - 1 : active.selection.active.line;
+      if (entry) selection = new vscode.Selection(line, 0, line, 0);
     }
     const ed = await vscode.window.showTextDocument(target, { viewColumn: active?.viewColumn ?? vscode.ViewColumn.Active, preview: false, selection });
     if (top) ed.revealRange(top, vscode.TextEditorRevealType.AtTop);
@@ -1393,7 +1428,7 @@ export class ChangesService implements vscode.Disposable {
       const one = got?.r ? await this.changeFrom(got.s, got.r, arg) : undefined;
       if (got?.r && one) await this.openChange(got.s, got.r, one.path, one.c.key);
     },
-    'sidestory.changes.openChanges': (arg?: unknown) => this.openChangesOf(arg instanceof vscode.Uri ? arg : undefined),
+    'sidestory.changes.openChangesWithBase': (arg?: unknown) => this.openChangesOf(arg instanceof vscode.Uri ? arg : undefined),
     'sidestory.changes.openFile': (arg?: unknown) => this.openFileOf(arg instanceof vscode.Uri ? arg : undefined),
     'sidestory.changes.copyExplainPrompt': async () => {
       const s = await this.current();

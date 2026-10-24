@@ -38,7 +38,7 @@ export const COMMANDS = [
   'sidestory.changes.nextUnexplained',
   'sidestory.changes.prevUnexplained',
   'sidestory.changes.openChange',
-  'sidestory.changes.openChanges',
+  'sidestory.changes.openChangesWithBase',
   'sidestory.changes.openFile',
   'sidestory.changes.copyExplainPrompt',
   'sidestory.changes.dismissExplain',

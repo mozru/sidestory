@@ -217,7 +217,7 @@
         "category": "Sidestory"
       },
       {
-        "command": "sidestory.changes.openChanges",
+        "command": "sidestory.changes.openChangesWithBase",
         "title": "Open Changes with Base",
         "category": "Sidestory",
         "icon": "$(git-compare)"
@@ -573,12 +573,12 @@
         "sidestory.changes.openStepsIn": {
           "type": "string",
           "enum": [
-            "diff",
-            "editor"
+            "editor",
+            "diff"
           ],
-          "enumDescriptions": [
-            "Steps of a sidestory with a base open the branch’s merge diff, at the step’s side.",
-            "Steps open plain editors (removed code in a read-only view of the old file). **Open Changes with Base** in the editor’s title bar switches to the diff."
+          "markdownEnumDescriptions": [
+            "Steps open plain editors (removed code in a read-only view of the old file). **Open Changes with Base** in the editor’s title bar switches a modified file to the branch’s diff; later steps in that file stay in the diff.",
+            "Steps of a sidestory with a base open the branch’s merge diff, at the step’s side. In a diff the step’s lines get a frame and the step’s title."
           ],
           "default": "editor",
           "description": "Where the steps of a sidestory that explains a branch (one with a \"base\") open."
@@ -869,8 +869,8 @@
           "when": "false"
         },
         {
-          "command": "sidestory.changes.openChanges",
-          "when": "!isInDiffEditor && resourcePath in sidestory.changes.comparable"
+          "command": "sidestory.changes.openChangesWithBase",
+          "when": "sidestory.changes.repo && !isInDiffEditor"
         },
         {
           "command": "sidestory.changes.openFile",
@@ -1344,9 +1344,9 @@
       ],
       "editor/title": [
         {
-          "command": "sidestory.changes.openChanges",
+          "command": "sidestory.changes.openChangesWithBase",
           "group": "navigation@2",
-          "when": "!isInDiffEditor && resourcePath in sidestory.changes.comparable"
+          "when": "!isInDiffEditor && !isMergeEditor && resourcePath in sidestory.changes.comparable"
         },
         {
           "command": "sidestory.changes.openFile",

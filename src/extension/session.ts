@@ -5,7 +5,7 @@ import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
 import { anchorParts, explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
 import { decodePair } from '../core/hunks.ts';
 import type { DiffContext } from './changes/open.ts';
-import { isDiffSide, openStepsIn, openTarget } from './changes/open.ts';
+import { diffShown, isDiffSide, openStepsIn, openTarget } from './changes/open.ts';
 import type { SideKey } from './changes/targets.ts';
 import { anchorAtSide, mapOldRange, targetKey } from './changes/targets.ts';
 import { relPath } from './changes/git-api.ts';
@@ -241,6 +241,8 @@ export class ExplainerSession implements vscode.Disposable {
       vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e)),
       vscode.window.onDidChangeTextEditorSelection((e) => this.onSelection(e)),
       vscode.window.onDidChangeVisibleTextEditors(() => this.decorations.refresh()),
+      // Whether an editor is a diff side (the frame, no dimming) comes from the tabs, which may change after it.
+      vscode.window.tabGroups.onDidChangeTabs(() => this.decorations.refresh()),
       // A hidden panel's page is gone (it asks again with `ready`): what it linked to and lit is gone with it.
       panel.onDidChangeViewState(() => {
         if (!panel.visible) this.forgetTargets();
@@ -1299,17 +1301,18 @@ export class ExplainerSession implements vscode.Disposable {
       const entry = p ? this.diff.entryFor({ path: p, side: 'base' }) : undefined;
       const map = entry ? this.diff.lineMap(entry.path) : undefined;
       const right = entry && entry.status !== 'D' ? this.diff.diffUris(entry)?.right : undefined;
-      if (map && right && visible(right)) {
+      if (map && right && visible(right) && isDiffSide(right)) {
         const at = mapOldRange(map, r.range).start;
         const n = r.range.end - r.range.start + 1;
         this.decorations.set({ uri: right, range: { start: at, end: at }, color: a.color, highlight: [], dim: false, note: `▾ ${n} removed ${n === 1 ? 'line' : 'lines'}: widen the diff or switch it to side by side to see ${n === 1 ? 'it' : 'them'}` });
         return;
       }
     }
-    // No dimming in a diff editor's sides (§7.3): fading on top of the diff's colours makes it hard to read.
+    // The label shows in a diff editor's side only. No dimming there (§7.3): `Decorations` decides per editor, so the
+    // same step fades the rest of the file in a plain editor beside it.
     const step = this.host.stepOf?.(this.ref.dir, a.id);
-    const label = step ? `◀ Step ${step.n} · ${step.title.length > 60 ? `${step.title.slice(0, 59)}…` : step.title}` : undefined;
-    this.decorations.set({ uri, range: r.range, color: a.color, highlight: a.highlight, dim: dim && !isDiffSide(uri), label });
+    const label = step ? `◀ Step ${step.n} · ${displayText(step.title, 60)}` : undefined;
+    this.decorations.set({ uri, range: r.range, color: a.color, highlight: a.highlight, dim, label });
   }
 
   /** Reveals one anchor at a time; while one is opening, only the latest request waits. */
@@ -1354,16 +1357,19 @@ export class ExplainerSession implements vscode.Disposable {
       const p = this.repoPath(a);
       const key = p ? { path: p, side: sideOf(a) } : undefined;
       const entry = key && this.diff ? this.diff.entryFor(key) : undefined;
-      const pair = entry && openStepsIn() === 'diff' ? this.diff!.diffUris(entry) : undefined;
+      const both = entry ? this.diff!.diffUris(entry) : undefined;
+      // The reader switched this file to its diff (Open Changes with Base): later steps in it stay there.
+      const mode = openStepsIn() === 'diff' || (both && diffShown(both)) ? 'diff' : 'editor';
+      const pair = mode === 'diff' ? both : undefined;
       const opened = await openTarget(key ? this.diff : undefined, { path: p ?? a.file, side: sideOf(a), range: r.range }, uri, {
         moveCursor,
         viewColumn: this.codeColumn(uri, pair ? { original: pair.left.toString(), modified: pair.right.toString() } : undefined),
         preserveFocus: !moveCursor,
-        mode: openStepsIn(),
+        mode,
       });
       if (this.disposed || !opened) return;
       if (moveCursor && opened.editor) this.decorations.flash(opened.editor, new vscode.Range(opened.range.start - 1, 0, opened.range.end - 1, 0));
-      else if (this.active === id) this.decorateActive(dim && !opened.inDiff); // unless the reader moved on while the file opened
+      else if (this.active === id) this.decorateActive(dim); // unless the reader moved on while the file opened
 
     } catch (e) {
       void vscode.window.showWarningMessage(`Can't open ${plainForMessage(a.file, 120)}: ${plainForMessage((e as Error).message)}`);
@@ -1387,7 +1393,7 @@ export class ExplainerSession implements vscode.Disposable {
   /** For tests (`sidestory._focus`): the highlight this panel set, and the step it shows. */
   focusInfo(): { active: string | undefined; uri?: string; range?: LineRange; dim?: boolean; note?: string; label?: string; framed?: boolean } {
     const f = this.decorations.focus;
-    return { active: this.active, ...(f ? { uri: f.uri.toString(), range: f.range, dim: f.dim, note: f.note, label: f.label, framed: this.decorations.framed() } : {}) };
+    return { active: this.active, ...(f ? { uri: f.uri.toString(), range: f.range, dim: f.dim && !this.decorations.framed(), note: f.note, label: f.label, framed: this.decorations.framed() } : {}) };
   }
 
   /** Whether the message was handed to the page. */

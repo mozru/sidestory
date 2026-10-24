@@ -411,7 +411,7 @@ export const window = {
   onDidChangeTextEditorSelection: events.selectionChanged.event,
   onDidChangeVisibleTextEditors: events.visibleEditorsChanged.event,
   visibleTextEditors: [] as unknown[],
-  tabGroups: { all: [] as unknown[] },
+  tabGroups: { all: [] as unknown[], onDidChangeTabs: () => ({ dispose() {} }) },
   activeColorTheme: { kind: ColorThemeKind.Dark },
   createOutputChannel: () => ({ info() {}, warn() {}, error() {}, dispose() {} }),
   showInformationMessage: async (message: string, ...buttons: unknown[]) => {
