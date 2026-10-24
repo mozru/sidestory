@@ -49,7 +49,9 @@ const TRANSIENT = new Set(['timeout', 'crashed', 'internal']);
 export function modalText(s: string, max = 80): string {
   // eslint-disable-next-line no-control-regex
   const one = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+  const cut = one.length > max ? `${one.slice(0, max - 1)}…` : one;
+  // Notifications render Markdown: `[x](command:…)` in a title must not become a link.
+  return cut.replace(/\]\(/g, '] (');
 }
 
 /** What the widget host needs from an explainer session. */

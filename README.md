@@ -39,7 +39,7 @@ Write one sidestory per piece and an overview that ties them together. Readers s
 
 - **The Sidestories view.** The Sidestory icon in the activity bar lists every sidestory by package, overviews first (**Start here**) with their details under them, in page order. Click one to open it; filter by title or summary.
 - **Explained here.** A CodeLens above explained code names the sidestory and step (*Overview › Detail · step 3: Credit*); click it to open the sidestory at that step. The status bar names it too.
-- **Go to Step.** **Sidestory: Go to Step…** finds any step by its title or blurb, in this package or all of them.
+- **Find a step.** **Sidestory: Go to Step…** finds any step by its title or blurb, in this package or all of them.
 
 ![The Sidestories view expands the DMA overview's details; a CodeLens in dma_ctrl.sv opens its sidestory at the Credit step; Go to Step finds "backpressure"](media/marketplace/navigation.gif)
 
@@ -77,7 +77,7 @@ code --install-extension paperkite.sidestory
 
 ### 2. Open an example
 
-Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory** from the Command Palette and pick **dma-overview**. For Python, open [`examples/tiny-lsm`](examples/tiny-lsm) and pick **lsm-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
+Clone [the repository](https://github.com/mozru/sidestory) and open the [`examples/stream-dma`](examples/stream-dma) folder in VS Code: a memory-to-memory DMA engine in eight SystemVerilog modules, with an overview and a sidestory per block. Run **Sidestory: Open Sidestory…** from the Command Palette and pick **dma-overview**. For Python, open [`examples/tiny-lsm`](examples/tiny-lsm) and pick **lsm-overview**. The smaller [`fixtures/sample-workspace`](fixtures/sample-workspace) has a bit reader and a retry loop.
 
 ### 3. Write your first sidestory
 
@@ -111,7 +111,7 @@ A sidestory is a folder under `.sidestory/` in your repository; file paths in it
 }
 ```
 
-Open it with **Sidestory: Open Sidestory**, then run **Sidestory: Pin Anchors to the Current Code** so the anchors follow the code through edits. The [guide](docs/GUIDE.md) covers every attribute, the manifest, overviews and details, styling and limits.
+Open it with **Sidestory: Open Sidestory…**, then run **Sidestory: Pin Anchors to the Current Code** so the anchors follow the code through edits. The [guide](docs/GUIDE.md) covers every attribute, the manifest, overviews and details, styling and limits.
 
 ### 4. Or ask your agent
 
@@ -133,10 +133,24 @@ Any other agent: point it at the guides. **Sidestory: Copy a Prompt for Your Age
 The checker ships with the extension; **Sidestory: Copy Widget Check Command** copies the exact command for your machine. It looks like:
 
 ```bash
-node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | tail -n 1)" .sidestory/dma-ctrl
+node "$(ls ~/.vscode*/extensions/*sidestory*/dist/check.cjs | sort -V | tail -n 1)" .sidestory/dma-ctrl
 ```
 
 Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-readable report.
+
+## Explaining a branch
+
+A sidestory with a `"base"` in its manifest explains a branch: its steps cover the branch's changes against that base. To browse the branch itself, use a branch-diff tool you already like: [Git Tree Compare](https://marketplace.visualstudio.com/items?itemName=letmaik.git-tree-compare) (recommended), GitLens, or Source Control. Sidestory adds to them rather than replacing them:
+
+- **Coverage marks on files.** Each changed file gets a small badge wherever VS Code decorates files (Git Tree Compare, Source Control, the Explorer, tabs): `✓` every change explained, `–` all marked trivial, `◐` partly, `○` not yet, `!` code added since its step was written. The tooltip says how much (`2 of 3 changes explained · Step 3 of Retry with jitter`).
+- **This branch**, at the top of the Sidestories view: the sidestories that explain the branch with their totals (`vs main · 9 explained · 3 trivial · 1 left`), and **Copy Prompt: Update the Sidestory for New Changes** while something is left. With none yet, **Copy Prompt: Explain This Branch** copies a prompt for Claude Code (or your agent); **Don't Suggest on This Branch** hides it.
+- **Steps open the branch's diff** at their side: added code highlighted on the right, removed code on the left, and the cursor on either side moves the panel. Changed lines no step explains get a dotted mark in the gutter while the sidestory is open.
+- **This File** lists every step, in any sidestory, that covers the file you're in, and for a changed file the changes not explained yet.
+- **One change at a time:** with the cursor in a change (in its diff or the changed file), the editor's context menu has **Copy Prompt: Explain This Change**, **Mark as Trivial…** (asks why, and writes it into the sidestory), and **Re-pin This Step** for a step whose code grew, once you've updated its prose.
+
+The base: **Sidestory: Set Base…** when you picked one for the branch, else the `"base"` of a sidestory added on the branch, else the branch base Git recorded, the `sidestory.changes.defaultBase` setting, the remote's default branch, or `main` (then `master`). When sidestories on the branch name different bases, **This branch** offers to switch.
+
+Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
 
 ## Commands
 
@@ -146,6 +160,7 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | **Sidestory: Go to Step…** | Find a step by its title or blurb, in this package or across all of them, and open the sidestory there. |
 | **Sidestory: Show Sidestories for This Code** | The sidestories that explain the code under the cursor (also in the editor's context menu). |
 | **Sidestory: Show Sidestories** | Show the Sidestories view, even in a repository with none yet. |
+| **Sidestory: Explain with Sidestory** | Open the steps that explain a file, or copy a prompt to explain it (Explorer, editor and tab context menus). |
 | **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your coding agent to write a sidestory. |
 | **Sidestory: Next Step** / **Previous Step** | Move through the sidestory (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd>, or <kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS; <kbd>J</kbd>/<kbd>K</kbd> in the panel). |
 | **Sidestory: Pin Anchors to the Current Code** | Record each anchor's code so sections follow it through edits and say when it changed. |
@@ -155,6 +170,13 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | **Sidestory: Add Widget Types** | Write type declarations so `tsc` and IntelliSense work on widget files. |
 | **Sidestory: Enable Widgets** | Turn widgets back on after the watchdog stopped one (and the setting, if it's off). |
 | **Sidestory: Revoke Widget Consent** | Forget that you agreed to run this workspace's widgets. |
+| **Sidestory: Next Unexplained Change** / **Previous…** | Open the branch's diff at the next change no step explains, from the active editor, in the sidestory's step order (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> on macOS). |
+| **Sidestory: Next Changed File** / **Previous…** | Open the next changed file's diff against the base, in path order (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd>, <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> on macOS). |
+| **Sidestory: Copy Prompt: Explain This Branch** | Copy a prompt that asks your agent to explain the branch's changes, step by step. |
+| **Sidestory: Copy Prompt: Explain This Change** | Copy a prompt for the change at the cursor (editor context menu, This File). |
+| **Sidestory: Mark as Trivial…** | Mark the change at the cursor, or the selected lines, as needing no explanation, with a reason. |
+| **Sidestory: Re-pin This Step** | Pin a step whose code grew since it was written, once its prose covers the new lines. |
+| **Sidestory: Set Base…** | Pick the branch to compare this branch with, kept per repository and branch. It wins over a sidestory's `base`; **Use the Default Base** goes back. |
 
 ## Settings
 
@@ -166,6 +188,11 @@ Add `--pin` to pin anchors from the files on disk, or `--json` for a machine-rea
 | `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
+| `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
+| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under **This branch** when no sidestory explains the branch. |
+| `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…**, no sidestory on the branch gives one, and Git recorded no base for the branch (empty: the remote's default branch, then `main` or `master`). |
+| `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |
+| `sidestory.changes.markUnexplained` | `false` | Mark unexplained changed lines in the diff's gutter even when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets; each workspace still asks first. A user setting: a repository's settings can't turn it on. In browser VS Code, set it in the **User** tab of the Settings editor. |
 
 ## Requirements

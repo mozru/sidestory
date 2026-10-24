@@ -18,7 +18,8 @@ import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
 import { createPanel, panelOptions, VIEW_TYPE } from './panel.ts';
-import { pickAnchor, pinAnchors, reanchorToSelection } from './pin.ts';
+import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
+import { ThisFileView } from './this-file.ts';
 import { PreparedTextCache } from './prepared-cache.ts';
 import type { SessionHost, SessionOptions } from './session.ts';
 import { SymbolTables } from './code-links.ts';
@@ -29,6 +30,8 @@ import { ourModal } from './widgets/watchdog.ts';
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { HighlightService } from './highlight/service.ts';
 import { AVAILABLE_KEY } from './bootstrap-shared.ts';
+import { isSafeFsPath } from '../core/repo-path.ts';
+import { ChangesService, CoverageDecorations } from './changes/service.ts';
 
 /** State the webview panel serializer keeps across restarts (written by the webview). */
 interface PanelState {
@@ -68,9 +71,11 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const selectionEditor = () =>
     vscode.window.activeTextEditor ?? (lastTextEditor && vscode.window.visibleTextEditors.includes(lastTextEditor) ? lastTextEditor : undefined);
 
+  /** Where a selection in a diff's virtual side is (set once the Changes view exists, §7.6). */
+  let selectionSides: SelectionSide | undefined;
   const reanchor = async (ref: ExplainerRef, anchorId: string, confirm: boolean) => {
     try {
-      await reanchorToSelection(ref, anchorId, selectionEditor(), confirm);
+      await reanchorToSelection(ref, anchorId, selectionEditor(), confirm, selectionSides);
     } catch (e) {
       log.error(`Re-anchor failed for ${ref.name}: ${(e as Error).message}`);
       void vscode.window.showErrorMessage(`Couldn't re-anchor: ${plainForMessage((e as Error).message)}`);
@@ -176,8 +181,83 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   };
 
   // ---- the sidebar ----
+  // The branch's comparison (docs/CHANGES-PLAN.md §4, §6, §7, §9.6): no view of its own (Git Tree Compare, GitLens and
+  // Source Control browse the branch); coverage shows as decorations on the files, the "This branch" group and This File.
+  const changes = new ChangesService(context, {
+    sidestoryDirs: () => [...index.all()].map((e) => e.ref.dir),
+    sidestoryBases: () => [...index.all()].flatMap((e) => (e.base !== undefined ? [{ dir: e.ref.dir, title: e.title, base: e.base }] : [])),
+    repin: async (dir, anchor) => {
+      const ref = await explainerFor(dir.toString());
+      if (!ref) return;
+      try {
+        await repinAnchor(ref, anchor, (id) => showing(ref)?.liveHint(id), widgets.pinHooks(ref));
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Couldn't re-pin: ${plainForMessage((e as Error).message)}`);
+      }
+    },
+  });
+  context.subscriptions.push(changes);
+  // Sessions with a base use the comparison (§7, §8, §11.4); coverage reads the index's sidestories (§6.1). Nothing is
+  // computed until some sidestory in the workspace has a base (§4.6).
+  host.diffs = changes.sessionDiffs;
+  const syncWants = () => changes.setWorkspaceWants([...index.all()].some((e) => e.base !== undefined));
+  context.subscriptions.push(
+    index.onDidChange(() => {
+      syncWants();
+      changes.indexChanged();
+    }),
+  );
+  syncWants();
+  selectionSides = async (uri, ref) => {
+    if (uri.scheme !== 'sidestory-git') return undefined;
+    // Only the diff of this sidestory's own comparison: its base must give the diff's merge-base (§7.6).
+    const s = await changes.sameMergeBase(index.entry(ref.dir)?.base);
+    const k = s ? changes.keyOf(s, uri) : undefined;
+    if (!s || !k) return 'refuse';
+    const full = vscode.Uri.joinPath(s.repo.rootUri, ...k.path.split('/'));
+    const prefix = ref.root.path.replace(/\/?$/, '/');
+    return full.path.startsWith(prefix) ? { file: full.path.slice(prefix.length), side: k.side } : 'refuse';
+  };
+  // This File (§9.10), after Sidestories.
+  const thisFile = new ThisFileView(index, here, {
+    fileOf: (uri) => {
+      const p = changes.pathOf(uri);
+      const s = changes.snapshot;
+      // Only a path the file system rule passes: This File reads the file it follows.
+      return p && s && isSafeFsPath(p) ? vscode.Uri.joinPath(s.repo.rootUri, ...p.split('/')) : undefined;
+    },
+    baseOf: (dir) => changes.result()?.belonging.find((b) => uriKey(b.dir) === uriKey(dir))?.manifest.base,
+    changesOf: (file) => changes.changesOf(file),
+  });
+  context.subscriptions.push(thisFile, changes.coverage.onDidChange(() => thisFile.refresh()));
+  // "This branch" at the top of Sidestories (§9.6): repainted only when its rows change.
+  tree.branch = changes;
+  let branchSig = '';
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      const sig = JSON.stringify(changes.branchGroup());
+      if (sig === branchSig) return;
+      branchSig = sig;
+      tree.refresh();
+    }),
+  );
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
   tree.view = view;
+  // This File starts collapsed; the first time a sidestory explains a branch in this workspace, it opens once (no
+  // focus taken), so its "Not explained yet" list is found. Never again in this workspace: the user's layout wins.
+  // Tried only when This File would have rows for the active file: no rebuild on every changes event before that.
+  const THIS_FILE_OPENED_HERE = 'sidestory.thisFile.openedInWorkspace';
+  let revealing = false;
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      if (revealing || context.workspaceState.get(THIS_FILE_OPENED_HERE) || !view.visible || !changes.result()?.belonging.length || !thisFile.wouldHaveRows()) return;
+      revealing = true;
+      void thisFile.revealQuietly().then((done) => {
+        revealing = false;
+        if (done) void context.workspaceState.update(THIS_FILE_OPENED_HERE, true);
+      });
+    }),
+  );
   context.subscriptions.push(view);
   void vscode.commands.executeCommand('setContext', 'sidestory.treeFiltered', !!tree.filter);
   const setAvailable = (on: boolean) => {
@@ -189,16 +269,34 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       setAvailable(true);
       void context.workspaceState.update(AVAILABLE_KEY, true);
     } else if (s === 'empty' && context.workspaceState.get(AVAILABLE_KEY) !== 'shown') {
-      // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view.
-      setAvailable(false);
-      void context.workspaceState.update(AVAILABLE_KEY, undefined);
+      // Cleared when a rebuild finds none, unless "Show Sidestories" asked for the view, or the branch has changes for
+      // the "This branch" group's prompt (docs/CHANGES-PLAN.md §9.1), which takes git a moment to answer.
+      void changes.probe().then(() => {
+        if (index.state !== 'empty' || context.workspaceState.get(AVAILABLE_KEY) === 'shown') return;
+        if (changes.branchHasWork) {
+          void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+          return;
+        }
+        setAvailable(false);
+        void context.workspaceState.update(AVAILABLE_KEY, undefined);
+      });
     }
   };
   context.subscriptions.push(index.onDidChangeState(onState));
+  // The probe says yes later (a new branch, a first commit after startup): the container shows, with the group's
+  // "Copy Prompt: Explain This Branch" (docs/CHANGES-PLAN.md §9.1).
+  context.subscriptions.push(
+    changes.onDidChange(() => {
+      if (!changes.branchHasWork || context.workspaceState.get(AVAILABLE_KEY)) return;
+      setAvailable(true);
+      void context.workspaceState.update(AVAILABLE_KEY, 'shown');
+    }),
+  );
   void vscode.commands.executeCommand('setContext', 'sidestory.indexState', 'loading');
   void index.refresh().then(() => onState(index.state));
 
-  // Reconcile on a git HEAD change (deletes the watcher can't see), and mark drift dirty.
+  // Reconcile on a git HEAD change (deletes the watcher can't see), and mark drift dirty. (The changes service asks
+  // its branch probe again on its own.)
   void watchHead(context, () => {
     void index.reconcile(true);
     drift.invalidateAll();
@@ -385,7 +483,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (!ref) return;
       const open = showing(ref);
       try {
-        await pinAnchors(ref, (id) => open?.liveHint(id), widgets.pinHooks(ref));
+        await pinAnchors(ref, (id) => open?.liveHint(id), widgets.pinHooks(ref), (base) => changes.baseSide(ref.root, base));
       } catch (e) {
         log.error(`Pin Anchors failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't pin anchors: ${plainForMessage((e as Error).message)}`);
@@ -400,7 +498,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (!anchorId) return;
       try {
         // Run from the editor by the user, on the section they picked: no extra confirmation.
-        await reanchorToSelection(ref, anchorId, editor, false);
+        await reanchorToSelection(ref, anchorId, editor, false, selectionSides);
       } catch (e) {
         log.error(`Re-anchor failed for ${ref.name}: ${(e as Error).message}`);
         void vscode.window.showErrorMessage(`Couldn't re-anchor: ${plainForMessage((e as Error).message)}`);
@@ -455,8 +553,11 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         void vscode.window.showErrorMessage(`Couldn't write the widget types: ${plainForMessage((e as Error).message)}`);
       }
     },
+    'sidestory.explainFile': (arg?: unknown) => thisFile.explainFile(arg),
     'sidestory.nextStep': () => target()?.navigate(1),
+
     'sidestory.prevStep': () => target()?.navigate(-1),
+    ...changes.commands,
   };
 
   // Hidden, for tests and the perf smoke (docs/NAVIGATION-PLAN.md §12.4): only in test runs.
@@ -465,6 +566,17 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       vscode.commands.registerCommand('sidestory._indexStats', async () => {
         await index.ready;
         return { ...index.stats(), here: here.stats() };
+      }),
+      vscode.commands.registerCommand('sidestory._changes', () => ({
+        branch: changes.branchGroup(),
+        marks: Object.fromEntries(CoverageDecorations.marksOf(changes.result())),
+        mergeBase: changes.snapshot?.mergeBase,
+      })),
+      vscode.commands.registerCommand('sidestory._focus', () => [...sessions].map((s) => s.focusInfo())),
+      vscode.commands.registerCommand('sidestory._thisFile', () => thisFile.stats()),
+      vscode.commands.registerCommand('sidestory._coverage', () => {
+        const r = changes.coverage.result;
+        return r && { totals: r.totals, belonging: r.belonging.map((b) => b.folder), files: [...r.files].map(([p, f]) => [p, f.coverage?.changes.map((c) => c.state)]) };
       }),
     );
   }
@@ -533,32 +645,49 @@ async function watchHead(context: vscode.ExtensionContext, onChange: () => void)
     const ext = vscode.extensions.getExtension<{ getAPI(v: 1): GitLike }>('vscode.git');
     if (!ext) return;
     const api = (ext.isActive ? ext.exports : await ext.activate()).getAPI(1);
-    const heads = new Map<unknown, string | undefined>();
+    // By root: the git API hands out a new wrapper object for the same repository on every call and event, so a
+    // repository is subscribed to once, and again only after it closed.
+    const heads = new Map<string, string | undefined>();
+    const subs = new Map<string, vscode.Disposable>();
     const watch = (repo: GitRepoLike) => {
-      heads.set(repo, repo.state.HEAD?.commit);
-      context.subscriptions.push(
+      const root = repo.rootUri.toString();
+      if (subs.has(root)) return;
+      heads.set(root, repo.state.HEAD?.commit);
+      subs.set(
+        root,
         repo.state.onDidChange(() => {
           const head = repo.state.HEAD?.commit;
-          if (head !== heads.get(repo)) {
-            heads.set(repo, head);
+          if (head !== heads.get(root)) {
+            heads.set(root, head);
             onChange();
           }
         }),
       );
     };
     api.repositories.forEach(watch);
-    context.subscriptions.push(api.onDidOpenRepository(watch));
+    context.subscriptions.push(
+      api.onDidOpenRepository(watch),
+      api.onDidCloseRepository((repo) => {
+        const root = repo.rootUri.toString();
+        subs.get(root)?.dispose();
+        subs.delete(root);
+        heads.delete(root);
+      }),
+      { dispose: () => subs.forEach((d) => d.dispose()) },
+    );
   } catch {
     // No git extension (or disabled): focus reconciliation still runs.
   }
 }
 
 interface GitRepoLike {
+  rootUri: vscode.Uri;
   state: { HEAD?: { commit?: string }; onDidChange: vscode.Event<void> };
 }
 interface GitLike {
   repositories: GitRepoLike[];
   onDidOpenRepository: vscode.Event<GitRepoLike>;
+  onDidCloseRepository: vscode.Event<GitRepoLike>;
 }
 
 /**

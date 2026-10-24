@@ -12,7 +12,7 @@ export interface ExplainerRef {
   root: vscode.Uri;
 }
 
-export const MAX_MANIFEST_BYTES = 1_000_000;
+export { MAX_MANIFEST_BYTES } from '../core/manifest.ts';
 export const MAX_HTML_BYTES = 5_000_000;
 export const MAX_CODE_BYTES = 10_000_000;
 

@@ -13,7 +13,15 @@
 //
 // --pin records each anchor's current code from the files on disk, as "Pin Anchors" does, never for
 // secret-looking files, and never for anchors widgets read unless --yes-widgets-may-read is given: those
-// let widgets read the code, so the user decides (docs/WIDGETS.md, "Checking your work").
+// let widgets read the code, so the user decides (docs/WIDGETS.md, "Checking your work"). In a sidestory
+// with a base, base-side anchors are pinned against the merge-base blob, never the working tree, and anchors
+// with code added since they were pinned are left alone: --accept <ids> re-pins those (docs/CHANGES-PLAN.md
+// §13.1). --pin also writes a stable `id` when the manifest has none (docs/COMMENTS-PLAN.md §3.1).
+//
+//   node check.cjs [<sidestory-dir>] --coverage [--base <ref>] [--committed | --head <sha>] [--repo <dir>] [--json]
+//
+// --coverage checks the branch's merge diff against the sidestories that belong to it (src/cli/coverage.ts) and
+// exits 3 when there are no errors but some change isn't explained or marked trivial.
 import { readFile, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
@@ -24,6 +32,7 @@ import { explainerNameSchema, parseGroup, parseManifest, type Anchor, type LineR
 import { pinQuote, trimBlankLines } from '../core/pin.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { PreparedText } from '../core/text.ts';
+import { sideOf } from '../core/manifest.ts';
 import { patchManifest, type AnchorPatch } from '../extension/manifest-edit.ts';
 import { realPathInside, writeFileAtomic } from '../extension/paths.ts';
 import { WidgetCompiler, type CompileResult, type WidgetCompilerOptions } from '../extension/widgets/compile.ts';
@@ -33,6 +42,7 @@ import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
+import { manifestDiagnosticFindings, newUlid, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -61,6 +71,10 @@ export interface PinReport {
   needsConsent: { anchor: string; file: string; range: LineRange; lines: number }[];
   /** With --yes-widgets-may-read: what widgets may now read. */
   widgetsMayRead: { anchor: string; file: string; range: LineRange; lines: number }[];
+  /** Anchors with code added since they were pinned (docs/CHANGES-PLAN.md §6.3), left for --accept. */
+  held: { anchor: string; lines: number[] }[];
+  /** The stable id written to a manifest that had none. */
+  id?: string;
 }
 
 export interface CheckReport {
@@ -82,6 +96,12 @@ export interface CheckReport {
 
 export interface CheckOptions {
   pin?: boolean;
+  /** Anchors to re-pin even though code was added inside them since they were pinned (--accept). */
+  accept?: readonly string[];
+  /** The branch comparison, for base-side pins and the anchors --pin leaves alone. */
+  branch?: BranchContext;
+  /** Makes the stable id --pin writes (tests). */
+  newId?: () => string;
   yesWidgetsMayRead?: boolean;
   /** Where the compiler's worker and data are (default: next to the bundle). */
   compiler?: WidgetCompilerOptions;
@@ -427,28 +447,60 @@ function lineCount(r: LineRange) {
   return r.end - r.start + 1;
 }
 
-async function pin(ctx: Context, manifestText: string, manifest: Manifest, widgetRead: (id: string) => boolean, yes: boolean): Promise<PinReport> {
-  const report: PinReport = { pinned: [], unchanged: [], skipped: [], needsConsent: [], widgetsMayRead: [] };
+interface PinWhat {
+  /** --pin: every anchor (but those code was added inside); otherwise only `accept`. */
+  all: boolean;
+  accept: ReadonlySet<string>;
+  branch?: BranchContext;
+  newId?: () => string;
+}
+
+async function pin(ctx: Context, manifestText: string, manifest: Manifest, widgetRead: (id: string) => boolean, yes: boolean, what: PinWhat): Promise<PinReport> {
+  const report: PinReport = { pinned: [], unchanged: [], skipped: [], needsConsent: [], widgetsMayRead: [], held: [] };
   const patches = new Map<string, AnchorPatch>();
   const files = new Map<string, Awaited<ReturnType<typeof readInRepo>>>();
   for (const a of manifest.anchors.values()) {
+    const accepting = what.accept.has(a.id);
+    if (!what.all && !accepting) continue;
+    const held = what.branch?.held.get(a.id);
+    if (held && !accepting) {
+      // Code was added inside this step after it was pinned: re-pinning would hide it from the coverage check.
+      report.held.push({ anchor: a.id, lines: held });
+      continue;
+    }
     if (isSecretPath(a.file)) {
       report.skipped.push({ anchor: a.id, reason: `${a.file} has a secret-looking name; Pin never copies those into the manifest` });
       continue;
     }
-    if (!files.has(a.file)) files.set(a.file, await readInRepo(ctx.root, a.file));
-    const file = files.get(a.file)!;
-    if ('error' in file) {
-      report.skipped.push({ anchor: a.id, reason: `${a.file}: ${file.error}` });
-      continue;
+    let doc: PreparedText;
+    if (sideOf(a) === 'base') {
+      // Removed code: the merge-base's version of the file, never the working tree (§7.6).
+      if (!what.branch) {
+        report.skipped.push({ anchor: a.id, reason: 'a base-side anchor is pinned against the merge-base, which needs the branch comparison: run it inside the repository, with a base that resolves (--coverage says why it doesn\'t)' });
+        continue;
+      }
+      const text = await what.branch.baseText(a.file);
+      if (text === undefined) {
+        report.skipped.push({ anchor: a.id, reason: `${a.file} isn't a file at the merge-base` });
+        continue;
+      }
+      doc = PreparedText.from(text);
+    } else {
+      if (!files.has(a.file)) files.set(a.file, await readInRepo(ctx.root, a.file));
+      const file = files.get(a.file)!;
+      if ('error' in file) {
+        report.skipped.push({ anchor: a.id, reason: `${a.file}: ${file.error}` });
+        continue;
+      }
+      if (isSecretFileName(basename(file.real))) {
+        report.skipped.push({ anchor: a.id, reason: `${a.file} links to a file with a secret-looking name` });
+        continue;
+      }
+      doc = PreparedText.from(file.text);
     }
-    if (isSecretFileName(basename(file.real))) {
-      report.skipped.push({ anchor: a.id, reason: `${a.file} links to a file with a secret-looking name` });
-      continue;
-    }
-    const doc = PreparedText.from(file.text);
     const r = resolveAnchor(doc, a);
-    const confident = !!r.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || (r.state === 'changed' && r.similarity >= 0.9));
+    // --accept takes the code where the anchor is now, changed or not (the author has checked the prose).
+    const confident = !!r.range && !r.ambiguous && (accepting ? r.state !== 'lost' : r.state === 'exact' || r.state === 'moved' || (r.state === 'changed' && r.similarity >= 0.9));
     if (!confident) {
       const why = !r.range ? 'code not found' : r.ambiguous ? 'ambiguous' : r.state === 'changed' ? 'code changed' : r.state === 'stale' ? 'out of date' : 'code not found';
       report.skipped.push({ anchor: a.id, reason: `${why}; use Re-anchor Section to Selection or Pin Anchors in VS Code, which let you accept intended changes` });
@@ -476,7 +528,10 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
     patches.set(a.id, { range, quote });
     report.pinned.push({ anchor: a.id, file: a.file, range });
   }
-  if (patches.size) await writeFileAtomic(ctx.manifestFile, patchManifest(manifestText, patches));
+  // A stable id for a manifest that has none (docs/COMMENTS-PLAN.md §3.1); a bad one is reported, never replaced.
+  const id = what.all && manifest.raw.id === undefined ? (what.newId ?? newUlid)() : undefined;
+  if (patches.size || id) await writeFileAtomic(ctx.manifestFile, patchManifest(manifestText, patches, { id }));
+  if (id) report.id = id;
   return report;
 }
 
@@ -505,6 +560,8 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
       add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'manifest', message: p.error });
       return undefined;
     }
+    // The branch fields and the id (docs/CHANGES-PLAN.md §3.4): bad values are dropped with a diagnostic.
+    for (const f of manifestDiagnosticFindings(ctx.manifestFile, manifestText, p.diagnostics)) add(ctx, f);
     return p.manifest;
   };
   if (manifestText === undefined) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'not-found', message: "manifest.json can't be read." });
@@ -547,9 +604,13 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
     compiler.dispose();
   }
 
-  if (opts.pin && manifest && manifestText !== undefined) {
+  const accept = new Set(opts.accept ?? []);
+  if (manifest) {
+    for (const id of accept) if (!manifest.anchors.has(id)) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'accept', message: `--accept ${id}: no anchor "${id}" in manifest.json.` });
+  }
+  if ((opts.pin || accept.size) && manifest && manifestText !== undefined) {
     const read = new Set([...scan.read, ...scan.uses.filter((u) => u.kind === 'useAnchorCode' && u.id).map((u) => u.id!)]);
-    report.pin = await pin(ctx, manifestText, manifest, (id) => scan.mayReadAny || read.has(id), !!opts.yesWidgetsMayRead);
+    report.pin = await pin(ctx, manifestText, manifest, (id) => scan.mayReadAny || read.has(id), !!opts.yesWidgetsMayRead, { all: !!opts.pin, accept, branch: opts.branch, newId: opts.newId });
     for (const s of report.pin.skipped) add(ctx, { severity: 'warning', file: ctx.manifestFile, code: 'pin-skipped', message: `Not pinned: ${s.anchor} (${s.reason}).` });
     if (report.pin.needsConsent.length) {
       const list = report.pin.needsConsent.map((e) => `${e.file} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`).join('; ');
@@ -558,8 +619,14 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
         message: `Not pinned, because widgets ${scan.mayReadAny ? 'may read any anchor (some widget code computes the anchor id, uses useAnchorCode other than as a direct call with a literal id, or could not be read)' : 'read these anchors with useAnchorCode'}, and pinning lets them read: ${list}. Show the user these files and line ranges, and rerun with --yes-widgets-may-read only if they agree.`,
       });
     }
+    // Read back without repeating the diagnostics already reported.
     manifestText = await readText(ctx.manifestFile);
+    const before = ctx.findings.length;
     manifest = parseIt();
+    ctx.findings.splice(before);
+  }
+  if (manifest?.base !== undefined && manifest.raw.id === undefined) {
+    add(ctx, { severity: 'info', file: ctx.manifestFile, code: 'missing-id', message: 'No "id": a stable id keeps comments attached when the sidestory is renamed or archived. --pin adds one; never change or remove it afterwards.' });
   }
 
   await checkAnchors(ctx, manifest, scan, new Set(scanned.steps));
@@ -579,7 +646,9 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
     };
     const ids = checkIds(page, new Set(manifest.anchors.keys()), widgetIds, manifestLine);
     for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
-    for (const p of ids.manifest) add(ctx, { ...p, file: ctx.manifestFile });
+    // Trivial marks are used by definition: they mark changes, they aren't steps (docs/CHANGES-PLAN.md §3.3).
+    const trivial = new Set([...manifest.anchors.values()].filter((a) => a.trivial).map((a) => `"${a.id}"`));
+    for (const p of ids.manifest) if (!(p.code === 'unused-anchor' && [...trivial].some((q) => p.message.includes(`Anchor ${q} isn't used`)))) add(ctx, { ...p, file: ctx.manifestFile });
   }
   return finish(report);
 }
@@ -622,52 +691,113 @@ function finish(report: CheckReport): CheckReport {
 
 const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 
-export function formatReport(report: CheckReport, cwd = process.cwd()): string {
+/** Findings as `file:line: severity code: message`, one plain line each: errors first, or in file order. */
+export function formatFindings(findings: readonly Finding[], cwd = process.cwd(), order: 'severity' | 'place' = 'severity'): string[] {
   // Messages and file names quote repository text (compiler diagnostics, names, paths): each prints as one plain
   // line, without control, bidirectional or invisible characters.
   const shown = (file: string) => {
     const r = relative(cwd, file);
     return plainLine(r && !r.startsWith('..') && !isAbsolute(r) ? r : file);
   };
-  const sorted = [...report.findings].sort((a, b) => rank[a.severity] - rank[b.severity] || a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0));
-  const out = sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${plainLine(f.message)}`);
+  const byPlace = (a: Finding, b: Finding) => a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0);
+  const sorted = [...findings].sort((a, b) => (order === 'severity' ? rank[a.severity] - rank[b.severity] || byPlace(a, b) : byPlace(a, b) || rank[a.severity] - rank[b.severity]));
+  return sorted.map((f) => `${shown(f.file)}${f.line ? `:${f.line}${f.column ? `:${f.column}` : ''}` : ''}: ${f.severity} ${f.code}: ${plainLine(f.message)}`);
+}
+
+/**
+ * The text report. `coverage`: it comes before the coverage section, whose totals line ends the output, so the
+ * widget line gives the count only, and is left out when there are no widgets.
+ */
+export function formatReport(report: CheckReport, cwd = process.cwd(), coverage = false): string {
+  const out = formatFindings(report.findings, cwd);
   const p = report.pin;
   if (p) {
-    out.push(`Pinned ${p.pinned.length} anchor(s)${p.pinned.length ? `: ${p.pinned.map((x) => x.anchor).join(', ')}` : ''}; ${p.unchanged.length} already pinned; ${p.skipped.length + p.needsConsent.length} not pinned.`);
+    out.push(`Pinned ${p.pinned.length} anchor(s)${p.pinned.length ? `: ${p.pinned.map((x) => x.anchor).join(', ')}` : ''}; ${p.unchanged.length} already pinned; ${p.skipped.length + p.needsConsent.length + p.held.length} not pinned.`);
+    if (p.held.length) out.push(`Not re-pinned, because code was added inside them since they were pinned: ${p.held.map((h) => h.anchor).join(', ')}. Read each step, make its prose cover the new lines, then run again with --accept ${p.held.map((h) => h.anchor).join(',')}.`);
+    if (p.id) out.push(`Added a stable "id" to manifest.json (${p.id}); keep it as it is.`);
     if (p.widgetsMayRead.length) {
       out.push('Widgets in this sidestory may now read (once the quotes are committed, or confirmed in VS Code):');
       for (const e of p.widgetsMayRead) out.push(`  ${plainLine(e.file)} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`);
     }
   }
   const n = report.widgets.length;
-  out.push(`${n === 0 ? 'No widgets' : `${n} widget${n === 1 ? '' : 's'}`} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
+  if (coverage) {
+    if (n) out.push(`${n} widget${n === 1 ? '' : 's'} checked.`);
+  } else if (n === 0) out.push(`Checked: ${report.errors} error(s), ${report.warnings} warning(s); no widgets.`);
+  else out.push(`${n} widget${n === 1 ? '' : 's'} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
   return out.join('\n');
 }
 
-const USAGE = 'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]';
+const USAGE = [
+  'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]] [--accept <anchor>[,…]]',
+  '                      [--coverage [--base <ref>] [--committed | --head <sha>]]',
+  '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--json]',
+  'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial',
+].join('\n');
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
-export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types')): Promise<number> {
-  const flags = new Set(argv.filter((a) => a.startsWith('--')));
-  const args = argv.filter((a) => !a.startsWith('--'));
-  const known = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help']);
-  const unknown = [...flags].filter((f) => !known.has(f));
+/** Flags that take a value (`--base main` or `--base=main`). */
+const VALUED = new Set(['--base', '--head', '--repo', '--accept']);
+const SWITCHES = new Set(['--json', '--pin', '--yes-widgets-may-read', '--types', '--help', '--coverage', '--committed']);
+
+export interface MainHooks {
+  /** Tests: the git to run and the environment it inherits; the stable id --pin writes. */
+  gitPath?: string;
+  env?: NodeJS.ProcessEnv;
+  newId?: () => string;
+}
+
+export async function main(argv: string[], io: { out: (s: string) => void; err: (s: string) => void } = { out: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`) }, compiler?: WidgetCompilerOptions, typesDir = bundleDir && join(bundleDir, 'widget-types'), hooks: MainHooks = {}): Promise<number> {
+  const flags = new Set<string>();
+  const values = new Map<string, string>();
+  const args: string[] = [];
+  const unknown: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (!a.startsWith('--')) {
+      args.push(a);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (VALUED.has(name)) {
+      const v = eq > 0 ? a.slice(eq + 1) : argv[++i];
+      if (v === undefined || v === '') {
+        io.err(`${name} needs a value\n${USAGE}`);
+        return 2;
+      }
+      values.set(name, v);
+      flags.add(name);
+    } else if (SWITCHES.has(a)) flags.add(a);
+    else unknown.push(a);
+  }
   if (flags.has('--help')) {
     io.out(USAGE);
     return 0;
   }
-  if (args.length !== 1 || unknown.length) {
-    io.err(unknown.length ? `unknown option ${unknown.join(', ')}\n${USAGE}` : USAGE);
+  const coverage = flags.has('--coverage');
+  const usage = (why?: string) => {
+    io.err(why ? `${why}\n${USAGE}` : USAGE);
     return 2;
-  }
-  if (flags.has('--yes-widgets-may-read') && !flags.has('--pin')) {
-    io.err(`--yes-widgets-may-read only goes with --pin\n${USAGE}`);
-    return 2;
-  }
+  };
+  if (unknown.length) return usage(`unknown option ${unknown.join(', ')}`);
+  if (args.length > 1 || (args.length === 0 && !coverage)) return usage();
+  if (flags.has('--yes-widgets-may-read') && !flags.has('--pin')) return usage('--yes-widgets-may-read only goes with --pin');
+  if (!coverage && ['--base', '--committed', '--head', '--repo'].some((f) => flags.has(f))) return usage('--base, --committed, --head and --repo go with --coverage');
+  if (flags.has('--committed') && flags.has('--head')) return usage('--committed and --head are two different heads: give one');
+  if (args.length === 0 && !flags.has('--base')) return usage('--coverage without a sidestory needs --base <branch>');
+  if (args.length === 0 && (flags.has('--pin') || flags.has('--accept') || flags.has('--types'))) return usage('--pin, --accept and --types need a sidestory folder');
+  if (args.length && flags.has('--repo')) return usage('--repo is for --coverage without a sidestory (a sidestory folder names its repository)');
+  const accept = values.get('--accept')?.split(',').map((x) => x.trim()).filter(Boolean) ?? [];
+  const json = flags.has('--json');
+
   // --types: what "Add Widget Types" writes, for a terminal (typecheck with TYPECHECK_COMMAND).
-  if (flags.has('--types')) {
-    let dir = resolve(args[0]!);
+  let dir: string | undefined;
+  if (args.length) {
+    dir = resolve(args[0]!);
     if (/sidestory\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
+  }
+  if (flags.has('--types') && dir) {
     const explain = dirname(dir);
     if (!typesDir || basename(explain) !== '.sidestory') {
       io.err(!typesDir ? 'check.cjs: the widget types are missing next to it' : `--types writes into the .sidestory folder, and ${dir} isn't in one`);
@@ -676,9 +806,63 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     const written = await writeWidgetTypes(explain, typesDir);
     io.err(`Wrote ${written.length} files to ${explain} (tsconfig.json, .types/). Typecheck the widgets with: ${TYPECHECK_COMMAND}`);
   }
-  const report = await checkExplainer(args[0]!, { pin: flags.has('--pin'), yesWidgetsMayRead: flags.has('--yes-widgets-may-read'), compiler });
-  io.out(flags.has('--json') ? JSON.stringify(report, null, 2) : formatReport(report));
-  return report.errors > 0 ? 1 : 0;
+
+  const covOpts = { base: values.get('--base'), committed: flags.has('--committed'), head: values.get('--head'), gitPath: hooks.gitPath, env: hooks.env };
+  // The comparison is needed for --coverage, and for pinning a sidestory with a base (base-side anchors read the
+  // merge-base; anchors with code added since they were pinned are left for --accept).
+  let cov: CoverageResult | undefined;
+  if (coverage) cov = await runCoverage({ ...covOpts, sidestory: dir, repo: values.get('--repo') });
+  else if (dir && (flags.has('--pin') || accept.length) && (await hasBase(dir))) cov = await runCoverage({ ...covOpts, sidestory: dir });
+
+  let report: CheckReport | undefined;
+  if (dir) {
+    report = await checkExplainer(dir, { pin: flags.has('--pin'), accept, branch: cov?.branch, newId: hooks.newId, yesWidgetsMayRead: flags.has('--yes-widgets-may-read'), compiler });
+    // Pinning moved or re-quoted anchors: count again with the manifest as it is now.
+    if (coverage && report.pin && (report.pin.pinned.length || report.pin.id)) cov = await runCoverage({ ...covOpts, sidestory: dir });
+  }
+  if (!coverage) {
+    io.out(json ? JSON.stringify(report, null, 2) : formatReport(report!));
+    return report!.errors > 0 ? 1 : 0;
+  }
+
+  // The normal checks on every other sidestory that belongs (§13.1).
+  const others: CheckReport[] = [];
+  for (const d of cov!.sidestoryDirs) if (d !== dir) others.push(await checkExplainer(d, { compiler }));
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  const keep = (f: Finding) => {
+    const k = `${f.file}\u0000${f.line ?? 0}\u0000${f.code}\u0000${f.message}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  };
+  for (const r of [...(report ? [report] : []), ...others]) for (const f of r.findings) if (keep(f)) findings.push(f);
+  // An anchor the normal check already calls unused needs no second warning from coverage.
+  const unused = new Set(findings.filter((f) => f.code === 'unused-anchor').map((f) => `${f.file}\u0000${f.line}`));
+  const covFindings = cov!.findings.filter((f) => !(f.code === 'anchor-unused' && unused.has(`${f.file}\u0000${f.line}`))).filter(keep);
+  const all = [...findings, ...covFindings];
+  const errors = all.filter((f) => f.severity === 'error').length;
+  const warnings = all.filter((f) => f.severity === 'warning').length;
+  if (json) {
+    const base = report ? { ...report, findings: all, errors, warnings } : { findings: all, errors, warnings };
+    io.out(JSON.stringify({ ...base, coverage: cov!.coverage }, null, 2));
+  } else {
+    const head = report ? formatReport({ ...report, findings, errors: findings.filter((f) => f.severity === 'error').length, warnings: findings.filter((f) => f.severity === 'warning').length }, process.cwd(), true) : formatFindings(findings).join('\n');
+    // One summary line, last: the coverage totals and every finding's count.
+    const summary = `${cov!.summary} ${errors} error(s), ${warnings} warning(s).`;
+    const lines = [head, cov!.header, ...formatFindings(covFindings, process.cwd(), 'place'), summary].filter((l) => l !== '');
+    io.out(lines.join('\n'));
+  }
+  if (errors > 0) return 1;
+  return cov!.done ? 0 : 3;
+}
+
+/** The manifest names a base (read leniently; the full parse comes with the check). */
+async function hasBase(dir: string): Promise<boolean> {
+  const text = await readText(join(dir, 'manifest.json'));
+  if (text === undefined) return false;
+  const p = parseManifest(text);
+  return p.ok && p.manifest.base !== undefined;
 }
 
 // Run when bundled as dist/check.cjs (or run directly by node); not when imported by tests.

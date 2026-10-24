@@ -403,7 +403,7 @@ describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () =>
     expect(unknown.join('\n')).toMatch(/data-explain-on: no anchor "phantom"/);
     expect(find(r, 'never-on')).toMatchObject([{ severity: 'warning', message: expect.stringMatching(/"other" never becomes the current step/) }]);
     expect(find(r, 'unused-anchor')).toMatchObject([{ severity: 'warning', file: join(dir, 'manifest.json'), line: expect.any(Number), message: expect.stringMatching(/"spare"/) }]);
-    expect(formatReport(r)).toMatch(/No widgets checked: 0 error\(s\), \d+ warning\(s\)\.$/);
+    expect(formatReport(r)).toMatch(/Checked: 0 error\(s\), \d+ warning\(s\); no widgets\.$/);
   });
 
   it('anchors a widget reads count as used; a computed id means unused anchors can\'t be told', async () => {

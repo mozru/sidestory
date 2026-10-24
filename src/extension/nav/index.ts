@@ -57,6 +57,8 @@ export interface IndexEntry {
   summary: string;
   group?: string;
   top?: boolean;
+  /** The manifest's `base` (a sidestory that explains a branch): the comparison runs only while some sidestory has one. */
+  base?: string;
   /** Anchor ids, with their file ids (into the index's file table), manifest ranges and quote positions. */
   ids: string[];
   file: Int32Array;
@@ -763,11 +765,13 @@ export class SidestoryIndex implements vscode.Disposable {
         e.summary = displayText(m.summary ?? '', 300);
         e.group = m.group !== undefined ? displayText(m.group, 60) || undefined : undefined;
         e.top = m.top;
+        e.base = m.base;
         e.errors = parsed.diagnostics.slice(0, 5).map((d) => displayText(d.anchor ? `${d.anchor}: ${d.message}` : d.message, 200));
         const positions = slicesOk ? quotePositions(text.replace(/^﻿/, ''), bomBytes) : new Map();
         this.setAnchors(e, [...m.anchors.values()], positions);
       } else {
         e.errors = [displayText(parsed.error, 300)];
+        e.base = undefined;
         this.setAnchors(e, [], new Map());
       }
       this.quotes.forget(e);

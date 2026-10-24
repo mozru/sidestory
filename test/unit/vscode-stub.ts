@@ -1,6 +1,6 @@
 // Just enough of the VS Code API to run an ExplainerSession in Node: files come from disk, events are
 // fired by the test, and every listener and watcher is counted so tests can tell what was left behind.
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import { posix } from 'node:path';
 
 export const counts = { joinPath: 0, watchers: 0, reads: 0, readPaths: [] as string[] };
@@ -12,9 +12,16 @@ const drive = /^\/[A-Za-z]:/;
 export class Uri {
   readonly scheme: string;
   readonly path: string;
-  constructor(scheme: string, path: string) {
+  readonly authority: string;
+  readonly query: string;
+  constructor(scheme: string, path: string, authority = '', query = '') {
     this.scheme = scheme;
     this.path = path;
+    this.authority = authority;
+    this.query = query;
+  }
+  static from(c: { scheme: string; authority?: string; path?: string; query?: string }): Uri {
+    return new Uri(c.scheme, c.path ?? '', c.authority ?? '', c.query ?? '');
   }
   static file(path: string): Uri {
     if (win) {
@@ -239,8 +246,12 @@ export const workspace = {
       return new Uint8Array(await readFile(uri.fsPath));
     },
     stat: async (uri: Uri) => {
-      const s = await stat(uri.fsPath);
-      return { mtime: Math.floor(s.mtimeMs), size: s.size, ctime: Math.floor(s.ctimeMs), type: s.isDirectory() ? 2 : 1 };
+      // As VS Code's disk provider: a link is followed, with the SymbolicLink bit set (alone for a broken one).
+      const l = await lstat(uri.fsPath);
+      const link = l.isSymbolicLink() ? FileType.SymbolicLink : 0;
+      const s = link ? await stat(uri.fsPath).catch(() => undefined) : l;
+      const kind = !s ? FileType.Unknown : s.isDirectory() ? FileType.Directory : s.isFile() ? FileType.File : FileType.Unknown;
+      return { mtime: Math.floor((s ?? l).mtimeMs), size: s?.size ?? 0, ctime: Math.floor((s ?? l).ctimeMs), type: kind | link };
     },
   },
   // As VS Code does, ignoring path case on Windows and macOS (where its URIs may disagree on a drive letter's case).
@@ -472,6 +483,8 @@ export class TreeItem {
   }
 }
 export class ThemeIcon {
+  static readonly File = new ThemeIcon('file');
+  static readonly Folder = new ThemeIcon('folder');
   readonly id: string;
   readonly color?: unknown;
   constructor(id: string, color?: unknown) {
@@ -492,3 +505,10 @@ export class Disposable {
   }
 }
 export const env = { openExternal: async () => true };
+export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
+export const FilePermission = { Readonly: 1 };
+export class FileSystemError extends Error {
+  static FileNotFound = (u?: unknown) => new FileSystemError(`not found: ${String(u)}`);
+  static NoPermissions = (u?: unknown) => new FileSystemError(`no permissions: ${String(u)}`);
+  static Unavailable = (u?: unknown) => new FileSystemError(`unavailable: ${String(u)}`);
+}

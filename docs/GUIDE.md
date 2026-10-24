@@ -16,6 +16,13 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Styling](#styling)
   - [What's supported, and what's removed](#whats-supported-and-whats-removed)
   - [Interactive widgets](#interactive-widgets)
+- [Explaining a branch](#explaining-a-branch)
+  - [Base, side and trivial marks](#base-side-and-trivial-marks)
+  - [The coverage rule](#the-coverage-rule)
+  - [Which sidestories count](#which-sidestories-count)
+  - [Coverage in VS Code](#coverage-in-vs-code)
+  - [Checking coverage](#checking-coverage)
+  - [Coverage in CI](#coverage-in-ci)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -30,7 +37,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 
 ## Reading a sidestory
 
-Open one with **Sidestory: Open Sidestory** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
+Open one with **Sidestory: Open Sidestory…** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
 
 - **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote).
 - **Move your cursor in the code** and the sidestory jumps to the section about it. Boxes and links that point at the code under the cursor get a ring, wherever they are in the page; only code a section covers changes the step.
@@ -48,7 +55,7 @@ A sidestory is a folder in your repository:
     assets/          optional: images, fonts, stylesheets
 ```
 
-Open it with **Sidestory: Open Sidestory**.
+Open it with **Sidestory: Open Sidestory…**.
 
 ### Link sections to code
 
@@ -372,6 +379,120 @@ export default function Refill({ width = 64 }: { width?: number }) {
 
 **Writing them:** [WIDGETS.md](WIDGETS.md) is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Sidestory: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .sidestory/<name>`; [WIDGETS.md §13](WIDGETS.md#13-checking-your-work-and-consent) has the exact command). **Sidestory: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
 
+## Explaining a branch
+
+A sidestory can explain a change instead of a piece of code: what a branch or pull request changes, step by step, in the order a reviewer wants it. It is an ordinary sidestory with a `base`, committed with the branch so reviewers get it with the PR. The checker tells you which changes it doesn't explain yet.
+
+### Base, side and trivial marks
+
+```json
+{
+  "version": 3,
+  "title": "Retry with full jitter",
+  "summary": "Why retries now wait a random time below a growing ceiling.",
+  "base": "main",
+  "trivialFiles": ["package-lock.json", "**/__snapshots__/**"],
+  "anchors": {
+    "ceiling": { "file": "src/retry.ts", "range": [40, 52] },
+    "old-loop": { "file": "src/retry.ts", "side": "base", "range": [20, 31], "color": "charts.red" },
+    "trivial-1": { "file": "src/api.ts", "range": [3, 9], "trivial": true, "why": "import order" }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `base` | Top level: what the branch is compared with, a branch or tag name (`main`, `release/2.1`, `origin/main`) or a full commit id. Short commit ids, `HEAD` and names with `..` or `@{` are refused. `main` also finds `origin/main` when there is no local `main` (a CI checkout). The comparison is the **merge diff**: from the merge-base of `base` and the branch to the branch, so work that landed on `main` after the branch started isn't in it. Without a base, a sidestory is a plain story about the code as it is. |
+| `side` | Anchor: `"base"` anchors **removed** code, in the merge-base's version of the file (the old path, for a renamed file). It needs a `base` and `"version": 3`. Absent means the code as it is now. |
+| `trivial`, `why` | Anchor: `"trivial": true` marks a mechanical change (formatting, import order, a rename, generated code) that needs no explanation; `why` (1–200 characters) is required, and reviewers see it. A trivial mark isn't a step: don't give it a section. Name them `trivial-1`, `trivial-2`, …. A trivial mark on a pure deletion goes on the base side. |
+| `trivialFiles` | Top level: globs (`*`, `**`, `?`) of whole files whose changes need no explanation, relative to the folder holding `.sidestory/`. Name them narrowly: `**`, `*`, or a pattern that matches more than half of the changed files is flagged. |
+| `id` | Top level: a stable id (a ULID). `--pin` writes it when there is none; never change or remove it. |
+
+Trivial is never the same as explained: the count says "9 explained · 3 trivial · 0 left", and a reviewer sees which changes were waved through and why.
+
+### The coverage rule
+
+The checker splits the merge diff into **changes**: runs of added and removed lines, with runs separated by a single unchanged line counted as one change. Line endings and a missing final newline aren't changes, and blank lines need no cover (unless a change is nothing but blank lines). Where the lines around an addition repeat (a function appended after other `}` lines), the addition is placed as late as it can go, as git shows it. Only anchors the page uses count (a section, a `data-explain-ref` or a `data-explain-on`), plus trivial marks. A change is explained when:
+
+- **Added lines:** every added line is inside an anchor (current side) in that file.
+- **Removed lines:** every removed line is inside a `"side": "base"` anchor, **or** an anchor on the current side covers where they were: the whole new range of a replacement (one anchor explains a rewrite, old lines included), or, for a pure deletion of at most 20 lines, both lines around it. A larger deletion needs a base-side anchor or a trivial mark.
+
+Some lines covered and some not is **partly explained**, which counts as not explained. A line added inside a pinned anchor that isn't in the anchor's pinned code was written after the step: it **needs a look** (`changed-since-pinned`) until you read the step, make the prose cover it, and accept it with `--accept <anchor>`. A broad anchor (over 40 lines and more than 5 times the changed lines it covers) still counts, with a warning.
+
+A file whose lines can't be compared counts as **one change**: a binary file, a Git LFS file (its pointer changed), a symbolic link, a submodule, a type change (a file becoming a link, say), and a path Sidestory won't read (control characters, `..`, `.git` or a leading `:`, or, from the working tree, a name Windows reads differently, like `con`, `nul.txt` or `a.`). No anchor can cover such a change and Mark as Trivial can't either: only a `trivialFiles` match marks it, so put binary assets there (`"assets/**/*.png"`). **Moves count too.** Files renamed or copied across folders make one move change per moved prefix: the old and new paths without their common trailing part, so moving `src/a` to `src/b`, subfolders and all, is one change ("12 files moved src/a → src/b"), pure moves and moved-and-edited files alike; renames within one folder that share a transform are one change too ("30 files renamed in src/components (*.js → *.ts)": the same extension change, or the same substitution at the start or end of the name keeping at least 3 characters of it), and any other rename in place is a change of its own ("renamed lib/retry.js → lib/retry-policy.js"), as is every rename that can switch a file off (an added `.disabled`, `.bak`, `.off`, `.orig`, `.old` or `~`, or code renamed to a non-code extension). A move can switch code off (`src/auth.js` → `src/disabled/auth.js`), so it needs a mention: **one sentence in a step** anchored in any of the moved files explains the whole group. A trivial mark or a `trivialFiles` match covers only its own file's move, so a group is trivial only when every moved file has one; a trivial mark on one file never waves through another's move. Every report of a move lists its files. Edited files keep their line changes as well. Not counted (the report lists them): mode-only changes, and a sidestory's own two files (`manifest.json` and `sidestory.html` of a complete sidestory). Everything else in a `.sidestory/<name>/` folder (widget code, assets, a helper script) counts like code anywhere, and code renamed onto a sidestory's own file counts as that code's deletion. Anything under `.sidestory/archive/` is one change, except an archived sidestory moved there unchanged from a sidestory complete at the merge-base, its manifest rewritten only in `base`, `head` and `landed`.
+
+### Which sidestories count
+
+A sidestory counts toward a branch when it was **added on that branch** (its `manifest.json` isn't there at the merge-base) and its `base` gives the same merge-base. So once a branch lands, its sidestory sits on `main` and never counts for a later branch, even one that edits it. **A follow-up PR on a landed sidestory needs its own sidestory**: write a new one for the follow-up, and link the old one with `data-explain-detail` if it helps.
+
+### Coverage in VS Code
+
+Sidestory doesn't add a file tree of its own for the branch: use the one you already have. [Git Tree Compare](https://marketplace.visualstudio.com/items?itemName=letmaik.git-tree-compare) is the one we recommend (it lists every file the branch changes against its base, committed or not); GitLens and the Source Control view work too. Sidestory's commands work from the right-hand (working tree) side of their diffs; the left side of Git Tree Compare's diff may be another commit than Sidestory's merge-base, so it's only read as the base side when it is that commit. Sidestory marks the files in all of them, and in the Explorer, with **file decorations**:
+
+- a **badge**: `✓` every change explained (some may be trivial), `–` every change marked trivial, `◐` partly, `○` none yet, `!` code added inside a step since it was written;
+- a **colour**: one for done, one for changes left;
+- a **tooltip** with the counts and the steps that explain the file ("2 of 3 changes explained · 1 marked trivial · Step 2 of Retry with jitter").
+
+A binary file, a link or a submodule is one change, marked like any other file (`○` until a `trivialFiles` match covers it). Files that aren't counted (a sidestory's own two files, line endings or mode only) get no mark. A move shows once, on its group's first file ("12 files moved src/a → src/b", its files in the tooltip); the other moved files say "moved with <that file> · 1 change for the group". Next Unexplained Change opens the first file's diff. Mark as Trivial on a move marks the move of the file the cursor is in (else the group's first file), on its first unchanged line (or, when that file is covered already, the first file that isn't), and names the files of the group that still need a mark; one sentence in a step (Copy Prompt: Explain This Change) covers them all.
+
+The mark is per file; for the changes inside one, open it:
+
+- **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor that aren't done yet (unexplained, partly explained, or changed since their step was written), each with its state: click one to go to its lines (the diff for a removed line). It offers **Copy Prompt: Explain This Change** for your agent, and **Mark as Trivial…** for a change that needs no explanation (it asks for the `why`). A file that counts as one change as a whole is named by its kind ("binary file", "symlink", "submodule", "too large") and has no Mark as Trivial: give it a `trivialFiles` glob. Changed files whose paths Sidestory won't read have no file to open: **This branch** lists them ("2 files with unsupported paths"), and a click copies them for `trivialFiles`.
+- The **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left; when none counts yet, or some changes are left, it offers a prompt to copy for your agent. When the branch can't be compared (the base set for it isn't found, it shares no commit with its base, there's no `main` or `master`, or git failed), the group says so, and clicking the row opens **Sidestory: Set Base…**.
+- **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. In a diff or a changed file they have keys: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the unexplained changes and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the files (on macOS <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> and <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd>).
+
+The base is, in order: the one you picked with **Sidestory: Set Base…** (kept per repository and branch; its first item says which base is in use and where it came from, and a base is saved only once it resolves); else the `base` of a sidestory added on this branch; else the branch's `branch.<name>.vscode-merge-base` git setting (the one VS Code's own Source Control uses); else the `sidestory.changes.defaultBase` setting; else the remote's default branch, then `main`, then `master`. Which sidestories count is decided as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
+
+### Checking coverage
+
+```bash
+CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs | sort -V | tail -n 1)"
+node "$CHECK" --coverage --base main              # every change of this branch, and what explains it
+node "$CHECK" .sidestory/retry-jitter --pin --coverage
+```
+
+- With a sidestory folder, the comparison uses its `base` (or `--base`); without one, `--base` is required. Either way every sidestory that counts is checked and named.
+- The working tree is compared by default, untracked files included (ignored ones aren't), and a deleted file paired with a similar untracked one counts as a rename. `--committed` compares `HEAD` instead (what CI sees); `--head <commit>` compares that commit.
+- `--json` adds `coverage`: every file and change with its lines, status (`explained`, `partly`, `unexplained`, `trivial`, `needsLook`) and the anchors that explain it.
+- `--pin` pins base-side anchors against the merge-base, never the working tree, and never re-pins an anchor with lines added since it was pinned; `--accept <anchor>[,…]` does, once you've updated the step.
+- Exit codes: **0** clean, **1** errors, **2** bad arguments, **3** no errors but some change isn't explained or marked trivial.
+
+The checker runs git itself (the extension doesn't), carefully: see [SECURITY.md](../SECURITY.md#the-checker-and-git).
+
+### Coverage in CI
+
+To check every pull request, add a workflow. It checks out the PR's head (not GitHub's merge commit) with full history, so the diff is exactly merge-base → head, and runs the checker from outside the checkout, so nothing in the PR can replace it. Until the checker is published on npm, it comes from the extension's VSIX at a version you pin, checked against the SHA-256 you recorded:
+
+```yaml
+# .github/workflows/sidestory-coverage.yml
+name: Sidestory coverage
+on: pull_request
+permissions: { contents: read }
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      SIDESTORY_VERSION: "0.1.0"        # the extension release you checked
+      SIDESTORY_SHA256: "<sha256 of that VSIX>"
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.pull_request.head.sha }}", fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Get the checker, outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL --compressed -o sidestory.vsix \
+            "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/paperkite/vsextensions/sidestory/${SIDESTORY_VERSION}/vspackage"
+          echo "${SIDESTORY_SHA256}  sidestory.vsix" | sha256sum -c -
+          unzip -q sidestory.vsix 'extension/dist/*' -d sidestory
+      - env: { BASE: "origin/${{ github.base_ref }}" }
+        run: node "$RUNNER_TEMP/sidestory/extension/dist/check.cjs" --coverage --base "$BASE" --committed
+        # exit 3 = some change isn't explained. Use `|| [ $? -eq 3 ]` to report without failing.
+```
+
+Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum sidestory.vsix`), and update both values together when you move to a newer release. Values from the event reach the script through `env:`, never inside it, and `persist-credentials: false` keeps the token out of `.git/config`.
+
 ## Settings
 
 | Setting | Default | |
@@ -382,6 +503,11 @@ export default function Refill({ width = 64 }: { width?: number }) {
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
 | `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
+| `sidestory.changes.defaultBase` | `""` | The branch, tag or commit a branch is compared with (`develop`, `origin/develop`) when none was set with **Sidestory: Set Base…**, no sidestory added on the branch gives a `base`, and Git recorded no base for the branch (`branch.<name>.vscode-merge-base`, which VS Code's Source Control sets); empty means the remote's default branch, then `main`, then `master`. |
+| `sidestory.changes.includeUncommitted` | `true` | Compare the working tree (staged, unstaged and untracked changes) rather than the last commit, for coverage, its decorations and the diffs steps open. Turn it off to see what CI sees. |
+| `sidestory.changes.openStepsIn` | `"diff"` | Where the steps of a sidestory that explains a branch open: `diff` (the branch's diff of the file) or `editor` (the file itself). |
+| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under "This branch" in the Sidestories view when the branch has changes and no sidestory explains it yet. |
+| `sidestory.changes.markUnexplained` | `false` | Mark unexplained changes in the gutter of the branch's diffs, also when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ## Troubleshooting

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorParts, parseManifest, partKey, type Anchor } from '../../src/core/manifest.ts';
+import { anchorParts, isValidBase, parseManifest, partKey, requiredVersion, type Anchor } from '../../src/core/manifest.ts';
 import type { Resolution } from '../../src/core/resolve.ts';
 import { anchorAtLine } from '../../src/core/sections.ts';
 import { contentSimilarity, lcsRatio } from '../../src/core/similarity.ts';
@@ -79,7 +79,7 @@ describe('parseManifest', () => {
   });
 
   it('reports a future version distinctly', () => {
-    expect(parseManifest(JSON.stringify({ version: 3, title: 't', anchors: {} }))).toMatchObject({ ok: false, code: 'unsupported-version' });
+    expect(parseManifest(JSON.stringify({ version: 4, title: 't', anchors: {} }))).toMatchObject({ ok: false, code: 'unsupported-version' });
   });
 
   it('refuses oversized manifests', () => {
@@ -310,5 +310,86 @@ describe('Anchor.parts (docs/AUTHORING-PLAN.md §1.1, release 1: the type only)'
     expect(partKey('done', 1)).toBe('done:2');
     const r = parseManifest(JSON.stringify({ version: 2, title: 't', anchors: { 'done:2': { file: 'x', range: [1, 1] } } }));
     expect(r.ok && r.manifest.anchors.has('done:2')).toBe(false);
+  });
+});
+
+describe('branch fields (docs/CHANGES-PLAN.md §3, §16.1)', () => {
+  const parse = (extra: Record<string, unknown>, anchors: Record<string, unknown> = {}) => {
+    const r = parseManifest(JSON.stringify({ version: 2, title: 'T', anchors, ...extra }));
+    if (!r.ok) throw new Error(r.error);
+    return r;
+  };
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+
+  it('base grammar: names and full ids, never short ids or git syntax', () => {
+    for (const ok of ['main', 'release/2.1', 'v1.4.0', 'origin/main', SHA, 'a'.repeat(64)]) expect(isValidBase(ok), ok).toBe(true);
+    for (const bad of ['-x', 'a..b', 'a@{1}', 'x.lock', 'HEAD', 'FETCH_HEAD', 'ORIG_HEAD', 'MERGE_HEAD', 'x/', '/x', 'a//b', 'a b', '', 'x'.repeat(201), 'a/.b']) expect(isValidBase(bad), bad).toBe(false);
+    // A short hex id is a ref name, never an abbreviated commit.
+    expect(parse({ base: 'abc1234' }).manifest.base).toBe('abc1234');
+  });
+
+  it('a bad base is a diagnostic and the sidestory is a plain file story', () => {
+    const r = parse({ base: 'a..b', head: SHA, trivialFiles: ['x'] });
+    expect(r.manifest.base).toBeUndefined();
+    expect(r.manifest.head).toBeUndefined();
+    expect(r.manifest.trivialFiles).toBeUndefined();
+    expect(r.diagnostics.map((d) => d.message.split(':')[0])).toEqual(['base', 'head', 'trivialFiles']);
+  });
+
+  it('head needs base and a full id', () => {
+    expect(parse({ head: SHA }).diagnostics[0]!.message).toMatch(/head: needs a valid "base"/);
+    expect(parse({ base: 'main', head: 'abc1234' }).diagnostics[0]!.message).toMatch(/full commit id/);
+    expect(parse({ base: 'main', head: SHA }).manifest.head).toBe(SHA);
+  });
+
+  it('trivialFiles: limits, no "..", no leading "/"', () => {
+    const r = parse({ base: 'main', trivialFiles: ['package-lock.json', '**/__snapshots__/**', '../x', '/abs', 'a/{b,c}', 'x'.repeat(201), 3] });
+    expect(r.manifest.trivialFiles).toEqual(['package-lock.json', '**/__snapshots__/**']);
+    expect(r.diagnostics).toHaveLength(5);
+    const many = parse({ base: 'main', trivialFiles: Array.from({ length: 101 }, (_, i) => `f${i}`) });
+    expect(many.manifest.trivialFiles).toHaveLength(100);
+  });
+
+  it('side, trivial and why', () => {
+    const r = parse({ version: 3, base: 'main' }, {
+      old: { file: 'a.ts', range: [1, 2], side: 'base' },
+      t: { file: 'a.ts', range: [1, 2], trivial: true, why: ' import order ' },
+      noWhy: { file: 'a.ts', range: [1, 2], trivial: true },
+      bad: { file: 'a.ts', range: [1, 2], side: 'left' },
+    });
+    expect(r.manifest.anchors.get('old')!.side).toBe('base');
+    expect(r.manifest.anchors.get('t')).toMatchObject({ trivial: true, why: 'import order' });
+    expect(r.manifest.anchors.get('noWhy')).toMatchObject({ trivial: true });
+    expect(r.manifest.anchors.get('noWhy')!.why).toBeUndefined();
+    expect(r.manifest.anchors.has('bad')).toBe(false);
+    expect(r.diagnostics.map((d) => d.anchor)).toEqual(['noWhy', 'bad']);
+  });
+
+  it('a why with bidi controls, zero-width or tag characters is refused', () => {
+    for (const why of ['import\u202e order', 'import\u200b order', 'tag\udb40\udc41', 'line\u2028break', 'lone \ud800']) {
+      const r = parse({ version: 3, base: 'main' }, { t: { file: 'a.ts', range: [1, 2], trivial: true, why } });
+      expect(r.manifest.anchors.get('t')!.why, JSON.stringify(why)).toBeUndefined();
+      expect(r.diagnostics.some((d) => d.anchor === 't' && /^why: /.test(d.message)), JSON.stringify(why)).toBe(true);
+    }
+  });
+
+  it('side "base" without a base skips the anchor', () => {
+    const r = parse({}, { old: { file: 'a.ts', range: [1, 2], side: 'base' } });
+    expect(r.manifest.anchors.has('old')).toBe(false);
+    expect(r.diagnostics[0]!.message).toMatch(/needs a valid top-level "base"/);
+  });
+
+  it('the version rule: side "base" needs 3, the rest leaves it unchanged', () => {
+    expect(requiredVersion({ anchors: { a: { side: 'base' } } })).toBe(3);
+    expect(requiredVersion({ anchors: { a: { trivial: true, why: 'x' }, b: { side: 'head' } } })).toBe(2);
+    const old = parse({ base: 'main' }, { old: { file: 'a.ts', range: [1, 2], side: 'base' } });
+    expect(old.manifest.anchors.has('old')).toBe(true);
+    expect(old.diagnostics.at(-1)!.message).toMatch(/need "version": 3/);
+    expect(parse({ version: 3, base: 'main' }, { old: { file: 'a.ts', range: [1, 2], side: 'base' } }).diagnostics).toEqual([]);
+  });
+
+  it('id: a ULID, or a diagnostic', () => {
+    expect(parse({ id: '01JB0000000000000000000000' }).manifest.id).toBe('01JB0000000000000000000000');
+    expect(parse({ id: 'nope' }).diagnostics[0]!.message).toMatch(/^id: must be a ULID/);
   });
 });
