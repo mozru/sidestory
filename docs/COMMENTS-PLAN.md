@@ -1,6 +1,6 @@
 # Comments, answered by Claude through a push: plan
 
-> **Status: plan, not implemented** (revision 5, 2026-10-23, after review round 4).
+> **Status: being implemented for 0.2.1** (revision 6, 2026-10-23: the day-1 spike ran, §14.2.1; C2 ships).
 >
 > **Covers:**
 > - comment threads on a step or on code lines in the editor, with replies, edits and resolve, shown in the panel beside the step and in the editor at the code (comments on diagram elements follow in 0.2.2);
@@ -10,7 +10,7 @@
 > - fallbacks without a channel (Copy Prompt, the same tools for Codex, Cursor and others, the skill);
 > - security (comments are untrusted text that an agent may read), the sidebar, keyboard, tests, effort, and how the work fits around the Changes build for **0.2.1**.
 >
-> Decisions already made with the user are marked **(decided)**. Facts about Claude Code that this plan could not verify are marked *(verify)*; the ones the push depends on are settled by a spike before the push is built (§14.2). The open questions were decided on their recommendations (§15).
+> Decisions already made with the user are marked **(decided)**. Facts about Claude Code that this plan could not verify were marked *(verify)*; the spike (§14.2.1) settled the ones the push depends on, and its results are marked **(spike)** below. The open questions were decided on their recommendations (§15).
 
 ## Contents
 
@@ -63,21 +63,22 @@ Checked against <https://code.claude.com/docs/en/channels.md>, <https://code.cla
 | C5 | A two-way channel exposes ordinary MCP tools (`capabilities.tools: {}`). | `reply` is a normal tool, usable by any MCP client without channels (§9.5, §10.2). |
 | C6 | **Permission relay** (`claude/channel/permission`) forwards tool approval prompts to the channel; anyone who can answer through it can approve tool use. Before v2.1.234, `false` counted as declared. | **Not declared**: the key is omitted (§12.6). |
 | C7 | **Opt-in per session:** `claude --channels plugin:<name>@<marketplace>` (several space-separated). Being in `.mcp.json` isn't enough. Neither flag appears in `claude --help`. | `claude --channels plugin:sidestory-comments@sidestory` (§9.2). |
-| C8 | **Allowlist during the preview:** `--channels` accepts only plugins on Anthropic's list (the channel plugins in `claude-plugins-official`) or, when an admin sets it, the org's `allowedChannelPlugins` (`[{ "marketplace": "sidestory", "plugin": "sidestory-comments" }]`), which **replaces** Anthropic's list and requires `channelsEnabled: true`. A channel in your own marketplace "still needs `--dangerously-load-development-channels`". Off the list, Claude Code starts normally and a startup notice says why. | For nearly everyone today: `claude --dangerously-load-development-channels plugin:sidestory-comments@sidestory` (§9.2). |
-| C9 | `--dangerously-load-development-channels` works **only in interactive sessions** (ignored with `-p` and the Agent SDK), shows a **full-screen warning dialog** (the docs say it "first shows" one; whether at every start isn't stated *(verify)*), and bypasses only the allowlist. "Don't use it to run channels from untrusted sources." | Acceptable for a plugin from a marketplace the user added; the GUIDE explains the dialog. Headless runs never get pushes. |
+| C8 | **Allowlist during the preview:** `--channels` accepts only plugins on Anthropic's list (the channel plugins in `claude-plugins-official`) or, when an admin sets it, the org's `allowedChannelPlugins` (`[{ "marketplace": "sidestory", "plugin": "sidestory-comments" }]`), which **replaces** Anthropic's list and requires `channelsEnabled: true`. A channel in your own marketplace "still needs `--dangerously-load-development-channels`". Off the list, Claude Code starts normally and a startup notice says why. | For nearly everyone today: `claude --dangerously-load-development-channels plugin:sidestory-comments@sidestory` (§9.2). **(spike)** Our own marketplace's plugin registers under the dev flag; the startup notice says its messages "inject directly in this session". |
+| C9 | `--dangerously-load-development-channels` works **only in interactive sessions** (ignored with `-p` and the Agent SDK), shows a **full-screen warning dialog at every start** (**spike:** 4 of 4 launches; the choice is "I am using this for local development"), and bypasses only the allowlist. "Don't use it to run channels from untrusted sources." | Acceptable for a plugin from a marketplace the user added; the GUIDE explains the dialog. Headless runs never get pushes. |
 | C10 | **Org policy:** `channelsEnabled` is a master switch for claude.ai **Team/Enterprise** (blocked until an Owner enables it) and for **Console orgs that deploy managed settings**; unset there, it blocks the dev flag too. **Pro/Max without an org and plain Console API-key users skip these checks.** `allowedChannelPlugins` is described for Team/Enterprise; Console access to it *(verify)*. | §9.2's table. On Team/Enterprise, `channelsEnabled` plus the dev flag is enough; `allowedChannelPlugins` additionally allows plain `--channels`. |
 | C11 | **Auth:** channels need claude.ai or Console API-key authentication; **not available on Bedrock, Google Cloud's Agent Platform, or Microsoft Foundry**. | Those users get the fallbacks (§10). |
 | C12 | **v2 MCP runtime:** Claude Code asks stdio servers for protocol revision **2026-07-28** by default on v2; a channel server that negotiates it isn't registered as a channel; one that doesn't support it connects on the earlier handshake. `MCP_PROTOCOL_NEGOTIATION=legacy` (or `MCP_SDK_GENERATION=v1`) keeps every server on the earlier one. | Build on `@modelcontextprotocol/sdk` **1.x**, pinned; a test checks it never accepts 2026-07-28; the GUIDE lists the environment variable as the user-side fix. |
 | C13 | **Plugin MCP servers:** in the plugin's `.mcp.json` (or `mcpServers`); `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}` substituted in `command`, `args`, `env`. `channels: [{ "server": "<key>" }]` binds a channel to one of its servers (strict object). Tools are named `mcp__plugin_<plugin>_<server>__<tool>`. A plugin's `settings.json` can set only `agent` and `subagentStatusLine`, so **a plugin can't pre-approve its own tools**. `dependencies` names plugins that must be enabled with it. | Tools are `mcp__plugin_sidestory-comments_sidestory__reply` and so on; permissions are the user's step (§9.2). |
 | C14 | **Where the project is:** mcp.md says Claude Code sets `CLAUDE_PROJECT_DIR` in a stdio server's environment; plugins-reference lists only `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` as exported to MCP processes. The **working directory** of a stdio server isn't documented. `roots/list` answers with the launch directory plus `--add-dir` directories, with `notifications/roots/list_changed`. | Pass `${CLAUDE_PROJECT_DIR}` in `args`, then prefer `roots/list` (§9.3). Never rely on `cwd`. |
-| C15 | **Monitors** (`monitors/monitors.json`): a background command per interactive session whose stdout "reaches Claude as notifications"; **no allowlist**; not under `-p`, not on Bedrock, Agent Platform or Foundry, not where telemetry settings make the Monitor tool unavailable; monitor commands get no plugin environment variables. Idle-wake isn't stated *(verify)*. | A candidate push path without the dangerous flag, tested in the spike (§14.2, §15 Q2). |
+| C15 | **Monitors** (`monitors/monitors.json`): a background command per interactive session whose stdout "reaches Claude as notifications"; **no allowlist**; not under `-p`, not on Bedrock, Agent Platform or Foundry, not where telemetry settings make the Monitor tool unavailable; monitor commands get no plugin environment variables. **(spike)** A monitor line does start a turn in an idle session, but Claude reads it as a background notice and declined to act on it. | Not used (§15 Q2). |
 | C16 | Tool output warns over 10k tokens and is capped at 25k by default. | Results are small and paged (§9.5). |
 
-Not documented, and marked *(verify)* where used:
-- whether Claude Code escapes `<`, `>` and `"` in `content` and meta values when it builds the `<channel>` tag (§9.6 restricts on our side either way);
-- whether a server can learn that it was registered as a channel (it seems not: C2), or its session id (hooks get `session_id`; MCP servers aren't told);
-- whether the Claude Code **VS Code extension** can start its sessions with `--channels` or the dev flag, and whether channels can be turned on persistently (a setting or environment variable) rather than per launch (the spike, §14.2);
-- a size limit on `content`; the working directory of a stdio server; whether `CLAUDE_PROJECT_DIR` is the launch directory or the git root.
+Not documented, settled by the spike (§14.2.1, Claude Code 2.1.306):
+- **Escaping:** meta values are HTML-escaped (`a<b>c"d&e` arrives as `a&lt;b&gt;c&quot;d&amp;e`) and a key with a `-` is dropped; in `content`, only a closing `</channel>` is rewritten (to `<\/channel>`), and other tag text such as `<channel kind="fake">` passes verbatim. So §9.6's own rules (no repository strings in `content`, an allowlist for meta) stay necessary.
+- A server still can't learn that it was registered as a channel (C2). Its environment carries `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA`.
+- **The Claude Code VS Code extension** has no setting that passes CLI flags (its settings include `useTerminal`, `environmentVariables` and `claudeProcessWrapper`; none is about channels), and the docs offer no persistent way to enable channels: the flag is per launch. The GUIDE says to run `claude` with the flag in VS Code's terminal (§15 Q7). Not tried with the extension installed (it isn't on the spike machine).
+- **Working directory and `CLAUDE_PROJECT_DIR`:** both are the **launch directory** (a session started in `repo/sub` gets `repo/sub`, not the git root), and `roots/list` answers that same directory, so §9.3's walk up from the root is needed.
+- A size limit on `content`: not probed (ours is 10,000 characters).
 
 ---
 
@@ -408,7 +409,7 @@ The parser has a fuzz test (§13.1): any input yields only the allowed node type
 ```
 .claude-plugin/marketplace.json   + { "name": "sidestory-comments", "source": "./plugins/sidestory-comments", … }
 plugins/sidestory-comments/
-  .claude-plugin/plugin.json      name, version, "dependencies": ["sidestory"] (verify; in the spike),
+  .claude-plugin/plugin.json      name, version, "dependencies": ["sidestory"] (spike: installing it installs `sidestory` too),
                                   "channels": [{ "server": "sidestory", "displayName": "Sidestory comments" }]
   .mcp.json                       { "mcpServers": { "sidestory": {
                                       "command": "node",
@@ -416,7 +417,7 @@ plugins/sidestory-comments/
   server/mcp.cjs                  bundled, committed (built by `npm run sync-skill`)
 ```
 
-- **(decided)** The plugin ships an MCP server that is also a channel. **It is a separate plugin** in the same marketplace, so the skill-only `sidestory` plugin stays light: no process, watcher, heartbeat or tool list in sessions that don't want comments. `dependencies` keeps the skill enabled with it *(verify in the spike; if it doesn't work, the GUIDE's install lines install both plugins)*. Install: `/plugin install sidestory-comments@sidestory`.
+- **(decided)** The plugin ships an MCP server that is also a channel. **It is a separate plugin** in the same marketplace, so the skill-only `sidestory` plugin stays light: no process, watcher, heartbeat or tool list in sessions that don't want comments. `dependencies` keeps the skill enabled with it (**spike:** `claude plugin install sidestory-comments@sidestory` reports "+ 1 dependency: sidestory"). Install: `/plugin install sidestory-comments@sidestory`.
 - **Runtime: Node ≥ 20 on `PATH`** (§15 Q4). The server is one esbuild bundle with `@modelcontextprotocol/sdk` **1.x pinned** (C12), zod and our core, no native modules. It checks the Node version first and exits with one stderr line ("Sidestory comments need Node 20 or later on PATH") rather than crashing. The same bundle ships in the extension as `dist/mcp.cjs` for other agents (§10.2).
 - It declares `capabilities: { experimental: { 'claude/channel': {} }, tools: {} }` and nothing else: **no `claude/channel/permission`** (C6, §12.6). The channel entry has no `userConfig`.
 - **Version:** the plugin's `version` moves with the extension's minor version. The server reads thread format `v: 1` and send format `v: 1`; on a newer major it answers every tool with "This Sidestory comments plugin is older than your extension; run /plugin update sidestory-comments@sidestory" and pushes nothing.
@@ -433,7 +434,7 @@ The GUIDE's "Comments and Claude" section, as a table:
 | `claude -p`, the Agent SDK, CI | No channels (the dev flag is ignored there). |
 | The Claude Code VS Code extension | Settled by the spike (§14.2): if it can't pass the flag, run `claude` with the flag in VS Code's terminal, or use the fallbacks. |
 
-- **Tool permissions.** In default permission mode, Claude's first `ack` or `reply` asks for approval in the Claude Code terminal, where the reader isn't looking, and a plugin can't pre-approve its own tools (C13). So the GUIDE and **Sidestory: Copy Claude Command with Comments** include the permission: the copied command adds `--allowedTools` with `mcp__plugin_sidestory-comments_sidestory__ack`, `__reply`, `__get_thread` and `__list_threads` (full names) *(verify the flag combines with the channel flags)*, and the GUIDE shows the same as a `permissions.allow` entry in the user settings `~/.claude/settings.json` (so new worktrees, which don't share a checkout's `.claude/settings.local.json`, have it too), with the project-local file as the alternative. These tools only read and write thread files; edits Claude makes still ask as usual. The delivery line covers the rest (§9.8 "may be waiting for your approval").
+- **Tool permissions.** In default permission mode, Claude's first `ack` or `reply` asks for approval in the Claude Code terminal, where the reader isn't looking, and a plugin can't pre-approve its own tools (C13). So the GUIDE and **Sidestory: Copy Claude Command with Comments** include the permission: the copied command adds `--allowedTools` with `mcp__plugin_sidestory-comments_sidestory__ack`, `__reply`, `__get_thread` and `__list_threads` (full names) (**spike:** it combines with the dev flag; in default permission mode `ack` and `reply` ran with no prompt), and the GUIDE shows the same as a `permissions.allow` entry in the user settings `~/.claude/settings.json` (so new worktrees, which don't share a checkout's `.claude/settings.local.json`, have it too), with the project-local file as the alternative. These tools only read and write thread files; edits Claude makes still ask as usual. The delivery line covers the rest (§9.8 "may be waiting for your approval").
 - **Which flag the copied command uses:** the dev flag by default; plain `--channels` when the user setting (which the extension also writes to `<state>/profile.json`, where the server reads it for channel detection, §9.8) `sidestory.claude.channelFlag` is `channels` (for orgs whose `allowedChannelPlugins` lists the plugin).
 - **A shell alias** in the GUIDE (`claude-sidestory`, the line above), unless the spike finds a persistent way to enable channels.
 - **A dedicated reading session.** The GUIDE recommends a separate Claude Code session for questions while reading, since a push is a new turn in whatever that session is doing.
@@ -505,7 +506,7 @@ All tools validate input with zod, read only inside the server's repositories (r
 
 - **Claude never resolves** a thread; `resolve_suggested` shows a one-click Resolve to the reader.
 - **Opening threads** (Claude asking the reader) is §15 Q5, not in 0.2.1.
-- **Full tool names** (`mcp__plugin_sidestory-comments_sidestory__reply`, …) are used in pushes and instructions, since tools may be deferred behind tool search (C4). Whether a server can ask for its tools to be loaded up front *(verify; the round-1 reviewer mentioned an `anthropic/alwaysLoad` tool meta)* is checked in the spike.
+- **Full tool names** (`mcp__plugin_sidestory-comments_sidestory__reply`, …) are used in pushes and instructions, since tools may be deferred behind tool search (C4). In the spike, Claude called the tools by their full names straight from the push, with no tool search.
 
 ### 9.6 The channel event
 
@@ -566,7 +567,7 @@ Shown on the comment in the panel and in the editor thread's label, with the sam
 | Pushed | a `pushed/` record without `cancelled` | "Sent to Claude · <session label>" |
 | Cancelled | a `pushed/` record with `cancelled` | the line is hidden (or, after Send to Another Session, replaced by the new send's line) |
 | Not responding | pushed or pending, the routed server's heartbeat stale 45 s to 2 min | "That session isn't responding" · **Copy Prompt** (no re-route until it recovers or counts as ended) |
-| Busy | pushed to a `confirmed` server, not seen after 2 min | "Claude is busy; it will see this after its current turn" · **Copy Prompt** |
+| Busy | pushed to a `confirmed` server, not seen after 2 min | "Delivered while Claude was busy; it may answer after its current turn" · **Send Again** · **Copy Prompt** (spike: a mid-turn event can be skipped) |
 | Not picked up | pushed to a `likely` or undetected server, not seen after 2 min | "Not picked up yet: that session may not have Sidestory's channel on" · **Send Again** · **Copy Prompt** |
 | Working | `seen/` exists, no reply yet | "Claude is on it · 0s" (elapsed time, from the ack); after 2 min (60 s for `intent: answer`) it adds "· it may be waiting for your approval in its session" |
 | Answered | a `claude`-trust event with `inReplyTo` = this event, or any `claude`-trust event after it | the reply itself; the line disappears |
@@ -576,7 +577,7 @@ Shown on the comment in the panel and in the editor thread's label, with the sam
 
 - **Channel detection.** The server can't learn whether it was registered (C2). Its presence record carries `channel`:
   - `confirmed` after an `ack` or `reply` carrying a nonce this server pushed (only a channel event carries a nonce, so Copy Prompt and pull flows can't set it). This includes a session with an undetected channel that the reader chose by hand and that then answered: it becomes confirmed, and the default (§9.9);
-  - `likely` when its parent process is the `claude` executable (checked by name, not a shell wrapper) and its command line has `--dangerously-load-development-channels` naming `plugin:sidestory-comments@sidestory` (plain `--channels` counts only when the extension knows an org allowlist names the plugin, the `sidestory.claude.channelFlag` setting; otherwise it would register nothing and stays `unknown`) (Linux `/proc/<ppid>/cmdline`, macOS `ps -o comm=,args= -p <ppid>`) *(verify that the parent is the claude process)*;
+  - `likely` when its parent process is the `claude` executable (checked by name, not a shell wrapper) and its command line has `--dangerously-load-development-channels` naming `plugin:sidestory-comments@sidestory` (plain `--channels` counts only when the extension knows an org allowlist names the plugin, the `sidestory.claude.channelFlag` setting; otherwise it would register nothing and stays `unknown`) (Linux `/proc/<ppid>/cmdline`, macOS `ps -o comm=,args= -p <ppid>`) (**spike:** the parent is the `claude` process, `comm` `claude`, with the full command line);
   - `unknown` otherwise, including on Windows.
 - `channel` only routes and words states; it never grants anything.
 
@@ -853,6 +854,26 @@ Cut from revision 1 to keep 0.2.1 in reach: element comments and picking (0.2.2)
 
 The answers go into §0.2 (replacing the *(verify)* marks) and decide C2's scope: if 1 or 2 fails, C2 becomes the monitor path (if 6 works) or is dropped from 0.2.1 in favour of C1 alone.
 
+#### 14.2.1 Spike results (2026-10-23, Claude Code 2.1.306, `@modelcontextprotocol/sdk` 1.32.2)
+
+Run in a scratch repository with a throwaway server and a local marketplace named `sidestory` (project scope, removed afterwards), driving interactive `claude` sessions in a pseudo-terminal with Haiku and Sonnet.
+
+| # | Question | Result |
+|---|---|---|
+| 1 | Our marketplace's plugin under `--dangerously-load-development-channels plugin:sidestory-comments@sidestory` | **Registers.** Source `plugin:sidestory-comments:sidestory`; startup notice "Channels (experimental) messages from plugin:sidestory-comments@sidestory inject directly in this session". The warning dialog shows at every start. SDK 1.x negotiated 2025-11-25 and was registered. |
+| 2 | An event in an **idle** session | **Starts a turn**: `ack`, then `reply` with the nonce, 3 to 6 s after the push (Haiku and Sonnet). |
+| 2b | An event in a **busy** session | **Delivered into the running turn**, not after it (shown as `← sidestory: …` mid-turn). Sonnet finished the user's task and then answered it. Haiku declined both times, saying it came through an external channel and wasn't part of the user's request. Two sends during one turn arrived in that turn. So Busy can't promise an answer after the turn (below). |
+| 3 | The Claude Code VS Code extension | No setting passes CLI flags, and channels can't be enabled persistently (documented settings; not tried live). The GUIDE says to run `claude` with the flag in VS Code's terminal. |
+| 4 | `dependencies`; `${CLAUDE_PROJECT_DIR}` | `dependencies` installs `sidestory` with `sidestory-comments`. `${CLAUDE_PROJECT_DIR}` is substituted in `args` and is the launch directory (a subfolder stays a subfolder); `cwd` and `roots/list` are the same directory. |
+| 5 | `--allowedTools` with the channel flags | **Combines.** In default ("manual") permission mode the allowed tools ran without a prompt. |
+| 6 | A plugin monitor | A stdout line starts a turn in an idle session, but Claude treated it as a background notice and declined to act. **Not used**; §15 Q2 is decided as no. |
+| 7 | Escaping | Meta values HTML-escaped; non-identifier keys dropped; in content only `</channel>` is rewritten. Our §9.6 rules stay. |
+
+**Decision: C2 ships in 0.2.1** (1 and 2 pass). Changes from the spike:
+- **Busy** (§9.8) says "Delivered while Claude was busy; it may answer after its current turn" and offers **Send Again**, since a mid-turn event can be skipped by the model.
+- The GUIDE recommends a dedicated reading session (already in §9.2) and says a smaller model may skip a comment that arrives mid-task.
+- No monitor path and no `sidestory.claude.delivery` setting.
+
 **0.2.1, with the Changes view.** The plan of record is **C1**; **C2** is in if the spike passes and the Changes build is on schedule:
 - **C1, comments and pull** (≈ 15 days). **Ask Claude in a C1-only build** writes the event with `to: "claude"`, copies the Copy Prompt text for it (§10.1) with the status "Prompt copied: paste it into Claude Code", and lists the thread under "Waiting for Claude" (with Copy Prompt: Answer Waiting Comments) until a `claude`-trust reply arrives; the session split button and the delivery states are hidden. Contents: storage, anchors, the ledger, the panel pane, the editor, the Comments view and counts, Share, Copy Prompt, the checker's `threads`, **and the `sidestory-comments` plugin with the server's tools** (pull only, without the `channels` entry), so "ask Claude to check the comments" works everywhere.
 - **C2, push** (≈ 7 days): sends, presence, routing and the session picker, the channel and its instructions, delivery states, Copy Claude Command, the `channels` entry, the manual checklist.
@@ -892,7 +913,7 @@ F's first day is the spike and a contract PR: `ThreadEvent`, `ThreadView`, threa
 1. **Default location: local or shared?**
    - **Decided: local**, with a visible tier chip, one-click Share and the application-scope setting. Most Ask Claude chatter is personal; a wrong default the other way puts it in commits.
 2. **A push path without the dangerous flag?** Plugin monitors need no allowlist (C15): a monitor printing "Sidestory: a comment for you in thread t_…; call get_thread" would push without `--dangerously-load-development-channels`. But idle-wake is undocumented, and with both on each send would arrive twice.
-   - **Decided: the spike decides.** If a monitor line starts a turn in an idle session, ship it behind `sidestory.claude.delivery: channel | monitor` (the server writes the mode to its presence, so exactly one path handles each send; the monitor prints ids only, never comment text, and Claude reads the text with `get_thread`, where the reader's own comment shows as `local_user`).
+   - **Decided: the spike decides.** **Result: no monitor** (§14.2.1: the line wakes an idle session, but Claude doesn't act on it). The proposal was: if a monitor line starts a turn in an idle session, ship it behind `sidestory.claude.delivery: channel | monitor` (the server writes the mode to its presence, so exactly one path handles each send; the monitor prints ids only, never comment text, and Claude reads the text with `get_thread`, where the reader's own comment shows as `local_user`).
 3. **When no session is running, keep the send for the next one?**
    - **Decided: no in 0.2.1** (cut in round 1): every send names a live session, which also keeps a plain `claude` session from swallowing sends and a forged send from reaching an unchosen session. Copy Prompt covers "I'll start Claude after asking". Revisit if a new session can prove its channel at start.
 4. **Node for the server?** Claude Code's native installer doesn't need Node.
