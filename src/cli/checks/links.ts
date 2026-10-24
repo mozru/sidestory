@@ -97,6 +97,8 @@ export function scanPageLinks(html: string): PageLinks {
     const ref = a.get('data-explain-ref');
     const code = a.get('data-explain-code');
     if (ref === undefined && code === undefined) return;
+    // a linked box makes a diagram a code map even with nothing lit per step
+    if (f.scope && on === undefined) f.scope.participants++;
     if (ref !== undefined && out.refs.length < MAX_RECORDS) out.refs.push({ id: ref.trim(), line: f.line() });
     if (code !== undefined && ref === undefined && out.codes.length < MAX_RECORDS) out.codes.push({ value: code, inherited: f.codeFile, line: f.line() });
     const what = ref !== undefined ? `data-explain-ref=${quoted(ref)}` : `data-explain-code=${quoted(code!)}`;
@@ -147,7 +149,7 @@ export function scanPageLinks(html: string): PageLinks {
   for (let t = tokens.next(); t; t = tokens.next()) tree.token(t);
   tree.finish();
   for (const d of diagrams) {
-    if (d.participants === 0) problem({ severity: 'warning', line: d.line, code: 'empty-diagram', message: 'This data-explain-diagram has no elements with data-explain-on, so nothing in it lights up or fades. Tag its boxes and wires, or drop the attribute.' });
+    if (d.participants === 0) problem({ severity: 'warning', line: d.line, code: 'empty-diagram', message: 'This data-explain-diagram has no elements with data-explain-on and no links, so nothing in it lights up or fades. Tag its boxes and wires, or drop the attribute.' });
   }
   return out;
 }
@@ -204,7 +206,11 @@ interface FileInfo {
  */
 export async function checkCodeLinks(root: string, codes: PageLinks['codes'], maxBytes: number): Promise<Problem[]> {
   const out: Problem[] = [];
+  /** By link path, then by real path: many links (or symlinks) to one file read and scan it once. */
   const files = new Map<string, Promise<FileInfo>>();
+  const byReal = new Map<string, Promise<Omit<FileInfo, 'secret'>>>();
+  /** Bytes read for code links in one run, at most: a page can't make the checker read the repository many times over. */
+  let budget = MAX_BYTES_PER_RUN;
   const done = new Set<string>();
   const fileInfo = (path: string) => {
     let p = files.get(path);
@@ -212,19 +218,32 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
       p = (async (): Promise<FileInfo> => {
         const c = await checkCodePath(root, path);
         if (!c.ok) return { error: c.why };
-        try {
-          if ((await stat(c.real)).size > maxBytes) return { secret: c.secret, error: 'it is too large to check' };
-          const text = await readFile(c.real, 'utf8');
-          const sv = isSvPath(path);
-          return { secret: c.secret, lines: text.split(/\r\n|\r|\n/).length, sv, table: sv ? scanSv(text) : undefined };
-        } catch {
-          return { error: "it can't be read" };
+        let content = byReal.get(c.real);
+        if (!content) {
+          content = (async () => {
+            try {
+              const size = (await stat(c.real)).size;
+              if (size > maxBytes) return { error: 'it is too large to check' };
+              if (size > budget) return { error: 'the page links to more code than one check reads' };
+              budget -= size;
+              const text = await readFile(c.real, 'utf8');
+              const sv = isSvPath(c.real) || isSvPath(path);
+              // lines as an editor counts them: a final newline doesn't start another line
+              const lines = text.split(/\r\n|\r|\n/).length - (/(\r\n|\r|\n)$/.test(text) ? 1 : 0);
+              return { lines: Math.max(1, lines), sv, table: sv ? scanSv(text) : undefined };
+            } catch {
+              return { error: "it can't be read" };
+            }
+          })();
+          byReal.set(c.real, content);
         }
+        return { ...(await content), secret: c.secret };
       })();
       files.set(path, p);
     }
     return p;
   };
+  let suggestions = 0;
   for (const c of codes) {
     const at = { line: c.line };
     const link = parseCodeLink(c.value, c.inherited);
@@ -246,9 +265,13 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
     done.add(canonical);
     const info = await fileInfo(link.path);
     const shownPath = quoted(link.path);
-    if (info.error && info.lines === undefined && !info.secret) {
-      out.push({ severity: 'error', ...at, code: 'code-link-file', message: `${what}: can't open ${shownPath}: ${info.error}.` });
-      continue;
+    if (info.error) {
+      const fatal = info.lines === undefined && !/too large|more code/.test(info.error);
+      out.push({ severity: fatal ? 'error' : 'info', ...at, code: fatal ? 'code-link-file' : 'code-link-unchecked', message: fatal ? `${what}: can't open ${shownPath}: ${info.error}.` : `${what}: ${shownPath} isn't checked: ${info.error}.` });
+      if (fatal || info.lines === undefined) {
+        if (info.secret) out.push({ severity: 'info', ...at, code: 'code-link-secret', message: `${what}: ${shownPath} has a secret-looking name, so the panel asks the reader before opening it.` });
+        continue;
+      }
     }
     if (info.secret) out.push({ severity: 'info', ...at, code: 'code-link-secret', message: `${what}: ${shownPath} has a secret-looking name, so the panel asks the reader before opening it.` });
     if (info.lines === undefined) continue;
@@ -258,7 +281,7 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
       if (t.start > info.lines || t.end > info.lines) {
         out.push({ severity: 'warning', ...at, code: 'code-link-range', message: `${what}: ${shownPath} has ${info.lines} lines, so ${t.start > info.lines ? 'the link opens nothing' : `lines past ${info.lines} don't exist`}.` });
       } else if (info.table) {
-        const better = symbolFor(info.table, { start: t.start, end: t.end });
+        const better = suggestions++ < MAX_SUGGESTIONS ? symbolFor(info.table, { start: t.start, end: t.end }) : undefined;
         out.push({ severity: 'info', ...at, code: 'code-link-lines', message: `${what}: line links point wherever those lines are after an edit${better ? `; #${better} follows the code` : '; a symbol (#name, #driver(x)) follows the code'}.` });
       }
       continue;
@@ -279,11 +302,19 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
   return out;
 }
 
+const MAX_BYTES_PER_RUN = 100_000_000;
+/** Line links that get a symbol suggestion; the rest still get the plain note. */
+const MAX_SUGGESTIONS = 50;
+/** Records looked at per suggestion. */
+const MAX_SUGGESTION_WORK = 20_000;
+
 /** A symbol path whose extent covers `range` (the tightest), checked to resolve back to that extent. */
 function symbolFor(table: SymbolTable, range: LineRange): string | undefined {
   type C = { path: string; extent: LineRange };
   const cands: C[] = [];
   const covers = (e: LineRange) => e.start <= range.start && e.end >= range.end;
+  if (table.drivers.length + table.symbols.length > MAX_SUGGESTION_WORK) return undefined;
+  let work = 0;
   for (const d of table.drivers) {
     if (!covers(d.extent)) continue;
     const name = defaultDriverName(d);
@@ -291,7 +322,7 @@ function symbolFor(table: SymbolTable, range: LineRange): string | undefined {
     const inner = d.scope.slice(1).filter((s) => !s.startsWith('\0'));
     cands.push({ path: [...inner, `driver(${name})`].join('.'), extent: d.extent });
     for (const c of d.cases) {
-      if (c.depth !== 0) continue;
+      if (c.depth !== 0 || (work += c.items.length) > MAX_SUGGESTION_WORK) continue;
       for (const it of c.items) if (covers(it.extent) && it.labels[0] && !it.labels[0].includes('\0')) cands.push({ path: [...inner, `driver(${name})`, `case(${it.labels[0]})`].join('.'), extent: it.extent });
     }
   }

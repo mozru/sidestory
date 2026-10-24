@@ -428,7 +428,8 @@ describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () =>
         '<svg role="group" aria-label="y"><rect data-explain-ref="other"/><g data-explain-ref="other"><title>Named</title></g></svg>',
         '<button data-explain-ref="other">b</button>',
         '<span data-explain-ref="other" data-explain-code="src/a.ts">both</span>',
-        '<figure data-explain-diagram><svg role="group" aria-label="z"><g data-explain-ref="other"><text>c</text></g></svg></figure>',
+        '<figure data-explain-diagram><svg role="group" aria-label="z"><g data-explain-ref="other"><text>c</text></g></svg></figure>', // a code map: not empty
+        '<figure data-explain-diagram><svg role="group" aria-label="w"><rect/></svg></figure>',
         '<p data-explain-on="other">alone</p>',
         widgetEl('w.tsx').replace('<p>Fallback text.</p>', '<p><a data-explain-ref="other">in fallback</a></p>'),
       ].join('\n'))),
@@ -474,7 +475,7 @@ describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () =>
     expect(msgs('code-link-file')).toEqual([expect.stringMatching(/rtl\/nope.sv.*isn't a file inside the repository/)]);
     expect(msgs('code-link-symbol')).toHaveLength(2);
     expect(msgs('code-link-symbol').join('\n')).toMatch(/go is an input port: link `#go`/);
-    expect(msgs('code-link-range')).toEqual([expect.stringMatching(/9 lines/)]);
+    expect(msgs('code-link-range')).toEqual([expect.stringMatching(/has 8 lines/)]);
     expect(msgs('code-link-lines')).toEqual([expect.stringMatching(/#driver\(state_q\) follows the code/)]);
     expect(msgs('symbol-unchecked')).toHaveLength(1);
     expect(msgs('code-link-secret')).toHaveLength(1);

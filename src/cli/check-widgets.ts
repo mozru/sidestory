@@ -570,8 +570,12 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
     const text = manifestText;
     const manifestLine = (id: string) => {
       if (text === undefined) return undefined;
-      const at = text.indexOf(`"${id}"`);
-      return at < 0 ? undefined : (lines ??= lineIndex(text))(at);
+      // the anchor's key: the id in quotes followed by a colon (not a `highlight` entry with the same text)
+      const key = `"${id}"`;
+      for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
+        if (/^\s*:/.test(text.slice(at + key.length, at + key.length + 20))) return (lines ??= lineIndex(text))(at);
+      }
+      return undefined;
     };
     const ids = checkIds(page, new Set(manifest.anchors.keys()), widgetIds, manifestLine);
     for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
