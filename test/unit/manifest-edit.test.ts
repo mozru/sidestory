@@ -89,11 +89,11 @@ describe('patchManifest', () => {
     expect(b.anchors.b).toEqual({ file: 'g', range: [2, 2], quote });
   });
 
-  it('adds an id after version when there is none, and keeps an existing one', () => {
+  it('adds an id last when there is none, and keeps an existing one', () => {
     const ID = '01JC0RETRYJ1TTER000000000A';
     const text = '{\n  "version": 2,\n  "title": "T",\n  "anchors": {}\n}\n';
     const out = patchManifest(text, new Map(), { id: ID });
-    expect(out).toBe(`{\n  "version": 2,\n  "id": "${ID}",\n  "title": "T",\n  "anchors": {}\n}\n`);
+    expect(out).toBe(`{\n  "version": 2,\n  "title": "T",\n  "anchors": {},\n  "id": "${ID}"\n}\n`);
     expect(patchManifest(out, new Map(), { id: '01JC0000000000000000000000' })).toBe(out);
     const compact = '{"version":2,"title":"T","anchors":{}}';
     expect(JSON.parse(patchManifest(compact, new Map(), { id: ID })).id).toBe(ID);

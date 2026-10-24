@@ -19,7 +19,7 @@ export interface AnchorPatch {
 }
 
 export interface ManifestPatchOptions {
-  /** A top-level `id` (a ULID, docs/COMMENTS-PLAN.md §3.1) to add when the manifest has none; an existing one is kept. */
+  /** A top-level `id` (a ULID, docs/COMMENTS-PLAN.md §3.1) to add, as the last field, when the manifest has none; an existing one is kept. */
   id?: string;
 }
 
@@ -52,12 +52,8 @@ export function patchManifest(text: string, patches: ReadonlyMap<string, AnchorP
   const version = Math.max(current, requiredVersion(expected), 2);
   expected.version = version;
   const addId = options.id !== undefined && expected.id === undefined ? options.id : undefined;
-  if (addId !== undefined) {
-    // Right after "version", as a person would write it.
-    const { version: v, ...rest } = expected;
-    for (const k of Object.keys(expected)) delete (expected as Record<string, unknown>)[k];
-    Object.assign(expected, { version: v, id: addId }, rest);
-  }
+  // Added last, so the lines a person wrote (and reads first) stay where they were.
+  if (addId !== undefined) expected.id = addId;
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   try {
     const edited = applyEdits(text, editsFor(text, patches, eol, version, addId));
@@ -75,10 +71,11 @@ function editsFor(text: string, patches: ReadonlyMap<string, AnchorPatch>, eol: 
   const version = property(root, 'version');
   if (version?.children?.[1] && version.children[1].value !== toVersion) edits.push(replace(version.children[1], String(toVersion)));
   if (addId !== undefined) {
-    if (!version) throw new Error('no version');
+    const last = root.children?.at(-1);
+    if (!last) throw new Error('empty manifest');
     const compact = !/[\r\n]/.test(text.slice(root.offset, root.offset + root.length));
-    const sep = compact ? ' ' : eol + lineIndent(text, version.offset);
-    edits.push({ offset: version.offset + version.length, length: 0, content: `,${sep}"id": ${JSON.stringify(addId)}` });
+    const sep = compact ? ' ' : eol + lineIndent(text, last.offset);
+    edits.push({ offset: last.offset + last.length, length: 0, content: `,${sep}"id": ${JSON.stringify(addId)}` });
   }
   const anchors = property(root, 'anchors')?.children?.[1];
   if (anchors?.type !== 'object') throw new Error('no anchors object');
