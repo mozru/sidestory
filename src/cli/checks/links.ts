@@ -7,7 +7,7 @@
 //   - code links: syntax, the file (real path, inside the repository, not in .git), SV symbols with the scanner,
 //     line ranges against the file, and a symbol to use instead of lines in SV files.
 // It runs on the shared linear HTML tokenizer and tree builder, so it stays linear on hostile pages.
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { HtmlTokenizer, TreeBuilder, type Frame, type StartTag } from '../../core/html-scan.ts';
 import { anchorIdSchema, type LineRange } from '../../core/manifest.ts';
 import { defaultDriverName, findSvSymbol, isSvPath, scanSv, type SymbolTable } from '../../core/symbols/sv.ts';
@@ -228,9 +228,8 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
               budget -= size;
               const text = await readFile(c.real, 'utf8');
               const sv = isSvPath(c.real) || isSvPath(path);
-              // lines as an editor counts them: a final newline doesn't start another line
-              const lines = text.split(/\r\n|\r|\n/).length - (/(\r\n|\r|\n)$/.test(text) ? 1 : 0);
-              return { lines: Math.max(1, lines), sv, table: sv ? scanSv(text) : undefined };
+              // lines as VS Code counts them (the empty line after a final newline included), so the checker and a click agree
+              return { lines: text.split(/\r\n|\r|\n/).length, sv, table: sv ? scanSv(text) : undefined };
             } catch {
               return { error: "it can't be read" };
             }
@@ -242,6 +241,56 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
       files.set(path, p);
     }
     return p;
+  };
+  /** Module name → the SV file next to `dir` that defines it (sibling files only, read within the run's budget). */
+  const modules = new Map<string, Promise<Map<string, string>>>();
+  const modulesIn = (dir: string) => {
+    let p = modules.get(dir);
+    if (!p) {
+      p = (async () => {
+        const out = new Map<string, string>();
+        let names: string[] = [];
+        try {
+          names = (await readdir(`${root}/${dir}`)).filter((n) => isSvPath(n)).slice(0, MAX_SIBLINGS);
+        } catch {
+          return out;
+        }
+        for (const n of names) {
+          const rel = dir ? `${dir}/${n}` : n;
+          const f = await fileInfo(rel);
+          for (const u of f.table?.units ?? []) if (!out.has(u)) out.set(u, rel);
+        }
+        return out;
+      })();
+      modules.set(dir, p);
+    }
+    return p;
+  };
+  /**
+   * For a driver or instance path that isn't in this file, where it is in the repository (§4.2): the child module
+   * that drives a net through a connection, or the module an instance path meant.
+   */
+  const elsewhere = async (table: SymbolTable, path: string, file: string): Promise<string> => {
+    const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    const found: string[] = [];
+    const driver = /(?:^|\.)driver\(([A-Za-z_][\w$]*)\)$/.exec(path)?.[1];
+    if (driver) {
+      for (const c of table.connections.filter((x) => x.idents.includes(driver)).slice(0, 4)) {
+        const type = table.symbols.find((s) => s.kind === 'instance' && s.name === c.instance)?.type;
+        const where = type && (await modulesIn(dir)).get(type);
+        if (!type || !where) continue;
+        const child = (await fileInfo(where)).table;
+        const port = child?.symbols.find((s) => s.kind === 'port' && s.name === c.port && s.scope[0] === type);
+        if (child && port?.dir === 'output' && findSvSymbol(child, `${type}.driver(${c.port})`).ok) found.push(`it's driven in ${where} through ${c.instance}'s .${c.port}: link ${where}#driver(${c.port})`);
+      }
+    }
+    const segs = path.split('.');
+    for (const seg of segs.slice(0, -1)) {
+      const type = table.symbols.find((s) => s.kind === 'instance' && s.name === seg)?.type;
+      const where = type && (await modulesIn(dir)).get(type);
+      if (where) found.push(`${type} is in ${where}: link ${where}#${segs.slice(segs.indexOf(seg) + 1).join('.')}`);
+    }
+    return found.length ? ` (${found.join('; ')})` : '';
   };
   let suggestions = 0;
   for (const c of codes) {
@@ -297,12 +346,14 @@ export async function checkCodeLinks(root: string, codes: PageLinks['codes'], ma
     }
     if (r.reason === 'syntax') out.push({ severity: 'error', ...at, code: 'code-link-syntax', message: `${what}: ${r.message}` });
     else if (r.partial) out.push({ severity: 'info', ...at, code: 'symbol-partial-scan', message: `${what}: ${r.message}` });
-    else out.push({ severity: 'warning', ...at, code: 'code-link-symbol', message: `${what}: ${r.message}` });
+    else out.push({ severity: 'warning', ...at, code: 'code-link-symbol', message: `${what}: ${r.message}${await elsewhere(info.table!, t.path, link.path)}` });
   }
   return out;
 }
 
 const MAX_BYTES_PER_RUN = 100_000_000;
+/** SV files next to a linked file that are read to find a module another link means. */
+const MAX_SIBLINGS = 200;
 /** Line links that get a symbol suggestion; the rest still get the plain note. */
 const MAX_SUGGESTIONS = 50;
 /** Records looked at per suggestion. */

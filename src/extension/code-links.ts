@@ -56,10 +56,10 @@ export class SymbolTables implements vscode.Disposable {
   }
 
   /** The cache entry for this version of this document object, made fresh (and most recent) when needed. */
-  private entry(doc: vscode.TextDocument) {
+  private entry(doc: vscode.TextDocument, chars?: () => number) {
     const key = doc.uri.toString();
     let e = this.cache.get(key);
-    if (!e || e.doc !== doc || e.version !== doc.version) e = { doc, version: doc.version, chars: 0 };
+    if (!e || e.doc !== doc || e.version !== doc.version) e = { doc, version: doc.version, chars: chars?.() ?? 0 };
     this.cache.delete(key);
     this.cache.set(key, e);
     // At most `max` documents, and at most MAX_CACHED_CHARS of scanned text behind them: drop the oldest.
@@ -76,17 +76,20 @@ export class SymbolTables implements vscode.Disposable {
 
   /** The table for this version of the document; undefined when it's too large, or a newer version took over. */
   get(doc: vscode.TextDocument): Promise<SymbolTable | undefined> {
-    const e = this.entry(doc);
+    let text: string | undefined;
+    // The size counts toward the cache cap before anything is evicted for it; the text is read once per version.
+    const e = this.entry(doc, () => (text = doc.getText()).length);
     if (e.table) return e.table;
+    text ??= doc.getText();
+    e.chars = text.length;
     const key = doc.uri.toString();
     const version = doc.version;
-    const stale = () => this.disposed || doc.isClosed || doc.version !== version;
-    const text = doc.getText();
-    e.chars = text.length;
+    const stale = () => this.disposed || doc.isClosed || doc.version !== version || this.cache.get(key) !== e;
+    const body = text;
     e.table = (async () => {
-      if (text.length > MAX_CODE_BYTES) return undefined;
+      if (body.length > MAX_CODE_BYTES) return undefined; // kept for this version: "too large" isn't asked again per link
       // A large file being edited is scanned once the edits stop (§4.3).
-      if (text.length > LARGE_FILE_CHARS) {
+      if (body.length > LARGE_FILE_CHARS) {
         for (;;) {
           const wait = (this.editedAt.get(key) ?? 0) + IDLE_MS - Date.now();
           if (wait <= 0) break;
@@ -94,11 +97,11 @@ export class SymbolTables implements vscode.Disposable {
           if (stale()) return undefined;
         }
       }
-      return scanSvSliced(text, { sliceMs: SLICE_MS, stop: stale, pause });
+      return scanSvSliced(text ?? body, { sliceMs: SLICE_MS, stop: stale, pause });
     })().catch(() => undefined);
-    // A scan given up for a newer version isn't kept: the next version scans again.
+    // A scan given up (a newer version, a close, evicted) isn't kept; a file too large to scan is.
     void e.table.then((t) => {
-      if (!t && this.cache.get(key) === e) this.cache.delete(key);
+      if (!t && body.length <= MAX_CODE_BYTES && this.cache.get(key) === e) this.cache.delete(key);
     });
     return e.table;
   }

@@ -174,6 +174,9 @@ const DATA_START = new Set(['reg', 'logic', 'bit', 'byte', 'shortint', 'int', 'l
 const GATES = new Set(['and', 'nand', 'or', 'nor', 'xor', 'xnor', 'buf', 'not', 'bufif0', 'bufif1', 'notif0', 'notif1', 'pullup', 'pulldown', 'tran', 'tranif0', 'tranif1', 'rtran', 'rtranif0', 'rtranif1', 'nmos', 'pmos', 'rnmos', 'rpmos', 'cmos', 'rcmos']);
 const TO_SEMICOLON = new Set(['import', 'export', 'timeunit', 'timeprecision', 'defparam', 'bind', 'alias', 'let', 'nettype', 'specparam', 'global', 'extern', 'pure', 'constraint', 'return', 'break', 'continue', 'disable', 'force', 'release', 'deassign']);
 
+/** Labels kept per case item (`A, B, C:`); more is no real case. */
+const MAX_LABELS = 64;
+
 const isIdentStart = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
 const isIdentChar = (c: number) => isIdentStart(c) || (c >= 48 && c <= 57) || c === 36;
 const isDigit = (c: number) => c >= 48 && c <= 57;
@@ -538,7 +541,7 @@ class Parser {
   readonly drivers: SvDriver[] = [];
   readonly connections: SvConnection[] = [];
   readonly units = new Set<string>();
-  readonly macroUses = new Map<string, { macro: string; line: number }>();
+  readonly macroUses = new Map<string, { macro: string; line: number; score: number }>();
   /** Counts unlabelled blocks, so each gets its own scope name. */
   private anon = 0;
 
@@ -574,7 +577,16 @@ class Parser {
     if (open < 0) return;
     const macro = text.slice(1, open).trim();
     const line = this.lineAt(i);
-    for (const m of text.slice(open).matchAll(/[A-Za-z_][A-Za-z0-9_$]*/g)) if (!KEYWORDS.has(m[0]) && !this.macroUses.has(m[0])) this.macroUses.set(m[0], { macro, line });
+    const first = /^\(\s*([A-Za-z_][A-Za-z0-9_$]*)/.exec(text.slice(open))?.[1];
+    const flop = /^(FF|DFF|REG|FLOP)/i.test(macro);
+    // names outside strings (`uvm_info("…")`)
+    for (const m of text.slice(open).replace(/"(?:[^"\\]|\\.)*"/g, '""').matchAll(/[A-Za-z_][A-Za-z0-9_$]*/g)) {
+      if (KEYWORDS.has(m[0])) continue;
+      // How likely this call assigns the name: its first argument in a flop macro, then any flop macro, then a mention.
+      const score = (flop ? 2 : 0) + (m[0] === first ? 1 : 0);
+      const had = this.macroUses.get(m[0]);
+      if (!had || score > had.score) this.macroUses.set(m[0], { macro, line, score });
+    }
   }
   /** An interface known from this file (`axi_if bus` in a port list is an interface port). */
   private unitNamed(name: string): boolean {
@@ -1705,7 +1717,8 @@ class Parser {
           if (d === 0 && this.is(i, ':')) break;
           if (this.isEndKw(i) || (d === 0 && this.is(i, ';'))) break;
           if (d === 0 && this.is(i, ',')) {
-            labels.push(this.key(labelStart, i - 1));
+            if (labels.length < MAX_LABELS) labels.push(this.key(labelStart, i - 1));
+            else this.markPartial('records');
             labelStart = i + 1;
           }
           d += this.delta(i);
@@ -1717,7 +1730,7 @@ class Parser {
           if (this.is(this.pos, ';')) this.pos++;
           continue;
         }
-        labels.push(this.key(labelStart, this.pos - 1));
+        if (labels.length < MAX_LABELS) labels.push(this.key(labelStart, this.pos - 1));
         this.pos++;
       }
       const before = this.pos;
@@ -2094,13 +2107,11 @@ interface TableIndex {
 }
 const indexes = new WeakMap<SymbolTable, TableIndex>();
 const caseIndexes = new WeakMap<SvDriver, Map<string, { item: SvCaseItem; depth: number }[]>>();
-/** Per name, at most this many entries are kept in an index list: enough to tell one from several. */
-const INDEX_CAP = 64;
-
+/** Index lists are whole (the records cap bounds them): a scoped name past the first few must still be found. */
 function addTo<K, V>(m: Map<K, V[]>, k: K, v: V): void {
   const l = m.get(k);
   if (!l) m.set(k, [v]);
-  else if (l.length < INDEX_CAP) l.push(v);
+  else if (l[l.length - 1] !== v) l.push(v);
 }
 
 function indexOf(table: SymbolTable): TableIndex {
@@ -2111,8 +2122,7 @@ function indexOf(table: SymbolTable): TableIndex {
   for (const d of table.drivers) {
     for (const b of new Set(d.targets.map((t) => t.base))) addTo(ix.drivers, b, d);
     for (const c of d.cases) if (c.depth === 0) for (const it of c.items) for (const l of it.labels) {
-      const list = ix.caseLabels.get(l);
-      if (!list?.includes(d)) addTo(ix.caseLabels, l, d);
+      addTo(ix.caseLabels, l, d); // drivers come in order, so a repeat is always the last entry
     }
   }
   for (const c of table.connections) {
@@ -2170,7 +2180,8 @@ export function findSvSymbol(table: SymbolTable, path: string): SvFound | SvNotF
     const hints: string[] = [];
     // only for names the scanned arms don't declare: a name merely used in a later arm says nothing
     if (table.skipped.has(name) && !ix.symbols.has(name)) hints.push('it is in a later `ifdef arm, which is not scanned yet');
-    const macro = table.macroUses.get(name);
+    // only for names nothing else in the file accounts for (not an input, not driven elsewhere)
+    const macro = ix.symbols.get(name)?.some((s) => s.kind === 'port' && s.dir === 'input') || ix.drivers.has(name) ? undefined : table.macroUses.get(name);
     if (macro) hints.push(`it is an argument of \`${macro.macro} on line ${macro.line}, and macros aren't followed yet: link ${shown(`#L${macro.line}`)}`);
     return hints;
   };

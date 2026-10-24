@@ -58,7 +58,7 @@ class Diagram:
         pts = wdef['pts']
         d = 'M' + ' L'.join(f'{x},{y}' for x, y in pts)
         link = ''
-        if wdef.get('code'):
+        if wdef.get('code') and self.with_code:
             link = f' data-explain-code="{escape(wdef["code"])}"'
         elif wdef.get('ref'):
             link = f' data-explain-ref="{escape(wdef["ref"])}"'
@@ -93,13 +93,17 @@ class Diagram:
             out.append(f'<rect class="blk-bar" x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="5" rx="2"/>')
         out.append(f'<text class="blk-title" x="{cx}" y="{b["y"] + 24}" text-anchor="middle">{escape(b["title"])}</text>')
         if b['sub']:
-            out.append(f'<text class="blk-sub" x="{cx}" y="{b["y"] + 40}" text-anchor="middle">{self.linked(b["sub"], b.get("codes"))}</text>')
+            out.append(f'<text class="blk-sub" x="{cx}" y="{b["y"] + 40}" text-anchor="middle">{self.linked(b["sub"], self.with_code and b.get("codes"))}</text>')
         for i, line in enumerate(b['lines']):
-            out.append(f'<text class="blk-line" x="{cx}" y="{b["y"] + 58 + i * 13}" text-anchor="middle">{self.linked(line, b.get("codes"))}</text>')
+            out.append(f'<text class="blk-line" x="{cx}" y="{b["y"] + 58 + i * 13}" text-anchor="middle">{self.linked(line, self.with_code and b.get("codes"))}</text>')
         out.append('</g>')
         return ''.join(out)
 
-    def svg(self, cls='dia'):
+    # code links are drawn by default; copies in widget fallbacks leave them out (the panel ignores links there)
+    with_code = True
+
+    def svg(self, cls='dia', code=True):
+        self.with_code = code
         body = ''.join(self.wire_svg(w) for w in self.wires) + ''.join(self.block_svg(b) for b in self.blocks) + ''.join(self.extra)
         # With links inside, a group: role="img" would make its children presentational to screen readers.
         role = 'group' if any(b['ref'] for b in self.blocks) else 'img'
@@ -154,6 +158,8 @@ def overview():
     # data beats (thick)
     d.wire('rd_rsp_data', 'data', [(60, 450), (140, 450)], 'rd_rsp_data|[63:0] · err', (100, 424), on=DATA + ERR)
     d.wire('fifo_wdata', 'data', [(290, 450), (370, 450)], 'fifo_wdata|[63:0]', (330, 424), on=DATA)
+    # dma_top lists several connections per line, and lighting goes by line: the cursor anywhere on such a line rings
+    # the wire whose connection is there (rd_start's line 85 also holds .rd_busy, .fifo_push …). Accepted here.
     d.wire('fifo_rdata', 'data', [(500, 450), (580, 450)], 'fifo_rdata|[63:0]', (540, 424), on=DATA, code='rtl/dma_top.sv#u_fifo(.rdata)', name='fifo_rdata: its connection at u_fifo')
     d.wire('packed_data', 'data', [(730, 450), (810, 450)], 'packed_data|[63:0] +strb', (770, 424), on=DATA)
     d.wire('wr_dat_data', 'data', [(960, 450), (1040, 450)], 'wr_dat_data|[63:0]', (1000, 424), on=DATA)
@@ -472,7 +478,8 @@ def main():
     page = SIDESTORY / 'dma-overview' / 'sidestory.html'
     for name in ('overview', 'control', 'datapath', 'backpressure', 'errors'):
         if f'<!-- diagram:{name} -->' in page.read_text():
-            splice(page, name, ov.svg())
+            # Only the overview copy carries code links: the others are widget fallbacks, where links aren't opened or lit.
+            splice(page, name, ov.svg(code=name == 'overview'))
     jobs = [('dma-ctrl', 'inside', m_ctrl), ('dma-addr-gen', 'inside', m_agen), ('dma-packer', 'inside', m_packer),
             ('dma-fifo', 'inside', m_fifo), ('dma-rd-port', 'inside', lambda: m_port('rd')),
             ('dma-wr-port', 'inside', lambda: m_port('wr')), ('dma-csr', 'inside', m_csr)]

@@ -382,3 +382,22 @@ describe('review round 1', () => {
     expect(isSvPath('a.txt', 'systemverilog')).toBe(true);
   });
 });
+
+describe('review round 2', () => {
+  it('a name repeated in many modules is still found in each (index lists are whole)', () => {
+    const t = scanSv(Array.from({ length: 100 }, (_, i) => `module m${i}; logic clk; assign y = ${i}; foo u (.a(x)); endmodule`).join('\n'));
+    expect(findSvSymbol(t, 'm80.clk').ok).toBe(true);
+    expect(findSvSymbol(t, 'm90.driver(y)')).toMatchObject({ ok: true, extent: { start: 91, end: 91 } });
+    expect(findSvSymbol(t, 'm69.u(.a)').ok).toBe(true);
+    expect(findSvSymbol(t, 'clk')).toMatchObject({ ok: false, reason: 'ambiguous' });
+  });
+  it('the macro hint prefers the flop that assigns the name over a macro that only reads it', () => {
+    const r = findSvSymbol(scanSv('module m;\n`ASSERT_KNOWN(StateKnown_A, state_q)\n`FF(state_q, state_d, IDLE)\nendmodule'), 'driver(state_q)');
+    expect(!r.ok && r.message).toMatch(/argument of `FF on line 3/);
+  });
+  it('labels per case item are capped', () => {
+    const t = scanSv(`module m; always_comb case (x) ${'a, '.repeat(10_000)}b: y = 1; endcase endmodule`);
+    expect(t.partial).toBe(true);
+    expect(t.drivers[0]!.cases[0]!.items[0]!.labels.length).toBeLessThanOrEqual(64);
+  });
+});

@@ -1090,7 +1090,26 @@ function followEditor(id: string): void {
   hidePill();
   setActive(id);
   const visible = top >= view.top && top <= view.top + view.height * 0.6;
-  if (!visible) scrollToSection(id);
+  if (visible) return;
+  // A box the cursor rings is on screen (a diagram elsewhere in the page, §8.2): stay with it, and offer the step.
+  if (ringOnScreen(view)) {
+    showPill(id, el);
+    return;
+  }
+  scrollToSection(id);
+}
+
+/** Whether an element the editor cursor rings (cx-here) is visible in the panel now. */
+function ringOnScreen(view: DOMRect): boolean {
+  for (const { el } of linkEls) {
+    if (!el.classList.contains('cx-here')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue; // not rendered (a hidden fallback)
+    const top = topOf(el);
+    const bottom = top + r.height;
+    if (bottom > view.top + 8 && top < view.bottom - 8) return true;
+  }
+  return false;
 }
 
 function showPill(id: string, el: HTMLElement): void {

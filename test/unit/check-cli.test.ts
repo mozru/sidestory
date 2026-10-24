@@ -445,6 +445,19 @@ describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () =>
     expect(find(r, 'link-in-widget')).toMatchObject([{ severity: 'info', message: expect.stringMatching(/holds 1 link/) }]);
   });
 
+  it('a net driven through an instance, or an instance path, names the child module\'s file', async () => {
+    const dir = repoWith({
+      'rtl/ctrl.sv': RTL,
+      'rtl/top.sv': 'module top (input logic clk);\n  logic b;\n  ctrl u_c (\n    .clk,\n    .go(1\'b1),\n    .busy(b)\n  );\nendmodule\n',
+      '.sidestory/demo/manifest.json': manifest({}),
+      '.sidestory/demo/sidestory.html': page('<a data-explain-code="rtl/top.sv#driver(b)">b</a> <a data-explain-code="rtl/top.sv#u_c.state_q">q</a>'),
+    });
+    const r = await check(dir);
+    const msgs = find(r, 'code-link-symbol').map((f) => f.message).join('\n');
+    expect(msgs).toMatch(/it's driven in rtl\/ctrl.sv through u_c's .busy: link rtl\/ctrl.sv#driver\(busy\)/);
+    expect(msgs).toMatch(/ctrl is in rtl\/ctrl.sv: link rtl\/ctrl.sv#state_q/);
+  });
+
   it('data-explain-code: syntax, files, SV symbols and line ranges, with the inherited file', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,
@@ -475,7 +488,7 @@ describe('links in the page (docs/AUTHORING-PLAN.md §2.3, §3.3, §8.1)', () =>
     expect(msgs('code-link-file')).toEqual([expect.stringMatching(/rtl\/nope.sv.*isn't a file inside the repository/)]);
     expect(msgs('code-link-symbol')).toHaveLength(2);
     expect(msgs('code-link-symbol').join('\n')).toMatch(/go is an input port: link `#go`/);
-    expect(msgs('code-link-range')).toEqual([expect.stringMatching(/has 8 lines/)]);
+    expect(msgs('code-link-range')).toEqual([expect.stringMatching(/has 9 lines/)]);
     expect(msgs('code-link-lines')).toEqual([expect.stringMatching(/#driver\(state_q\) follows the code/)]);
     expect(msgs('symbol-unchecked')).toHaveLength(1);
     expect(msgs('code-link-secret')).toHaveLength(1);

@@ -176,6 +176,8 @@ export class ExplainerSession implements vscode.Disposable {
   private ownSymbols: SymbolTables | undefined;
   /** The page chose this section itself at open; reveal it once it resolves. */
   private revealWhenResolved: string | undefined;
+  /** Bumped per cursor follow, and by the panel's own reveals, so an older follow still lighting gives way. */
+  private cursorSeq = 0;
 
   /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
   constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost, opts: SessionOptions = {}) {
@@ -743,8 +745,18 @@ export class ExplainerSession implements vscode.Disposable {
     const line = e.selections[0]!.active.line + 1;
     // The reader moved in the code: stop fading the rest of the file.
     if (ids.size && this.decorations.isDimmed()) this.decorateActive(false);
-    this.debounce('cursor', CURSOR_DELAY, () => {
-      this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+    this.debounce('cursor', CURSOR_DELAY, () => void this.followCursor(doc, line, ids, detail));
+  }
+
+  /**
+   * The reader's cursor rested at `line`: light what links there, then follow with the step. Lighting goes first,
+   * so the page knows what's lit when it decides whether to scroll to the step (§8.2).
+   */
+  private async followCursor(doc: vscode.TextDocument, line: number, ids: Set<string>, detail: [string, { title: string }] | undefined): Promise<void> {
+    const mine = ++this.cursorSeq;
+    await this.lightAt(doc, line).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
+    if (mine !== this.cursorSeq || this.disposed) return; // a newer cursor move, or the panel's own reveal
+    {
       // The shared cursor helper (cursor.ts). Only sections steer the step (docs/AUTHORING-PLAN.md §0, §8.2): an
       // anchor used only by `data-explain-ref` lights its boxes instead. Until the page has said which ids are
       // sections (first render, hidden panel), every anchor counts, as before.
@@ -761,7 +773,7 @@ export class ExplainerSession implements vscode.Disposable {
       this.setActive(id);
       this.decorateActive(false);
       this.post({ type: 'syncTo', anchorId: id });
-    });
+    }
   }
 
   // ---- webview ----
@@ -923,8 +935,9 @@ export class ExplainerSession implements vscode.Disposable {
     const key = uriKey(uri);
     if (targets.files.has(key)) {
       const extents = await this.extentsFor(doc, key, targets);
-      if (seq !== this.hereSeq || this.disposed || targets !== this.targets || !extents) return;
-      for (const [link, range] of extents) if (line >= range.start && line <= range.end) found.push({ link, range, stale: false });
+      if (seq !== this.hereSeq || this.disposed || targets !== this.targets) return;
+      // stale extents (a newer version): light what the refs say rather than leave an old ring
+      for (const [link, range] of extents ?? []) if (line >= range.start && line <= range.end) found.push({ link, range, stale: false });
     }
     // The tightest wins, as for sections: trustworthy before stale, then the shortest, then the first, refs first.
     found.sort((a, b) => Number(a.stale) - Number(b.stale) || a.range.end - a.range.start - (b.range.end - b.range.start) || a.range.start - b.range.start || Number(!a.ref) - Number(!b.ref));
@@ -993,7 +1006,11 @@ export class ExplainerSession implements vscode.Disposable {
       if (choice !== open || this.disposed || generation !== this.generation) return;
       // The dialog may have stayed up a long time (a checkout meanwhile): check the path again.
       const again = await checkCodePath(root.fsPath, path);
-      if (!again.ok || again.size > MAX_CODE_BYTES || this.disposed || generation !== this.generation) return;
+      if (this.disposed || generation !== this.generation) return;
+      if (!again.ok || again.size > MAX_CODE_BYTES) {
+        say(`Can't open ${name}: ${again.ok ? 'it grew past 10 MB' : again.why}.`);
+        return;
+      }
       file = again;
     }
     this.opening++;
@@ -1122,6 +1139,7 @@ export class ExplainerSession implements vscode.Disposable {
     // The panel's choice overtakes a cursor move still waiting to be followed.
     clearTimeout(this.timers.get('cursor'));
     this.timers.delete('cursor');
+    this.cursorSeq++;
     if (this.reveal.running) {
       this.reveal.next = { id, moveCursor };
       return;
