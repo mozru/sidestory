@@ -437,11 +437,11 @@ Files that aren't counted (binary files, the sidestory's own files, line endings
 
 The mark is per file; for the changes inside one, open it:
 
-- **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor, each with its state and the step that explains it: click one to go to its lines (the diff for a removed line), or to the step. It also offers to copy a prompt for your agent, and **Mark as Trivial** for a change that needs no explanation (it asks for the `why`).
+- **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor that aren't done yet (unexplained, partly explained, or changed since their step was written), each with its state: click one to go to its lines (the diff for a removed line). It offers **Copy Prompt: Explain This Change** for your agent, and **Mark as Trivial…** for a change that needs no explanation (it asks for the `why`).
 - The **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left; when none counts yet, or some changes are left, it offers a prompt to copy for your agent.
 - **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. Bind them to keys if you review this way.
 
-The base is the one you picked with **Sidestory: Set Base…** (kept per workspace), else the branch's `vscode-merge-base` git setting (the one VS Code's own Source Control uses), else the `sidestory.changes.defaultBase` setting, else the remote's default branch, `main` or `master`. A sidestory's own `base` decides which sidestories count, as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
+The base is, in order: the one you picked with **Sidestory: Set Base…** (kept per workspace); else the `base` of a sidestory added on this branch; else the branch's `branch.<name>.vscode-merge-base` git setting (the one VS Code's own Source Control uses); else the `sidestory.changes.defaultBase` setting; else the remote's default branch, then `main`, then `master`. Which sidestories count is decided as in the checker. The extension counts with the same code as the checker, so the marks and `check.cjs --coverage` agree; it reads the repository through VS Code's built-in Git extension and never runs git itself.
 
 ### Checking coverage
 
@@ -503,7 +503,11 @@ Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
 | `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
-| `sidestory.changes.defaultBase` | `""` | The branch a branch is compared with when no sidestory of it names a `base` (`main`, `origin/develop`); empty means the repository's default branch. **Sidestory: Set Base…** overrides it per workspace. |
+| `sidestory.changes.defaultBase` | `""` | The branch, tag or commit a branch is compared with when no sidestory gives a `base` and none was set with **Sidestory: Set Base…** (`develop`, `origin/develop`); empty means the remote's default branch, then `main`, then `master`. |
+| `sidestory.changes.includeUncommitted` | `true` | Compare the working tree (staged, unstaged and untracked changes) rather than the last commit, for coverage, its decorations and the diffs steps open. Turn it off to see what CI sees. |
+| `sidestory.changes.openStepsIn` | `"diff"` | Where the steps of a sidestory that explains a branch open: `diff` (the branch's diff of the file) or `editor` (the file itself). |
+| `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under "This branch" in the Sidestories view when the branch has changes and no sidestory explains it yet. |
+| `sidestory.changes.markUnexplained` | `false` | Mark unexplained changes in the gutter of the branch's diffs, also when no sidestory with this base is open. |
 | `sidestory.widgets.enabled` | `true` | Run interactive widgets (each workspace still asks first). Application scope: only your user settings count. In browser VS Code (code-server, openvscode-server), set it in the **User** tab of the Settings editor, which lives in the browser; the server's (Remote) settings file doesn't apply. |
 
 ## Troubleshooting
