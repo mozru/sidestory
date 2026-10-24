@@ -14,7 +14,7 @@
 
 Shiki wins on the one thing this feature is for: looking like the editor beside it. The size is affordable (§6). The WASM Oniguruma engine isn't needed: the JS engine handles every grammar we ship (`forgiving: true` leaves an unsupported pattern unmatched rather than failing the grammar).
 
-Superseded by §10: grammars now come from the installed extensions (VS Code's built-in language extensions and whatever the reader added), tokenized by `vscode-textmate` with VS Code's own Oniguruma WASM. §10 supersedes the grammar parts of §1, §2, §4 (`lang` validation), §5 (markdown fences, Shiki's limits, the heap limit) and §6 (shipped grammars, the alias table); the rest still holds.
+Superseded by §10: grammars now come from the installed extensions (VS Code's built-in language extensions and whatever the reader added), tokenized by `vscode-textmate` with VS Code's own Oniguruma WASM. §10 supersedes the grammar parts of §1, §2, §4 (`lang` validation), §5 (markdown fences, Shiki's limits, the heap limit, load time now charged) and §6 (shipped grammars, the alias table); the rest still holds.
 
 ## 2. Data flow
 
@@ -96,9 +96,9 @@ A `<Code lang="ts">` UI component needs tokens inside the widget's frame, which 
 - e2e (browser VS Code in Docker): a highlighted block in the real default theme the test sets explicitly (`workbench.colorTheme`) has that theme's keyword color.
 - Panel test for a partly colored block whose request was replaced by a newer one (it's completed). Unit test: markdown fences named `../../x` and `__proto__` load nothing.
 
-## 10. Grammars from installed extensions (supersedes the grammar parts of §1, §2, §6)
+## 10. Grammars from installed extensions (see the note in §1 for what it supersedes)
 
-The reader's VS Code already knows how to color every language it can open: built-in language extensions (`vscode.typescript`, `vscode.python`, `vscode.markdown`…, 80–90 grammars) and any the reader installed (SystemVerilog, VHDL, TOML…). Code blocks use those grammars instead of a fixed set we ship, so a block looks like the same file in the editor, and new languages need no Sidestory release.
+The reader's VS Code already knows how to color every language it can open: built-in language extensions (ids `vscode.typescript`, `vscode.python`, `vscode.markdown`…, in folders like `typescript-basics`; 80–90 grammars) and any the reader installed (SystemVerilog, VHDL, TOML…). Code blocks use those grammars instead of a fixed set we ship, so a block looks like the same file in the editor, and new languages need no Sidestory release.
 
 ### 10.1 Choices
 
