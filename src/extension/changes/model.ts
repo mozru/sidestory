@@ -252,7 +252,8 @@ export function folderLabel(f: FolderNode): string {
   const files = `${n(f.fileCount)} ${f.fileCount === 1 ? 'file' : 'files'}`;
   if (f.uncounted === f.fileCount) return files;
   const counts = countsLabel({ added: f.added, removed: f.removed });
-  return counts ? `${files} · ${counts}` : files;
+  const partial = f.uncounted ? ` · ${n(f.uncounted)} uncounted` : '';
+  return counts ? `${files} · ${counts}${partial}` : files;
 }
 
 /** "4 commits", "1 commit", "1000+ commits". */

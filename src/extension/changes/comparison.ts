@@ -28,6 +28,8 @@ export interface Snapshot {
   readonly partialClone: boolean;
   /** HEAD is the base branch (or its commit). */
   readonly onBase: boolean;
+  /** Changed files whose paths are unsafe to show or read (control characters, `..`, `.git`): not listed. */
+  readonly unsafe: number;
 }
 
 export type ComparisonState =
@@ -50,7 +52,8 @@ export function toEntries(repo: GitRepo, changes: readonly (GitChange | GitDiffC
   const entries: ChangeEntry[] = [];
   let unsafe = 0;
   for (const c of changes) {
-    const status = statusLetter(c.status);
+    // Read each property once: the API's changes can be class instances with getters (never spread them).
+    const status = untracked ? 'A' : statusLetter(c.status);
     if (!status) continue;
     const newPath = relPath(repo, c.renameUri ?? c.uri);
     const oldPath = relPath(repo, c.originalUri);
@@ -300,11 +303,15 @@ export class Comparison implements vscode.Disposable {
     } else list = await repo.diffWith(mergeBase);
     if (epoch !== this.epoch) return;
 
-    const { entries } = toEntries(repo, list);
+    const listed = toEntries(repo, list);
+    const entries = listed.entries;
+    let unsafe = listed.unsafe;
     if (mode === 'workingTree') {
       const seen = new Set(entries.map((e) => e.path));
       const untracked = [...(s.untrackedChanges ?? []), ...s.workingTreeChanges.filter((c) => c.status === 7)];
-      for (const e of toEntries(repo, untracked.map((c) => ({ ...c, status: 7 })), true).entries) {
+      const extra = toEntries(repo, untracked, true);
+      unsafe += extra.unsafe;
+      for (const e of extra.entries) {
         if (!seen.has(e.path)) {
           seen.add(e.path);
           entries.push(e);
@@ -348,6 +355,7 @@ export class Comparison implements vscode.Disposable {
         countsKnown,
         partialClone,
         onBase: (!!base.branch && base.branch === head.name) || base.sha === headSha,
+        unsafe,
       },
     });
   }

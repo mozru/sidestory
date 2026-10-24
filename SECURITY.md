@@ -30,6 +30,13 @@ What it can't do, and how that is enforced:
 - `localResourceRoots` includes the `.sidestory/` folder (a panel can move between the sidestories in it). VS Code checks resource paths by prefix, not by real path, so a symlink inside `.sidestory/` could in principle expose another readable file to the panel's own resource loader. Sidestory content itself can't load such URLs (assets go through the extension, which checks real paths), and the panel can't send data anywhere.
 - Sidestory HTML can't run script. Code from the repository runs only as widgets, below.
 
+## The Changes view and git
+
+- **The extension never runs git itself.** The Changes view reads the branch's merge diff through VS Code's git extension (its API), which runs only in trusted workspaces, with your git settings. In Restricted Mode the view says so and reads nothing.
+- **Old versions of files come from git objects, never the file system.** The left side of a diff (and the right side in "committed only") is a read-only `sidestory-git:` document naming a full commit id, a repository by a salted hash (no path), and a repo-relative path. It serves regular files only: symlinks, submodules and folders are refused, so nothing outside that commit's tree is followed. Files over 10 MB are refused, before and after the read (a textconv driver you configured can change a file's size).
+- **Repository text stays text.** Paths with control characters, `..` or `.git` segments are never listed, read or opened; paths, branch, tag and commit names are cleaned before they are shown, and shown literally in quick picks. Refs reach the git extension only as validated, fully qualified names (`refs/heads/main`) or full commit ids; a "Commit…" entry must be hex.
+- **Network** only on a click: **Fetch**, through the git extension. In a partial clone, line counts are off, since computing them could download every file.
+
 ## Interactive widgets
 
 Widgets are React components in a sidestory's folder (`<explain-widget src="widgets/x.tsx">`). Unlike the rest of a sidestory, **they are code from the repository, and they run.** The boundary is your informed consent plus limits on what a widget can see; the sandbox makes misuse harder but is not treated as containment.

@@ -1,9 +1,10 @@
 // Runs the extension in real desktop VS Code (Electron) on this OS, against a copy of the sample workspace:
 // once with LF line endings and once with CRLF (as a Windows checkout gives), in a folder whose path has a
 // space and non-ASCII characters. VS Code itself is downloaded to .vscode-test/ (cached).
-// Usage: node test/desktop/run.mjs [--version 1.95.0|stable] [--only lf|crlf]
+// Usage: node test/desktop/run.mjs [--version 1.95.0|stable] [--only lf|crlf|changes]
 import { runTests } from '@vscode/test-electron';
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -59,6 +60,33 @@ for (const eol of ['lf', 'crlf']) {
     });
   } catch (e) {
     console.error(`desktop tests failed (${eol}): ${e}`);
+    failed = true;
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+// The Changes view (docs/CHANGES-PLAN.md §16.4): the fixture repository with 1,500 more changed files, trusted, through
+// the real git extension.
+if (!only || only === 'changes') {
+  const base = mkdtempSync(join(tmpdir(), 'cx desktop ü-'));
+  const workspace = join(base, 'Changes Repo');
+  const generated = 1500;
+  execFileSync(process.execPath, [join(root, 'test/fixtures/git-repo.mjs'), workspace, '--many', String(generated)]);
+  const userData = join(base, 'user-data');
+  mkdirSync(join(userData, 'User'), { recursive: true });
+  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never' }));
+  console.log(`\n== desktop VS Code ${version}, ${process.platform}, the Changes view ==`);
+  try {
+    await runTests({
+      version,
+      extensionDevelopmentPath: root,
+      extensionTestsPath: join(root, 'dist-test/desktop/index.cjs'),
+      launchArgs: [workspace, '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', `--user-data-dir=${userData}`],
+      extensionTestsEnv: { CX_WORKSPACE: workspace, CX_SUITE: 'changes', CX_GENERATED: String(generated) },
+    });
+  } catch (e) {
+    console.error(`desktop tests failed (changes): ${e}`);
     failed = true;
   } finally {
     rmSync(base, { recursive: true, force: true });

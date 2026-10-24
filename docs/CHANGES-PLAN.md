@@ -1,6 +1,6 @@
 # Diff-first sidestories and the Changes view: plan
 
-> **Status: plan, not implemented** (revision 4, 2026-10-23, after review round 3).
+> **Status: release 1a (the navigator) implemented** for 0.2.1, see §20 for what was built, the deviations and the answers to every *(verify)* that 1a depends on; 1b, 2 and 3 are still a plan (revision 4, 2026-10-23, after review round 3).
 >
 > **Covers:**
 > - an optional `base` on any sidestory, which makes its steps open diff editors on the branch's merge diff;
@@ -37,6 +37,7 @@
 17. [Open questions](#17-open-questions)
 18. [Effort, phasing and splitting the work](#18-effort-phasing-and-splitting-the-work)
 19. [Review log](#19-review-log)
+20. [Release 1a: built, deviations, verified](#20-release-1a-built-deviations-verified)
 
 ---
 
@@ -1348,3 +1349,57 @@ D's first day is a contract PR: the `Comparison`, `ChangeEntry`, `Change`, `Targ
 
 **Round 4** (revision 4): **both reviewers report only nits**, after one last minor from the security reviewer: `-c url.….insteadOf=` doesn't clear a planted rule, so the archive push step now verifies `.git/config` is unchanged since checkout and holds no `url.*`, `http.*` or `credential.*` setting. Nits folded in: the file chords also work from a plain editor of a changed file; the review prompt allows pinned quotes; `--head`'s base must be an ancestor; `--landing` inputs validated; the worktree command `cd`s to the repository root; review sidestories are also recognized by folder name or by being created during review.
 
+
+---
+
+## 20. Release 1a: built, deviations, verified
+
+### 20.1 What was built
+
+`src/extension/changes/`: `model.ts` (entries, the compact tree with counts, sorts, the filter, next/previous, labels; no vscode import), `base.ts` (§3.1's grammar, §4.3's resolution and default chain; no vscode import), `git-api.ts` (the API subset, feature detection, the ref reader), `comparison.ts` (one comparison: base → merge-base → file list, commit count, recompute rules of §4.4), `git-fs.ts` (the `sidestory-git:` and `sidestory-empty:` providers, repository ids, the status-letter decorations), `tree.ts` (the rows), `view.ts` (title bar, states, commands, base picker, filter, next/previous, Open All), and `probe.ts` (the bootstrap's one question, §9.1). The view is registered by the full extension; the bootstrap only routes its commands and runs the probe.
+
+Seams for 1b: `ChangesView.snapshot` (the comparison), `ChangesView.diffUris` (the one place a file's two URIs are built, for `openTarget`), `ChangesView.pathOf` (an editor's document → repo path, either side of a diff, for This File and cursor-follow), `ChangesTree`'s node kinds (a sidestory row and change items slot in beside `folder` and `file`), and `ChangeEntry.noText` / the `kind` column of §5.1 for "Not counted".
+
+### 20.2 Deviations from the plan
+
+- **Line counts without numstat.** `diffBetweenWithStats` is missing on 1.95 and `diffBetweenWithStats2` (uncommitted counts in one call) on 1.95 and 1.105. Then counts are filled in per file from the git extension's one-file patch (`diffWith(ref, path)` / `diffBetween(a, b, path)`), 4 at a time, at most 2,000 files, in view order; renames stay uncounted (a one-path patch can't pair the sides) and folders say "· 1 uncounted". `hunks.ts` (§5.2) replaces this in 1b. Untracked files are counted by reading them (≤ 2 MB, `NUL` in the first 8 KB means binary).
+- **Binary vs mode-only:** the API's numstat reports both as 0/0 (it maps `-` to 0), so both read "no line changes" until 1b reads the blobs.
+- **Unsafe paths** (control characters, `..`, `.git`, backslashes) are left out with a count in the view's message, not listed as an "unsupported path" row (that row belongs to 1b's "Not counted" group). The rule is `isSafeRepoPath`, not `isSafeRelativePath`, which also refuses `[`, `]`, `{`, `}`, `*`, `?` (for watcher globs) and would refuse `pages/[id].tsx`.
+- **Unsaved edits** (§4.4): a dirty document of a file present at the merge-base and not otherwise changed is listed as `M · unsaved` without comparing texts (that needs §5.2's decoding rules, 1b); counts are of the file on disk.
+- **"Fetch More History"** isn't a button: the message names `git fetch --unshallow`. **Fetch** (base not found) is.
+- **"main has 12 newer commits"** isn't shown: `TreeView.description` has no tooltip. The base picker's first item shows the merge-base instead.
+- **The base picker** has no "bases sidestories use" group (1b) and no Review a Branch (release 2).
+- **Commit count:** `log`'s `maxEntries` is ignored with a `range` (below), so the count first checks the merge-base is among HEAD's latest 1,001 commits and says "1000+" otherwise; only then does it read the range.
+- **Collapse All** is in the `…` menu and works by new ids (VS Code's built-in button would be a fifth inline action).
+- The keybindings are those of §9.3 for Next/Previous Changed File; the Unexplained and Mark Viewed chords come with 1b and release 2.
+
+### 20.3 The (verify) answers
+
+Checked against the git extension of VS Code 1.95.0 and 1.142 (its `dist/main.js` and `api.d.ts`), desktop VS Code 1.143.1, and browser VS Code 1.105.1 (the e2e image).
+
+| Where | Question | Answer |
+|---|---|---|
+| §0 | The git extension in Restricted Mode | `capabilities.untrustedWorkspaces.supported: false` in 1.95 and 1.142: no git in Restricted Mode. The view's welcome says so. |
+| §4.2 | `getRefs` options | `getRefs({ pattern, count, sort: 'alphabetically' \| 'committerdate' \| 'creatordate', contains })` (`for-each-ref`), in 1.95 and later. Used with a pattern and a count; `state.refs` is the fallback. |
+| §4.2 | Which diff `diffBetween` runs | `git diff --name-status -z --diff-filter=ADMR a...b`: three-dot. Passing the merge-base makes it irrelevant; a unit test pins that the list is asked for from the merge-base. |
+| §4.2 | `diffBetweenWithStats` | Exists (1.142, not 1.95): `git diff --raw --numstat --diff-filter=ADMR -z --find-renames=<git.similarityThreshold>% a...b` → `DiffChange { insertions, deletions }`; binary files are 0/0. `diffBetweenWithStats2(ref)` is the same against the working tree (tracked files): newer than 1.105. |
+| §4.2 | Untracked files | `state.untrackedChanges` is in the API from 1.95, but filled only with `git.untrackedChanges: "separate"`; with `"mixed"` (the default) untracked files are in `workingTreeChanges` with status `UNTRACKED`. Both are read. With `"hidden"` git status doesn't report them and the view can't list them. |
+| §4.2 | `buffer` and textconv | `git show --textconv <ref>:<path>`: yes. The provider caps after the call. |
+| §4.2 | `getConfig`, `vscode-merge-base` | `getConfig(key)` reads local config and rejects when unset. `branch.<name>.vscode-merge-base` is the git extension's record of a branch's base (e.g. `origin/main`). **`getBranchBase()` writes that key** (`setConfig`) when it is missing, so the view reads `getConfig` directly and never calls `getBranchBase`. |
+| §4.2 | Status mapping | Name-status letters: `A` → `INDEX_ADDED`, `M` → `MODIFIED`, `D` → `DELETED`, `R` → `INDEX_RENAMED`; parsing stops at any other letter. The `Change` objects of `state.*Changes` are class instances with getters: never spread them. |
+| §4.2 | Type changes | Dropped by `--diff-filter=ADMR` in every list call: confirmed. Copies are never reported (no `-C`). |
+| §4.6 | Uncommitted counts from numstat against a commit | `diffBetweenWithStats2(mergeBase)` covers tracked files; untracked ones aren't in any numstat and are counted from the file. |
+| §9.2 | `log({ range, maxEntries })` | `range` exists, but **`maxEntries` is ignored when `range` is given** (1.95 and 1.142): `log mb..head` is unbounded. Hence §20.2's bounded check. |
+| §9.3 | Multi-diff editors in `visibleTextEditors` | **No**: with `vscode.changes` showing 500 files on 1.143.1, none of its inner editors is a visible text editor, so 1b's decorations won't reach it. `vscode.changes` exists on 1.105 and 1.143; VS Code appends "(N files)" to its title. Opening 500 files logs VS Code's own "potential listener LEAK" warnings. |
+| §9.9 | `fetch({ depth })` | `FetchOptions.depth` exists; not used in 1a (above). |
+| §4.5 | `isReadonly` as a `MarkdownString` | In `@types/vscode` 1.95: `boolean \| MarkdownString`. Used. |
+| §17 Q14 | Default bindings of the chords | macOS 1.143.1: `ctrl+cmd+down` is bound to `notebook.cell.focusInOutput`, `notebook.focusNextEditor`, `quickInput.nextSeparator` and `workbench.action.terminal.resizePaneDown`, `ctrl+cmd+up` to their counterparts, each scoped to a notebook, quick input or terminal; none applies in a diff, an editor or the Changes view, where ours does. Windows and Linux (`ctrl+alt+pagedown` / `pageup`) not checked on those platforms yet. In browser VS Code on macOS the chord reaches the workbench. |
+| §10.2 | A worktree call in the API | `createWorktree` exists in 1.142's API (not 1.95): for release 2. |
+| §9.9 | Welcome views | A `viewsWelcome` `when` can't test `view == …`: the views' welcome entries use only `sidestory.changes.state`. |
+| §16.3 | The e2e image | Has git. Its settings don't stop the trust prompt in openvscode-server 1.105.1; the Changes suite answers "Yes" (the git extension needs trust) while the other suites keep Restricted Mode. |
+
+Not needed by 1a and left open: §5.2 jsdiff, §7.5 `hideUnchangedRegions`, §10.2 `openWith(uri, 'default')` for notebooks.
+
+### 20.4 Measured
+
+Desktop VS Code 1.143.1, macOS, the fixture plus 1,500 generated files: the list in 0.3 s after Show Changes (activation and the git extension's first status included), the first diff in 0.4 s, Next Changed File about 30 ms per file. Unit: 20,000 files build the tree in about 10 ms, filter in about 1 ms and sort by size in about 20 ms (§16.1's targets).

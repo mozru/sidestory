@@ -914,67 +914,67 @@
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == untrusted",
+        "when": "sidestory.changes.state == untrusted",
         "contents": "Changes need git, which VS Code turns off in Restricted Mode.\n[Manage Workspace Trust](command:workbench.trust.manage)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == missing",
+        "when": "sidestory.changes.state == missing",
         "contents": "Changes need VS Code's Git extension, which isn't available here."
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == disabled",
+        "when": "sidestory.changes.state == disabled",
         "contents": "Changes need VS Code's Git extension, which is turned off or can't find git.\n[Open Git Settings](command:workbench.action.openSettings?%5B%22git.enabled%22%5D)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == noRepo",
+        "when": "sidestory.changes.state == noRepo",
         "contents": "This folder isn't in a git repository. The Changes view lists a branch's changes against its base."
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == loading",
+        "when": "sidestory.changes.state == loading",
         "contents": "Comparing with the base…"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == noCommits",
+        "when": "sidestory.changes.state == noCommits",
         "contents": "This repository has no commits yet."
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == noBase",
+        "when": "sidestory.changes.state == noBase",
         "contents": "Pick a branch to compare with.\n[Change Base…](command:sidestory.changes.pickBase)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == baseNotFound",
+        "when": "sidestory.changes.state == baseNotFound",
         "contents": "[Fetch](command:sidestory.changes.fetch)\n[Change Base…](command:sidestory.changes.pickBase)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == noMergeBase",
+        "when": "sidestory.changes.state == noMergeBase",
         "contents": "[Change Base…](command:sidestory.changes.pickBase)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == onBase",
+        "when": "sidestory.changes.state == onBase",
         "contents": "You're on the base branch: nothing to compare.\n[Change Base…](command:sidestory.changes.pickBase)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == noChanges",
+        "when": "sidestory.changes.state == noChanges",
         "contents": "No changes between this branch and its base.\n[Change Base…](command:sidestory.changes.pickBase)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == filteredOut",
+        "when": "sidestory.changes.state == filteredOut",
         "contents": "No changed file matches the filter.\n[Clear Filter](command:sidestory.changes.clearFilter)"
       },
       {
         "view": "sidestory.changes",
-        "when": "view == sidestory.changes && sidestory.changes.state == error",
+        "when": "sidestory.changes.state == error",
         "contents": "Couldn't compare with the base.\n[Refresh](command:sidestory.changes.refresh)"
       }
     ]

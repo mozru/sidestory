@@ -36,9 +36,15 @@ export async function expand(row: Locator): Promise<void> {
   await expect(row).toHaveAttribute('aria-expanded', 'true');
 }
 
-/** Runs a view title action by its tooltip. */
-export async function viewAction(page: Page, title: string): Promise<void> {
-  // The view is alone in its container, so its actions sit in the container's title bar.
+/** Runs a view title action by its tooltip: in the pane's header when the container shows several views, else the container's. */
+export async function viewAction(page: Page, title: string, pane: Locator = sidebar(page)): Promise<void> {
+  const header = pane.locator('.pane-header');
+  const own = header.locator(`.actions-container a[aria-label^="${title}"]`).first();
+  await header.hover().catch(() => {});
+  if (await own.count()) {
+    await own.click();
+    return;
+  }
   const bar = page.locator('.part.sidebar .composite.title');
   await bar.hover();
   await bar.locator(`.actions-container a[aria-label^="${title}"]`).first().click();

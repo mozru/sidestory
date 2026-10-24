@@ -31,8 +31,11 @@ const KEYS = {
 const MAX_PICKS = 50;
 const MAX_RECENT = 10;
 const OPEN_ALL_CAP = 500;
-/** Untracked files get their lines counted (they aren't in numstat): at most this many, this large. */
-const COUNT_UNTRACKED = { files: 2000, bytes: 2 * 1024 * 1024, parallel: 4 } as const;
+/**
+ * Files without counts from the list (untracked files, which numstat doesn't see, and every file when the API has no
+ * numstat call) get counted one by one, in view order: at most this many, untracked ones up to this size.
+ */
+const COUNT_LATER = { files: 2000, bytes: 2 * 1024 * 1024, parallel: 4 } as const;
 
 type State = 'untrusted' | 'missing' | 'disabled' | 'noRepo' | 'loading' | 'noCommits' | 'noBase' | 'baseNotFound' | 'noMergeBase' | 'onBase' | 'noChanges' | 'filteredOut' | 'error' | 'ready';
 
@@ -74,6 +77,7 @@ export class ChangesView implements vscode.Disposable {
       this.view.onDidChangeVisibility(() => this.updateActive()),
       this.view.onDidChangeSelection((e) => this.onSelect(e.selection)),
       vscode.window.onDidChangeActiveTextEditor(() => this.updateActiveFile()),
+      vscode.window.tabGroups.onDidChangeTabs(() => this.updateActiveFile()),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.init()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.changes.defaultBase')) void this.comparison?.refresh(true);
@@ -251,7 +255,7 @@ export class ChangesView implements vscode.Disposable {
     }
     this.updateTitle();
     this.updateActiveFile();
-    this.countUntracked(snap, c.epoch);
+    this.countLater(snap, c.epoch);
     this.stats.renders++;
     this.stats.files = snap.entries.length;
     this.stats.lastRenderMs = Date.now() - t0;
@@ -287,6 +291,7 @@ export class ChangesView implements vscode.Disposable {
       msg.push(`${name(s.head.name)} and ${name(s.head.upstream)} have diverged (${s.head.ahead} ahead, ${s.head.behind} behind): showing your local branch.`);
     }
     if (s.total > s.entries.length) msg.push(`Showing ${MAX_LISTED.toLocaleString('en-US')} of ${s.total.toLocaleString('en-US')} changed files.`);
+    if (s.unsafe) msg.push(`${s.unsafe} changed ${s.unsafe === 1 ? 'file has a path' : 'files have paths'} with control characters, “..” or “.git” in it: not listed.`);
     if (s.partialClone) msg.push('Partial clone: line counts are off, since computing them could download every file.');
     if (this.filterText) {
       const shown = this.tree.order.length;
@@ -295,31 +300,42 @@ export class ChangesView implements vscode.Disposable {
     view.message = msg.length ? msg.join(' ') : undefined;
   }
 
-  /** Counts the lines of untracked files (numstat doesn't list them), a few at a time, then repaints. */
-  private countUntracked(snap: Snapshot, epoch: number): void {
-    if (this.countEpoch === epoch || snap.mode !== 'workingTree' || snap.partialClone) return;
+  /** Counts lines the list didn't come with, a few files at a time and in view order, then repaints. */
+  private countLater(snap: Snapshot, epoch: number): void {
+    if (this.countEpoch === epoch || snap.partialClone) return;
     this.countEpoch = epoch;
-    const todo = snap.entries.filter((e) => e.untracked && e.added === undefined && !e.noText).slice(0, COUNT_UNTRACKED.files);
+    // Renames and copies: a one-path patch can't pair the two sides, so they stay uncounted here.
+    // What the view shows first, then files the filter hides.
+    const todo = [...new Set([...this.tree.order, ...snap.entries])]
+      .filter((e) => e.added === undefined && !e.noText && (e.untracked || e.status === 'A' || e.status === 'M' || e.status === 'D'))
+      .slice(0, COUNT_LATER.files);
     if (!todo.length) return;
+    const repo = snap.repo;
     let next = 0;
     const work = async () => {
       while (next < todo.length && this.comparison?.epoch === epoch) {
         const e = todo[next++]!;
         try {
-          const uri = vscode.Uri.joinPath(snap.repo.rootUri, ...e.path.split('/'));
-          const st = await vscode.workspace.fs.stat(uri);
-          if (st.type !== vscode.FileType.File || st.size > COUNT_UNTRACKED.bytes) continue;
-          const bytes = await vscode.workspace.fs.readFile(uri);
-          if (bytes.subarray(0, 8000).includes(0)) e.noText = true;
-          else e.added = countLines(bytes);
-          e.removed = 0;
+          const uri = vscode.Uri.joinPath(repo.rootUri, ...e.path.split('/'));
+          if (e.untracked) {
+            const st = await vscode.workspace.fs.stat(uri);
+            if (st.type !== vscode.FileType.File || st.size > COUNT_LATER.bytes) continue;
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            if (bytes.subarray(0, 8000).includes(0)) e.noText = true;
+            else e.added = countLines(bytes);
+            e.removed = 0;
+          } else {
+            const patch = snap.mode === 'workingTree' ? await repo.diffWith(snap.mergeBase, uri.fsPath) : await repo.diffBetween(snap.mergeBase, snap.head.sha, uri.fsPath);
+            if (this.comparison?.epoch !== epoch) return;
+            Object.assign(e, patchCounts(patch));
+          }
           this.scheduleRepaint();
         } catch {
           // gone or unreadable: no count
         }
       }
     };
-    for (let i = 0; i < COUNT_UNTRACKED.parallel; i++) void work();
+    for (let i = 0; i < COUNT_LATER.parallel; i++) void work();
   }
 
   private scheduleRepaint(): void {
@@ -329,8 +345,19 @@ export class ChangesView implements vscode.Disposable {
     }, 250);
   }
 
+  /**
+   * The file of the active editor tab: either side of a diff (the empty side of an added or deleted file says
+   * nothing), or a plain editor. The tab, not the focused text editor: focus may be in the tree.
+   */
+  private activePath(): string | undefined {
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (input instanceof vscode.TabInputTextDiff) return this.pathOf(input.modified) ?? this.pathOf(input.original);
+    if (input instanceof vscode.TabInputText) return this.pathOf(input.uri);
+    return this.pathOf(vscode.window.activeTextEditor?.document.uri);
+  }
+
   private updateActiveFile(): void {
-    const p = this.pathOf(vscode.window.activeTextEditor?.document.uri);
+    const p = this.activePath();
     setContext('sidestory.changes.activeFileChanged', !!p && this.shownPaths.has(p));
   }
 
@@ -413,7 +440,7 @@ export class ChangesView implements vscode.Disposable {
       vscode.window.setStatusBarMessage(s.entries.length ? 'No changed file matches the filter' : 'No changed files', 3000);
       return;
     }
-    const active = this.pathOf(vscode.window.activeTextEditor?.document.uri);
+    const active = this.activePath();
     const selected = this.view.selection[0];
     const fromPath = active && order.some((e) => e.path === active) ? active : selected?.kind === 'file' ? selected.entry.path : undefined;
     const r = step(order.length, fromPath ? order.findIndex((e) => e.path === fromPath) : -1, dir);
@@ -578,7 +605,8 @@ export class ChangesView implements vscode.Disposable {
       const { left, right } = this.diffUris(s, e);
       return [this.fileUri(s, e.path), e.status === 'A' ? undefined : left, e.status === 'D' ? undefined : right];
     });
-    const title = `Changes vs ${name(s.base.branch ?? s.base.label, 40)} (${shown.length} files)`;
+    // VS Code adds "(N files)" to the title itself.
+    const title = `Changes vs ${name(s.base.branch ?? s.base.label, 40)}`;
     try {
       await vscode.commands.executeCommand('vscode.changes', title, resources);
     } catch (e) {
@@ -709,6 +737,22 @@ export class ChangesView implements vscode.Disposable {
     this.comparisonSubs.forEach((d) => d.dispose());
     this.subscriptions.forEach((d) => d.dispose());
   }
+}
+
+/** Lines added and removed in one file's unified diff; a binary file has none. */
+export function patchCounts(patch: string): { added: number; removed: number; noText?: true } {
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('@@')) inHunk = true;
+    else if (line.startsWith('diff --git ')) inHunk = false;
+    else if (!inHunk) {
+      if (/^Binary files .* differ$/.test(line) || line.startsWith('GIT binary patch')) return { added: 0, removed: 0, noText: true };
+    } else if (line[0] === '+') added++;
+    else if (line[0] === '-') removed++;
+  }
+  return added || removed ? { added, removed } : { added, removed, noText: true };
 }
 
 /** Lines in a text file's bytes (a final line without a newline counts). */

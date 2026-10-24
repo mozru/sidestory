@@ -52,7 +52,11 @@ export interface GitRepo {
   getRefs?(query: { pattern?: string | string[]; count?: number; sort?: 'alphabetically' | 'committerdate' }, token?: vscode.CancellationToken): Promise<GitRef[]>;
   getMergeBase(a: string, b: string): Promise<string | undefined>;
   diffWith(ref: string): Promise<GitChange[]>;
+  /** One file's patch against the working tree. */
+  diffWith(ref: string, path: string): Promise<string>;
   diffBetween(a: string, b: string): Promise<GitChange[]>;
+  /** One file's patch, `git diff a...b -- path`. */
+  diffBetween(a: string, b: string, path: string): Promise<string>;
   /** `git diff --raw --numstat a...b` (VS Code 1.9x+). */
   diffBetweenWithStats?(a: string, b: string): Promise<GitDiffChange[]>;
   /** `git diff --raw --numstat ref`: the working tree against ref, tracked files only (newer). */

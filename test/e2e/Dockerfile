@@ -12,6 +12,11 @@ COPY examples/stream-dma/.sidestory /home/workspace/sample/stream-dma/.sidestory
 COPY examples/stream-dma/rtl /home/workspace/sample/stream-dma/rtl
 COPY examples/stream-dma/.sidestory /home/workspace/.fixture/stream-dma/.sidestory
 COPY examples/stream-dma/rtl /home/workspace/.fixture/stream-dma/rtl
+# The Changes view's fixture (docs/CHANGES-PLAN.md §16.3): a branch with A/M/D/R changes and a main that moved on
+# after the fork. Needs git in the image; tests copy the pristine fixture to /home/workspace/chg.
+COPY test/fixtures/git-repo.mjs /tmp/git-repo.mjs
+RUN (command -v git >/dev/null || (apt-get update -q && apt-get install -yq --no-install-recommends git && rm -rf /var/lib/apt/lists/*)) \
+  && ${OPENVSCODE_SERVER_ROOT}/node /tmp/git-repo.mjs /home/workspace/.chg-fixture
 COPY test/e2e/settings.json /home/workspace/.openvscode-server/data/Machine/settings.json
 COPY test/e2e/settings.json /home/workspace/.openvscode-server/data/User/settings.json
 COPY test/e2e/settings.json /home/workspace/.settings.json
