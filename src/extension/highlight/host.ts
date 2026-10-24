@@ -144,6 +144,9 @@ export class Highlighter {
     clear: () => this.failedAt.clear(),
   };
   private engineName: EngineName | undefined;
+  /** Grammar failures already logged (a failed grammar is retried after the breaker's window, but logged once). */
+  private readonly loggedFailures = new Set<string>();
+  private workerMissingLogged = false;
   /** Results by (theme, lang, hash of code). */
   private readonly cache: SizeLru<Uint32Array | null>;
   /** Blocks being tokenized now, so a second request for the same block waits for the same answer. */
@@ -171,6 +174,7 @@ export class Highlighter {
     this.grammars = grammars;
     this.version++;
     this.failed.clear();
+    this.loggedFailures.clear();
     if (this.current) this.restartWorker = true;
     else this.stopWorker();
   }
@@ -286,7 +290,7 @@ export class Highlighter {
         const name = `${scope}${from ? ` (from ${from})` : ''}`;
         if (!set) {
           this.failed.add(scope);
-          this.opts.log?.(`Code block colors: couldn't read the grammar ${name}; its blocks stay plain.`);
+          this.logFailure(scope, `Code block colors: couldn't read the grammar ${name}; its blocks stay plain.`);
           return null;
         }
         const start: JobStart = { fresh: false, heap: 0 };
@@ -299,7 +303,7 @@ export class Highlighter {
           if (start.fresh) {
             this.timedOut(who);
             this.failed.add(scope);
-            this.opts.log?.(`Code block colors: loading the grammar ${name} ${r === 'timeout' ? 'took too long' : 'stopped the highlighter'}; its blocks stay plain.`);
+            this.logFailure(scope, `Code block colors: loading the grammar ${name} ${r === 'timeout' ? 'took too long' : 'stopped the highlighter'}; its blocks stay plain.`);
             return null;
           }
           continue;
@@ -316,7 +320,7 @@ export class Highlighter {
         for (const s of r.parsed ?? []) this.sent.add(s);
         if (!r.loaded) {
           this.failed.add(scope);
-          this.opts.log?.(`Code block colors: the grammar ${name} didn't load; its blocks stay plain.`);
+          this.logFailure(scope, `Code block colors: the grammar ${name} didn't load; its blocks stay plain.`);
           return null;
         }
         this.warm.add(scope);
@@ -347,6 +351,12 @@ export class Highlighter {
       return runs;
     }
     return null;
+  }
+
+  private logFailure(scope: string, message: string): void {
+    if (this.loggedFailures.has(scope)) return;
+    this.loggedFailures.add(scope);
+    this.opts.log?.(message);
   }
 
   private get heapBudget(): number {
@@ -417,7 +427,9 @@ export class Highlighter {
         forWorker,
         start,
         resolve: (r) => {
-          if (who && job.startedAt !== undefined) this.spend(who, Date.now() - job.startedAt);
+          // A crash on a worker over half full is retried uncharged (the grammars filled it, not this job).
+          const blameless = r === 'crashed' && job.start !== undefined && job.start.heap > this.heapBudget / 2;
+          if (who && job.startedAt !== undefined && !blameless) this.spend(who, Date.now() - job.startedAt);
           resolve(r);
         },
       };
@@ -443,7 +455,8 @@ export class Highlighter {
     try {
       this.worker ??= this.startWorker();
     } catch (e) {
-      this.opts.log?.((e as Error).message);
+      if (!this.workerMissingLogged) this.opts.log?.((e as Error).message);
+      this.workerMissingLogged = true;
       // Not the job's fault: no grammar is marked plain for it, no requester charged.
       job.resolve({ id: job.req.id, ok: false, error: (e as Error).message });
       this.pump();

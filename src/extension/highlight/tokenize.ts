@@ -133,7 +133,7 @@ export class Tokenizer {
     return pal;
   }
 
-  /** Which of `scopes` this worker has parsed for good (what the host needn't send again). */
+  /** Which of `scopes` vscode-textmate asked for and got text for (loaded, or broken for good): what the host needn't send again. */
   parsed(scopes: readonly string[]): string[] {
     return scopes.filter((s) => this.asked.has(s) && !this.missing.has(s));
   }
@@ -150,7 +150,8 @@ export class Tokenizer {
    */
   async load(scope: string, set: GrammarSet): Promise<boolean | 'stale'> {
     if (this.loaded.has(scope)) return true;
-    if (this.missing.has(scope)) return 'stale';
+    // A scope this worker knows as missing (left out of an earlier set by the caps) can't load here.
+    if (this.missing.has(scope) || set.files.some((f) => this.missing.has(f.scopeName))) return 'stale';
     // Scopes already asked for are parsed (or known missing) for good: their text isn't kept again.
     for (const f of set.files) if (!this.asked.has(f.scopeName)) this.files.set(f.scopeName, f);
     for (const [s, inj] of set.injections) this.injections.set(s, inj);
