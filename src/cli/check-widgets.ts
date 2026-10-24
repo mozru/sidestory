@@ -723,7 +723,8 @@ export function formatReport(report: CheckReport, cwd = process.cwd(), coverage 
   const n = report.widgets.length;
   if (coverage) {
     if (n) out.push(`${n} widget${n === 1 ? '' : 's'} checked.`);
-  } else out.push(`${n === 0 ? 'No widgets' : `${n} widget${n === 1 ? '' : 's'}`} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
+  } else if (n === 0) out.push(`Checked: ${report.errors} error(s), ${report.warnings} warning(s); no widgets.`);
+  else out.push(`${n} widget${n === 1 ? '' : 's'} checked: ${report.errors} error(s), ${report.warnings} warning(s).`);
   return out.join('\n');
 }
 
