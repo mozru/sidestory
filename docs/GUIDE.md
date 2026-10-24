@@ -16,6 +16,12 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Styling](#styling)
   - [What's supported, and what's removed](#whats-supported-and-whats-removed)
   - [Interactive widgets](#interactive-widgets)
+- [Explaining a branch](#explaining-a-branch)
+  - [Base, side and trivial marks](#base-side-and-trivial-marks)
+  - [The coverage rule](#the-coverage-rule)
+  - [Which sidestories count](#which-sidestories-count)
+  - [Checking coverage](#checking-coverage)
+  - [Coverage in CI](#coverage-in-ci)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -371,6 +377,102 @@ export default function Refill({ width = 64 }: { width?: number }) {
 **Running widgets is your choice.** Widgets are code from the repository, so they run only when the workspace is trusted, the `sidestory.widgets.enabled` setting is on (it is by default; it's a user setting, so a repository's settings can't turn it on), and you agree: the panel says how many widgets a sidestory has and offers **Run widgets…**, which opens a VS Code dialog saying what they can do. Until then, and in Restricted Mode, you see the fallbacks. You're asked once per sidestory, and again when widget code arrives through git (checkout, pull, merge), not after your own edits or when you switch back to a version you already agreed to. Consent is kept in VS Code's workspace storage (in browser VS Code, per browser profile). **Sidestory: Revoke Widget Consent** takes it back. A widget that freezes the panel is turned off by a watchdog: its box offers **Try again**, and **Sidestory: Enable Widgets** turns every widget the watchdog stopped back on (and the setting, if it's off). What widgets can and can't reach is in [SECURITY.md](../SECURITY.md).
 
 **Writing them:** [WIDGETS.md](WIDGETS.md) is the guide (also for Claude): the contract, imports, theming, linking to code, placement, focus, state, performance, and a gallery. Problems show in the Problems panel as you save; **Sidestory: Check Widgets** checks on demand, and a standalone checker ships with the extension for Claude Code and scripts (`node <extension>/dist/check.cjs .sidestory/<name>`; [WIDGETS.md §13](WIDGETS.md#13-checking-your-work-and-consent) has the exact command). **Sidestory: Add Widget Types** (or `check.cjs --types` from a terminal) adds type declarations so `tsc` and IntelliSense work on widget files without installing anything.
+
+## Explaining a branch
+
+A sidestory can explain a change instead of a piece of code: what a branch or pull request changes, step by step, in the order a reviewer wants it. It is an ordinary sidestory with a `base`, committed with the branch so reviewers get it with the PR. The checker tells you which changes it doesn't explain yet.
+
+### Base, side and trivial marks
+
+```json
+{
+  "version": 3,
+  "title": "Retry with full jitter",
+  "summary": "Why retries now wait a random time below a growing ceiling.",
+  "base": "main",
+  "trivialFiles": ["package-lock.json", "**/__snapshots__/**"],
+  "anchors": {
+    "ceiling": { "file": "src/retry.ts", "range": [40, 52] },
+    "old-loop": { "file": "src/retry.ts", "side": "base", "range": [20, 31], "color": "charts.red" },
+    "trivial-1": { "file": "src/api.ts", "range": [3, 9], "trivial": true, "why": "import order" }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `base` | Top level: what the branch is compared with, a branch or tag name (`main`, `release/2.1`, `origin/main`) or a full commit id. Short commit ids, `HEAD` and names with `..` or `@{` are refused. `main` also finds `origin/main` when there is no local `main` (a CI checkout). The comparison is the **merge diff**: from the merge-base of `base` and the branch to the branch, so work that landed on `main` after the branch started isn't in it. Without a base, a sidestory is a plain story about the code as it is. |
+| `side` | Anchor: `"base"` anchors **removed** code, in the merge-base's version of the file (the old path, for a renamed file). It needs a `base` and `"version": 3`. Absent means the code as it is now. |
+| `trivial`, `why` | Anchor: `"trivial": true` marks a mechanical change (formatting, import order, a rename, generated code) that needs no explanation; `why` (1–200 characters) is required, and reviewers see it. A trivial mark isn't a step: don't give it a section. Name them `trivial-1`, `trivial-2`, …. A trivial mark on a pure deletion goes on the base side. |
+| `trivialFiles` | Top level: globs (`*`, `**`, `?`) of whole files whose changes need no explanation, relative to the folder holding `.sidestory/`. Name them narrowly: `**`, `*`, or a pattern that matches more than half of the changed files is flagged. |
+| `id` | Top level: a stable id (a ULID). `--pin` writes it when there is none; never change or remove it. |
+
+Trivial is never the same as explained: the count says "9 explained · 3 trivial · 0 left", and a reviewer sees which changes were waved through and why.
+
+### The coverage rule
+
+The checker splits the merge diff into **changes**: runs of added and removed lines, with runs separated by a single unchanged line counted as one change. Line endings and a missing final newline aren't changes. Only anchors the page uses count (a section, a `data-explain-ref` or a `data-explain-on`), plus trivial marks. A change is explained when:
+
+- **Added lines:** every added line is inside an anchor (current side) in that file.
+- **Removed lines:** every removed line is inside a `"side": "base"` anchor, **or** an anchor on the current side covers where they were: the whole new range of a replacement (one anchor explains a rewrite, old lines included), or, for a pure deletion of at most 20 lines, both lines around it. A larger deletion needs a base-side anchor or a trivial mark.
+
+Some lines covered and some not is **partly explained**, which counts as not explained. A line added inside a pinned anchor that isn't in the anchor's pinned code was written after the step: it **needs a look** (`changed-since-pinned`) until you read the step, make the prose cover it, and accept it with `--accept <anchor>`. A broad anchor (over 40 lines and more than 5 times the changed lines it covers) still counts, with a warning.
+
+Binary files, submodules, symlinks, mode-only changes, Git LFS pointers and the sidestory's own files aren't counted; the report lists them.
+
+### Which sidestories count
+
+A sidestory counts toward a branch when it was **added on that branch** (its `manifest.json` isn't there at the merge-base) and its `base` gives the same merge-base. So once a branch lands, its sidestory sits on `main` and never counts for a later branch, even one that edits it. **A follow-up PR on a landed sidestory needs its own sidestory**: write a new one for the follow-up, and link the old one with `data-explain-detail` if it helps.
+
+### Checking coverage
+
+```bash
+CHECK="$(ls ~/.vscode*/extensions/paperkite.sidestory-*/dist/check.cjs | tail -n 1)"
+node "$CHECK" --coverage --base main              # every change of this branch, and what explains it
+node "$CHECK" .sidestory/retry-jitter --pin --coverage
+```
+
+- With a sidestory folder, the comparison uses its `base` (or `--base`); without one, `--base` is required. Either way every sidestory that counts is checked and named.
+- The working tree is compared by default, untracked files included (ignored ones aren't), and a deleted file paired with a similar untracked one counts as a rename. `--committed` compares `HEAD` instead (what CI sees); `--head <commit>` compares that commit.
+- `--json` adds `coverage`: every file and change with its lines, status (`explained`, `partly`, `unexplained`, `trivial`, `needsLook`) and the anchors that explain it.
+- `--pin` pins base-side anchors against the merge-base, never the working tree, and never re-pins an anchor with lines added since it was pinned; `--accept <anchor>[,…]` does, once you've updated the step.
+- Exit codes: **0** clean, **1** errors, **2** bad arguments, **3** no errors but some change isn't explained or marked trivial.
+
+The checker runs git itself (the extension doesn't), carefully: see [SECURITY.md](../SECURITY.md#the-checker-and-git).
+
+### Coverage in CI
+
+To check every pull request, add a workflow. It checks out the PR's head (not GitHub's merge commit) with full history, so the diff is exactly merge-base → head, and runs the checker from outside the checkout, so nothing in the PR can replace it. Until the checker is published on npm, it comes from the extension's VSIX at a version you pin, checked against the SHA-256 you recorded:
+
+```yaml
+# .github/workflows/sidestory-coverage.yml
+name: Sidestory coverage
+on: pull_request
+permissions: { contents: read }
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      SIDESTORY_VERSION: "0.1.0"        # the extension release you checked
+      SIDESTORY_SHA256: "<sha256 of that VSIX>"
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.pull_request.head.sha }}", fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Get the checker, outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL --compressed -o sidestory.vsix \
+            "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/paperkite/vsextensions/sidestory/${SIDESTORY_VERSION}/vspackage"
+          echo "${SIDESTORY_SHA256}  sidestory.vsix" | sha256sum -c -
+          unzip -q sidestory.vsix 'extension/dist/*' -d sidestory
+      - env: { BASE: "origin/${{ github.base_ref }}" }
+        run: node "$RUNNER_TEMP/sidestory/extension/dist/check.cjs" --coverage --base "$BASE" --committed
+        # exit 3 = some change isn't explained. Use `|| [ $? -eq 3 ]` to report without failing.
+```
+
+Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum sidestory.vsix`), and update both values together when you move to a newer release. Values from the event reach the script through `env:`, never inside it, and `persist-credentials: false` keeps the token out of `.git/config`.
 
 ## Settings
 

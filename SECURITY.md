@@ -38,6 +38,18 @@ What it can't do, and how that is enforced:
 - **Network** only on a click: **Fetch**, through the git extension. In a partial clone Sidestory computes no line counts (that could download every file), but the git extension's own rename detection when it lists changes, and reopening an old version, can still download the objects they read.
 - **Your diff tools.** When the git extension gives no line counts (older VS Code), they are counted per file through its one-file diff, which applies textconv drivers you configured; counting is skipped when `diff.external` is set. Diff drivers with a `command` that `.gitattributes` selects still apply, as in any diff git shows you.
 
+## The checker and git
+
+The standalone checker (`dist/check.cjs`) runs git itself for `--coverage` and for pinning a sidestory with a base: there is no git extension in a terminal or CI. The repository it reads may be hostile (a pull request in CI, a project you just cloned), and an agent may run it, so:
+
+- **It finds the repository itself**, as the nearest folder above the sidestory (or `--repo`) holding `.git`, and always tells git which one (`--git-dir`, `--work-tree`). A bare repository planted inside the tree, with a config that would run commands, is never discovered or read.
+- **It never uses a shell**, and gives git a clean environment: inherited `GIT_*` variables (as a hook calling it might set) are removed, prompts and optional locks are off, and every call turns off the pager, fsmonitor, hooks, commit signature checks, external diff tools, textconv and all network access. In a partial clone a missing object is reported, never fetched.
+- **No clean filter runs.** Committed changes (`--committed`, `--head`, CI) are listed tree to tree and file contents read with `cat-file`, which run no filters. Comparing the working tree, git may refresh files through a clean filter that `.gitattributes` selects; on git 2.40 or newer the checker replaces the repository's attributes with empty ones, and on older git it refuses working tree mode when a filter other than git-lfs's standard one is configured (use `--committed` or a newer git). It refuses too when `.git/info/attributes` selects a filter.
+- **Refs and paths are data.** A `base` from a manifest or `--base` must pass the same grammar as in the extension (no leading `-`, no `..`, `@{` or pseudo-refs like `HEAD`) before git sees it, is resolved through fully qualified names (`refs/heads/main`, then its upstream, `refs/remotes/…`, `refs/tags/…`), and only full commit ids are used afterwards. Paths come after `--` as literal paths, and only hex object ids are ever written to git's input.
+- **Sizes are capped:** 10 MB per file and 200 MB per run, checked before reading; working tree files are read only when they are regular files inside the repository (no links, no FIFOs).
+
+The extension itself still never runs git.
+
 ## Interactive widgets
 
 Widgets are React components in a sidestory's folder (`<explain-widget src="widgets/x.tsx">`). Unlike the rest of a sidestory, **they are code from the repository, and they run.** The boundary is your informed consent plus limits on what a widget can see; the sandbox makes misuse harder but is not treated as containment.
