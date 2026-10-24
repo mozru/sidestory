@@ -15,6 +15,7 @@
 // re-pinned when the author says so: re-pinning would hide that its prose doesn't cover the new lines.
 import * as vscode from 'vscode';
 import { normLine } from '../core/coverage.ts';
+import { displayText, escapeIcons, plainForMessage } from '../core/display-text.ts';
 import { textLines } from '../core/hunks.ts';
 import type { Anchor, LineRange, Quote, Side } from '../core/manifest.ts';
 import { isSafeRelativePath, parseManifest, sideOf } from '../core/manifest.ts';
@@ -86,18 +87,22 @@ function pinAt(lines: readonly string[], range: LineRange, norm: Quote['norm'] |
 }
 
 const rangeText = (r: LineRange) => (r.start === r.end ? `${r.start}` : `${r.start}–${r.end}`);
+/** Repository text (folder names, paths, ids, errors quoting the manifest) in a notification: no links, no controls. */
+const msg = (s: string) => plainForMessage(s, 300);
+/** Repository text in the status bar, which renders `$(icon)`: cleaned and shown literally. */
+const bar = (s: string) => escapeIcons(displayText(s, 200));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 async function snapshot(ref: ExplainerRef, baseSide?: BaseSide): Promise<Snapshot | undefined> {
   const uri = manifestUri(ref);
   const manifestText = await readInside(uri, ref.root, MAX_MANIFEST_BYTES);
   if (manifestText === undefined) {
-    void vscode.window.showErrorMessage(`Can't read ${vscode.workspace.asRelativePath(uri)}.`);
+    void vscode.window.showErrorMessage(`Can't read ${msg(vscode.workspace.asRelativePath(uri))}.`);
     return undefined;
   }
   const parsed = parseManifest(manifestText);
   if (!parsed.ok) {
-    void vscode.window.showErrorMessage(parsed.error);
+    void vscode.window.showErrorMessage(msg(parsed.error));
     return undefined;
   }
   const anchors = [...parsed.manifest.anchors.values()];
@@ -178,7 +183,7 @@ export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => Li
     const choice = await ourModal(() =>
       vscode.window.showWarningMessage(
         `${n} ${n === 1 ? 'step has' : 'steps have'} code added since ${n === 1 ? 'it was' : 'they were'} written. Re-pin ${n === 1 ? 'it' : 'them'} anyway?`,
-        { modal: true, detail: `${grew.join(', ')}. Re-pinning says the prose already covers the new lines; update the prose first if it doesn't.` },
+        { modal: true, detail: `${msg(grew.join(', '))}. Re-pinning says the prose already covers the new lines; update the prose first if it doesn't.` },
         repin,
         others,
       ),
@@ -227,11 +232,11 @@ export async function pinAnchors(ref: ExplainerRef, liveHint: (id: string) => Li
   if (patches.size) await writeManifest(ref, snap.manifestText, patchManifest(snap.manifestText, patches));
   if (confirmed.length) widgets?.record(confirmed);
   const parts: string[] = [];
-  parts.push(patches.size ? `Pinned ${plural(patches.size, 'anchor')} in ${ref.name}.` : `Nothing pinned in ${ref.name}: no anchor's code was found with confidence.`);
-  if (slightlyChanged.length) parts.push(`Accepted small changes in: ${slightlyChanged.join(', ')}.`);
-  if (refused.length) parts.push(`Not pinned: ${refused.map((x) => `${x.anchor.id} (${REASON[x.reason]}${x.why ? `: ${x.why}` : ''})`).join(', ')}.`);
+  parts.push(patches.size ? `Pinned ${plural(patches.size, 'anchor')} in ${msg(ref.name)}.` : `Nothing pinned in ${msg(ref.name)}: no anchor's code was found with confidence.`);
+  if (slightlyChanged.length) parts.push(`Accepted small changes in: ${msg(slightlyChanged.join(', '))}.`);
+  if (refused.length) parts.push(`Not pinned: ${refused.map((x) => `${msg(x.anchor.id)} (${REASON[x.reason]}${x.why ? `: ${msg(x.why)}` : ''})`).join(', ')}.`);
   const dirty = [...snap.dirty].filter((f) => snap.anchors.some((a) => a.file === f && patches.has(a.id)));
-  if (dirty.length) parts.push(`Pinned from unsaved changes in ${dirty.join(', ')}.`);
+  if (dirty.length) parts.push(`Pinned from unsaved changes in ${msg(dirty.join(', '))}.`);
   const message = parts.join(' ');
   if (patches.size) void vscode.window.showInformationMessage(message);
   else void vscode.window.showWarningMessage(message);
@@ -248,7 +253,7 @@ export async function repinAnchor(ref: ExplainerRef, anchorId: string, liveHint:
   if (!snap) return;
   const a = snap.anchors.find((x) => x.id === anchorId);
   if (!a || sideOf(a) === 'base') {
-    void vscode.window.showWarningMessage(a ? `“${anchorId}” quotes the base side: there is nothing added to re-pin.` : `${ref.name} has no anchor “${anchorId}”.`);
+    void vscode.window.showWarningMessage(a ? `“${msg(anchorId)}” quotes the base side: there is nothing added to re-pin.` : `${msg(ref.name)} has no anchor “${msg(anchorId)}”.`);
     return;
   }
   const doc = snap.files.get(fileKey(a));
@@ -257,14 +262,14 @@ export async function repinAnchor(ref: ExplainerRef, anchorId: string, liveHint:
   const found = !!r?.range && !r.ambiguous && (r.state === 'exact' || r.state === 'moved' || r.state === 'changed');
   const pin = doc && found ? pinAt(doc.lines, r!.range!, a.quote?.norm) : null;
   if (!pin) {
-    void vscode.window.showWarningMessage(`Can't re-pin “${anchorId}”: its code isn't found with confidence. Re-anchor it to a selection instead.`);
+    void vscode.window.showWarningMessage(`Can't re-pin “${msg(anchorId)}”: its code isn't found with confidence. Re-anchor it to a selection instead.`);
     return;
   }
   if (widgets) {
     const read = await widgets.readAnchors();
     if (read === 'all' || read?.has(a.id)) {
       if (isSecretPath(a.file)) {
-        void vscode.window.showWarningMessage(`Not re-pinned: widgets read “${anchorId}”, and ${a.file} looks like it holds secrets.`);
+        void vscode.window.showWarningMessage(`Not re-pinned: widgets read “${msg(anchorId)}”, and ${msg(a.file)} looks like it holds secrets.`);
         return;
       }
       if (!widgets.isConfirmed(a.file, pin.quote, pin.range)) {
@@ -274,7 +279,7 @@ export async function repinAnchor(ref: ExplainerRef, anchorId: string, liveHint:
     }
   }
   await writeManifest(ref, snap.manifestText, patchManifest(snap.manifestText, new Map([[a.id, pin]])));
-  vscode.window.setStatusBarMessage(`Re-pinned “${anchorId}” to ${a.file}:${rangeText(pin.range)}.`, 5000);
+  vscode.window.setStatusBarMessage(`Re-pinned “${bar(anchorId)}” to ${bar(a.file)}:${rangeText(pin.range)}.`, 5000);
 }
 
 function refusal(r: Resolution, confident: boolean): Refusal {
@@ -310,7 +315,7 @@ async function offerRepin(ref: ExplainerRef, candidates: Candidate[], baseSide?:
   });
   const picks = await vscode.window.showQuickPick(items, {
     canPickMany: true,
-    title: `Re-pin anchors in ${ref.name}`,
+    title: `Re-pin anchors in ${bar(ref.name)}`,
     placeHolder: 'These weren\'t pinned. Pick the ones whose code changed on purpose, to pin them to these lines.',
     ignoreFocusOut: true,
   });
@@ -336,8 +341,8 @@ async function offerRepin(ref: ExplainerRef, candidates: Candidate[], baseSide?:
     patches.set(id, pin);
   }
   if (patches.size) await writeManifest(ref, snap.manifestText, patchManifest(snap.manifestText, patches));
-  const note = skipped.length ? ` Left as they were: ${skipped.join(', ')}.` : '';
-  void vscode.window.showInformationMessage(`Re-pinned ${plural(patches.size, 'anchor')} in ${ref.name}.${note}`);
+  const note = skipped.length ? ` Left as they were: ${msg(skipped.join(', '))}.` : '';
+  void vscode.window.showInformationMessage(`Re-pinned ${plural(patches.size, 'anchor')} in ${msg(ref.name)}.${note}`);
 }
 
 /** Anchor states as an open panel shows them, for ordering the anchor picker. */
@@ -356,12 +361,12 @@ export async function pickAnchor(ref: ExplainerRef, view?: AnchorStates): Promis
   const rank = (id: string) => NEEDS_LOOK[state(id) ?? ''] ?? 3;
   const anchors = [...snap].sort((a, b) => rank(a.id) - rank(b.id));
   if (anchors.length === 0) {
-    void vscode.window.showInformationMessage(`${ref.name} has no anchors.`);
+    void vscode.window.showInformationMessage(`${msg(ref.name)} has no anchors.`);
     return undefined;
   }
   const label: Partial<Record<string, string>> = { lost: 'code not found', stale: 'out of date', changed: 'code changed' };
   const qp = vscode.window.createQuickPick<vscode.QuickPickItem & { id: string }>();
-  qp.title = `Re-anchor a section of ${ref.name} to the selected code`;
+  qp.title = `Re-anchor a section of ${bar(ref.name)} to the selected code`;
   qp.placeholder = 'Which section?';
   qp.items = anchors.map((a) => ({
     id: a.id,
@@ -390,7 +395,7 @@ async function readManifestAnchors(ref: ExplainerRef): Promise<Anchor[] | undefi
   const text = await readInside(uri, ref.root, MAX_MANIFEST_BYTES);
   const parsed = text === undefined ? undefined : parseManifest(text);
   if (!parsed?.ok) {
-    void vscode.window.showErrorMessage(parsed?.error ?? `Can't read ${vscode.workspace.asRelativePath(uri)}.`);
+    void vscode.window.showErrorMessage(msg(parsed?.error ?? `Can't read ${vscode.workspace.asRelativePath(uri)}.`));
     return undefined;
   }
   return [...parsed.manifest.anchors.values()];
@@ -410,7 +415,7 @@ export type SelectionSide = (uri: vscode.Uri, ref: ExplainerRef) => Promise<{ fi
 export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, editor: vscode.TextEditor | undefined, confirm: boolean, sides?: SelectionSide): Promise<void> {
   const sel = editor?.selection;
   if (!editor || !sel || sel.isEmpty || editor.document.getText(sel).trim() === '') {
-    void vscode.window.showInformationMessage(`To re-anchor “${anchorId}”, first select its code in an editor, then try again.`);
+    void vscode.window.showInformationMessage(`To re-anchor “${msg(anchorId)}”, first select its code in an editor, then try again.`);
     return;
   }
   const doc = editor.document;
@@ -421,32 +426,32 @@ export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, e
   }
   const file = mapped ? mapped.file : await relativeInside(doc.uri, ref.root);
   if (!file) {
-    void vscode.window.showWarningMessage(`Can't anchor to ${vscode.workspace.asRelativePath(doc.uri)}: it isn't inside the repository that holds ${ref.name}.`);
+    void vscode.window.showWarningMessage(`Can't anchor to ${msg(vscode.workspace.asRelativePath(doc.uri))}: it isn't inside the repository that holds ${msg(ref.name)}.`);
     return;
   }
   // A selection ending at the start of a line doesn't take that line in.
   const endLine = sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line : sel.end.line + 1;
   const pin = pinAt(splitLines(doc.getText()), { start: sel.start.line + 1, end: endLine }, undefined);
   if (!pin) {
-    void vscode.window.showWarningMessage(`Can't anchor “${anchorId}” there: the selection is blank or too long.`);
+    void vscode.window.showWarningMessage(`Can't anchor “${msg(anchorId)}” there: the selection is blank or too long.`);
     return;
   }
   const where = `${file}:${rangeText(pin.range)}`;
   if (confirm) {
     const ok = 'Re-anchor';
-    const choice = await ourModal(() => vscode.window.showInformationMessage(`Re-anchor “${anchorId}” to ${where}?`, { modal: true, detail: 'This updates its entry in manifest.json.' }, ok));
+    const choice = await ourModal(() => vscode.window.showInformationMessage(`Re-anchor “${msg(anchorId)}” to ${msg(where)}?`, { modal: true, detail: 'This updates its entry in manifest.json.' }, ok));
     if (choice !== ok) return;
   }
   const uri = manifestUri(ref);
   const manifestText = await readInside(uri, ref.root, MAX_MANIFEST_BYTES);
   const parsed = manifestText === undefined ? undefined : parseManifest(manifestText);
   if (manifestText === undefined || !parsed?.ok) {
-    void vscode.window.showErrorMessage(parsed && !parsed.ok ? parsed.error : `Can't read ${vscode.workspace.asRelativePath(uri)}.`);
+    void vscode.window.showErrorMessage(msg(parsed && !parsed.ok ? parsed.error : `Can't read ${vscode.workspace.asRelativePath(uri)}.`));
     return;
   }
   const anchor = parsed.manifest.anchors.get(anchorId);
   if (!anchor) {
-    void vscode.window.showWarningMessage(`${ref.name} has no anchor “${anchorId}”.`);
+    void vscode.window.showWarningMessage(`${msg(ref.name)} has no anchor “${msg(anchorId)}”.`);
     return;
   }
   const quote = pinQuote(splitLines(doc.getText()), pin.range, anchor.quote?.norm);
@@ -455,7 +460,7 @@ export async function reanchorToSelection(ref: ExplainerRef, anchorId: string, e
   const side: Side | undefined = mapped ? mapped.side : anchor.side === 'base' ? 'head' : undefined;
   await writeManifest(ref, manifestText, patchManifest(manifestText, new Map([[anchorId, { file: file === anchor.file ? undefined : file, range: pin.range, quote, ...(side ? { side } : {}) }]])));
   const unsaved = doc.isDirty ? ' (from unsaved changes)' : '';
-  vscode.window.setStatusBarMessage(`Re-anchored “${anchorId}” to ${where}${unsaved}.`, 5000);
+  vscode.window.setStatusBarMessage(`Re-anchored “${bar(anchorId)}” to ${bar(where)}${unsaved}.`, 5000);
 }
 
 /** The file's path relative to `root`, if it lies inside it (links followed) and is a valid anchor path. */

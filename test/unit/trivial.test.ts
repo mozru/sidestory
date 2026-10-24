@@ -50,6 +50,17 @@ describe('Mark as Trivial', () => {
     expect(picks[0]!.map((i) => i.description)).toEqual(['.sidestory/b', '.sidestory/alice-retry']);
   });
 
+  it('repository text in the status bar is shown literally, never as an icon', async () => {
+    const folder = '.sidestory/b$(zap)';
+    mkdirSync(join(root, folder), { recursive: true });
+    writeFileSync(join(root, folder, 'manifest.json'), JSON.stringify({ version: 2, title: 'B', anchors: {} }));
+    pickIndex = 0;
+    await markTrivial(snap(), [belonging(folder, '')], { ...target, path: 'src/$(alert).ts' });
+    const msg = vscode.statusMessages.at(-1)!;
+    expect(msg).toContain('src/\\$(alert).ts');
+    expect(msg).toContain('.sidestory/b\\$(zap)');
+  });
+
   it('starts .sidestory/<branch-slug> and says so in the why box', async () => {
     expect(await markTrivial(snap(), [], target)).toBe('.sidestory/alice-retry');
     expect(prompts[0]).toMatch(/^Starts \.sidestory\/alice-retry\. Why/);

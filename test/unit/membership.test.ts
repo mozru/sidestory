@@ -1,12 +1,36 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
 import { belongs, countedPath, isArchivePath, isCompleteSidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
-import { isSafeRepoPath } from '../../src/core/repo-path.ts';
+import { isSafeFsPath, isSafeRepoPath, pathProblem } from '../../src/core/repo-path.ts';
 
-describe('isSafeRepoPath (src/core/repo-path.ts)', () => {
-  it('refuses paths any OS would read differently or git would read as magic', () => {
-    for (const bad of ['', ':x', ':(literal)a', 'a\\b', 'a/../b', './a', 'a//b', '.git/config', 'x/.GIT/y', 'a\u0001b', 'con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b', 'x'.repeat(4097)]) expect(isSafeRepoPath(bad), JSON.stringify(bad)).toBe(false);
-    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c', '.sidestory/x/manifest.json']) expect(isSafeRepoPath(ok), ok).toBe(true);
+describe('isSafeRepoPath and isSafeFsPath (src/core/repo-path.ts)', () => {
+  const always = ['', ':x', ':(literal)a', 'a\\b', 'a/../b', './a', 'a//b', '.git/config', 'x/.GIT/y', 'a\u0001b', 'x'.repeat(4097)];
+  const windowsOnly = ['con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b', 'src/a.ts:stream', 'a:b/c', 'c:/x'];
+
+  it('refuses paths git would read as magic, or that escape or confuse a reader, for any read', () => {
+    for (const bad of always) {
+      expect(isSafeRepoPath(bad), JSON.stringify(bad)).toBe(false);
+      expect(isSafeFsPath(bad), JSON.stringify(bad)).toBe(false);
+    }
+    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c', '.sidestory/x/manifest.json']) {
+      expect(isSafeRepoPath(ok), ok).toBe(true);
+      expect(isSafeFsPath(ok), ok).toBe(true);
+    }
+  });
+
+  it('Windows device names, trailing dots and spaces, and ":" anywhere (NTFS streams) are refused for file system reads only', () => {
+    for (const p of windowsOnly) {
+      expect(isSafeRepoPath(p), p).toBe(true); // a blob read by id: harmless
+      expect(isSafeFsPath(p), p).toBe(false);
+    }
+  });
+
+  it('says which rule a path breaks, device names included', () => {
+    expect(pathProblem('con', true)).toMatch(/Windows device name/);
+    expect(pathProblem('a.ts:x', true)).toMatch(/alternate data stream/);
+    expect(pathProblem('docs/a.', true)).toMatch(/ending in a dot or a space/);
+    expect(pathProblem('a\u0007b')).toMatch(/control character/);
+    expect(pathProblem('con')).toBeUndefined();
   });
 });
 

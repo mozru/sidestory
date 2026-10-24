@@ -8,7 +8,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEdits, modify, parse } from 'jsonc-parser';
 import * as vscode from 'vscode';
-import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
+import { displayText, escapeIcons } from '../../core/display-text.ts';
 import type { LineRange, Side } from '../../core/manifest.ts';
 import { parseWhy } from '../../core/manifest.ts';
 import { pinQuote } from '../../core/pin.ts';
@@ -135,7 +135,8 @@ export async function markTrivial(s: Snapshot, belonging: readonly Belonging[], 
       if (!(await vscode.workspace.applyEdit(edit))) throw new Error("couldn't edit manifest.json");
       await open.save();
     } else await writeFileAtomic(real, text);
-    vscode.window.setStatusBarMessage(`Marked ${plainForMessage(t.path, 80)} L${t.range.start}–${t.range.end} trivial in ${plainForMessage(b.folder, 80)}.`, 5000);
+    // The status bar renders $(icon): repository text is cleaned and escaped for it.
+    vscode.window.setStatusBarMessage(`Marked ${escapeIcons(displayText(t.path, 80))} L${t.range.start}–${t.range.end} trivial in ${escapeIcons(displayText(b.folder, 80))}.`, 5000);
     return b.folder;
   }
   // A new sidestory for this branch: the base, a title from the branch, and one sentence on the page.
@@ -156,6 +157,6 @@ export async function markTrivial(s: Snapshot, belonging: readonly Belonging[], 
   const safe = manifest.title.replace(/[<&]/g, '');
   const page = `<!doctype html>\n<html><head><meta charset="utf-8"><title>${safe}</title></head><body>\n<h1>${safe}</h1>\n<p>Started with a change marked trivial. Explain the branch's other changes here.</p>\n</body></html>\n`;
   await writeFile(join(real, 'sidestory.html'), page, { flag: 'wx' });
-  vscode.window.setStatusBarMessage(`Started .sidestory/${slug} with a trivial mark.`, 5000);
+  vscode.window.setStatusBarMessage(`Started .sidestory/${escapeIcons(displayText(slug, 80))} with a trivial mark.`, 5000);
   return `.sidestory/${slug}`;
 }

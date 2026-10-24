@@ -4,9 +4,12 @@
 // merge-base from their own `base`), their used anchors resolved per side (head side against the comparison's new
 // text, base side against the merge-base blob of the old path), and change blocks from both sides decoded the same
 // way. Work is lazy and bounded (§4.6): only while someone needs it (a sidestory with a base in the workspace, an open
-// one, or a command), 4 files at a time, anchored files first, at most 200 MB read per recompute, cached by content.
-// The rules shared with the checker: which paths count (`countedPath`), a sidestory needs both its files, a side past
-// MAX_COMPARE_BYTES counts as one change (`tooLargeChange`), an unreadable one makes the result incomplete.
+// one, or a command), 4 files at a time, anchored files first, at most 200 MB read per recompute, cached by content
+// within byte budgets. The rules shared with the checker (src/cli/coverage.ts): which paths count (`countedPath`), a
+// sidestory needs both its files (a page past the read cap still makes it one, incomplete), unstaged renames are
+// paired by content (`pairUnstagedRenames`), Git LFS pointers aren't counted, and each of these counts as ONE change
+// that only trivialFiles can cover (`tooLargeChange`): a side past MAX_COMPARE_BYTES, a binary file, a symlink, a
+// submodule, a type change, an unsupported path. An unreadable side makes the result incomplete.
 //
 // `computeCoverage` is the core and takes a `CoverageSource` (unit tests stub it); `CoverageService` builds the
 // source from the comparison's snapshot and the git extension, caches, and fires when a result changes.
@@ -15,13 +18,15 @@ import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodePair, decodeUtf8, diffTexts, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
+import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsPointer, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
 import { belongs, countedPath, isArchivePath, sidestoryFolderOf } from '../../core/membership.ts';
+import { pairUnstagedRenames } from '../../core/renames.ts';
+import { isSafeFsPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
-import { MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readInside } from '../explainers.ts';
+import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.ts';
 import { log } from '../log.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
@@ -29,7 +34,34 @@ import type { GitRepo } from './git-api.ts';
 import { apiPath, refReader, relPath } from './git-api.ts';
 import type { ChangeEntry } from './model.ts';
 
-export const COVERAGE_WORK = { parallel: 4, bytesPerRecompute: 200 * 1024 * 1024, fileBytes: MAX_COMPARE_BYTES, debounceMs: 300, diffCache: 5000, textCache: 2000 } as const;
+export const COVERAGE_WORK = {
+  parallel: 4,
+  bytesPerRecompute: 200 * 1024 * 1024,
+  fileBytes: MAX_COMPARE_BYTES,
+  /** A sidestory's page: read up to the checker's cap (MAX_COMPARE_BYTES); past it, a candidate that is incomplete. */
+  htmlBytes: MAX_COMPARE_BYTES,
+  debounceMs: 300,
+  /** Diffs and their texts kept between recomputes, by estimated size (one entry per path in working tree mode). */
+  diffCacheBytes: 64 * 1024 * 1024,
+  /** Merge-base blobs kept between recomputes, by size. */
+  oldBlobBytes: 64 * 1024 * 1024,
+} as const;
+
+/**
+ * What one side of a changed file holds: its bytes, or why it has none to compare. 'tooLarge' past
+ * MAX_COMPARE_BYTES; 'link', 'submodule' and 'unsupported' (a path the file system rule refuses, or something other
+ * than a file on disk) count as one change; undefined when unreadable (the result is incomplete).
+ */
+export type SideBytes = Uint8Array | 'tooLarge' | 'link' | 'submodule' | 'unsupported' | undefined;
+
+/** A changed file the comparison couldn't list because of its path (`isSafeRepoPath`): it counts as one change. */
+export interface UnsupportedEntry {
+  readonly path: string;
+  readonly oldPath?: string;
+}
+
+/** Why a file counts as one change without a line diff. */
+export type WholeKind = 'tooLarge' | 'binary' | 'link' | 'submodule' | 'unsupported';
 
 /** A sidestory folder seen at the head (working tree or HEAD), before the membership test. */
 export interface Candidate {
@@ -40,20 +72,24 @@ export interface Candidate {
   dir: vscode.Uri;
   manifestText: string;
   html: string;
+  /** The page is over COVERAGE_WORK.htmlBytes: still a candidate, but its anchors can't be read (incomplete). */
+  htmlTooLarge?: boolean;
 }
 
 /** What `computeCoverage` reads; every method resolves to undefined rather than throwing. */
 export interface CoverageSource {
   readonly mergeBase: string;
   readonly entries: readonly ChangeEntry[];
+  /** Changed files left out of `entries` for their paths: each counts as one change (§5.1). */
+  readonly unsupported?: readonly UnsupportedEntry[];
   candidates(): Promise<Candidate[]>;
   /** Whether the merge-base holds a path; undefined when git couldn't say (an error is never "absent"). */
   presentAtMergeBase(repoPath: string): Promise<boolean | undefined>;
   /** The merge-base a sidestory's `base` gives against the comparison's head. */
   ownMergeBase(spec: string): Promise<string | undefined>;
-  /** A side's bytes; 'tooLarge' past MAX_COMPARE_BYTES; undefined when unreadable. */
-  oldBytes(repoPath: string): Promise<Uint8Array | 'tooLarge' | undefined>;
-  newBytes(repoPath: string): Promise<Uint8Array | 'tooLarge' | undefined>;
+  /** A side's bytes, or why there are none (`SideBytes`). */
+  oldBytes(repoPath: string): Promise<SideBytes>;
+  newBytes(repoPath: string): Promise<SideBytes>;
   /** A content key for the new side when it is cheaper than reading it (immutable blobs); else undefined. */
   diffKey?(e: ChangeEntry): string | undefined;
 }
@@ -76,6 +112,8 @@ export interface FileResult {
   coverage: FileCoverage | undefined;
   /** Change blocks by key, for change items and the gutter. */
   blocks: Map<string, ChangeBlock>;
+  /** Counted as one change without a line diff, and why. */
+  whole?: WholeKind;
 }
 
 export interface CoverageResult {
@@ -84,6 +122,8 @@ export interface CoverageResult {
   files: Map<string, FileResult>;
   totals: Totals;
   targets: Target[];
+  /** Changed files with paths Sidestory won't read (not in `files`): each is one change in the totals. */
+  unsupported: string[];
   /** A page too large to scan, or the byte budget spent: coverage is not complete. */
   incomplete: boolean;
   /** Files diffed so far / files to diff (the totals say "computing…" until they match). */
@@ -91,7 +131,6 @@ export interface CoverageResult {
   total: number;
 }
 
-const isBinary = (b: Uint8Array | undefined) => !!b && b.subarray(0, 8000).includes(0);
 const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const under = (prefix: string, p: string) => (prefix ? (p.startsWith(`${prefix}/`) ? p.slice(prefix.length + 1) : undefined) : p);
 const join = (prefix: string, p: string) => (prefix ? `${prefix}/${p}` : p);
@@ -123,75 +162,225 @@ interface Texts {
   new: string | undefined;
 }
 
+/** A cached diff: `content` says which texts it was computed from (working tree mode replaces it on new content). */
+export interface DiffCacheEntry {
+  diff: FileDiff;
+  texts: Texts;
+  content?: string;
+}
+
+/** Where diffs are kept between calls: a Map in tests, a `ByteLru` in the service. */
+export interface DiffCache {
+  get(key: string): DiffCacheEntry | undefined;
+  set(key: string, value: DiffCacheEntry): void;
+}
+
+/**
+ * A least-recently-used map bounded by total bytes (`sizeOf` each value), not by entry count: a few huge files and
+ * thousands of small ones cost what they weigh. A value larger than the whole budget isn't kept.
+ */
+export class ByteLru<V> {
+  private readonly map = new Map<string, { v: V; n: number }>();
+  private total = 0;
+  readonly maxBytes: number;
+  private readonly sizeOf: (v: V) => number;
+  constructor(maxBytes: number, sizeOf: (v: V) => number) {
+    this.maxBytes = maxBytes;
+    this.sizeOf = sizeOf;
+  }
+  get(key: string): V | undefined {
+    const e = this.map.get(key);
+    if (!e) return undefined;
+    this.map.delete(key);
+    this.map.set(key, e);
+    return e.v;
+  }
+  set(key: string, v: V): void {
+    this.delete(key);
+    const n = Math.max(1, this.sizeOf(v));
+    if (n > this.maxBytes) return;
+    this.map.set(key, { v, n });
+    this.total += n;
+    while (this.total > this.maxBytes) {
+      const [k, e] = this.map.entries().next().value!;
+      this.map.delete(k);
+      this.total -= e.n;
+    }
+  }
+  delete(key: string): void {
+    const e = this.map.get(key);
+    if (!e) return;
+    this.map.delete(key);
+    this.total -= e.n;
+  }
+  clear(): void {
+    this.map.clear();
+    this.total = 0;
+  }
+  get bytes(): number {
+    return this.total;
+  }
+  get size(): number {
+    return this.map.size;
+  }
+}
+
+/** A cached diff's weight: its texts (up to 2 bytes a character) and its blocks. */
+export const diffEntryBytes = (e: DiffCacheEntry) => 2 * ((e.texts.old?.length ?? 0) + (e.texts.new?.length ?? 0)) + 256 * (e.diff.changes.length + 1);
+
+type Classified = { kind: 'text'; ob: Uint8Array | undefined; nb: Uint8Array | undefined } | { kind: 'whole'; whole: WholeKind } | { kind: 'lfs' } | { kind: 'unreadable' };
+
+/**
+ * What a changed file's two sides make it, in the checker's order (src/cli/coverage.ts): a link, submodule or
+ * unsupported side first, then an unreadable side, then one past the size cap, then an LFS pointer (not counted),
+ * then binary (one change), else text.
+ */
+function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
+  const sides = [ob, nb];
+  if (sides.includes('submodule')) return { kind: 'whole', whole: 'submodule' };
+  if (sides.includes('link')) return { kind: 'whole', whole: 'link' };
+  if (sides.includes('unsupported')) return { kind: 'whole', whole: 'unsupported' };
+  if ((e.status !== 'A' && ob === undefined) || (e.status !== 'D' && nb === undefined)) return { kind: 'unreadable' };
+  if (ob === 'tooLarge' || nb === 'tooLarge') return { kind: 'whole', whole: 'tooLarge' };
+  const o = ob as Uint8Array | undefined;
+  const n = nb as Uint8Array | undefined;
+  if (isLfsPointer(o) || isLfsPointer(n)) return { kind: 'lfs' };
+  if (isBinary(o) || isBinary(n)) return { kind: 'whole', whole: 'binary' };
+  return { kind: 'text', ob: o, nb: n };
+}
+
+const sideSize = (b: SideBytes) => (b instanceof Uint8Array ? b.length : 0);
+
+/** One change spanning nothing: only a trivialFiles match covers it (the checker's `tooLargeChange`). */
+const wholeDiff = (path: string): FileDiff => ({ changes: [tooLargeChange(path, 0, 0)], tooLarge: 'size', lineEndingsOnly: false, oldLines: 0, newLines: 0 });
+
 /**
  * Coverage of the comparison's files by the belonging sidestories. `order` puts files first (expanded and visible
  * ones, in view order); anchored files go before the rest. `cache` keeps diffs by content between calls.
  */
 export async function computeCoverage(
   src: CoverageSource,
-  opts: { order?: readonly string[]; cache?: Map<string, { diff: FileDiff; texts: Texts }>; isCurrent?: () => boolean; onProgress?: (r: CoverageResult) => void } = {},
+  opts: { order?: readonly string[]; cache?: DiffCache; isCurrent?: () => boolean; onProgress?: (r: CoverageResult) => void } = {},
 ): Promise<CoverageResult | undefined> {
   const isCurrent = opts.isCurrent ?? (() => true);
-  const cache = opts.cache ?? new Map();
+  const cache: DiffCache = opts.cache ?? new Map();
   const { found, incomplete: unsure } = await belongingSidestories(src);
   if (!isCurrent()) return undefined;
   const none: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   // No layer without a sidestory (§9.2): the navigator's own counting fills in the counts then.
-  if (!found.length) return { mergeBase: src.mergeBase, belonging: [], files: new Map(), totals: none, targets: [], incomplete: unsure, done: 0, total: 0 };
-  const counted = src.entries.filter((e) => countedPath(e.path) && !e.noText);
+  if (!found.length) return { mergeBase: src.mergeBase, belonging: [], files: new Map(), totals: none, targets: [], unsupported: [], incomplete: unsure, done: 0, total: 0 };
+  // Every counted path is read, numstat's "no text" ones too: a binary file counts as one change, as in the checker.
+  const counted = src.entries.filter((e) => countedPath(e.path));
   // Anchored files first (a step's file can't wait behind 5,000 others), then the view's order, then by path.
   const anchored = new Set<string>();
   for (const s of found) for (const a of s.manifest.anchors.values()) anchored.add(join(s.prefix, a.file));
   const rank = new Map((opts.order ?? []).map((p, i) => [p, i]));
-  const todo = counted.slice().sort((a, b) => {
+  let todo = counted.slice().sort((a, b) => {
     const x = Number(!anchored.has(a.path) && !anchored.has(a.oldPath ?? '')) - Number(!anchored.has(b.path) && !anchored.has(b.oldPath ?? ''));
     return x || (rank.get(a.path) ?? 1e9) - (rank.get(b.path) ?? 1e9) || byPath(a.path, b.path);
   });
-  const texts = new Map<string, { entry: ChangeEntry; diff: FileDiff; texts: Texts }>();
+  const texts = new Map<string, { entry: ChangeEntry; diff: FileDiff; texts: Texts; whole?: WholeKind }>();
+  /** Sides read before the main pass (rename pairing), by entry. */
+  const pre = new Map<ChangeEntry, { ob: SideBytes; nb: SideBytes }>();
+  /** A paired rename → the untracked entry of the comparison it stands for (its counts are shown there). */
+  const originals = new Map<ChangeEntry, ChangeEntry>();
   let bytes = 0;
   let incomplete = unsure;
-  let next = 0;
-  const work = async () => {
-    while (next < todo.length && isCurrent()) {
-      const e = todo[next++]!;
-      const key = src.diffKey?.(e);
-      const hit = key ? cache.get(key) : undefined;
-      if (hit) {
-        texts.set(e.path, { entry: e, ...hit });
-        continue;
-      }
+  const read = async (e: ChangeEntry) => {
+    const r = pre.get(e);
+    if (r) return r;
+    const [ob, nb] = await Promise.all([e.status === 'A' ? undefined : src.oldBytes(e.oldPath ?? e.path), e.status === 'D' ? undefined : src.newBytes(e.path)]);
+    bytes += sideSize(ob) + sideSize(nb);
+    return { ob, nb };
+  };
+  const pool = async (list: readonly ChangeEntry[], each: (e: ChangeEntry) => Promise<void>) => {
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: COVERAGE_WORK.parallel }, async () => {
+        while (next < list.length && isCurrent()) await each(list[next++]!);
+      }),
+    );
+  };
+
+  // Unstaged renames (§4.6), as the checker pairs them: deleted tracked files and untracked ones, by content.
+  const deleted = todo.filter((e) => e.status === 'D' && !e.untracked);
+  const untracked = todo.filter((e) => e.status === 'A' && e.untracked);
+  if (deleted.length && untracked.length) {
+    await pool([...deleted, ...untracked], async (e) => {
       if (bytes > COVERAGE_WORK.bytesPerRecompute) {
         incomplete = true;
-        continue;
+        return;
       }
-      const [ob, nb] = await Promise.all([e.status === 'A' ? undefined : src.oldBytes(e.oldPath ?? e.path), e.status === 'D' ? undefined : src.newBytes(e.path)]);
-      if (ob === 'tooLarge' || nb === 'tooLarge') {
-        // Past MAX_COMPARE_BYTES: one change, as the checker counts it (no text, so only trivialFiles can cover it).
-        texts.set(e.path, { entry: e, diff: { changes: [tooLargeChange(e.path, 0, 0)], tooLarge: 'size', lineEndingsOnly: false, oldLines: 0, newLines: 0 }, texts: { old: undefined, new: undefined } });
-        continue;
-      }
-      if ((e.status !== 'A' && !ob) || (e.status !== 'D' && !nb)) {
-        incomplete = true; // unreadable: not counted, and the totals say so
-        continue;
-      }
-      bytes += (ob?.length ?? 0) + (nb?.length ?? 0);
-      if (isBinary(ob) || isBinary(nb)) {
-        e.noText = true;
-        continue;
-      }
-      const d = decodePair(ob, nb);
-      const t: Texts = { old: e.status === 'A' ? undefined : d.old, new: e.status === 'D' ? undefined : d.new };
-      const contentKey = key ?? `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.path}\0${e.status}\0${createHash('sha256').update(d.new).digest('base64')}`;
-      let diff = cache.get(contentKey)?.diff;
-      if (!diff) {
-        diff = diffTexts(e.path, d.old, d.new);
-        if (cache.size >= COVERAGE_WORK.diffCache) cache.delete(cache.keys().next().value!);
-        cache.set(contentKey, { diff, texts: t });
-      }
-      texts.set(e.path, { entry: e, diff, texts: t });
+      pre.set(e, await read(e));
+    });
+    if (!isCurrent()) return undefined;
+    const isText = (e: ChangeEntry) => {
+      const r = pre.get(e);
+      return !!r && classify(e, r.ob, r.nb).kind === 'text';
+    };
+    const pairs = pairUnstagedRenames(
+      deleted.filter(isText),
+      untracked.filter(isText),
+      (d) => pre.get(d)!.ob as Uint8Array,
+      (a) => pre.get(a)!.nb as Uint8Array,
+    );
+    if (pairs.length) {
+      const gone = new Set(pairs.map((p) => p.deleted));
+      const into = new Map(pairs.map((p) => [p.added, p.deleted]));
+      todo = todo
+        .filter((e) => !gone.has(e))
+        .map((e) => {
+          const d = into.get(e);
+          if (!d) return e;
+          const r: ChangeEntry = { path: e.path, oldPath: d.path, status: 'R', untracked: true, ...(e.unsaved ? { unsaved: true } : {}) };
+          pre.set(r, { ob: pre.get(d)!.ob, nb: pre.get(e)!.nb });
+          originals.set(r, e);
+          d.counting = false;
+          return r;
+        });
     }
-  };
-  await Promise.all(Array.from({ length: COVERAGE_WORK.parallel }, work));
+  }
+
+  await pool(todo, async (e) => {
+    const key = src.diffKey?.(e);
+    const hit = key ? cache.get(key) : undefined;
+    if (hit) {
+      texts.set(e.path, { entry: e, diff: hit.diff, texts: hit.texts });
+      return;
+    }
+    if (!pre.has(e) && bytes > COVERAGE_WORK.bytesPerRecompute) {
+      incomplete = true;
+      return;
+    }
+    const { ob, nb } = await read(e);
+    const c = classify(e, ob, nb);
+    if (c.kind === 'unreadable') {
+      incomplete = true; // unreadable: not counted, and the totals say so
+      return;
+    }
+    if (c.kind === 'lfs') {
+      e.noText = true; // a Git LFS pointer: not counted
+      return;
+    }
+    if (c.kind === 'whole') {
+      if (c.whole === 'binary') e.noText = true;
+      texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: c.whole });
+      return;
+    }
+    const d = decodePair(c.ob, c.nb);
+    const t: Texts = { old: e.status === 'A' ? undefined : d.old, new: e.status === 'D' ? undefined : d.new };
+    // Committed mode: immutable blobs, keyed by commit. Working tree mode: one slot per path, replaced when the
+    // content (or the merge-base, the old path or the status) changes.
+    const slot = key ?? `wt\0${e.path}`;
+    const content = key ? undefined : `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.status}\0${createHash('sha256').update(d.new).digest('base64')}`;
+    const cached = cache.get(slot);
+    let diff = cached && cached.content === content ? cached.diff : undefined;
+    if (!diff) {
+      diff = diffTexts(e.path, d.old, d.new);
+      cache.set(slot, { diff, texts: t, ...(content !== undefined ? { content } : {}) });
+    }
+    texts.set(e.path, { entry: e, diff, texts: t });
+  });
   if (!isCurrent()) return undefined;
   // By path, whatever order the workers finished in: the same result for the same inputs.
   const done = [...texts.values()].sort((a, b) => byPath(a.entry.path, b.entry.path));
@@ -199,13 +388,28 @@ export async function computeCoverage(
   // Counts from the blocks (§5.2): exact, and the same for renames and untracked files.
   for (const { entry, diff } of done) {
     if (diff.tooLarge) continue;
-    entry.added = diff.changes.reduce((n, c) => n + c.added, 0);
-    entry.removed = diff.changes.reduce((n, c) => n + c.removed, 0);
-    entry.counting = false;
+    const added = diff.changes.reduce((n, c) => n + c.added, 0);
+    const removed = diff.changes.reduce((n, c) => n + c.removed, 0);
+    for (const x of [entry, originals.get(entry)]) {
+      if (!x) continue;
+      x.added = added;
+      x.removed = removed;
+      x.counting = false;
+    }
   }
 
-  const byNew = new Map(done.map((t) => [t.entry.path, t]));
-  const byOld = new Map(done.map((t) => [t.entry.oldPath ?? t.entry.path, t]));
+  // One entry per path on each side, as the checker picks them: an added file has no merge-base side; a file's own
+  // entry wins over a copy made from it; then the first by path.
+  const byNew = new Map<string, (typeof done)[number]>();
+  const byOld = new Map<string, (typeof done)[number]>();
+  for (const t of done) if (!byNew.has(t.entry.path)) byNew.set(t.entry.path, t);
+  for (const copies of [false, true]) {
+    for (const t of done) {
+      if ((t.entry.status === 'C') !== copies || t.entry.status === 'A') continue;
+      const k = t.entry.oldPath ?? t.entry.path;
+      if (!byOld.has(k)) byOld.set(k, t);
+    }
+  }
   const matchers = found.map((s) => ({ s, match: globMatcher(s.manifest.trivialFiles ?? []) }));
   const isTrivialFile = (p: string) => matchers.some(({ s, match }) => {
     const r = under(s.prefix, p);
@@ -214,7 +418,8 @@ export async function computeCoverage(
   const targets: Target[] = [];
   const belonging: Belonging[] = [];
   for (const s of found) {
-    const used = usedAnchorIds(s.html.length > MAX_HTML_BYTES ? '' : s.html);
+    // The checker's caps: a page read up to MAX_COMPARE_BYTES and scanned with usedAnchorIds' own limits.
+    const used = s.htmlTooLarge ? { ids: new Set<string>(), incomplete: true } : usedAnchorIds(s.html);
     if (used.incomplete) incomplete = true;
     const outline = outlineHtml(s.html);
     belonging.push({
@@ -260,11 +465,16 @@ export async function computeCoverage(
       newLines: newLines.length,
     };
   });
+  // Paths the comparison couldn't list: one change each, coverable only by trivialFiles; never in `files`.
+  const unsupported = (src.unsupported ?? []).filter((u) => !texts.has(u.path)).sort((a, b) => byPath(a.path, b.path));
+  for (const u of unsupported) {
+    inputs.push({ path: u.path, ...(u.oldPath !== undefined ? { oldPath: u.oldPath } : {}), changes: [tooLargeChange(u.path, 0, 0)], newLine: () => '', oldLine: () => '', trivialFile: isTrivialFile(u.path), newLines: 0 });
+  }
   const result = coverage(inputs, targets);
   const files = new Map<string, FileResult>();
   const covByPath = new Map(result.files.map((f) => [f.path, f]));
-  for (const { entry, diff } of done) {
-    files.set(entry.path, { entry, diff, coverage: covByPath.get(entry.path), blocks: new Map(diff.changes.map((c) => [c.key, c])) });
+  for (const { entry, diff, whole } of done) {
+    files.set(entry.path, { entry, diff, coverage: covByPath.get(entry.path), blocks: new Map(diff.changes.map((c) => [c.key, c])), ...(whole ? { whole } : {}) });
   }
   // Per sidestory: the changes it explains or marks (a change several explain counts for each).
   for (const b of belonging) {
@@ -281,7 +491,7 @@ export async function computeCoverage(
     }
     t.files = seen.size;
   }
-  return { mergeBase: src.mergeBase, belonging, files, totals: result.totals, targets, incomplete, done: done.length, total: counted.length };
+  return { mergeBase: src.mergeBase, belonging, files, totals: result.totals, targets, unsupported: unsupported.map((u) => u.path), incomplete, done: done.length + unsupported.length, total: todo.length + unsupported.length };
 }
 
 // ---- the service ----
@@ -300,12 +510,14 @@ export class CoverageService implements vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private readonly subs: vscode.Disposable[] = [];
-  private readonly cache = new Map<string, { diff: FileDiff; texts: Texts }>();
+  private readonly cache = new ByteLru<DiffCacheEntry>(COVERAGE_WORK.diffCacheBytes, diffEntryBytes);
   /** Merge-bases by (base spec, head): resolving a base costs a few git calls. */
   private readonly own = new Map<string, Promise<string | undefined>>();
   /** Whether the merge-base holds a path: immutable per merge-base. */
   private readonly present = new Map<string, Promise<boolean | undefined>>();
-  private readonly oldTexts = new Map<string, Promise<Uint8Array | 'tooLarge' | undefined>>();
+  /** Merge-base sides read so far (immutable), bounded by bytes; reads in flight are shared. */
+  private readonly oldTexts = new ByteLru<SideBytes>(COVERAGE_WORK.oldBlobBytes, (b) => (b instanceof Uint8Array ? b.length : 64));
+  private readonly oldInFlight = new Map<string, Promise<SideBytes>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
   private running = false;
@@ -355,8 +567,9 @@ export class CoverageService implements vscode.Disposable {
   async diffOne(s: Snapshot, e: ChangeEntry): Promise<FileDiff | undefined> {
     const src = this.source(s);
     const [ob, nb] = await Promise.all([e.status === 'A' ? undefined : src.oldBytes(e.oldPath ?? e.path), e.status === 'D' ? undefined : src.newBytes(e.path)]);
-    if (ob === 'tooLarge' || nb === 'tooLarge' || (e.status !== 'A' && !ob) || (e.status !== 'D' && !nb) || isBinary(ob) || isBinary(nb)) return undefined;
-    const d = decodePair(ob, nb);
+    const c = classify(e, ob, nb);
+    if (c.kind !== 'text') return undefined;
+    const d = decodePair(c.ob, c.nb);
     return diffTexts(e.path, d.old, d.new);
   }
 
@@ -397,37 +610,51 @@ export class CoverageService implements vscode.Disposable {
 
   private source(s: Snapshot): CoverageSource {
     const repo = s.repo;
-    const blob = async (sha: string, p: string): Promise<Uint8Array | 'tooLarge' | undefined> => {
+    const blob = async (sha: string, p: string): Promise<SideBytes> => {
       try {
-        if ((await repo.getObjectDetails(sha, apiPath(repo, p))).size > COVERAGE_WORK.fileBytes) return 'tooLarge';
+        // The mode first: a link's blob is its target's path and a gitlink has none; each counts as one change.
+        const details = await repo.getObjectDetails(sha, apiPath(repo, p));
+        if (details.mode === '160000') return 'submodule';
+        if (details.mode === '120000') return 'link';
+        if (details.size > COVERAGE_WORK.fileBytes) return 'tooLarge';
         return await repo.buffer(sha, apiPath(repo, p));
       } catch {
         return undefined; // missing or unreadable
       }
     };
     const fileUri = (p: string) => vscode.Uri.joinPath(repo.rootUri, ...p.split('/'));
-    const disk = async (uri: vscode.Uri): Promise<Uint8Array | 'tooLarge' | undefined> => {
+    const disk = async (uri: vscode.Uri): Promise<SideBytes> => {
       try {
         const st = await vscode.workspace.fs.stat(uri);
-        if (st.type !== vscode.FileType.File) return undefined;
+        // As the checker's lstat: a link (to a file, a folder or nowhere), a folder (a submodule's checkout or a
+        // nested repository), anything else that isn't a file.
+        if (st.type & vscode.FileType.SymbolicLink) return 'link';
+        if (st.type === vscode.FileType.Directory) return 'submodule';
+        if (st.type !== vscode.FileType.File) return 'unsupported';
         if (st.size > COVERAGE_WORK.fileBytes) return 'tooLarge';
         return await vscode.workspace.fs.readFile(uri);
       } catch {
         return undefined;
       }
     };
-    const working = async (p: string): Promise<Uint8Array | 'tooLarge' | undefined> => {
+    const working = async (p: string): Promise<SideBytes> => {
+      // The file system rule (src/core/repo-path.ts): a device name, a trailing dot or space, or ":" never reaches
+      // the disk; the file counts as one change, as the checker counts it.
+      if (!isSafeFsPath(p)) return 'unsupported';
       const uri = fileUri(p);
       const bytes = await disk(uri);
+      if (!(bytes === undefined || bytes instanceof Uint8Array)) return bytes;
       // Unsaved edits count in working tree mode (§9.7): the open document's text, but only while the file on disk
       // is UTF-8. A Latin-1 file's text re-encoded as UTF-8 would turn every non-ASCII line into a change (§5.2).
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
-      if (doc?.isDirty && bytes !== 'tooLarge' && (!bytes || decodeUtf8(bytes) !== undefined)) return new TextEncoder().encode(doc.getText());
+      if (doc?.isDirty && (!bytes || decodeUtf8(bytes) !== undefined)) return new TextEncoder().encode(doc.getText());
       return bytes;
     };
     return {
       mergeBase: s.mergeBase,
       entries: s.entries,
+      // The comparison's entries left out for their paths, once it passes them on (comparison.ts: `unsupported`).
+      unsupported: (s as Snapshot & { readonly unsupported?: readonly UnsupportedEntry[] }).unsupported,
       candidates: () => this.candidates(s),
       presentAtMergeBase: (p) => {
         const key = `${s.mergeBase}\0${p}`;
@@ -443,26 +670,36 @@ export class CoverageService implements vscode.Disposable {
         return v;
       },
       ownMergeBase: (spec) => this.ownMergeBase(s, spec),
-      oldBytes: (p) => {
-        // The merge-base's blobs never change: kept across recomputes.
-        const key = `${s.mergeBase}\0${p}`;
-        let v = this.oldTexts.get(key);
-        if (!v) {
-          v = blob(s.mergeBase, p);
-          if (this.oldTexts.size >= COVERAGE_WORK.textCache) this.oldTexts.delete(this.oldTexts.keys().next().value!);
-          this.oldTexts.set(key, v);
-        }
-        return v;
-      },
+      oldBytes: (p) => this.oldSide(s.mergeBase, p, () => blob(s.mergeBase, p)),
       newBytes: (p) => (s.mode === 'workingTree' ? working(p) : blob(s.head.sha, p)),
       // Committed mode: both sides are immutable blobs.
       diffKey: (e) => (s.mode === 'committed' ? `${s.mergeBase}\0${s.head.sha}\0${e.oldPath ?? e.path}\0${e.path}\0${e.status}` : undefined),
     };
   }
 
+  /** A merge-base side: never changes, so kept across recomputes within COVERAGE_WORK.oldBlobBytes. */
+  private oldSide(mergeBase: string, p: string, readIt: () => Promise<SideBytes>): Promise<SideBytes> {
+    const key = `${mergeBase}\0${p}`;
+    const kept = this.oldTexts.get(key);
+    if (kept !== undefined) return Promise.resolve(kept);
+    let v = this.oldInFlight.get(key);
+    if (!v) {
+      v = readIt().then((b) => {
+        this.oldInFlight.delete(key);
+        // An unreadable side is asked again next time (a fetch may bring it).
+        if (b !== undefined) this.oldTexts.set(key, b);
+        return b;
+      });
+      this.oldInFlight.set(key, v);
+    }
+    return v;
+  }
+
   /** Sidestory folders in this repository, read where the comparison's head is: the working tree, or HEAD. */
   private async candidates(s: Snapshot): Promise<Candidate[]> {
     const out: Candidate[] = [];
+    // The checker's decoding: UTF-8, else Latin-1 byte for byte.
+    const decode = (b: Uint8Array) => decodeUtf8(b) ?? decodeLatin1(b);
     for (const dir of this.host.sidestoryDirs()) {
       const folder = relPath(s.repo, dir);
       if (!folder) continue;
@@ -471,26 +708,28 @@ export class CoverageService implements vscode.Disposable {
       if (i < 0 || i !== parts.length - 2) continue;
       const prefix = parts.slice(0, i).join('/');
       let manifestText: string | undefined;
-      let html: string | undefined;
+      let html: string | 'tooLarge' | undefined;
       if (s.mode === 'workingTree') {
         const root = vscode.Uri.joinPath(s.repo.rootUri, ...(prefix ? prefix.split('/') : []));
         manifestText = await readInside(vscode.Uri.joinPath(dir, 'manifest.json'), root, MAX_MANIFEST_BYTES);
-        html = await readInside(vscode.Uri.joinPath(dir, 'sidestory.html'), root, MAX_HTML_BYTES);
+        html = await readPage(vscode.Uri.joinPath(dir, 'sidestory.html'), root, decode);
       } else {
-        const read = async (name: string, max: number) => {
+        const read = async (name: string, max: number): Promise<string | 'tooLarge' | undefined> => {
           try {
             const p = apiPath(s.repo, `${folder}/${name}`);
-            if ((await s.repo.getObjectDetails(s.head.sha, p)).size > max) return undefined;
-            return new TextDecoder().decode(await s.repo.buffer(s.head.sha, p));
+            if ((await s.repo.getObjectDetails(s.head.sha, p)).size > max) return 'tooLarge';
+            return decode(await s.repo.buffer(s.head.sha, p));
           } catch {
             return undefined;
           }
         };
-        manifestText = await read('manifest.json', MAX_MANIFEST_BYTES);
-        html = await read('sidestory.html', MAX_HTML_BYTES);
+        const m = await read('manifest.json', MAX_MANIFEST_BYTES);
+        manifestText = m === 'tooLarge' ? undefined : m;
+        html = await read('sidestory.html', COVERAGE_WORK.htmlBytes);
       }
-      // Both files, or it isn't a sidestory yet (an agent still writing the page), as the checker counts.
-      if (manifestText !== undefined && html !== undefined) out.push({ folder, prefix, dir, manifestText, html });
+      // Both files, or it isn't a sidestory yet (an agent still writing the page), as the checker counts. A page
+      // past the cap still makes it one: its anchors can't be read, so the result is incomplete.
+      if (manifestText !== undefined && html !== undefined) out.push({ folder, prefix, dir, manifestText, html: html === 'tooLarge' ? '' : html, ...(html === 'tooLarge' ? { htmlTooLarge: true } : {}) });
     }
     return out;
   }
@@ -514,6 +753,14 @@ export class CoverageService implements vscode.Disposable {
       }
     } catch (e) {
       log.warn(`coverage: ${(e as Error).message}`);
+      // Commands wait for a result for this snapshot: give them one, marked incomplete (the last result if there
+      // is one, else an empty one), rather than leave them waiting out their timeout.
+      if (live()) {
+        const prev = this.result;
+        this.result = prev ? { ...prev, incomplete: true } : { mergeBase: s.mergeBase, belonging: [], files: new Map(), totals: { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 }, targets: [], unsupported: [], incomplete: true, done: 0, total: 0 };
+        this.resultFor = s;
+        this.emitter.fire();
+      }
     } finally {
       this.running = false;
       if (this.again) {
@@ -535,6 +782,27 @@ export class CoverageService implements vscode.Disposable {
 export function isUnknownPath(e: unknown): boolean {
   const x = e as { gitErrorCode?: unknown; message?: unknown } | undefined;
   return x?.gitErrorCode === 'UnknownPath' || (typeof x?.message === 'string' && /not known by git|does not exist in|exists on disk, but not in/i.test(x.message));
+}
+
+/**
+ * A sidestory's page from the working tree with the checker's cap and decoding: an open document's unsaved text when
+ * it is dirty, else the file's bytes (links followed only inside `root`); 'tooLarge' past COVERAGE_WORK.htmlBytes;
+ * undefined when missing or outside.
+ */
+async function readPage(uri: vscode.Uri, root: vscode.Uri, decode: (b: Uint8Array) => string): Promise<string | 'tooLarge' | undefined> {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  if (open?.isDirty) {
+    const text = open.getText();
+    return Buffer.byteLength(text, 'utf8') > COVERAGE_WORK.htmlBytes ? 'tooLarge' : text;
+  }
+  const size = await vscode.workspace.fs.stat(uri).then(
+    (st) => st.size,
+    () => undefined,
+  );
+  if (size === undefined) return undefined;
+  if (size > COVERAGE_WORK.htmlBytes) return 'tooLarge';
+  const bytes = await readBytesInside(uri, root, COVERAGE_WORK.htmlBytes);
+  return bytes ? decode(bytes) : undefined;
 }
 
 export type { GitRepo };

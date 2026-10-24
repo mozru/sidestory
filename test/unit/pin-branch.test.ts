@@ -87,6 +87,18 @@ describe('Pin Anchors with a base (§7.6)', () => {
   });
 });
 
+describe('repository text in notifications (§15)', () => {
+  it("the sidestory's folder name can't become a link or hide text in a notification", async () => {
+    setup(HEAD_LOOP);
+    const evil = { ...(ref() as object), name: 'retry[x](command:workbench.action.terminal.new)\u202e' } as never;
+    await pinAnchors(evil, undefined, undefined, fromMergeBase);
+    const m = vscode.info.at(-1)!.message;
+    expect(m).toContain('retry[x] (command:');
+    expect(m).not.toContain('](');
+    expect(m).not.toContain('\u202e');
+  });
+});
+
 describe('needs a look (§13.1)', () => {
   // A line added inside the step's code: still "changed" with high similarity, but the prose doesn't cover it.
   const grown = HEAD_LOOP.replace('loop line 6 with some words\n', 'loop line 6 with some words\nawait jitter(delay, random)\n');

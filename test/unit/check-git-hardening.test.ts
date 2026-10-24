@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../../src/cli/check-widgets.ts';
-import { findRepository, gitEnv, isSafeRepoPath, resolveGit } from '../../src/cli/git.ts';
+import { findRepository, gitEnv, isSafeFsPath, isSafeRepoPath, resolveGit } from '../../src/cli/git.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 let base = '';
@@ -100,7 +100,7 @@ describe('every git call', () => {
       const config = c.argv.flatMap((a, k) => (c.argv[k - 1] === '-c' ? [a] : []));
       expect(config).toEqual(expect.arrayContaining(['core.fsmonitor=false', 'safe.bareRepository=explicit', 'protocol.allow=never', 'log.showSignature=false', 'diff.renameLimit=1000']));
       expect(config.find((x) => x.startsWith('core.hooksPath='))).toMatch(/sidestory-git-/);
-      expect(c.env).toEqual({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: base });
+      expect(c.env).toEqual({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_ALLOW_PROTOCOL: 'none', GIT_CEILING_DIRECTORIES: base });
     }
     expect(existsSync(join(base, 'PAGER-MARKER'))).toBe(false);
   });
@@ -114,7 +114,7 @@ describe('every git call', () => {
   });
 
   it('the environment helper drops every GIT_ variable, whatever its case', () => {
-    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: '', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C', NoDefaultCurrentDirectoryInExePath: '1' });
+    expect(gitEnv('/r/x', { GIT_DIR: 'a', git_index_file: 'b', PATH: 'p' })).toEqual({ PATH: '', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_ALLOW_PROTOCOL: 'none', GIT_CEILING_DIRECTORIES: '/r', LC_ALL: 'C', NoDefaultCurrentDirectoryInExePath: '1' });
   });
 
   it('a git planted in the repository never runs: relative, empty and in-repository PATH entries are skipped', async () => {
@@ -158,9 +158,12 @@ describe('every git call', () => {
     expect(r.calls.find((c) => c.argv.includes('diff'))!.argv).toContain('--ignore-submodules=all');
   });
 
-  it('paths Windows would read differently are unsafe', () => {
-    for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'a./b', 'a /b', 'src/x.']) expect(isSafeRepoPath(bad), bad).toBe(false);
-    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c']) expect(isSafeRepoPath(ok), ok).toBe(true);
+  it('paths Windows would read differently are unsafe to read from disk, not by blob id', () => {
+    for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'a./b', 'a /b', 'src/x.', 'a.ts:zone']) {
+      expect(isSafeFsPath(bad), bad).toBe(false);
+      expect(isSafeRepoPath(bad), bad).toBe(true);
+    }
+    for (const ok of ['src/a.ts', 'console/x.ts', '.github/x.yml', 'a.b/c']) expect(isSafeFsPath(ok), ok).toBe(true);
   });
 });
 

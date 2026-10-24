@@ -1,7 +1,7 @@
 // check.cjs --coverage (src/cli/coverage.ts, docs/CHANGES-PLAN.md §13.1) on the real git fixture
 // (test/fixtures/git-repo.mjs --explained), built in a temporary folder and copied per test.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +201,76 @@ describe('--coverage on the fixture', () => {
     expect(r.coverage.sidestories).toEqual([]);
     const withDir = await json([join(dir, '.sidestory/retry-jitter'), '--coverage', '--base', 'feature']);
     expect(withDir.findings.find((f) => f.code === 'not-belonging')!.message).toMatch(/already exists at the merge-base/);
+  });
+});
+
+describe('files whose lines cannot be compared (§5.1)', () => {
+  const commitAll = (dir: string, msg: string) => {
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+  };
+
+  it.skipIf(process.platform === 'win32')('a type change (file to link) is one change, with its own finding', async () => {
+    const dir = copy();
+    rmSync(join(dir, 'README.md'));
+    symlinkSync('docs/notes.md', join(dir, 'README.md'));
+    commitAll(dir, 'readme becomes a link');
+    const r = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    const f = r.coverage.files.find((x) => x.path === 'README.md')!;
+    expect(f.kind).toBe('type-change');
+    expect(f.changes.map((c) => c.status)).toEqual(['unexplained']);
+    expect(r.coverage.totals.left).toBe(2);
+    expect(r.findings.find((x) => x.code === 'type-change')!.message).toMatch(/^README\.md changed type \(a file, a link or a submodule\); it counts as one unexplained change\. Mark it in trivialFiles/);
+  });
+
+  it('a binary file is one change; the finding suggests a trivialFiles glob, which covers it', async () => {
+    const dir = copy();
+    writeFileSync(join(dir, 'logo.png'), new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]));
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(r.coverage.files.find((x) => x.path === 'logo.png')).toMatchObject({ kind: 'binary', changes: [{ status: 'unexplained', old: null, new: null }] });
+    expect(r.findings.find((x) => x.file.endsWith('logo.png'))!.message).toBe('logo.png is a binary file; it counts as one unexplained change. Mark it in trivialFiles if it needs no explanation (a glob such as "**/*.png" for assets).');
+    const mf = join(dir, '.sidestory/retry-jitter/manifest.json');
+    writeFileSync(mf, JSON.stringify({ ...JSON.parse(readFileSync(mf, 'utf8')), trivialFiles: ['**/*.png'] }, null, 2));
+    const marked = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(marked.coverage.files.find((x) => x.path === 'logo.png')!.changes[0]!.status).toBe('trivial');
+  });
+
+  it.skipIf(process.platform === 'win32')('an unsupported path is one change, and the finding says which rule it breaks (device names included)', async () => {
+    const dir = copy();
+    writeFileSync(join(dir, 'nul.txt'), 'x\n');
+    writeFileSync(join(dir, 'tab\tname.txt'), 'x\n');
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(r.coverage.files.find((x) => x.path === 'nul.txt')).toMatchObject({ kind: 'unsupported', changes: [{ status: 'unexplained' }] });
+    expect(r.coverage.files.find((x) => x.path === 'tab\tname.txt')).toMatchObject({ kind: 'unsupported' });
+    const msgs = r.findings.filter((x) => x.code === 'unsupported-path').map((x) => x.message);
+    expect(msgs.some((m) => m.includes('a Windows device name (con, nul.txt, com1…)') && m.includes('"nul.txt"'))).toBe(true);
+    expect(msgs.some((m) => m.includes('a control character'))).toBe(true);
+    // Committed, the device name is an ordinary blob: read and compared line by line.
+    commitAll(dir, 'odd names');
+    const committed = await json(['--coverage', '--base', 'main', '--committed', '--repo', dir]);
+    expect(committed.coverage.files.find((x) => x.path === 'nul.txt')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained', new: [1, 1] }] });
+  });
+
+  it('a Git LFS pointer is not counted, even when the other side was binary', async () => {
+    const dir = copy();
+    writeFileSync(join(dir, 'video.mp4'), new Uint8Array([0, 1, 2, 3]));
+    commitAll(dir, 'binary');
+    writeFileSync(join(dir, 'video.mp4'), 'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 4\n');
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(r.coverage.files.find((x) => x.path === 'video.mp4')).toMatchObject({ kind: 'lfs', changes: [] });
+    expect(r.coverage.totals.notCounted).toBe(1);
+  });
+
+  it('a page over the read cap still makes its folder a sidestory of the branch, and coverage incomplete', async () => {
+    const dir = copy();
+    const page = join(dir, '.sidestory/retry-jitter/sidestory.html');
+    writeFileSync(page, readFileSync(page, 'utf8') + `<!-- ${'x'.repeat(10 * 1024 * 1024)} -->\n`);
+    const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(r.coverage.sidestories).toEqual(['.sidestory/retry-jitter']);
+    expect(r.coverage.incomplete).toBe(true);
+    expect(r.findings.find((x) => x.code === 'coverage-incomplete')!.message).toMatch(/over 10 MB, too large to read/);
+    expect(r.findings.map((x) => x.code)).not.toContain('anchor-unused');
+    expect(r.code).toBe(3);
   });
 });
 

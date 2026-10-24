@@ -1,0 +1,188 @@
+// The checker and the extension count the same changes (docs/CHANGES-PLAN.md §5.1, §6, §13): binary files, symlinks,
+// submodules and unsupported paths are one change each, Git LFS pointers aren't counted, Windows device names are
+// read by blob id but refused on disk, and an unstaged rename is paired by content. The checker runs on a real
+// repository (src/cli/coverage.ts); the extension's coverage runs through CoverageService's own source over a git
+// API stand-in backed by the same repository, with entries listed as comparison.ts lists them.
+import { execFileSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { CoverageJson } from '../../src/cli/coverage.ts';
+import { isSafeRepoPath } from '../../src/core/repo-path.ts';
+import type { ChangeEntry } from '../../src/extension/changes/model.ts';
+
+vi.mock('vscode', () => import('./vscode-stub.ts'));
+const { main } = await import('../../src/cli/check-widgets.ts');
+const { CoverageService, computeCoverage } = await import('../../src/extension/changes/coverage-service.ts');
+type Result = import('../../src/extension/changes/coverage-service.ts').CoverageResult;
+const vscode = await import('./vscode-stub.ts');
+
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+const gitEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+const gitBuf = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd, env: gitEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (cwd: string, ...args: string[]) => gitBuf(cwd, ...args).toString();
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+const LFS = 'version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n';
+const WEIRD = 'weird\u0001name.txt';
+
+let base = '';
+let committed = '';
+let n = 0;
+
+beforeAll(() => {
+  base = realpathSync(mkdtempSync(join(tmpdir(), 'cx-parity-')));
+  committed = join(base, 'committed');
+  execFileSync(process.execPath, [join(repoRoot, 'test/fixtures/git-repo.mjs'), committed, '--explained'], { env: gitEnv });
+  // A commit of files whose lines can't be compared, on the branch.
+  mkdirSync(join(committed, 'assets'));
+  writeFileSync(join(committed, 'assets/logo.png'), PNG);
+  writeFileSync(join(committed, 'data.bin'), PNG);
+  writeFileSync(join(committed, 'video.mp4'), LFS);
+  symlinkSync('README.md', join(committed, 'readme-link'));
+  writeFileSync(join(committed, 'con'), 'a file Windows would read as the console\n');
+  writeFileSync(join(committed, WEIRD), 'a control character in its name\n');
+  git(committed, 'add', '-A');
+  // A submodule (a gitlink to the branch's own commit) and its empty folder, as a clone without --recursive has it.
+  git(committed, 'update-index', '--add', '--cacheinfo', `160000,${git(committed, 'rev-parse', 'HEAD').trim()},vendor/lib`);
+  mkdirSync(join(committed, 'vendor/lib'), { recursive: true });
+  // trivialFiles marks the assets folder.
+  const mf = join(committed, '.sidestory/retry-jitter/manifest.json');
+  const m = JSON.parse(readFileSync(mf, 'utf8'));
+  m.trivialFiles = ['assets/**'];
+  writeFileSync(mf, JSON.stringify(m, null, 2));
+  git(committed, 'add', '-A');
+  git(committed, 'commit', '-q', '--no-verify', '-m', 'Assets, links, a submodule');
+}, 60_000);
+
+afterAll(() => rmSync(base, { recursive: true, force: true }));
+
+function copy(): string {
+  const dir = join(base, `copy${n++}`);
+  cpSync(committed, dir, { recursive: true, verbatimSymlinks: true });
+  return dir;
+}
+
+async function checker(dir: string, committedOnly: boolean): Promise<CoverageJson> {
+  const out: string[] = [];
+  await main(['--coverage', '--base', 'main', ...(committedOnly ? ['--committed'] : []), '--repo', dir, '--json'], { out: (s) => out.push(s), err: () => {} }, undefined, undefined, { env: gitEnv });
+  return JSON.parse(out.join('\n')).coverage;
+}
+
+/** The git extension's calls the coverage service makes, answered by git in `root`. */
+function fakeRepo(root: string) {
+  const rel = (abs: string) => relative(root, abs).split(sep).join('/');
+  return {
+    rootUri: vscode.Uri.file(root),
+    getObjectDetails: async (treeish: string, path: string) => {
+      const out = git(root, '--literal-pathspecs', 'ls-tree', '-l', '-z', treeish, '--', rel(path));
+      const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64}) +(\d+|-)\t/.exec(out);
+      if (!m) throw Object.assign(new Error('Path not known by git'), { gitErrorCode: 'UnknownPath' });
+      return { mode: m[1]!, object: m[3]!, size: m[4] === '-' ? 0 : Number(m[4]) };
+    },
+    buffer: async (ref: string, path: string) => new Uint8Array(gitBuf(root, 'cat-file', 'blob', `${ref}:${rel(path)}`)),
+  };
+}
+
+/** Entries as comparison.ts lists them: renames from git, untracked files, unsafe paths set apart. */
+function listing(root: string, mergeBase: string, workingTree: boolean): { entries: ChangeEntry[]; unsupported: { path: string; oldPath?: string }[] } {
+  const parts = git(root, 'diff', '--name-status', '-z', '-M', '--no-ext-diff', mergeBase, ...(workingTree ? [] : ['HEAD']), '--').split('\0');
+  const entries: ChangeEntry[] = [];
+  const unsupported: { path: string; oldPath?: string }[] = [];
+  const push = (e: ChangeEntry) => (isSafeRepoPath(e.path) && (e.oldPath === undefined || isSafeRepoPath(e.oldPath)) ? entries.push(e) : unsupported.push({ path: e.path, ...(e.oldPath ? { oldPath: e.oldPath } : {}) }));
+  for (let i = 0; i < parts.length - 1; ) {
+    const status = parts[i++]!;
+    if (status.startsWith('R')) {
+      const oldPath = parts[i++]!;
+      push({ status: 'R', oldPath, path: parts[i++]! });
+    } else push({ status: status[0] === 'A' ? 'A' : status[0] === 'D' ? 'D' : 'M', path: parts[i++]! });
+  }
+  if (workingTree) for (const p of git(root, 'ls-files', '-o', '--exclude-standard', '-z').split('\0').filter(Boolean)) push({ status: 'A', path: p, untracked: true });
+  return { entries, unsupported };
+}
+
+async function extension(root: string, workingTree: boolean): Promise<Result> {
+  const mergeBase = git(root, 'merge-base', 'main', 'HEAD').trim();
+  const { entries, unsupported } = listing(root, mergeBase, workingTree);
+  const snap = { repo: fakeRepo(root), mergeBase, head: { sha: git(root, 'rev-parse', 'HEAD').trim() }, mode: workingTree ? 'workingTree' : 'committed', entries, unsupported };
+  const svc = new CoverageService({ snapshot: () => snap as never, order: () => [], sidestoryDirs: () => [vscode.Uri.file(join(root, '.sidestory/retry-jitter')) as never] });
+  // Resolving `base` goes through the git extension's ref calls (base.ts, tested elsewhere): main's merge-base here.
+  svc.ownMergeBase = async (_s, spec) => (spec === 'main' ? mergeBase : undefined);
+  try {
+    return (await computeCoverage((svc as unknown as { source(s: unknown): never }).source(snap)))!;
+  } finally {
+    svc.dispose();
+  }
+}
+
+const checkerStates = (c: CoverageJson) => Object.fromEntries(c.files.filter((f) => f.changes.length).map((f) => [f.path, f.changes.map((x) => x.status).join(',')]));
+function extensionStates(r: Result): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [p, f] of r.files) if (f.coverage?.changes.length) out[p] = f.coverage.changes.map((c) => c.state).join(',');
+  for (const p of r.unsupported) out[p] = 'unexplained';
+  return out;
+}
+const pick = (t: { changes: number; explained: number; trivial: number; left: number }) => ({ changes: t.changes, explained: t.explained, trivial: t.trivial, left: t.left });
+
+describe.skipIf(process.platform === 'win32')('the checker and the extension count the same changes', () => {
+  it('committed: binary, link, submodule and unsupported paths are one change each; LFS is not counted; a device name is a blob', async () => {
+    const c = await checker(committed, true);
+    const r = await extension(committed, false);
+    const kind = (p: string) => c.files.find((f) => f.path === p)?.kind;
+    expect(kind('assets/logo.png')).toBe('binary');
+    expect(kind('data.bin')).toBe('binary');
+    expect(kind('readme-link')).toBe('link');
+    expect(kind('vendor/lib')).toBe('submodule');
+    expect(kind(WEIRD)).toBe('unsupported');
+    expect(kind('video.mp4')).toBe('lfs');
+    expect(kind('con')).toBe('text');
+    expect(checkerStates(c)).toMatchObject({ 'assets/logo.png': 'trivial', 'data.bin': 'unexplained', 'readme-link': 'unexplained', 'vendor/lib': 'unexplained', [WEIRD]: 'unexplained', con: 'unexplained' });
+    expect(checkerStates(c)['video.mp4']).toBeUndefined();
+    expect(extensionStates(r)).toEqual(checkerStates(c));
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+    expect(r.files.get('readme-link')!.whole).toBe('link');
+    expect(r.files.get('vendor/lib')!.whole).toBe('submodule');
+    expect(r.files.get('data.bin')!.whole).toBe('binary');
+    expect(r.unsupported).toEqual([WEIRD]);
+    expect(r.incomplete).toBe(c.incomplete);
+  });
+
+  it('working tree: an unstaged rename is paired, untracked links, nested repositories and device names count once', async () => {
+    const dir = copy();
+    renameSync(join(dir, 'docs/notes.md'), join(dir, 'docs/renamed.md'));
+    writeFileSync(join(dir, 'new.bin'), PNG);
+    symlinkSync('README.md', join(dir, 'untracked-link'));
+    writeFileSync(join(dir, 'prn.txt'), 'Windows would read this as the printer\n');
+    mkdirSync(join(dir, 'nested'));
+    git(join(dir, 'nested'), 'init', '-q');
+    writeFileSync(join(dir, 'nested/x.txt'), 'x\n');
+    const c = await checker(dir, false);
+    const r = await extension(dir, true);
+    const kind = (p: string) => c.files.find((f) => f.path === p)?.kind;
+    expect(c.files.find((f) => f.path === 'docs/renamed.md')).toMatchObject({ oldPath: 'docs/notes.md', status: 'R' });
+    expect(c.files.find((f) => f.path === 'docs/notes.md')).toBeUndefined();
+    expect(kind('untracked-link')).toBe('link');
+    expect(kind('prn.txt')).toBe('unsupported');
+    expect(kind('con')).toBe('unsupported'); // read from disk in working tree mode
+    expect(kind('nested')).toBe('submodule');
+    expect(kind('vendor/lib')).toBe('submodule');
+    expect(kind('new.bin')).toBe('binary');
+    // The extension pairs the rename too: no deletion of docs/notes.md left to explain.
+    expect(r.files.get('docs/renamed.md')?.entry).toMatchObject({ status: 'R', oldPath: 'docs/notes.md' });
+    expect(r.files.has('docs/notes.md')).toBe(false);
+    expect(r.files.get('prn.txt')!.whole).toBe('unsupported');
+    expect(r.files.get('untracked-link')!.whole).toBe('link');
+    // The nested repository: the checker sees a submodule-to-be, the extension (git's `nested/`) an unsupported path;
+    // one change either way.
+    const cs = checkerStates(c);
+    const es = extensionStates(r);
+    expect(cs.nested).toBe('unexplained');
+    expect(es['nested/']).toBe('unexplained');
+    delete cs.nested;
+    delete es['nested/'];
+    expect(es).toEqual(cs);
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+  });
+});

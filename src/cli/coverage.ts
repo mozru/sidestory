@@ -8,17 +8,26 @@ import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock } from '../core/hunks.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsPointer, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
 import { belongs, countedPath, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
+import { pairUnstagedRenames } from '../core/renames.ts';
+import { pathProblem } from '../core/repo-path.ts';
 import { resolveAnchor } from '../core/resolve.ts';
-import { contentSimilarity } from '../core/similarity.ts';
 import { normalizeLines, PreparedText } from '../core/text.ts';
 import { resolveBase } from '../extension/changes/base.ts';
 import type { Finding, Severity } from './check-widgets.ts';
-import { findRepository, Git, GitError, isSafeRepoPath, WorkingTreeRefused, type RawEntry } from './git.ts';
+import { findRepository, Git, GitError, isSafeFsPath, isSafeRepoPath, WorkingTreeRefused, type RawEntry } from './git.ts';
 
 export type FileKind = 'text' | 'binary' | 'lfs' | 'submodule' | 'link' | 'mode' | 'line-endings' | 'sidestory' | 'archive' | 'unsupported' | 'type-change' | 'missing' | 'too-large';
+
+/**
+ * Kinds whose lines can't be compared but which still count, each as ONE change that only a trivialFiles match can
+ * cover (`tooLargeChange`, §5.1): so nothing a branch changes can slip past the gate by being binary, a link, a
+ * submodule, a type change or a path Sidestory won't read. Git LFS pointers, mode-only changes and line-ending-only
+ * changes stay "not counted".
+ */
+export const ONE_CHANGE_KINDS: ReadonlySet<FileKind> = new Set<FileKind>(['too-large', 'binary', 'link', 'submodule', 'type-change', 'unsupported']);
 
 export interface CoverageOptions {
   /** Where to look for the repository when no sidestory is given (--repo, else the working directory). */
@@ -126,6 +135,8 @@ interface Sidestory {
   manifest: Manifest;
   diagnostics: Diagnostic[];
   html: string;
+  /** The page is over the read cap (MAX_COMPARE_BYTES): a candidate all the same, and coverage is incomplete. */
+  htmlTooLarge?: boolean;
   ownMergeBase?: string;
 }
 
@@ -265,26 +276,35 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const entries: Entry[] = raw.map((r) => ({ ...r, kind: 'text' }));
   if (mode === 'working') {
     const tracked = new Set(entries.map((e) => e.path));
-    for (const p of await git.untracked()) {
-      if (!tracked.has(p)) entries.push({ status: 'A', oldMode: '000000', newMode: '100644', oldId: '0'.repeat(mergeBase.length), newId: '0'.repeat(mergeBase.length), path: p, kind: 'text', untracked: true });
+    for (const listed of await git.untracked()) {
+      // `ls-files -o` lists an untracked nested repository as `dir/`: a submodule-to-be, one change.
+      const nested = listed.endsWith('/') && listed.length > 1;
+      const p = nested ? listed.slice(0, -1) : listed;
+      if (!tracked.has(p)) entries.push({ status: 'A', oldMode: '000000', newMode: nested ? '160000' : '100644', oldId: '0'.repeat(mergeBase.length), newId: '0'.repeat(mergeBase.length), path: p, kind: 'text', untracked: true });
     }
   }
   const sorted = entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   // Bytes: blobs by id, working tree files by path.
+  // In working tree mode the new side is always the file on disk, as in the extension: git may show a hash for it
+  // (the index's, or the file's own when it had to hash a racily clean file) that isn't an object in the clone.
   const blobIds = new Set<string>();
   for (const e of sorted) {
     if (!ZERO.test(e.oldId)) blobIds.add(e.oldId);
-    if (!ZERO.test(e.newId)) blobIds.add(e.newId);
+    if (!ZERO.test(e.newId) && mode !== 'working') blobIds.add(e.newId);
   }
   const unsafe = (e: Entry) => !isSafeRepoPath(e.path) || (e.oldPath !== undefined && !isSafeRepoPath(e.oldPath));
+  // In working tree mode the new side is read from disk: the file system rule (no device names, trailing dots or
+  // spaces, ":") applies to it too. Blobs read by id need only the lenient rule.
+  const unreadableOnDisk = (e: Entry) => mode === 'working' && e.newMode !== '000000' && !isSafeFsPath(e.path);
   let classified = sorted.map((e) => {
     if (unsafe(e)) e.kind = 'unsupported';
     else if (isArchivePath(e.path) || (e.oldPath !== undefined && isArchivePath(e.oldPath))) e.kind = 'archive';
     else if (!countedPath(e.path)) e.kind = 'sidestory';
-    else if (e.status === 'T' || (e.oldMode === '120000') !== (e.newMode === '120000') && e.oldMode !== '000000' && e.newMode !== '000000') e.kind = 'type-change';
+    else if (e.status === 'T' || ((e.oldMode === '120000') !== (e.newMode === '120000') || (e.oldMode === '160000') !== (e.newMode === '160000')) && e.oldMode !== '000000' && e.newMode !== '000000') e.kind = 'type-change';
     else if (e.oldMode === '160000' || e.newMode === '160000') e.kind = 'submodule';
     else if (e.oldMode === '120000' || e.newMode === '120000') e.kind = 'link';
+    else if (unreadableOnDisk(e)) e.kind = 'unsupported';
     else if (e.status === 'M' && !ZERO.test(e.newId) && e.oldId === e.newId) e.kind = 'mode';
     return e;
   });
@@ -296,14 +316,29 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     if (why === 'budget') incomplete = true;
   }
 
-  const readNew = async (e: Entry): Promise<Uint8Array | 'too-large' | 'missing' | undefined> => {
+  const readNew = async (e: Entry): Promise<Uint8Array | 'too-large' | 'missing' | 'link' | 'submodule' | 'unsupported' | undefined> => {
     if (e.newMode === '000000') return undefined;
-    if (!ZERO.test(e.newId)) return blobs.get(e.newId) ?? (skipped.get(e.newId) === 'too-large' ? 'too-large' : 'missing');
+    if (mode !== 'working') return blobs.get(e.newId) ?? (skipped.get(e.newId) === 'too-large' ? 'too-large' : 'missing');
     const r = await git.readWorkingFile(e.path);
     if ('bytes' in r) return r.bytes;
-    if (r.error === 'too-large') return 'too-large';
-    if (r.error === 'budget') incomplete = true;
-    return 'missing';
+    switch (r.error) {
+      case 'too-large':
+        return 'too-large';
+      // A link on disk (an untracked symlink, or a folder on the way that is one): the extension's stat sees a link too.
+      case 'link':
+      case 'outside':
+        return 'link';
+      case 'directory':
+        return 'submodule';
+      case 'not-a-file':
+      case 'unsupported':
+        return 'unsupported';
+      case 'budget':
+        incomplete = true;
+        return 'missing';
+      default:
+        return 'missing';
+    }
   };
   const readOld = (e: Entry): Uint8Array | 'too-large' | 'missing' | undefined => {
     if (e.oldMode === '000000' || ZERO.test(e.oldId)) return undefined;
@@ -315,6 +350,10 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const e of classified) {
     if (e.kind !== 'text') continue;
     const [o, n] = [readOld(e), await readNew(e)];
+    if (n === 'link' || n === 'submodule' || n === 'unsupported') {
+      e.kind = n;
+      continue;
+    }
     if (o === 'missing' || n === 'missing') {
       e.kind = 'missing';
       continue;
@@ -323,8 +362,9 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       e.kind = 'too-large';
       continue;
     }
-    if (isBinary(o) || isBinary(n)) e.kind = 'binary';
-    else if (isLfs(o) || isLfs(n)) e.kind = 'lfs';
+    // An LFS pointer on either side is left out (a file moved into LFS too); binary counts as one change.
+    if (isLfsPointer(o) || isLfsPointer(n)) e.kind = 'lfs';
+    else if (isBinary(o) || isBinary(n)) e.kind = 'binary';
     else if (o && n && sameBytes(o, n)) e.kind = e.oldMode !== e.newMode ? 'mode' : 'line-endings';
     oldBytes.set(e, o);
     newBytes.set(e, n);
@@ -332,8 +372,21 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
 
   // Unstaged renames (§4.6): a deleted tracked file and an untracked new one, paired by content.
   if (mode === 'working') {
-    const paired = pairUnstagedRenames(classified, oldBytes, newBytes);
-    if (paired.size) classified = classified.filter((e) => !paired.has(e));
+    const deleted = classified.filter((e) => e.kind === 'text' && e.status === 'D' && !e.untracked);
+    const added = classified.filter((e) => e.kind === 'text' && e.untracked);
+    const pairs = pairUnstagedRenames(deleted, added, (d) => oldBytes.get(d), (a) => newBytes.get(a));
+    const dropped = new Set<Entry>();
+    for (const { deleted: d, added: a } of pairs) {
+      // The untracked entry becomes the rename; the deletion it replaces goes.
+      dropped.add(d);
+      a.oldPath = d.path;
+      a.oldId = d.oldId;
+      a.oldMode = d.oldMode;
+      a.status = 'R';
+      a.detected = true;
+      oldBytes.set(a, oldBytes.get(d));
+    }
+    if (dropped.size) classified = classified.filter((e) => !dropped.has(e));
   }
 
   for (const e of classified) {
@@ -349,9 +402,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     e.oldText = d.old;
   }
   for (const e of classified) {
-    if (e.kind === 'unsupported') add('warning', root, 'unsupported-path', `A changed file has a path Sidestory won't read (control characters, "..", ".git" or a leading ":"): ${JSON.stringify((e.oldPath ? `${e.oldPath} → ${e.path}` : e.path).slice(0, 200))}. It isn't counted.`);
-    else if (e.kind === 'type-change') add('warning', abs(e.path), 'type-change', `${e.path} changed between a file and a link; it isn't counted (explain it in prose if it matters).`);
-    else if (e.kind === 'missing') {
+    if (e.kind === 'missing') {
       incomplete = true;
       add('warning', abs(e.path), 'blob-missing', `${e.path}: a version of this file isn't in this clone (a partial or shallow clone); the checker never fetches. Fetch it (git fetch) and run again.`);
     }
@@ -367,6 +418,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     }
   }
   if (given && !candidates.has(given.folder)) candidates.set(given.folder, { prefix: given.prefix, fromDisk: mode === 'working' });
+  for (const folder of candidates.keys()) if (!isSafeRepoPath(folder)) candidates.delete(folder);
   const ownMergeBases = new Map<string, Promise<string | undefined>>([[baseSpec, Promise.resolve(mergeBase)]]);
   const ownMergeBase = (spec: string) => {
     let p = ownMergeBases.get(spec);
@@ -413,13 +465,13 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       }
       continue;
     }
-    sidestories.push({ folder, prefix: c.prefix, manifestText: read.manifestText, manifest: m, diagnostics: parsed.diagnostics, html: read.html, ownMergeBase: own });
+    sidestories.push({ folder, prefix: c.prefix, manifestText: read.manifestText, manifest: m, diagnostics: parsed.diagnostics, html: read.html, ...(read.htmlTooLarge ? { htmlTooLarge: true } : {}), ownMergeBase: own });
   }
   for (const n of notBelonging) add('warning', given?.manifestFile ?? root, 'not-belonging', `${n} doesn't count toward this branch's coverage.`);
   header += sidestories.length ? `; counting ${sidestories.map((s) => s.folder).join(', ')}` : '; no sidestory of this branch yet';
 
   // Counted files, trivialFiles, targets.
-  const counted = classified.filter((e) => e.kind === 'text' || e.kind === 'too-large');
+  const counted = classified.filter((e) => e.kind === 'text' || ONE_CHANGE_KINDS.has(e.kind));
   const matchers = sidestories.map((s) => ({ s, patterns: s.manifest.trivialFiles ?? [], match: globMatcher(s.manifest.trivialFiles ?? []) }));
   const underPrefix = (prefix: string, path: string) => (prefix ? (path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : undefined) : path);
   for (const { s, patterns } of matchers) {
@@ -455,10 +507,10 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const targets: Target[] = [];
   const stepTitles = new Map<string, Map<string, string>>();
   for (const s of sidestories) {
-    const used = usedAnchorIds(s.html);
+    const used = s.htmlTooLarge ? { ids: new Set<string>(), incomplete: true } : usedAnchorIds(s.html);
     if (used.incomplete) {
       incomplete = true;
-      add('warning', abs(`${s.folder}/sidestory.html`), 'coverage-incomplete', "The page is too large to scan for the anchors it uses, so coverage can't be complete. Split the page.");
+      add('warning', abs(`${s.folder}/sidestory.html`), 'coverage-incomplete', s.htmlTooLarge ? `The page is over ${MAX_COMPARE_BYTES / (1024 * 1024)} MB, too large to read for the anchors it uses, so coverage can't be complete. Split the page.` : "The page is too large to scan for the anchors it uses, so coverage can't be complete. Split the page.");
     }
     const outline = outlineHtml(s.html);
     const steps = new Set(outline.steps.map((x) => x.id));
@@ -520,8 +572,11 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const block = inputs[fi]!.changes[ci]!;
       const at = block.new ? block.new.start : e.newMode === '000000' ? (block.old?.start ?? 1) : Math.max(1, Math.min(block.newAt, e.diff?.newLines ?? 1));
       const where = block.new ? `lines ${span(block.new)}`.replace(/^lines (\d+)$/, 'line $1') : e.newMode === '000000' ? 'deleted file' : `deleted at line ${at}`;
-      if (e.kind === 'too-large') {
-        if (c.state !== 'trivial') add('warning', file, 'unexplained', `${f.path} is too large to compare (over ${MAX_COMPARE_BYTES / (1024 * 1024)} MB); it counts as one unexplained change. Mark it in trivialFiles if it needs no explanation.`, 1);
+      if (ONE_CHANGE_KINDS.has(e.kind)) {
+        if (c.state !== 'trivial') {
+          const [code, at, what] = oneChangeFinding(e, root, abs);
+          add('warning', at, code, `${what}; it counts as one unexplained change. Mark it in trivialFiles if it needs no explanation${e.kind === 'binary' ? ' (a glob such as "**/*.png" for assets)' : ''}.`, at === root ? undefined : 1);
+        }
         return;
       }
       if (c.state === 'unexplained') {
@@ -581,7 +636,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     };
   }
 
-  const notCounted = classified.filter((e) => e.kind !== 'text' && e.kind !== 'too-large' && e.kind !== 'sidestory' && e.kind !== 'archive' && e.kind !== 'line-endings');
+  const notCounted = classified.filter((e) => e.kind !== 'text' && !ONE_CHANGE_KINDS.has(e.kind) && e.kind !== 'sidestory' && e.kind !== 'archive' && e.kind !== 'line-endings');
   const totals = { ...result.totals, notCounted: notCounted.length };
   const kinds = [...new Set(notCounted.map((e) => kindLabel(e.kind)))];
   const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
@@ -631,6 +686,27 @@ function toJson(c: ChangeCoverage, b: ChangeBlock): JsonChange {
   };
 }
 
+/** The finding for a file that counts as one change: its code, the file it names, and what it is. */
+function oneChangeFinding(e: Entry, root: string, abs: (p: string) => string): [string, string, string] {
+  const shown = e.oldPath !== undefined && e.oldPath !== e.path ? `${e.oldPath} → ${e.path}` : e.path;
+  switch (e.kind) {
+    case 'unsupported': {
+      const why = [e.oldPath, e.path].map((p) => (p === undefined ? undefined : (pathProblem(p) ?? pathProblem(p, true)))).find((x) => x !== undefined) ?? 'a path Sidestory refuses';
+      return ['unsupported-path', root, `A changed file has a path Sidestory won't read (${why}): ${JSON.stringify(shown.slice(0, 200))}`];
+    }
+    case 'binary':
+      return ['unexplained', abs(e.path), `${shown} is a binary file`];
+    case 'link':
+      return ['unexplained', abs(e.path), `${shown} is a symbolic link`];
+    case 'submodule':
+      return ['unexplained', abs(e.path), `${shown} is a submodule whose commit changed`];
+    case 'type-change':
+      return ['type-change', abs(e.path), `${shown} changed type (a file, a link or a submodule)`];
+    default:
+      return ['unexplained', abs(e.path), `${shown} is too large to compare (over ${MAX_COMPARE_BYTES / (1024 * 1024)} MB)`];
+  }
+}
+
 function kindLabel(k: FileKind): string {
   return { binary: 'binary', lfs: 'LFS', submodule: 'submodule', link: 'link', mode: 'mode only', unsupported: 'unsupported path', 'type-change': 'type change', missing: 'missing object', text: 'text', 'line-endings': 'line endings only', sidestory: 'sidestory', archive: 'archive', 'too-large': 'too large' }[k];
 }
@@ -647,75 +723,31 @@ const compactLines = (lines: number[]) => {
 };
 
 /** A sidestory's manifest and page: from the working tree, or from the head commit (falling back to disk when `diskToo`). */
-async function readSidestory(git: Git, folder: string, atCommit: string | undefined, diskToo: boolean): Promise<{ manifestText: string; html: string } | undefined> {
-  // Both files or neither (isCompleteSidestory): a manifest without its page counts nothing yet.
+async function readSidestory(git: Git, folder: string, atCommit: string | undefined, diskToo: boolean): Promise<{ manifestText: string; html: string; htmlTooLarge?: boolean } | undefined> {
+  // Both files or neither (isCompleteSidestory): a manifest without its page counts nothing yet. A page over the
+  // read cap still makes it a sidestory (its anchors can't be read, so coverage is incomplete), as in the extension.
   const files = SIDESTORY_FILES.map((f) => `${folder}/${f}`);
+  const htmlAt = SIDESTORY_FILES.indexOf('sidestory.html');
   const decode = (b: Uint8Array) => decodeUtf8(b) ?? decodeLatin1(b);
+  const done = (manifest: Uint8Array, html: Uint8Array | 'too-large') => ({ manifestText: decode(manifest), html: html === 'too-large' ? '' : decode(html), ...(html === 'too-large' ? { htmlTooLarge: true } : {}) });
   if (atCommit) {
     const t = await git.lsTree(atCommit, files);
     const ids = files.map((f) => t.get(f));
     if (isCompleteSidestory(SIDESTORY_FILES.filter((_, k) => ids[k] && REGULAR.has(ids[k].mode)))) {
       const b = await git.blobs(ids.map((i) => i!.id));
-      const [m, h] = ids.map((i) => b.bytes.get(i!.id));
-      if (m && h) return { manifestText: decode(m), html: decode(h) };
+      const got = ids.map((i, k) => b.bytes.get(i!.id) ?? (k === htmlAt && b.skipped.get(i!.id) === 'too-large' ? ('too-large' as const) : undefined));
+      const m = got[1 - htmlAt];
+      const h = got[htmlAt];
+      if (m instanceof Uint8Array && h) return done(m, h);
     }
     if (!diskToo) return undefined;
   }
-  const [m, h] = await Promise.all(files.map((f) => git.readWorkingFile(f)));
-  if (!('bytes' in m!) || !('bytes' in h!)) return undefined;
-  return { manifestText: decode(m.bytes), html: decode(h.bytes) };
-}
-
-/**
- * Pairs deleted tracked files with untracked new ones by content (§4.6): at most 50 × 50, each at most 1 MB,
- * similarity ≥ 0.5, best pairs first. The untracked entry becomes the rename; returns the deletions it replaces.
- */
-function pairUnstagedRenames(entries: Entry[], oldBytes: Map<Entry, Uint8Array | undefined>, newBytes: Map<Entry, Uint8Array | undefined>): Set<Entry> {
-  const used = new Set<Entry>();
-  const dropped = new Set<Entry>();
-  const deleted = entries.filter((e) => e.kind === 'text' && e.status === 'D' && !e.untracked);
-  const added = entries.filter((e) => e.kind === 'text' && e.untracked);
-  if (!deleted.length || !added.length || deleted.length > 50 || added.length > 50) return dropped;
-  const MB = 1024 * 1024;
-  const lines = (b: Uint8Array | undefined) => (b && b.length <= MB ? normalizeLines(textLines(decodeUtf8(b) ?? decodeLatin1(b))) : undefined);
-  const pairs: { d: Entry; a: Entry; score: number }[] = [];
-  for (const d of deleted) {
-    const dl = lines(oldBytes.get(d));
-    if (!dl?.length) continue;
-    for (const a of added) {
-      const al = lines(newBytes.get(a));
-      if (!al?.length) continue;
-      const score = contentSimilarity(dl, al);
-      if (score >= 0.5) pairs.push({ d, a, score });
-    }
-  }
-  pairs.sort((x, y) => y.score - x.score || (x.a.path < y.a.path ? -1 : x.a.path > y.a.path ? 1 : x.d.path < y.d.path ? -1 : 1));
-  for (const p of pairs) {
-    if (used.has(p.d) || used.has(p.a)) continue;
-    used.add(p.d).add(p.a);
-    dropped.add(p.d);
-    p.a.oldPath = p.d.path;
-    p.a.oldId = p.d.oldId;
-    p.a.oldMode = p.d.oldMode;
-    p.a.status = 'R';
-    p.a.detected = true;
-    oldBytes.set(p.a, oldBytes.get(p.d));
-  }
-  return dropped;
-}
-
-function isBinary(b: Uint8Array | undefined): boolean {
-  if (!b) return false;
-  const n = Math.min(b.length, 8000);
-  for (let i = 0; i < n; i++) if (b[i] === 0) return true;
-  return false;
-}
-
-function isLfs(b: Uint8Array | undefined): boolean {
-  if (!b || b.length > 1024) return false;
-  const head = 'version https://git-lfs.github.com/spec/v1';
-  for (let i = 0; i < head.length; i++) if (b[i] !== head.charCodeAt(i)) return false;
-  return true;
+  const read = await Promise.all(files.map((f) => git.readWorkingFile(f)));
+  const m = read[1 - htmlAt]!;
+  const h = read[htmlAt]!;
+  if (!('bytes' in m)) return undefined;
+  if ('bytes' in h) return done(m.bytes, h.bytes);
+  return h.error === 'too-large' ? done(m.bytes, 'too-large') : undefined;
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

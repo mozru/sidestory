@@ -428,8 +428,8 @@ describe('the sidestory-git: provider (§4.5)', () => {
     expect(isSafeRepoPath('pages/[id].tsx')).toBe(true);
     expect(isSafeRepoPath('a/\u0007b')).toBe(false);
     expect(isSafeRepoPath(':(literal)x')).toBe(false);
-    // The checker's rule: Windows device names and segments ending in a dot or a space.
-    for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b']) expect(isSafeRepoPath(bad), bad).toBe(false);
+    // Blobs are read by id: Windows device names and trailing dots are refused only for file system reads.
+    for (const p of ['con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b']) expect(isSafeRepoPath(p), p).toBe(true);
     expect(isSafeRepoPath('console/x.ts')).toBe(true);
   });
   it('one id per root, however many wrapper objects the git API hands out', () => {

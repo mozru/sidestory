@@ -8,7 +8,8 @@
 // - git is found in JS (`resolveGit`): an absolute PATH entry outside the repository, never the working directory
 //   (Windows searches the current directory first, and a committed git.exe would run), and spawned by that path;
 // - git runs through execFile/spawn, never a shell, with every `GIT_*` variable removed and a fixed set added;
-// - every call turns off the pager, fsmonitor, hooks, signatures and the network;
+// - every call turns off the pager, fsmonitor, hooks, signatures and the network (`GIT_ALLOW_PROTOCOL=none`, which
+//   repository config can't override, unlike `protocol.allow`), and is killed after GIT_LIMITS.callMs;
 // - refs pass §3.1's grammar and are resolved to full ids through fully qualified candidates; paths follow `--`
 //   with literal pathspecs; only hex ids are written to `cat-file --batch`.
 import { spawn } from 'node:child_process';
@@ -18,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, sep, win32 } from 'node:path';
 import { MAX_COMPARE_BYTES } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase } from '../core/manifest.ts';
-import { isSafeRepoPath } from '../core/repo-path.ts';
+import { isSafeFsPath, isSafeRepoPath } from '../core/repo-path.ts';
 import type { RefReader } from '../extension/changes/base.ts';
 
 export const GIT_LIMITS = {
@@ -28,6 +29,8 @@ export const GIT_LIMITS = {
   runBytes: 200 * 1024 * 1024,
   /** Output of a listing call (diff --raw, ls-files, ls-tree). */
   listingBytes: 256 * 1024 * 1024,
+  /** One git call, start to exit: a hung git (a lock, a pipe, a filesystem stall) can't hold CI forever. */
+  callMs: 120_000,
 } as const;
 
 /** git-lfs's own filter settings, the only ones allowed on gits without `--attr-source` (§13.2). */
@@ -47,8 +50,8 @@ export class GitError extends Error {
   }
 }
 
-/** Paths read or shown from git output (§4.5): the one rule the extension uses too (src/core/repo-path.ts). */
-export { isSafeRepoPath };
+/** Paths read or shown from git output (§4.5): the rules the extension uses too (src/core/repo-path.ts). */
+export { isSafeFsPath, isSafeRepoPath };
 
 export interface RepoLocation {
   /** The working tree's root (a real path). */
@@ -95,11 +98,17 @@ export function gitEnv(root: string, base: NodeJS.ProcessEnv = process.env, plat
   for (const [k, v] of Object.entries(base)) if (!/^GIT_/i.test(k)) env[k] = v;
   // PATH keeps only the folders resolveGit would use, so what git starts in turn (git-lfs, a credential helper,
   // ssh) can't come from `.`, an empty entry or the repository either.
-  const key = pathKey(base, platform);
-  if (key !== undefined) env[key] = safePathEntries(root, base, platform).join(platform === 'win32' ? win32.delimiter : posix.delimiter);
+  // On Windows the name is case-insensitive and an env object can hold both PATH and Path: every spelling is
+  // replaced by one, so no unfiltered copy reaches the child.
+  const keys = pathKeys(base, platform);
+  for (const k of keys) delete env[k];
+  if (keys.length) env[keys[0]!] = safePathEntries(root, base, platform).join(platform === 'win32' ? win32.delimiter : posix.delimiter);
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_OPTIONAL_LOCKS = '0';
   env.GIT_NO_LAZY_FETCH = '1';
+  // No transport at all: unlike `-c protocol.allow=never`, which a repository's `protocol.<name>.allow=always`
+  // overrides (per-protocol config wins), this list beats every config. No protocol is named "none".
+  env.GIT_ALLOW_PROTOCOL = 'none';
   // A repository's refs/replace/ could make a commit or blob read as another one.
   env.GIT_NO_REPLACE_OBJECTS = '1';
   env.GIT_CEILING_DIRECTORIES = dirname(root);
@@ -131,9 +140,16 @@ export async function resolveGit(root: string, env: NodeJS.ProcessEnv = process.
   return undefined;
 }
 
-/** The PATH variable's name in `env` (`Path` on Windows is common), or undefined. */
-function pathKey(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
-  return Object.keys(env).find((k) => (platform === 'win32' ? k.toUpperCase() === 'PATH' : k === 'PATH'));
+/**
+ * The PATH variable's names in `env`: on Windows every spelling (`PATH`, `Path`, …; an exact `PATH` first, then
+ * `Path`, then the rest), elsewhere only `PATH`.
+ */
+export function pathKeys(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] {
+  if (platform !== 'win32') return Object.prototype.hasOwnProperty.call(env, 'PATH') ? ['PATH'] : [];
+  const rank = (k: string) => (k === 'PATH' ? 0 : k === 'Path' ? 1 : 2);
+  return Object.keys(env)
+    .filter((k) => k.toUpperCase() === 'PATH')
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 /**
@@ -143,7 +159,7 @@ function pathKey(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | un
 export function safePathEntries(root: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
   const windows = platform === 'win32';
   const p = windows ? win32 : posix;
-  const key = pathKey(env, platform);
+  const key = pathKeys(env, platform)[0];
   const pathVar = (key !== undefined ? env[key] : undefined) ?? '';
   const fold = (s: string) => (windows || platform === 'darwin' ? s.toLowerCase() : s);
   const real = (s: string) => {
@@ -245,32 +261,53 @@ export class Git {
     ];
   }
 
-  /** Runs git with the hardened prefix; resolves with its output, rejects with GitError on a failure exit unless `ok` allows the code. */
-  async run(args: readonly string[], opts: { input?: string; ok?: readonly number[]; maxBytes?: number; extra?: readonly string[] } = {}): Promise<{ code: number; stdout: Buffer; stderr: string }> {
+  /**
+   * Runs git with the hardened prefix; resolves with its output, rejects with GitError on a failure exit unless `ok`
+   * allows the code, once the output passes `maxBytes` (the child is killed, and nothing more is kept), or after
+   * `timeoutMs`. With `exact`, `maxBytes` is the expected size (cat-file): the output goes straight into one buffer
+   * of that size, so a blob batch is held once, not as chunks plus their concatenation.
+   */
+  async run(args: readonly string[], opts: { input?: string; ok?: readonly number[]; maxBytes?: number; exact?: boolean; extra?: readonly string[]; timeoutMs?: number } = {}): Promise<{ code: number; stdout: Buffer; stderr: string }> {
     const argv = [...(await this.prefix()), ...(opts.extra ?? []), ...args];
     const exe = await this.executable();
     return new Promise((resolvePromise, reject) => {
       const child = spawn(exe, argv, { cwd: this.root, env: this.env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-      const out: Buffer[] = [];
+      const max = opts.maxBytes ?? GIT_LIMITS.listingBytes;
+      const into = opts.exact ? Buffer.allocUnsafe(max) : undefined;
+      const chunks: Buffer[] = [];
       let size = 0;
       let err = '';
-      const max = opts.maxBytes ?? GIT_LIMITS.listingBytes;
+      let settled = false;
+      const fail = (e: GitError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        chunks.length = 0;
+        child.kill('SIGKILL');
+        reject(e);
+      };
+      const timeoutMs = opts.timeoutMs ?? GIT_LIMITS.callMs;
+      const timer = setTimeout(() => fail(new GitError(`git ${args[0]}: no answer after ${Math.round(timeoutMs / 1000)} s`, null, '')), timeoutMs);
       child.stdout.on('data', (b: Buffer) => {
-        size += b.length;
-        if (size > max) {
-          child.kill();
-          reject(new GitError(`git ${args[0]}: output larger than ${max} bytes`, null, ''));
+        if (settled) return;
+        if (size + b.length > max) {
+          fail(new GitError(`git ${args[0]}: output larger than ${max} bytes`, null, ''));
           return;
         }
-        out.push(b);
+        if (into) b.copy(into, size);
+        else chunks.push(b);
+        size += b.length;
       });
       child.stderr.on('data', (b: Buffer) => {
         if (err.length < 64_000) err += b.toString('utf8');
       });
-      child.on('error', (e) => reject(new GitError(`git couldn't be run: ${e.message}`, null, '')));
+      child.on('error', (e) => fail(new GitError(`git couldn't be run: ${e.message}`, null, '')));
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         const c = code ?? -1;
-        if (c === 0 || opts.ok?.includes(c)) resolvePromise({ code: c, stdout: Buffer.concat(out), stderr: err });
+        if (c === 0 || opts.ok?.includes(c)) resolvePromise({ code: c, stdout: into ? into.subarray(0, size) : chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, size), stderr: err });
         else reject(new GitError(`git ${args[0]} failed (${c}): ${err.trim().split('\n')[0] ?? ''}`, c, err));
       });
       child.stdin.on('error', () => {});
@@ -368,7 +405,14 @@ export class Git {
     const extra = await this.filterGuard();
     // --ignore-submodules=all: git would otherwise look inside each submodule's working tree (its config, its
     // fsmonitor) to see whether it is dirty. Committed mode still lists submodule pointer changes (not counted).
-    return parseRaw((await this.run(['diff', '--raw', '-z', '--no-abbrev', '-M', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--end-of-options', mergeBase, '--'], { extra })).stdout);
+    const entries = parseRaw((await this.run(['diff', '--raw', '-z', '--no-abbrev', '-M', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--end-of-options', mergeBase, '--'], { extra })).stdout);
+    // --ignore-submodules=all hides gitlink changes altogether, committed ones too. The index's gitlinks against the
+    // merge-base (`--cached`: no working tree, so no submodule is looked inside) add them back: a submodule moved on
+    // the branch, or staged, counts (§5.1). A submodule only checked out at another commit isn't listed.
+    const listed = new Set(entries.map((e) => e.path));
+    const cached = parseRaw((await this.run(['diff', '--cached', '--raw', '-z', '--no-abbrev', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--end-of-options', mergeBase, '--'], { extra })).stdout);
+    for (const e of cached) if ((e.oldMode === '160000' || e.newMode === '160000') && !listed.has(e.path)) entries.push(e);
+    return entries;
   }
 
   /** The global options for working tree reads, or throws WorkingTreeRefused. */
@@ -478,7 +522,7 @@ export class Git {
     }
     if (!wanted.length) return { bytes, skipped };
     const max = wanted.reduce((n, id) => n + info.get(id)!.size + 200, 0);
-    const out = (await this.run(['cat-file', '--batch'], { input: wanted.map((id) => `${id}\n`).join(''), maxBytes: max })).stdout;
+    const out = (await this.run(['cat-file', '--batch'], { input: wanted.map((id) => `${id}\n`).join(''), maxBytes: max, exact: true })).stdout;
     let at = 0;
     while (at < out.length) {
       const nl = out.indexOf(10, at);
@@ -487,7 +531,8 @@ export class Git {
       const m = /^([0-9a-f]{40,64}) (\w+) (\d+)$/.exec(header);
       if (!m) break;
       const size = Number(m[3]);
-      bytes.set(m[1]!, new Uint8Array(out.subarray(nl + 1, nl + 1 + size)));
+      // Views into the one output buffer, not copies: every byte of it is a wanted blob.
+      bytes.set(m[1]!, out.subarray(nl + 1, nl + 1 + size));
       at = nl + 1 + size + 1;
     }
     for (const id of wanted) if (!bytes.has(id)) skipped.set(id, 'missing');
@@ -495,15 +540,18 @@ export class Git {
   }
 
   /**
-   * A working tree file's bytes (the new side in working tree mode): lstat first and no links, its real path
-   * inside the root, a regular file only, opened without blocking (an untracked FIFO), size checked first.
+   * A working tree file's bytes (the new side in working tree mode): a path that passes `isSafeFsPath`, lstat first
+   * and no links, its real path inside the root, a regular file only, opened without blocking (an untracked FIFO),
+   * size checked first.
    */
-  async readWorkingFile(rel: string): Promise<{ bytes: Uint8Array } | { error: 'missing' | 'link' | 'not-a-file' | 'outside' | 'too-large' | 'budget' }> {
-    if (!isSafeRepoPath(rel)) return { error: 'outside' };
+  async readWorkingFile(rel: string): Promise<{ bytes: Uint8Array } | { error: 'unsupported' | 'missing' | 'link' | 'directory' | 'not-a-file' | 'outside' | 'too-large' | 'budget' }> {
+    // The file system rule: no device names, trailing dots or spaces, or ":" (NTFS streams) on any OS.
+    if (!isSafeFsPath(rel)) return { error: 'unsupported' };
     const abs = join(this.root, ...rel.split('/'));
     const st = await lstat(abs).catch(() => undefined);
     if (!st) return { error: 'missing' };
     if (st.isSymbolicLink()) return { error: 'link' };
+    if (st.isDirectory()) return { error: 'directory' };
     if (!st.isFile()) return { error: 'not-a-file' };
     const real = await realpath(abs).catch(() => undefined);
     const rootReal = await realpath(this.root).catch(() => this.root);

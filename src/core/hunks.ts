@@ -34,9 +34,10 @@ export const DIFF_LIMITS = {
 export const MAX_COMPARE_BYTES = 10 * 1024 * 1024;
 
 /**
- * The one change a file too large to read counts as (a side over MAX_COMPARE_BYTES), the same in the extension and
- * the checker: its key comes from the path alone (there is no text to hash), and it spans each side's lines when
- * the caller knows them (0 when it doesn't: then it has no runs, so nothing can cover it but a trivialFiles match).
+ * The one change a file counts as when its lines can't be compared, the same in the extension and the checker (§5.1):
+ * a side over MAX_COMPARE_BYTES, a binary file, a symlink, a submodule, a type change or an unsupported path. Its key
+ * comes from the path alone (there is no text to hash), and it spans each side's lines when the caller knows them (0
+ * when it doesn't: then it has no runs, so nothing can cover it but a trivialFiles match).
  */
 export function tooLargeChange(path: string, oldLines: number, newLines: number): ChangeBlock {
   const old = oldLines > 0 ? { start: 1, end: oldLines } : null;
@@ -54,6 +55,25 @@ export function tooLargeChange(path: string, oldLines: number, newLines: number)
     oldLen: Math.max(0, oldLines),
     newLen: Math.max(0, newLines),
   };
+}
+
+// ---- what a side holds (§5.1) ----
+
+/** Binary as git decides it: a NUL byte in the first 8,000 bytes. */
+export function isBinary(b: Uint8Array | undefined): boolean {
+  if (!b) return false;
+  const n = Math.min(b.length, 8000);
+  for (let i = 0; i < n; i++) if (b[i] === 0) return true;
+  return false;
+}
+
+const LFS_HEAD = 'version https://git-lfs.github.com/spec/v1';
+
+/** A Git LFS pointer: at most 1 KB, starting with git-lfs's version line. Left out of coverage ("not counted"). */
+export function isLfsPointer(b: Uint8Array | undefined): boolean {
+  if (!b || b.length > 1024 || b.length < LFS_HEAD.length) return false;
+  for (let i = 0; i < LFS_HEAD.length; i++) if (b[i] !== LFS_HEAD.charCodeAt(i)) return false;
+  return true;
 }
 
 // ---- decoding (§5.2 step 2) ----
