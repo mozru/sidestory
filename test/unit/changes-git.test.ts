@@ -328,6 +328,68 @@ describe('the base a sidestory on the branch gives (§11.4)', () => {
     expect(picked.snapshot!.base.source).toBe('pick');
     picked.dispose();
   });
+  it('never a commit id, and never HEAD itself (`base: "feature"` on feature): the default chain then', async () => {
+    const self = new Comparison(cliRepo(), opts({ sidestoryBase: () => 'feature' }));
+    await self.refresh();
+    expect(self.snapshot!.base).toMatchObject({ spec: 'main', source: 'fallback' });
+    self.dispose();
+    const sha = git('rev-parse', 'main').trim();
+    const byId = new Comparison(cliRepo(), opts({ sidestoryBase: () => sha }));
+    await byId.refresh();
+    expect(byId.snapshot!.base.source).toBe('fallback');
+    byId.dispose();
+  });
+});
+
+describe('the same comparison keeps its snapshot', () => {
+  it('a recompute that changes nothing keeps the Snapshot object and fires no change; a real change does', async () => {
+    const repo = cliRepo();
+    const c = new Comparison(repo, opts());
+    let changes = 0;
+    let rechecks = 0;
+    c.onDidChange(() => changes++);
+    c.onDidRecheck(() => rechecks++);
+    await c.refresh();
+    const first = c.snapshot!;
+    expect(changes).toBe(1);
+    await c.refresh();
+    await c.refresh(true);
+    expect(c.snapshot).toBe(first);
+    expect(changes).toBe(1);
+    expect(rechecks).toBe(2);
+    // Another base: another snapshot.
+    const other = new Comparison(repo, opts({ setting: () => 'main' }));
+    await other.refresh();
+    expect(other.snapshot).not.toBe(first);
+    other.dispose();
+    c.dispose();
+  });
+  it('the same files with other details (uncommitted now): the same object, updated, and a change', async () => {
+    const repo = cliRepo();
+    const c = new Comparison(repo, opts({ mode: () => 'workingTree' }));
+    let changes = 0;
+    c.onDidChange(() => changes++);
+    await c.refresh();
+    const first = c.snapshot!;
+    const touched = first.entries.find((e) => e.status === 'M')!;
+    (repo.state as { workingTreeChanges: unknown[] }).workingTreeChanges = [{ uri: Uri.file(join(dir, touched.path)), originalUri: Uri.file(join(dir, touched.path)), renameUri: undefined, status: 5 }];
+    await c.refresh();
+    expect(c.snapshot).toBe(first);
+    expect(first.uncommitted).toBe(true);
+    expect(changes).toBe(2);
+    (repo.state as { workingTreeChanges: unknown[] }).workingTreeChanges = [];
+    c.dispose();
+  });
+  it('an unchanged problem (a base not found) is said once', async () => {
+    const c = new Comparison(cliRepo(), opts({ pick: () => 'devlop' }));
+    let changes = 0;
+    c.onDidChange(() => changes++);
+    await c.refresh();
+    await c.refresh(true);
+    expect(c.state).toEqual({ kind: 'baseNotFound', spec: 'devlop' });
+    expect(changes).toBe(1);
+    c.dispose();
+  });
 });
 
 describe('counting commits', () => {
@@ -369,6 +431,19 @@ describe('the sidestory-git: provider (§4.5)', () => {
     // The checker's rule: Windows device names and segments ending in a dot or a space.
     for (const bad of ['con', 'src/nul.txt', 'COM1/x', 'docs/a.', 'a /b']) expect(isSafeRepoPath(bad), bad).toBe(false);
     expect(isSafeRepoPath('console/x.ts')).toBe(true);
+  });
+  it('one id per root, however many wrapper objects the git API hands out', () => {
+    const ids = new RepoIds(memento() as never);
+    const a = cliRepo();
+    const b = cliRepo(); // the same repository, another wrapper
+    const id = ids.idOf(a);
+    expect(ids.idOf(b)).toBe(id);
+    for (let i = 0; i < 5; i++) ids.idOf(cliRepo());
+    expect(ids.size).toBe(1);
+    expect(ids.repo(ids.idOf(a))).toBe(a);
+    ids.forget(b);
+    expect(ids.repo(ids.idOf(a))).toBe(a); // asked again after closing: known again
+    expect(ids.size).toBe(1);
   });
   it('the same repository gets the same id across reloads (the salt is kept)', () => {
     const m = memento();
