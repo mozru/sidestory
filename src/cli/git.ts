@@ -14,12 +14,13 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { MAX_COMPARE_BYTES } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase } from '../core/manifest.ts';
 import type { RefReader } from '../extension/changes/base.ts';
 
 export const GIT_LIMITS = {
-  /** One blob or working tree file (MAX_CODE_BYTES). */
-  blobBytes: 10 * 1024 * 1024,
+  /** One blob or working tree file: the cut-off the extension uses too (MAX_COMPARE_BYTES). */
+  blobBytes: MAX_COMPARE_BYTES,
   /** Bytes read per run (§4.6). */
   runBytes: 200 * 1024 * 1024,
   /** Output of a listing call (diff --raw, ls-files, ls-tree). */

@@ -8,9 +8,9 @@ import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, textLines, type ChangeBlock } from '../core/hunks.ts';
-import { explainerNameSchema, FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
-import { belongs, isArchivePath } from '../core/membership.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock } from '../core/hunks.ts';
+import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
+import { belongs, countedPath, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { contentSimilarity } from '../core/similarity.ts';
 import { normalizeLines, PreparedText } from '../core/text.ts';
@@ -129,11 +129,12 @@ interface Sidestory {
   ownMergeBase?: string;
 }
 
-/** `<prefix>.sidestory/<name>/<rest>` for a real sidestory folder name, else undefined. */
-function sidestoryOf(path: string): { prefix: string; name: string; rest: string } | undefined {
-  const m = /^(?:(.*)\/)?\.sidestory\/([^/]+)\/(.+)$/.exec(path);
-  if (!m || m[2] === 'archive' || !explainerNameSchema.safeParse(m[2]).success) return undefined;
-  return { prefix: m[1] ?? '', name: m[2]!, rest: m[3]! };
+/** `<prefix>/.sidestory/<name>/<rest>` for a real sidestory folder (`sidestoryFolderOf`), else undefined. */
+function sidestoryOf(path: string): { prefix: string; folder: string; rest: string } | undefined {
+  const folder = sidestoryFolderOf(path);
+  if (!folder) return undefined;
+  const at = folder.lastIndexOf('/.sidestory/');
+  return { prefix: at < 0 ? '' : folder.slice(0, at), folder, rest: path.slice(folder.length + 1) };
 }
 
 const rel = (prefix: string, file: string) => (prefix ? `${prefix}/${file}` : file);
@@ -280,7 +281,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   let classified = sorted.map((e) => {
     if (unsafe(e)) e.kind = 'unsupported';
     else if (isArchivePath(e.path) || (e.oldPath !== undefined && isArchivePath(e.oldPath))) e.kind = 'archive';
-    else if (sidestoryOf(e.path)) e.kind = 'sidestory';
+    else if (!countedPath(e.path)) e.kind = 'sidestory';
     else if (e.status === 'T' || (e.oldMode === '120000') !== (e.newMode === '120000') && e.oldMode !== '000000' && e.newMode !== '000000') e.kind = 'type-change';
     else if (e.oldMode === '160000' || e.newMode === '160000') e.kind = 'submodule';
     else if (e.oldMode === '120000' || e.newMode === '120000') e.kind = 'link';
@@ -486,7 +487,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     return {
       path: e.path,
       ...(e.oldPath !== undefined ? { oldPath: e.oldPath } : {}),
-      changes: e.diff?.changes ?? [tooLargeChange(e.path)],
+      changes: e.diff?.changes ?? [tooLargeChange(e.path, 0, 0)],
       newLine: (l) => newLines[l - 1] ?? '',
       oldLine: (l) => oldLines[l - 1] ?? '',
       trivialFile: isTrivialFile(e.path),
@@ -510,7 +511,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const at = block.new ? block.new.start : e.newMode === '000000' ? (block.old?.start ?? 1) : Math.max(1, Math.min(block.newAt, e.diff?.newLines ?? 1));
       const where = block.new ? `lines ${span(block.new)}`.replace(/^lines (\d+)$/, 'line $1') : e.newMode === '000000' ? 'deleted file' : `deleted at line ${at}`;
       if (e.kind === 'too-large') {
-        if (c.state !== 'trivial') add('warning', file, 'unexplained', `${f.path} is too large to compare (over 10 MB); it counts as one unexplained change. Mark it in trivialFiles if it needs no explanation.`, 1);
+        if (c.state !== 'trivial') add('warning', file, 'unexplained', `${f.path} is too large to compare (over ${MAX_COMPARE_BYTES / (1024 * 1024)} MB); it counts as one unexplained change. Mark it in trivialFiles if it needs no explanation.`, 1);
         return;
       }
       if (c.state === 'unexplained') {
@@ -624,10 +625,6 @@ function kindLabel(k: FileKind): string {
   return { binary: 'binary', lfs: 'LFS', submodule: 'submodule', link: 'link', mode: 'mode only', unsupported: 'unsupported path', 'type-change': 'type change', missing: 'missing object', text: 'text', 'line-endings': 'line endings only', sidestory: 'sidestory', archive: 'archive', 'too-large': 'too large' }[k];
 }
 
-function tooLargeChange(path: string): ChangeBlock {
-  return { key: `large-${path.length}-${[...path].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261).toString(16)}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0 };
-}
-
 const compactLines = (lines: number[]) => {
   const out: string[] = [];
   for (let i = 0; i < lines.length; ) {
@@ -641,12 +638,13 @@ const compactLines = (lines: number[]) => {
 
 /** A sidestory's manifest and page: from the working tree, or from the head commit (falling back to disk when `diskToo`). */
 async function readSidestory(git: Git, folder: string, atCommit: string | undefined, diskToo: boolean): Promise<{ manifestText: string; html: string } | undefined> {
-  const files = [`${folder}/manifest.json`, `${folder}/sidestory.html`];
+  // Both files or neither (isCompleteSidestory): a manifest without its page counts nothing yet.
+  const files = SIDESTORY_FILES.map((f) => `${folder}/${f}`);
   const decode = (b: Uint8Array) => decodeUtf8(b) ?? decodeLatin1(b);
   if (atCommit) {
     const t = await git.lsTree(atCommit, files);
     const ids = files.map((f) => t.get(f));
-    if (ids.every((i) => i && REGULAR.has(i.mode))) {
+    if (isCompleteSidestory(SIDESTORY_FILES.filter((_, k) => ids[k] && REGULAR.has(ids[k].mode)))) {
       const b = await git.blobs(ids.map((i) => i!.id));
       const [m, h] = ids.map((i) => b.bytes.get(i!.id));
       if (m && h) return { manifestText: decode(m), html: decode(h) };

@@ -121,6 +121,12 @@ describe('§6.3: trivial', () => {
     expect(r.files.map((f) => f.changes[0]!.state)).toEqual(['trivial', 'trivial', 'unexplained']);
     expect(r.totals).toEqual({ changes: 3, explained: 0, trivial: 2, left: 1, needsLook: 0, files: 3 });
   });
+  it('files with no change (line endings only, or none) are not in totals.files', () => {
+    const crlf = diffTexts('src/b.ts', 'a\nb\n', 'a\r\nb');
+    expect(crlf.lineEndingsOnly).toBe(true);
+    const r = coverage([file('src/a.ts', old10, addedOnly), { path: 'src/b.ts', changes: crlf.changes, newLine: () => '', trivialFile: false }, file('src/c.ts', old10, old10)], []);
+    expect(r.totals).toMatchObject({ changes: 1, files: 1 });
+  });
   it('a change inside trivial anchors is trivial, with their why', () => {
     const c = one(file('src/a.ts', old10, addedOnly), [T('trivial-1', 'head', 4, 5, { trivial: true, why: 'import order' })]);
     expect(c).toMatchObject({ state: 'trivial', why: ['import order'] });

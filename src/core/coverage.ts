@@ -120,6 +120,12 @@ interface Cover {
   trivial: boolean;
 }
 
+/**
+ * Each change's coverage, per file, with the totals. `totals.files` counts files with at least one change: a file
+ * whose diff has none (only line endings or a final newline differ, `FileDiff.lineEndingsOnly`, or nothing at all)
+ * is never in the totals, so callers may pass such files or leave them out and get the same numbers. Which files
+ * are passed at all is `countedPath` (src/core/membership.ts).
+ */
 export function coverage(files: readonly FileInput[], targets: readonly Target[]): { files: FileCoverage[]; totals: Totals; targets: TargetUse[] } {
   // Targets by (path, side); lost ones cover nothing and are left out.
   const bySide = new Map<string, number[]>();
@@ -150,8 +156,9 @@ export function coverage(files: readonly FileInput[], targets: readonly Target[]
   });
   for (const p of perChange) if ([...p.users].some((i) => uses[i]!.broad)) p.cov.broad = true;
 
-  const totals: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: files.length };
+  const totals: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   for (const f of out) {
+    if (f.changes.length) totals.files++;
     for (const c of f.changes) {
       if (c.state === 'explained') f.explained++;
       else if (c.state === 'trivial') f.trivial++;

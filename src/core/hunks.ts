@@ -17,6 +17,36 @@ export const DIFF_LIMITS = {
   mergeGap: 1,
 } as const;
 
+/**
+ * The most either tool reads of one side of a changed file (MAX_CODE_BYTES, §4.6). A file with a side past it isn't
+ * read at all and counts as one change (`tooLargeChange`); files up to it but past `DIFF_LIMITS.maxBytes` are read
+ * and count as one change spanning both sides (`FileDiff.tooLarge`).
+ */
+export const MAX_COMPARE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * The one change a file too large to read counts as (a side over MAX_COMPARE_BYTES), the same in the extension and
+ * the checker: its key comes from the path alone (there is no text to hash), and it spans each side's lines when
+ * the caller knows them (0 when it doesn't: then it has no runs, so nothing can cover it but a trivialFiles match).
+ */
+export function tooLargeChange(path: string, oldLines: number, newLines: number): ChangeBlock {
+  const old = oldLines > 0 ? { start: 1, end: oldLines } : null;
+  const nu = newLines > 0 ? { start: 1, end: newLines } : null;
+  return {
+    key: `large-${contentHash(path, [], [])}`,
+    old,
+    new: nu,
+    removedRuns: old ? [old] : [],
+    addedRuns: nu ? [nu] : [],
+    added: Math.max(0, newLines),
+    removed: Math.max(0, oldLines),
+    oldAt: 1,
+    newAt: 1,
+    oldLen: Math.max(0, oldLines),
+    newLen: Math.max(0, newLines),
+  };
+}
+
 // ---- decoding (§5.2 step 2) ----
 
 /**

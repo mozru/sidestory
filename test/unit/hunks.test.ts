@@ -1,6 +1,6 @@
 // What a change is and the line maps (src/core/hunks.ts, docs/CHANGES-PLAN.md §5.2–5.3, tests of §16.1).
 import { describe, expect, it } from 'vitest';
-import { decodePair, DIFF_LIMITS, diffTexts, newToOld, oldToNew, textLines, type FileDiff } from '../../src/core/hunks.ts';
+import { decodePair, DIFF_LIMITS, diffTexts, MAX_COMPARE_BYTES, newToOld, oldToNew, textLines, tooLargeChange, type FileDiff } from '../../src/core/hunks.ts';
 
 const L = (...lines: string[]) => lines.map((l) => `${l}\n`).join('');
 const range = (n: number, prefix = 'line') => Array.from({ length: n }, (_, i) => `${prefix} ${i + 1}`);
@@ -238,5 +238,16 @@ describe('decoding', () => {
     expect(textLines('a')).toEqual(['a']);
     expect(textLines('a\n')).toEqual(['a']);
     expect(textLines('a\n\n')).toEqual(['a', '']);
+  });
+});
+
+describe('too large to read', () => {
+  it('one change keyed by the path alone, spanning the lines the caller knows', () => {
+    expect(MAX_COMPARE_BYTES).toBe(10 * 1024 * 1024);
+    const a = tooLargeChange('big.bin.txt', 0, 0);
+    expect(a).toMatchObject({ old: null, new: null, added: 0, removed: 0, removedRuns: [], addedRuns: [] });
+    expect(tooLargeChange('big.bin.txt', 3, 5).key).toBe(a.key);
+    expect(tooLargeChange('other.txt', 0, 0).key).not.toBe(a.key);
+    expect(tooLargeChange('big.bin.txt', 3, 5)).toMatchObject({ old: { start: 1, end: 3 }, new: { start: 1, end: 5 }, added: 5, removed: 3, oldLen: 3, newLen: 5 });
   });
 });
