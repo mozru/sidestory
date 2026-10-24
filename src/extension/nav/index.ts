@@ -217,11 +217,11 @@ export class SidestoryIndex implements vscode.Disposable {
   /**
    * Names on the primary path, top first (§4.3); just the sidestory when it is a top or unknown. Anchored at the top:
    * a path longer than `max` keeps its first `max` names (so it may stop short of the sidestory). `max` must be at
-   * most PRIMARY_PATH_PREFIX (32), or the walk is no longer bounded (every caller here passes 17 or less).
+   * most PRIMARY_PATH_PREFIX (32), the bound that keeps the walk short, so a larger `max` is clamped to it (every
+   * caller here passes 17 or less).
    */
   primaryPath(e: IndexEntry, max?: number): string[] {
-    console.assert(max === undefined || max <= PRIMARY_PATH_PREFIX, `primaryPath: max ${max} > ${PRIMARY_PATH_PREFIX} is an unbounded walk`);
-    const p = this.packageOf(e)?.graph.primaryPath(e.ref.name, max);
+    const p = this.packageOf(e)?.graph.primaryPath(e.ref.name, max === undefined ? undefined : Math.min(max, PRIMARY_PATH_PREFIX));
     return p ? [...p] : [e.ref.name];
   }
 
