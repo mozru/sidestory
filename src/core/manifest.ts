@@ -186,6 +186,21 @@ export function isValidTrivialGlob(p: string): boolean {
 }
 
 /**
+ * A `trivialFiles` glob that matches exactly one path's shape, for a path that isn't a valid glob itself (an
+ * unsupported path: control characters, a backslash, `[`, `{`): each character a glob refuses becomes `?`, which
+ * matches any one character in a segment, and a `.` or `..` segment becomes `?` or `??`. Undefined when no valid glob
+ * can match it (an empty segment, a leading `/`, over the length cap).
+ */
+export function trivialGlobFor(path: string): string | undefined {
+  if (path.startsWith('/')) return undefined;
+  const glob = path
+    .split('/')
+    .map((seg) => (seg === '.' ? '?' : seg === '..' ? '??' : seg.replace(/[\\\x00-\x1f\x7f[\]{}!]/g, '?')))
+    .join('/');
+  return isValidTrivialGlob(glob) ? glob : undefined;
+}
+
+/**
  * The version a manifest's contents need (§3.5): 3 once any anchor (or part) is on the base side, else 2. Writers
  * set `version = max(current, required)`.
  */
@@ -306,6 +321,9 @@ export function parseWhy(v: unknown): { value?: string; error?: string } {
  * Parses a manifest. A broken anchor becomes a diagnostic and the rest still load;
  * only a broken top level (or an unknown future version) fails the whole manifest.
  */
+/** The most bytes a manifest is read with (the extension and the checker). */
+export const MAX_MANIFEST_BYTES = 1_000_000;
+
 export function parseManifest(json: string): ParseResult {
   if (json.length > LIMITS.manifestChars) return { ok: false, code: 'too-large', error: `manifest.json is longer than ${LIMITS.manifestChars} characters` };
   let raw: unknown;

@@ -1,5 +1,5 @@
 // The checker and the extension count the same changes (docs/CHANGES-PLAN.md §5.1, §6, §13): binary files, symlinks,
-// submodules and unsupported paths are one change each, Git LFS pointers aren't counted, Windows device names are
+// submodules, Git LFS files, pure renames and unsupported paths are one change each, Windows device names are
 // read by blob id but refused on disk, and an unstaged rename is paired by content. The checker runs on a real
 // repository (src/cli/coverage.ts); the extension's coverage runs through CoverageService's own source over a git
 // API stand-in backed by the same repository, with entries listed as comparison.ts lists them.
@@ -127,7 +127,7 @@ function extensionStates(r: Result): Record<string, string> {
 const pick = (t: { changes: number; explained: number; trivial: number; left: number }) => ({ changes: t.changes, explained: t.explained, trivial: t.trivial, left: t.left });
 
 describe.skipIf(process.platform === 'win32')('the checker and the extension count the same changes', () => {
-  it('committed: binary, link, submodule and unsupported paths are one change each; LFS is not counted; a device name is a blob', async () => {
+  it('committed: binary, Git LFS, link, submodule and unsupported paths are one change each; a device name is a blob', async () => {
     const c = await checker(committed, true);
     const r = await extension(committed, false);
     const kind = (p: string) => c.files.find((f) => f.path === p)?.kind;
@@ -139,7 +139,8 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(kind('video.mp4')).toBe('lfs');
     expect(kind('con')).toBe('text');
     expect(checkerStates(c)).toMatchObject({ 'assets/logo.png': 'trivial', 'data.bin': 'unexplained', 'readme-link': 'unexplained', 'vendor/lib': 'unexplained', [WEIRD]: 'unexplained', con: 'unexplained' });
-    expect(checkerStates(c)['video.mp4']).toBeUndefined();
+    expect(checkerStates(c)['video.mp4']).toBe('unexplained');
+    expect(r.files.get('video.mp4')!.whole).toBe('lfs');
     expect(extensionStates(r)).toEqual(checkerStates(c));
     expect(pick(r.totals)).toEqual(pick(c.totals));
     expect(r.files.get('readme-link')!.whole).toBe('link');
@@ -229,5 +230,49 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(extensionStates(r)).toEqual(cs);
     expect(pick(r.totals)).toEqual(pick(c.totals));
     expect(r.files.get('.sidestory/archive/2026-01-02-landed/extra.js')!.whole).toBe('archive');
+  });
+
+  it('a move that changes no line is one change; an archived manifest passes only as the archive job rewrites it', async () => {
+    const dir = copy();
+    const commit = (msg: string) => {
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+    };
+    const manifest = (title: string) => ({ version: 3, title, base: 'main', anchors: {} });
+    git(dir, 'checkout', '-q', 'main');
+    for (const name of ['landed', 'landed2']) {
+      mkdirSync(join(dir, `.sidestory/${name}`), { recursive: true });
+      writeFileSync(join(dir, `.sidestory/${name}/manifest.json`), JSON.stringify(manifest(name), null, 2));
+      writeFileSync(join(dir, `.sidestory/${name}/sidestory.html`), `<p>${name}</p>\n`);
+    }
+    commit('Two sidestories land');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    const mb = git(dir, 'rev-parse', 'main').trim();
+    // Pure moves: switched off by directory, or hidden in a folder that isn't a sidestory.
+    mkdirSync(join(dir, 'src/disabled'), { recursive: true });
+    git(dir, 'mv', 'README.md', 'src/disabled/README.md');
+    mkdirSync(join(dir, '.sidestory/notes'), { recursive: true });
+    git(dir, 'mv', 'docs/notes.md', '.sidestory/notes/notes.md');
+    // Archived as the job writes it (base, head, landed added), and one with a payload field.
+    mkdirSync(join(dir, '.sidestory/archive'), { recursive: true });
+    for (const [name, extra] of [['landed', {}], ['landed2', { payload: 'require("x")' }]] as const) {
+      const to = `.sidestory/archive/2026-01-02-${name}`;
+      git(dir, 'mv', `.sidestory/${name}`, to);
+      writeFileSync(join(dir, to, 'manifest.json'), JSON.stringify({ ...manifest(name), base: mb, head: mb, landed: { branch: 'feature', at: '2026-01-02' }, ...extra }, null, 2));
+    }
+    commit('Moves and archives');
+
+    const c = await checker(dir, true);
+    const r = await extension(dir, false);
+    const cs = checkerStates(c);
+    expect(c.files.find((f) => f.path === 'src/disabled/README.md')).toMatchObject({ kind: 'rename', oldPath: 'README.md' });
+    expect(cs['src/disabled/README.md']).toBe('unexplained');
+    expect(cs['.sidestory/notes/notes.md']).toBe('unexplained');
+    expect(cs['.sidestory/archive/2026-01-02-landed2/manifest.json']).toBe('unexplained');
+    expect(Object.keys(cs).filter((p) => p.includes('landed') && !p.endsWith('landed2/manifest.json'))).toEqual([]);
+    expect(extensionStates(r)).toEqual(cs);
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+    expect(r.files.get('src/disabled/README.md')!.diff.changes[0]!.renamedFrom).toBe('README.md');
   });
 });

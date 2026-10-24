@@ -1,6 +1,6 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
-import { archiveMoveCandidates, belongs, countedChange, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
 import { isSafeFsPath, isSafeRepoPath, pathProblem } from '../../src/core/repo-path.ts';
 
 describe('isSafeRepoPath and isSafeFsPath (src/core/repo-path.ts)', () => {
@@ -75,6 +75,23 @@ describe('archiveMoveCandidates (shared by the checker and the extension)', () =
       [ren.path, ren.path, '.sidestory/retry', 'sidestory.html'],
     ]);
     expect(archiveMoveCandidates([del, add], () => false)).toEqual([]);
+  });
+});
+
+describe('isArchivedManifest', () => {
+  const enc = (v: unknown) => new TextEncoder().encode(typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+  const m = { version: 3, title: 'Retry', base: 'main', anchors: { a: { file: 'a.ts', range: { start: 1, end: 2 } } } };
+  const sha = 'a'.repeat(40);
+  it('accepts the archive job\'s rewrite: base, head and landed added or changed, layout and key order free', () => {
+    expect(isArchivedManifest(enc(m), enc({ ...m, base: sha, head: sha, landed: { branch: 'feat', at: '2026-01-02' } }))).toBe(true);
+    expect(isArchivedManifest(enc(m), enc(JSON.stringify({ anchors: m.anchors, title: 'Retry', version: 3, base: sha })))).toBe(true);
+  });
+  it('refuses anything else: a payload field, other anchors, not JSON, not a manifest, too large', () => {
+    expect(isArchivedManifest(enc(m), enc({ ...m, payload: 'x' }))).toBe(false);
+    expect(isArchivedManifest(enc(m), enc({ ...m, anchors: {} }))).toBe(false);
+    expect(isArchivedManifest(enc(m), enc('not json'))).toBe(false);
+    expect(isArchivedManifest(enc(m), enc([1, 2]))).toBe(false);
+    expect(isArchivedManifest(enc(m), new Uint8Array(1_000_001).fill(0x20))).toBe(false);
   });
 });
 

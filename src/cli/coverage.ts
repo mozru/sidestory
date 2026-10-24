@@ -8,9 +8,9 @@ import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, normLine, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock } from '../core/hunks.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, withRenameChange, type ChangeBlock } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
 import { resolveAnchor } from '../core/resolve.ts';
@@ -19,16 +19,17 @@ import { resolveBase } from '../extension/changes/base.ts';
 import type { Finding, Severity } from './check-widgets.ts';
 import { findRepository, Git, GitError, isSafeFsPath, isSafeRepoPath, WorkingTreeRefused, type RawEntry } from './git.ts';
 
-export type FileKind = 'text' | 'binary' | 'lfs' | 'submodule' | 'link' | 'mode' | 'line-endings' | 'sidestory' | 'archive' | 'unsupported' | 'type-change' | 'missing' | 'too-large';
+export type FileKind = 'text' | 'rename' | 'binary' | 'lfs' | 'submodule' | 'link' | 'mode' | 'line-endings' | 'sidestory' | 'archive' | 'unsupported' | 'type-change' | 'missing' | 'too-large';
 
 /**
  * Kinds whose lines can't be compared but which still count, each as ONE change that only a trivialFiles match can
- * cover (`tooLargeChange`, §5.1): so nothing a branch changes can slip past the gate by being binary, a link, a
- * submodule, a type change, a path Sidestory won't read, or under `.sidestory/archive/` (archives are written by the
- * archive job on the default branch, never in a branch). Complete Git LFS pointers on every side, mode-only and
- * line-ending-only changes stay "not counted".
+ * cover (`tooLargeChange`, §5.1): so nothing a branch changes can slip past the gate by being binary, in Git LFS, a
+ * link, a submodule, a type change, a path Sidestory won't read, or under `.sidestory/archive/` (archives are written
+ * by the archive job on the default branch, never in a branch). A pure move ('rename') counts too, as one change any
+ * head-side anchor in the file covers (`withRenameChange`). Only mode-only and line-ending-only changes stay "not
+ * counted".
  */
-export const ONE_CHANGE_KINDS: ReadonlySet<FileKind> = new Set<FileKind>(['too-large', 'binary', 'link', 'submodule', 'type-change', 'unsupported', 'archive']);
+export const ONE_CHANGE_KINDS: ReadonlySet<FileKind> = new Set<FileKind>(['too-large', 'binary', 'lfs', 'link', 'submodule', 'type-change', 'unsupported', 'archive']);
 
 export interface CoverageOptions {
   /** Where to look for the repository when no sidestory is given (--repo, else the working directory). */
@@ -322,18 +323,29 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
 
   // Archiving into a branch (§12.4, way 2: the skill offers it, and it arrives with an ordinary PR): a file of a
   // sidestory that was complete at the merge-base, moved to `<prefix>/.sidestory/archive/<YYYY-MM-DD>-<name>/` with
-  // the same relative path and the same blob (manifest.json may be rewritten: the archive records its commits). Such
+  // the same relative path and the same blob (manifest.json only as the archive job rewrites it: `isArchivedManifest`). Such
   // a move, and the deletion it pairs with, are the explanation moving, not code. Anything else under the archive
   // counts as one change.
   const completeAtBase = new Map<string, Promise<boolean>>();
   const archiveMoves = new Set<Entry>();
   for (const { entry: e, from, folder, file } of archiveMoveCandidates(sorted, isSafeRepoPath)) {
     if (ZERO.test(from.oldId)) continue;
-    if (file !== 'manifest.json' && from.oldId !== e.newId) {
-      // The working tree's side may have no id (or a stale one): compare the bytes on disk with the old blob.
+    // The new side as committed, or on disk in working tree mode (its id may be missing or stale there).
+    const newSide = async () => {
+      if (mode === 'working') {
+        const disk = await git.readWorkingFile(e.path);
+        return 'bytes' in disk ? disk.bytes : undefined;
+      }
+      return ZERO.test(e.newId) ? undefined : (await git.blobs([e.newId])).bytes.get(e.newId);
+    };
+    if (file === 'manifest.json') {
+      // Only as the archive job rewrites it: the old manifest but for base, head and landed (isArchivedManifest).
+      const [old, now] = [(await git.blobs([from.oldId])).bytes.get(from.oldId), await newSide()];
+      if (!old || !now || !isArchivedManifest(old, now)) continue;
+    } else if (from.oldId !== e.newId) {
       if (mode !== 'working') continue;
-      const [disk, old] = [await git.readWorkingFile(e.path), (await git.blobs([from.oldId])).bytes.get(from.oldId)];
-      if (!('bytes' in disk) || !old || !sameBytes(disk.bytes, old)) continue;
+      const [now, old] = [await newSide(), (await git.blobs([from.oldId])).bytes.get(from.oldId)];
+      if (!now || !old || !sameBytes(now, old)) continue;
     }
     if (!completeAtBase.has(folder)) {
       const files = SIDESTORY_FILES.map((n) => `${folder}/${n}`);
@@ -432,10 +444,11 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       e.kind = 'too-large';
       continue;
     }
-    // Left out only when every side is a complete LFS pointer (isLfsChange); binary counts as one change.
+    // Git LFS (every side a complete pointer, isLfsChange) and binary each count as one change.
     if (isLfsChange(o, n)) e.kind = 'lfs';
     else if (isBinary(o) || isBinary(n)) e.kind = 'binary';
-    else if (o && n && sameBytes(o, n)) e.kind = e.oldMode !== e.newMode ? 'mode' : 'line-endings';
+    // The same bytes: mode only or nothing, unless the path changed (a pure rename counts, below).
+    else if (o && n && sameBytes(o, n) && (e.oldPath === undefined || e.oldPath === e.path)) e.kind = e.oldMode !== e.newMode ? 'mode' : 'line-endings';
     oldBytes.set(e, o);
     newBytes.set(e, n);
   }
@@ -462,11 +475,13 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const e of classified) {
     if (e.kind !== 'text') continue;
     const d = decodePair(oldBytes.get(e), newBytes.get(e));
-    const diff = diffTexts(e.path, d.old, d.new);
+    // A rename or copy that changed no line is one change (§5.1): moving a file can switch it off.
+    const diff = withRenameChange(diffTexts(e.path, d.old, d.new), e);
     if (diff.lineEndingsOnly || !diff.changes.length) {
       e.kind = 'line-endings';
       continue;
     }
+    if (diff.changes[0]?.renamedFrom !== undefined) e.kind = 'rename';
     e.diff = { changes: diff.changes, newLines: diff.newLines };
     e.newText = d.new;
     e.oldText = d.old;
@@ -542,7 +557,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   header += sidestories.length ? `; counting ${sidestories.map((s) => s.folder).join(', ')}` : '; no sidestory of this branch yet';
 
   // Counted files, trivialFiles, targets.
-  const counted = classified.filter((e) => e.kind === 'text' || ONE_CHANGE_KINDS.has(e.kind));
+  const counted = classified.filter((e) => e.kind === 'text' || e.kind === 'rename' || ONE_CHANGE_KINDS.has(e.kind));
   const matchers = sidestories.map((s) => ({ s, patterns: s.manifest.trivialFiles ?? [], match: globMatcher(s.manifest.trivialFiles ?? []) }));
   const underPrefix = (prefix: string, path: string) => (prefix ? (path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : undefined) : path);
   for (const { s, patterns } of matchers) {
@@ -643,6 +658,10 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const block = inputs[fi]!.changes[ci]!;
       const at = block.new ? block.new.start : e.newMode === '000000' ? (block.old?.start ?? 1) : Math.max(1, Math.min(block.newAt, e.diff?.newLines ?? 1));
       const where = block.new ? `lines ${span(block.new)}`.replace(/^lines (\d+)$/, 'line $1') : e.newMode === '000000' ? 'deleted file' : `deleted at line ${at}`;
+      if (block.renamedFrom !== undefined) {
+        if (c.state === 'unexplained') add('warning', file, 'unexplained', `${e.status === 'C' ? 'copied' : 'renamed'} from ${block.renamedFrom} with no line changed: a move can switch code off, so it needs a mention. Anchor a step (or a trivial mark) in the file, or list it in trivialFiles.`, 1);
+        return;
+      }
       if (ONE_CHANGE_KINDS.has(e.kind)) {
         if (c.state !== 'trivial') {
           const [code, at, what] = oneChangeFinding(e, root, abs);
@@ -707,7 +726,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     };
   }
 
-  const notCounted = classified.filter((e) => e.kind !== 'text' && !ONE_CHANGE_KINDS.has(e.kind) && e.kind !== 'sidestory' && e.kind !== 'line-endings');
+  const notCounted = classified.filter((e) => e.kind !== 'text' && e.kind !== 'rename' && !ONE_CHANGE_KINDS.has(e.kind) && e.kind !== 'sidestory' && e.kind !== 'line-endings');
   const totals = { ...result.totals, notCounted: notCounted.length };
   const kinds = [...new Set(notCounted.map((e) => kindLabel(e.kind)))];
   const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
@@ -773,6 +792,8 @@ function oneChangeFinding(e: Entry, root: string, abs: (p: string) => string): [
       return ['unexplained', abs(e.path), `${shown} is a submodule whose commit changed`];
     case 'type-change':
       return ['type-change', abs(e.path), `${shown} changed type (a file, a link or a submodule)`];
+    case 'lfs':
+      return ['unexplained', abs(e.path), `${shown} is stored in Git LFS (its pointer changed), so its contents can't be compared`];
     case 'archive':
       return ['archive-changed', abs(e.path), `${shown} is under .sidestory/archive/, which only the archive job writes on the default branch, never a branch`];
     default:
@@ -781,7 +802,7 @@ function oneChangeFinding(e: Entry, root: string, abs: (p: string) => string): [
 }
 
 function kindLabel(k: FileKind): string {
-  return { binary: 'binary', lfs: 'LFS', submodule: 'submodule', link: 'link', mode: 'mode only', unsupported: 'unsupported path', 'type-change': 'type change', missing: 'missing object', text: 'text', 'line-endings': 'line endings only', sidestory: 'sidestory', archive: 'archive', 'too-large': 'too large' }[k];
+  return { rename: 'renamed', binary: 'binary', lfs: 'LFS', submodule: 'submodule', link: 'link', mode: 'mode only', unsupported: 'unsupported path', 'type-change': 'type change', missing: 'missing object', text: 'text', 'line-endings': 'line endings only', sidestory: 'sidestory', archive: 'archive', 'too-large': 'too large' }[k];
 }
 
 const compactLines = (lines: number[]) => {

@@ -57,6 +57,24 @@ export function tooLargeChange(path: string, oldLines: number, newLines: number)
   };
 }
 
+/**
+ * The change a counted rename or copy is when no line changed (§5.1): moving `src/auth.js` to `src/disabled/auth.js`
+ * can switch a module off, so the move itself needs a mention. Its key comes from both paths.
+ */
+export function renameChange(oldPath: string, path: string): ChangeBlock {
+  return { key: `rename-${contentHash(path, [oldPath], [])}`, old: null, new: null, removedRuns: [], addedRuns: [], added: 0, removed: 0, oldAt: 1, newAt: 1, oldLen: 0, newLen: 0, renamedFrom: oldPath };
+}
+
+/**
+ * A file's diff with the rename change added when its path changed and its text didn't (no change, or line endings
+ * only); any other diff as it is. The same rule in the checker and the extension.
+ */
+export function withRenameChange(diff: FileDiff, e: { readonly status: string; readonly path: string; readonly oldPath?: string }): FileDiff {
+  const moved = (e.status === 'R' || e.status === 'C') && e.oldPath !== undefined && e.oldPath !== e.path;
+  if (!moved || diff.tooLarge || diff.changes.length) return diff;
+  return { ...diff, changes: [renameChange(e.oldPath!, e.path)], lineEndingsOnly: false };
+}
+
 // ---- what a side holds (§5.1) ----
 
 /** Binary as git decides it: a NUL byte in the first 8,000 bytes. */
@@ -87,9 +105,9 @@ export function isLfsPointer(b: Uint8Array | undefined): boolean {
 }
 
 /**
- * A change left out of coverage as Git LFS ("not counted", §5.1): every side the file has is a complete pointer (an
- * added or deleted file has one side). A pointer replaced by anything else, or anything replaced by a pointer,
- * is compared as usual (text, binary, or one change).
+ * A Git LFS change (§5.1): every side the file has is a complete pointer (an added or deleted file has one side).
+ * Its contents can't be compared, so it counts as one change that only trivialFiles covers. A pointer replaced by
+ * anything else, or anything replaced by a pointer, is compared as usual (text, binary, or one change).
  */
 export function isLfsChange(oldBytes: Uint8Array | undefined, newBytes: Uint8Array | undefined): boolean {
   if (!oldBytes && !newBytes) return false;
@@ -190,6 +208,11 @@ export interface ChangeBlock {
   /** Lines of the change's region on each side (removed or added lines plus merged unchanged ones). */
   oldLen: number;
   newLen: number;
+  /**
+   * A rename (or copy) that changed no line: the path it came from. It has no lines, and counts as one change that any
+   * head-side anchor or trivial mark in the file covers (§5.1), or a trivialFiles match.
+   */
+  renamedFrom?: string;
 }
 
 export interface FileDiff {

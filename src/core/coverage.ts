@@ -143,7 +143,7 @@ export function coverage(files: readonly FileInput[], targets: readonly Target[]
     const head = bySide.get(`head\u0000${f.path}`) ?? [];
     const base = bySide.get(`base\u0000${f.oldPath ?? f.path}`) ?? [];
     const changes = f.changes.map((c, ci) => {
-      const cov = f.trivialFile ? trivialFileChange(c) : coverChange(f, c, head, base, targets, explains);
+      const cov = f.trivialFile ? trivialFileChange(c) : c.renamedFrom !== undefined ? coverRename(c, head, targets) : coverChange(f, c, head, base, targets, explains);
       perChange.push({ file: fi, change: ci, users: cov.users, cov: cov.cov });
       return cov.cov;
     });
@@ -179,8 +179,30 @@ function isBroad(lines: number, explains: number): boolean {
   return explains > 0 && lines > COVERAGE_LIMITS.broadLines && lines > COVERAGE_LIMITS.broadFactor * explains;
 }
 
+/**
+ * A rename that changed no line (§5.1): one change, covered by any head-side target in the renamed file (a step
+ * that mentions the move, or a trivial mark). It doesn't count toward a target's `explains`.
+ */
+function coverRename(c: ChangeBlock, head: number[], targets: readonly Target[]): { cov: ChangeCoverage; users: Set<number> } {
+  const users = new Set(head);
+  const explaining = head.some((i) => !targets[i]!.trivial);
+  const state: ChangeState = !users.size ? 'unexplained' : explaining ? 'explained' : 'trivial';
+  const whys = [...new Set(head.flatMap((i) => (targets[i]!.trivial && targets[i]!.why ? [targets[i]!.why!] : [])))];
+  const cov: ChangeCoverage = {
+    key: c.key,
+    state,
+    by: head.map((i) => ({ sidestory: targets[i]!.sidestory, anchor: targets[i]!.anchor })),
+    uncovered: [],
+    coveredLines: users.size ? 1 : 0,
+    changedLines: 1,
+  };
+  if (state === 'trivial' && whys.length) cov.why = whys;
+  if (head.some((i) => targets[i]!.state === 'stale')) cov.stale = true;
+  return { cov, users };
+}
+
 function trivialFileChange(c: ChangeBlock): { cov: ChangeCoverage; users: Set<number> } {
-  const changed = c.added + c.removed;
+  const changed = c.renamedFrom !== undefined ? 1 : c.added + c.removed;
   return { cov: { key: c.key, state: 'trivial', by: [], uncovered: [], coveredLines: changed, changedLines: changed }, users: new Set() };
 }
 

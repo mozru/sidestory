@@ -1,6 +1,7 @@
 // Which sidestories count toward a comparison's coverage (docs/CHANGES-PLAN.md §6.1). Pure: the extension and the
 // checker look the facts up their own way (the git API, hardened git) and apply this same test.
-import { explainerNameSchema } from './manifest.ts';
+import { decodeUtf8 } from './hunks.ts';
+import { explainerNameSchema, MAX_MANIFEST_BYTES, parseManifest } from './manifest.ts';
 
 /**
  * Does a sidestory belong to a comparison (merge-base M → head)?
@@ -118,6 +119,40 @@ export function archiveMoveCandidates<E extends { readonly status: string; reado
     if (from) out.push({ entry: e, from, folder, file: m[3]! });
   }
   return out;
+}
+
+/** The fields the archive job writes into an archived manifest (§12.3): everything else stays as it was. */
+export const ARCHIVE_FIELDS = ['base', 'head', 'landed'] as const;
+
+/**
+ * Whether an archived `manifest.json` is the merge-base's manifest as the archive job rewrites it (§12.3): at most
+ * MAX_MANIFEST_BYTES, a valid manifest, and equal to the old one but for `base`, `head` and `landed`. Anything else
+ * (a payload field, other anchors, not JSON) is not an archive move, and counts as one change.
+ */
+export function isArchivedManifest(oldBytes: Uint8Array, newBytes: Uint8Array): boolean {
+  if (newBytes.byteLength > MAX_MANIFEST_BYTES || oldBytes.byteLength > MAX_MANIFEST_BYTES) return false;
+  const [oldText, newText] = [decodeUtf8(oldBytes), decodeUtf8(newBytes)];
+  if (oldText === undefined || newText === undefined || !parseManifest(newText).ok) return false;
+  const rest = (text: string): string | undefined => {
+    try {
+      const v: unknown = JSON.parse(text.replace(/^\ufeff/, ''));
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+      const o = { ...(v as Record<string, unknown>) };
+      for (const k of ARCHIVE_FIELDS) delete o[k];
+      return canonical(o);
+    } catch {
+      return undefined;
+    }
+  };
+  const a = rest(oldText);
+  return a !== undefined && a === rest(newText);
+}
+
+/** JSON with object keys sorted, so layout and key order don't matter. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`;
+  return JSON.stringify(v);
 }
 
 /** The files a sidestory folder must hold to be one (relative to the folder). */

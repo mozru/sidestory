@@ -40,7 +40,7 @@ function check(v: Value): string {
     v.kind === 'path' ? safePath(v.value)
     : v.kind === 'branch' ? safeBranch(v.value)
     : v.kind === 'title' ? safeTitle(v.value)
-    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path|archived sidestory file))$/.test(v.value) ? v.value : undefined)
+    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path|archived sidestory file|Git LFS file)|moved, no line changed)$/.test(v.value) ? v.value : undefined)
     : v.value !== undefined && /^[a-z]{1,20}$/.test(v.value) ? v.value : undefined;
   return ok ?? `(${DESCRIBE[v.kind]})`;
 }
@@ -71,10 +71,20 @@ export function updatePrompt(sidestory: string, base: string): string {
   );
 }
 
-export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced'; whole?: boolean }): string {
+export function changePrompt(c: { sidestory?: string; base: string; file: string; lines: string; kind: 'added' | 'removed' | 'replaced'; whole?: boolean; movedFrom?: string }): string {
   const data: [string, Value][] = [];
   if (c.sidestory) data.push(['sidestory', path(c.sidestory)]);
   data.push(['base', branch(c.base)], ['file', path(c.file)], ['lines', { kind: 'lines', value: c.lines }], ['kind', { kind: 'word', value: c.kind }]);
+  // A move that changed no line (§5.1): moving a file can switch it off, so the move needs a mention.
+  if (c.movedFrom !== undefined) {
+    data.push(['moved from', path(c.movedFrom)]);
+    return prompt(
+      c.sidestory
+        ? 'The file below was moved (or copied) without a line changing; a move can switch code off. Mention the move in a step of the sidestory below anchored in the file (or add a trivial mark there, with why), then re-run --coverage.'
+        : 'The file below was moved (or copied) without a line changing; a move can switch code off. Start a sidestory for this branch (with the base below) with a step anchored in the file that says why it moved, then run --coverage.',
+      data,
+    );
+  }
   // A whole-file change (binary, link, submodule, too large): no step can explain it, only a trivialFiles glob.
   if (c.whole) {
     return prompt(

@@ -5,11 +5,13 @@
 // text, base side against the merge-base blob of the old path), and change blocks from both sides decoded the same
 // way. Work is lazy and bounded (§4.6): only while someone needs it (a sidestory with a base in the workspace, an open
 // one, or a command), 4 files at a time, anchored files first, at most 200 MB read per recompute, cached by content
-// within byte budgets. The rules shared with the checker (src/cli/coverage.ts): which paths count (`countedPath`), a
-// sidestory needs both its files (a page past the read cap still makes it one, incomplete), unstaged renames are
-// paired by content (`pairUnstagedRenames`), Git LFS pointers aren't counted, and each of these counts as ONE change
-// that only trivialFiles can cover (`tooLargeChange`): a side past MAX_COMPARE_BYTES, a binary file, a symlink, a
-// submodule, a type change, an unsupported path. An unreadable side makes the result incomplete.
+// within byte budgets. The rules shared with the checker (src/cli/coverage.ts): which entries count (`countedChange`,
+// archive moves by `archiveMoveCandidates` and `isArchivedManifest`), a sidestory needs both its files (a page past
+// the read cap still makes it one, incomplete), unstaged renames are paired by content (`pairUnstagedRenames`), a
+// rename that changed no line is one change (`withRenameChange`), and each of these counts as ONE change that only
+// trivialFiles can cover (`tooLargeChange`): a side past MAX_COMPARE_BYTES, a binary file, a Git LFS file, a symlink,
+// a submodule, a type change, an unsupported path, a file under an archive. An unreadable side makes the result
+// incomplete.
 //
 // `computeCoverage` is the core and takes a `CoverageSource` (unit tests stub it); `CoverageService` builds the
 // source from the comparison's snapshot and the git extension, caches, and fires when a result changes.
@@ -19,10 +21,10 @@ import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
+import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, withRenameChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
-import { archiveMoveCandidates, belongs, countedChange, isArchivePath, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
 import { pairUnstagedRenames } from '../../core/renames.ts';
 import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
@@ -64,7 +66,7 @@ export interface UnsupportedEntry {
 }
 
 /** Why a file counts as one change without a line diff. */
-export type WholeKind = 'tooLarge' | 'binary' | 'link' | 'submodule' | 'unsupported' | 'archive';
+export type WholeKind = 'tooLarge' | 'binary' | 'lfs' | 'link' | 'submodule' | 'unsupported' | 'archive';
 
 /** A sidestory folder seen at the head (working tree or HEAD), before the membership test. */
 export interface Candidate {
@@ -93,6 +95,8 @@ export interface CoverageSource {
   /** A side's bytes, or why there are none (`SideBytes`). */
   oldBytes(repoPath: string): Promise<SideBytes>;
   newBytes(repoPath: string): Promise<SideBytes>;
+  /** The new side as saved (on disk, or HEAD's blob), never an open document's unsaved text: archive moves are checked on it. */
+  newDiskBytes?(repoPath: string): Promise<SideBytes>;
   /** A content key for the new side when it is cheaper than reading it (immutable blobs); else undefined. */
   diffKey?(e: ChangeEntry): string | undefined;
   /**
@@ -243,11 +247,11 @@ export class ByteLru<V> {
 /** A cached diff's weight: its texts (up to 2 bytes a character) and its blocks. */
 export const diffEntryBytes = (e: DiffCacheEntry) => 2 * ((e.texts.old?.length ?? 0) + (e.texts.new?.length ?? 0)) + 256 * (e.diff.changes.length + 1);
 
-type Classified = { kind: 'text'; ob: Uint8Array | undefined; nb: Uint8Array | undefined } | { kind: 'whole'; whole: WholeKind } | { kind: 'lfs' } | { kind: 'unreadable' };
+type Classified = { kind: 'text'; ob: Uint8Array | undefined; nb: Uint8Array | undefined } | { kind: 'whole'; whole: WholeKind } | { kind: 'unreadable' };
 
 /**
  * What a changed file's two sides make it, in the checker's order (src/cli/coverage.ts): a link, submodule or
- * unsupported side first, then an unreadable side, then one past the size cap, then an LFS pointer (not counted),
+ * unsupported side first, then an unreadable side, then one past the size cap, then Git LFS (one change),
  * then binary (one change), else text.
  */
 function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
@@ -259,8 +263,8 @@ function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
   if (ob === 'tooLarge' || nb === 'tooLarge') return { kind: 'whole', whole: 'tooLarge' };
   const o = ob as Uint8Array | undefined;
   const n = nb as Uint8Array | undefined;
-  // Left out only when every side the file has is a complete LFS pointer (the checker's rule).
-  if (isLfsChange(o, n)) return { kind: 'lfs' };
+  // Stored in Git LFS (every side a complete pointer): its contents can't be compared, so one change, as the checker.
+  if (isLfsChange(o, n)) return { kind: 'whole', whole: 'lfs' };
   if (isBinary(o) || isBinary(n)) return { kind: 'whole', whole: 'binary' };
   return { kind: 'text', ob: o, nb: n };
 }
@@ -311,10 +315,10 @@ export async function computeCoverage(
   const moves = new Set<ChangeEntry>();
   for (const { entry, from, folder, file } of archiveMoveCandidates(src.entries, isSafeRepoPath)) {
     if (!(await completeOf(folder)).mergeBase) continue;
-    if (file !== 'manifest.json') {
-      const [ob, nb] = await Promise.all([src.oldBytes(from.oldPath ?? from.path), src.newBytes(entry.path)]);
-      if (!(ob instanceof Uint8Array) || !(nb instanceof Uint8Array) || !sameBytes(ob, nb)) continue;
-    }
+    // As the checker confirms it: the same bytes, or for manifest.json the archive job's rewrite (isArchivedManifest).
+    const [ob, nb] = await Promise.all([src.oldBytes(from.oldPath ?? from.path), (src.newDiskBytes ?? src.newBytes)(entry.path)]);
+    if (!(ob instanceof Uint8Array) || !(nb instanceof Uint8Array)) continue;
+    if (file === 'manifest.json' ? !isArchivedManifest(ob, nb) : !sameBytes(ob, nb)) continue;
     moves.add(entry).add(from);
   }
   if (!isCurrent()) return undefined;
@@ -408,7 +412,7 @@ export async function computeCoverage(
     const key = src.diffKey?.(e);
     const hit = key ? cache.get(key) : undefined;
     if (hit) {
-      texts.set(e.path, { entry: e, diff: hit.diff, texts: hit.texts });
+      texts.set(e.path, { entry: e, diff: withRenameChange(hit.diff, e), texts: hit.texts });
       return;
     }
     if (!pre.has(e) && bytes > COVERAGE_WORK.bytesPerRecompute) {
@@ -421,12 +425,8 @@ export async function computeCoverage(
       incomplete = true; // unreadable: not counted, and the totals say so
       return;
     }
-    if (c.kind === 'lfs') {
-      e.noText = true; // a Git LFS pointer: not counted
-      return;
-    }
     if (c.kind === 'whole') {
-      if (c.whole === 'binary') e.noText = true;
+      if (c.whole === 'binary' || c.whole === 'lfs') e.noText = true;
       texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: c.whole });
       return;
     }
@@ -442,7 +442,8 @@ export async function computeCoverage(
       diff = diffTexts(e.path, d.old, d.new);
       cache.set(slot, { diff, texts: t, ...(content !== undefined ? { content } : {}) });
     }
-    texts.set(e.path, { entry: e, diff, texts: t });
+    // A rename or copy that changed no line is one change (§5.1), as the checker counts it.
+    texts.set(e.path, { entry: e, diff: withRenameChange(diff, e), texts: t });
   });
   if (!isCurrent()) return undefined;
   // Under a sidestory archive and not an unchanged archive move: one change each, unread.
@@ -776,6 +777,7 @@ export class CoverageService implements vscode.Disposable {
       },
       oldBytes: (p) => this.oldSide(s.mergeBase, p, () => blob(s.mergeBase, p)),
       newBytes: (p) => (s.mode === 'workingTree' ? working(p) : blob(s.head.sha, p)),
+      newDiskBytes: (p) => (s.mode === 'workingTree' ? (isSafeFsPath(p) ? disk(fileUri(p)) : Promise.resolve('unsupported' as const)) : blob(s.head.sha, p)),
       // Committed mode: both sides are immutable blobs.
       diffKey: (e) => (s.mode === 'committed' ? `${s.mergeBase}\0${s.head.sha}\0${e.oldPath ?? e.path}\0${e.path}\0${e.status}` : undefined),
     };

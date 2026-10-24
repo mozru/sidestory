@@ -144,7 +144,7 @@ describe('coverage in the extension (computeCoverage)', () => {
 describe('the checker\'s rules in the extension', () => {
   const enc = (t: string) => new TextEncoder().encode(t);
 
-  it('binary, link, submodule and unsupported sides are one change each; an LFS pointer is not counted', async () => {
+  it('binary, Git LFS, link, submodule and unsupported sides are one change each', async () => {
     const base = source();
     const s: Source = {
       ...base,
@@ -156,16 +156,15 @@ describe('the checker\'s rules in the extension', () => {
       oldBytes: async (p) => (p === 'vendor/lib' ? 'submodule' : base.oldBytes(p)),
     };
     const r = (await computeCoverage(s))!;
-    for (const [p, whole] of [['logo.png', 'binary'], ['link', 'link'], ['vendor/lib', 'submodule'], ['con', 'unsupported']] as const) {
+    for (const [p, whole] of [['logo.png', 'binary'], ['video.mp4', 'lfs'], ['link', 'link'], ['vendor/lib', 'submodule'], ['con', 'unsupported']] as const) {
       expect(r.files.get(p)!.whole, p).toBe(whole);
       expect(r.files.get(p)!.coverage!.changes.map((c) => c.state), p).toEqual(['unexplained']);
     }
-    expect(r.files.has('video.mp4')).toBe(false);
     expect(r.unsupported).toEqual(['weird\u0001name']);
     expect(r.unsupportedLeft).toEqual(['weird\u0001name']);
     expect(r.files.has('weird\u0001name')).toBe(false);
-    // The fixture's 1 left, plus 5.
-    expect(r.totals).toMatchObject({ explained: 3, trivial: 1, left: 6 });
+    // The fixture's 1 left, plus 6.
+    expect(r.totals).toMatchObject({ explained: 3, trivial: 1, left: 7 });
   });
 
   it('trivialFiles covers a file counted as one change, an unsupported path included', async () => {
@@ -202,7 +201,9 @@ describe('the checker\'s rules in the extension', () => {
     expect(r.files.has('docs/old.md')).toBe(false);
     // The pair is exposed, so the extension maps the deleted and the untracked entry to this one.
     expect([...r.paired]).toEqual([['docs/old.md', 'docs/new.md']]);
-    expect(r.files.get('docs/new.md')!.diff.changes).toEqual([]);
+    // A move that changed no line: one change (§5.1), which any head-side anchor in the file would cover.
+    expect(r.files.get('docs/new.md')!.diff.changes.map((c) => c.renamedFrom)).toEqual(['docs/old.md']);
+    expect(r.files.get('docs/new.md')!.coverage!.changes.map((c) => c.state)).toEqual(['unexplained']);
     // The comparison's own untracked entry shows the counts.
     expect(s.entries.find((e) => e.path === 'docs/new.md')).toMatchObject({ added: 0, removed: 0 });
   });

