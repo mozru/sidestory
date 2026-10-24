@@ -91,6 +91,35 @@ export function countedChange(
   return { counted: true, as: 'addition' };
 }
 
+/** An archived sidestory file: `<prefix>/.sidestory/archive/<YYYY-MM-DD>-<name>/<file>` (prefix, name, file). */
+export const ARCHIVED_PATH = /^(?:(.*)\/)?\.sidestory\/archive\/\d{4}-\d{2}-\d{2}-([^/]+)\/(.+)$/;
+
+/**
+ * Archiving in a branch (§12.4): an added or renamed file under `<prefix>/.sidestory/archive/<YYYY-MM-DD>-<name>/`
+ * whose live path `<prefix>/.sidestory/<name>/<file>` is a real sidestory folder's, with the entry it moved from (the
+ * rename itself, or the deletion of the live path). Candidates only: the caller confirms the same bytes (any file
+ * but `manifest.json`, which the archive may rewrite) and that the folder was a complete sidestory at the
+ * merge-base. A confirmed move and its deletion are the explanation moving, not code: neither counts. Shared by
+ * the checker and the extension.
+ */
+export function archiveMoveCandidates<E extends { readonly status: string; readonly path: string; readonly oldPath?: string }>(
+  entries: readonly E[],
+  isSafe: (path: string) => boolean,
+): { entry: E; from: E; folder: string; file: string }[] {
+  const deletedAt = new Map(entries.filter((e) => e.status === 'D').map((e) => [e.path, e]));
+  const out: { entry: E; from: E; folder: string; file: string }[] = [];
+  for (const e of entries) {
+    const m = (e.status === 'R' || e.status === 'A') && isSafe(e.path) ? ARCHIVED_PATH.exec(e.path) : null;
+    if (!m) continue;
+    const live = `${m[1] ? `${m[1]}/` : ''}.sidestory/${m[2]}/${m[3]}`;
+    const folder = sidestoryFolderOf(live);
+    if (!folder) continue;
+    const from = e.status === 'R' ? (e.oldPath === live ? e : undefined) : deletedAt.get(live);
+    if (from) out.push({ entry: e, from, folder, file: m[3]! });
+  }
+  return out;
+}
+
 /** The files a sidestory folder must hold to be one (relative to the folder). */
 export const SIDESTORY_FILES = ['manifest.json', 'sidestory.html'] as const;
 

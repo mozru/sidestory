@@ -45,7 +45,7 @@ export function fileDecoration(f: FileCoverage, steps: readonly string[] = []): 
 }
 
 /** Why a file counts as one change without lines (coverage's `WholeKind`), in This File's words. */
-export const WHOLE_WORDS = { binary: 'binary file', link: 'symlink', submodule: 'submodule', tooLarge: 'too large', unsupported: 'unsupported path' } as const;
+export const WHOLE_WORDS = { binary: 'binary file', link: 'symlink', submodule: 'submodule', tooLarge: 'too large', unsupported: 'unsupported path', archive: 'archived sidestory file' } as const;
 export type WholeKindWord = keyof typeof WHOLE_WORDS;
 
 /** The status bar line when Next/Previous Unexplained Change finds nothing left to open. */

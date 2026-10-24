@@ -19,12 +19,12 @@ import * as vscode from 'vscode';
 import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsPointer, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
+import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock, type FileDiff } from '../../core/hunks.ts';
 import type { Manifest } from '../../core/manifest.ts';
 import { parseManifest, sideOf } from '../../core/manifest.ts';
-import { belongs, countedPath, isArchivePath, sidestoryFolderOf } from '../../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivePath, SIDESTORY_FILES, sidestoryFolderOf } from '../../core/membership.ts';
 import { pairUnstagedRenames } from '../../core/renames.ts';
-import { isSafeFsPath } from '../../core/repo-path.ts';
+import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
 import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.ts';
@@ -64,7 +64,7 @@ export interface UnsupportedEntry {
 }
 
 /** Why a file counts as one change without a line diff. */
-export type WholeKind = 'tooLarge' | 'binary' | 'link' | 'submodule' | 'unsupported';
+export type WholeKind = 'tooLarge' | 'binary' | 'link' | 'submodule' | 'unsupported' | 'archive';
 
 /** A sidestory folder seen at the head (working tree or HEAD), before the membership test. */
 export interface Candidate {
@@ -95,6 +95,11 @@ export interface CoverageSource {
   newBytes(repoPath: string): Promise<SideBytes>;
   /** A content key for the new side when it is cheaper than reading it (immutable blobs); else undefined. */
   diffKey?(e: ChangeEntry): string | undefined;
+  /**
+   * Whether a sidestory folder holds both its files as regular files, at the head (on disk in working tree mode) and
+   * at the merge-base; only a complete sidestory's two files are left out (§5.1). Absent: assumed complete.
+   */
+  completeSidestory?(folder: string): Promise<{ head: boolean; mergeBase: boolean }>;
 }
 
 export interface Belonging {
@@ -254,12 +259,14 @@ function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
   if (ob === 'tooLarge' || nb === 'tooLarge') return { kind: 'whole', whole: 'tooLarge' };
   const o = ob as Uint8Array | undefined;
   const n = nb as Uint8Array | undefined;
-  if (isLfsPointer(o) || isLfsPointer(n)) return { kind: 'lfs' };
+  // Left out only when every side the file has is a complete LFS pointer (the checker's rule).
+  if (isLfsChange(o, n)) return { kind: 'lfs' };
   if (isBinary(o) || isBinary(n)) return { kind: 'whole', whole: 'binary' };
   return { kind: 'text', ob: o, nb: n };
 }
 
 const sideSize = (b: SideBytes) => (b instanceof Uint8Array ? b.length : 0);
+const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** One change spanning nothing: only a trivialFiles match covers it (the checker's `tooLargeChange`). */
 const wholeDiff = (path: string): FileDiff => ({ changes: [tooLargeChange(path, 0, 0)], tooLarge: 'size', lineEndingsOnly: false, oldLines: 0, newLines: 0 });
@@ -279,8 +286,52 @@ export async function computeCoverage(
   const none: Totals = { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 };
   // No layer without a sidestory (§9.2): the navigator's own counting fills in the counts then.
   if (!found.length) return emptyResult(src.mergeBase, unsure);
-  // Every counted path is read, numstat's "no text" ones too: a binary file counts as one change, as in the checker.
-  const counted = src.entries.filter((e) => countedPath(e.path));
+  // Which entries count, as the checker decides (src/cli/coverage.ts): only the two files of a sidestory complete at
+  // the head or the merge-base are left out; a rename between code and such a file is its code side alone; an
+  // unchanged archive move of a sidestory complete at the merge-base isn't code; anything else under an archive is
+  // one change. Every counted path is read, numstat's "no text" ones too: a binary file counts as one change.
+  const owned = new Set<string>();
+  for (const e of src.entries) {
+    for (const p of [e.path, e.oldPath]) {
+      const f = p !== undefined ? sidestoryFolderOf(p) : undefined;
+      if (f && (SIDESTORY_FILES as readonly string[]).includes(p!.slice(f.length + 1))) owned.add(f);
+    }
+  }
+  const completeness = new Map<string, Promise<{ head: boolean; mergeBase: boolean }>>();
+  const completeOf = (f: string) => {
+    let v = completeness.get(f);
+    if (!v) completeness.set(f, (v = src.completeSidestory ? src.completeSidestory(f) : Promise.resolve({ head: true, mergeBase: true })));
+    return v;
+  };
+  const complete = new Set<string>();
+  for (const f of owned) {
+    const c = await completeOf(f);
+    if (c.head || c.mergeBase) complete.add(f);
+  }
+  const moves = new Set<ChangeEntry>();
+  for (const { entry, from, folder, file } of archiveMoveCandidates(src.entries, isSafeRepoPath)) {
+    if (!(await completeOf(folder)).mergeBase) continue;
+    if (file !== 'manifest.json') {
+      const [ob, nb] = await Promise.all([src.oldBytes(from.oldPath ?? from.path), src.newBytes(entry.path)]);
+      if (!(ob instanceof Uint8Array) || !(nb instanceof Uint8Array) || !sameBytes(ob, nb)) continue;
+    }
+    moves.add(entry).add(from);
+  }
+  if (!isCurrent()) return undefined;
+  const counted: ChangeEntry[] = [];
+  const archived: ChangeEntry[] = [];
+  for (const e of src.entries) {
+    if (moves.has(e)) continue;
+    if (isArchivePath(e.path) || (e.oldPath !== undefined && isArchivePath(e.oldPath))) {
+      archived.push(e);
+      continue;
+    }
+    const c = countedChange(e, (f) => complete.has(f));
+    if (!c.counted) continue;
+    if (c.as === 'deletion') counted.push({ path: e.oldPath!, status: 'D' });
+    else if (c.as === 'addition') counted.push({ path: e.path, status: 'A', ...(e.untracked ? { untracked: true } : {}), ...(e.unsaved ? { unsaved: true } : {}) });
+    else counted.push(e);
+  }
   // Anchored files first (a step's file can't wait behind 5,000 others), then the view's order, then by path.
   const anchored = new Set<string>();
   for (const s of found) for (const a of s.manifest.anchors.values()) anchored.add(join(s.prefix, a.file));
@@ -394,6 +445,8 @@ export async function computeCoverage(
     texts.set(e.path, { entry: e, diff, texts: t });
   });
   if (!isCurrent()) return undefined;
+  // Under a sidestory archive and not an unchanged archive move: one change each, unread.
+  for (const e of archived) if (!texts.has(e.path)) texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: 'archive' });
   // By path, whatever order the workers finished in: the same result for the same inputs.
   const done = [...texts.values()].sort((a, b) => byPath(a.entry.path, b.entry.path));
 
@@ -705,6 +758,22 @@ export class CoverageService implements vscode.Disposable {
         return v;
       },
       ownMergeBase: (spec) => this.ownMergeBase(s, spec),
+      completeSidestory: async (folder) => {
+        const files = SIDESTORY_FILES.map((n) => `${folder}/${n}`);
+        const regularAt = async (sha: string) =>
+          (await Promise.all(files.map((p) => repo.getObjectDetails(sha, apiPath(repo, p)).then((d) => d.mode === '100644' || d.mode === '100755', () => false)))).every(Boolean);
+        // On disk as the checker's isWorkingFile: a safe path, a regular file (never a link).
+        const onDisk = async (p: string) => {
+          if (!isSafeFsPath(p)) return false;
+          try {
+            return (await vscode.workspace.fs.stat(fileUri(p))).type === vscode.FileType.File;
+          } catch {
+            return false;
+          }
+        };
+        const head = s.mode === 'workingTree' ? (await Promise.all(files.map(onDisk))).every(Boolean) : await regularAt(s.head.sha);
+        return { head, mergeBase: await regularAt(s.mergeBase) };
+      },
       oldBytes: (p) => this.oldSide(s.mergeBase, p, () => blob(s.mergeBase, p)),
       newBytes: (p) => (s.mode === 'workingTree' ? working(p) : blob(s.head.sha, p)),
       // Committed mode: both sides are immutable blobs.

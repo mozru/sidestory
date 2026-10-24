@@ -103,11 +103,11 @@ function listing(root: string, mergeBase: string, workingTree: boolean): { entri
   return { entries, unsupported };
 }
 
-async function extension(root: string, workingTree: boolean): Promise<Result> {
+async function extension(root: string, workingTree: boolean, dirs: string[] = ['.sidestory/retry-jitter']): Promise<Result> {
   const mergeBase = git(root, 'merge-base', 'main', 'HEAD').trim();
   const { entries, unsupported } = listing(root, mergeBase, workingTree);
   const snap = { repo: fakeRepo(root), mergeBase, head: { sha: git(root, 'rev-parse', 'HEAD').trim() }, mode: workingTree ? 'workingTree' : 'committed', entries, unsupported };
-  const svc = new CoverageService({ snapshot: () => snap as never, order: () => [], sidestoryDirs: () => [vscode.Uri.file(join(root, '.sidestory/retry-jitter')) as never] });
+  const svc = new CoverageService({ snapshot: () => snap as never, order: () => [], sidestoryDirs: () => dirs.map((d) => vscode.Uri.file(join(root, d)) as never) });
   // Resolving `base` goes through the git extension's ref calls (base.ts, tested elsewhere): main's merge-base here.
   svc.ownMergeBase = async (_s, spec) => (spec === 'main' ? mergeBase : undefined);
   try {
@@ -184,5 +184,50 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     delete es['nested/'];
     expect(es).toEqual(cs);
     expect(pick(r.totals)).toEqual(pick(c.totals));
+  });
+
+  it('LFS only when every side is a complete pointer; code in a sidestory folder, a rename onto sidestory.html and archives count', async () => {
+    const dir = copy();
+    const commit = (msg: string) => {
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', msg);
+    };
+    // A sidestory complete on main, so the branch's merge-base has it (archiving needs that).
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, '.sidestory/landed'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/landed/manifest.json'), JSON.stringify({ version: 3, title: 'Landed', base: 'main', anchors: {} }, null, 2));
+    writeFileSync(join(dir, '.sidestory/landed/sidestory.html'), '<p>Landed</p>\n');
+    commit('A sidestory lands');
+    git(dir, 'checkout', '-q', 'feature');
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    // An incomplete pointer is text; a text file becoming a pointer is a change.
+    writeFileSync(join(dir, 'fake-lfs.txt'), 'version https://git-lfs.github.com/spec/v1\noid sha256:abc\n');
+    writeFileSync(join(dir, 'README.md'), LFS);
+    // Code kept in a sidestory folder counts like code anywhere.
+    mkdirSync(join(dir, '.sidestory/helper'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/helper/run.js'), 'module.exports = () => 1;\n');
+    // Code renamed onto a sidestory's page: the code's deletion counts.
+    mkdirSync(join(dir, '.sidestory/second'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/second/manifest.json'), JSON.stringify({ version: 3, title: 'Second', base: 'main', anchors: {} }, null, 2));
+    git(dir, 'mv', 'docs/notes.md', '.sidestory/second/sidestory.html');
+    // Archiving the landed sidestory unchanged isn't code; anything else under the archive is one change.
+    mkdirSync(join(dir, '.sidestory/archive'), { recursive: true });
+    git(dir, 'mv', '.sidestory/landed', '.sidestory/archive/2026-01-02-landed');
+    writeFileSync(join(dir, '.sidestory/archive/2026-01-02-landed/extra.js'), 'run();\n');
+    commit('Pointers, helpers, a page, an archive');
+
+    const c = await checker(dir, true);
+    const r = await extension(dir, false, ['.sidestory/retry-jitter', '.sidestory/second']);
+    const cs = checkerStates(c);
+    expect(cs['fake-lfs.txt']).toBe('unexplained');
+    expect(cs['README.md']).toBeDefined();
+    expect(cs['.sidestory/helper/run.js']).toBe('unexplained');
+    expect(cs['docs/notes.md']).toBe('unexplained');
+    expect(cs['.sidestory/second/sidestory.html']).toBeUndefined();
+    expect(cs['.sidestory/archive/2026-01-02-landed/extra.js']).toBe('unexplained');
+    expect(Object.keys(cs).filter((p) => p.includes('landed') && !p.endsWith('extra.js'))).toEqual([]);
+    expect(extensionStates(r)).toEqual(cs);
+    expect(pick(r.totals)).toEqual(pick(c.totals));
+    expect(r.files.get('.sidestory/archive/2026-01-02-landed/extra.js')!.whole).toBe('archive');
   });
 });

@@ -40,7 +40,7 @@ function check(v: Value): string {
     v.kind === 'path' ? safePath(v.value)
     : v.kind === 'branch' ? safeBranch(v.value)
     : v.kind === 'title' ? safeTitle(v.value)
-    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path))$/.test(v.value) ? v.value : undefined)
+    : v.kind === 'lines' ? (v.value !== undefined && /^(L\d{1,7}(–\d{1,7})?( \(removed\))?|whole file, (binary file|symlink|submodule|too large|unsupported path|archived sidestory file))$/.test(v.value) ? v.value : undefined)
     : v.value !== undefined && /^[a-z]{1,20}$/.test(v.value) ? v.value : undefined;
   return ok ?? `(${DESCRIBE[v.kind]})`;
 }

@@ -10,7 +10,7 @@ import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
 import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, type ChangeBlock } from '../core/hunks.ts';
 import { FULL_SHA, isValidBase, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
-import { belongs, countedChange, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, isArchivePath, isCompleteSidestory, SIDESTORY_FILES, sidestoryFolderOf } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
 import { resolveAnchor } from '../core/resolve.ts';
@@ -325,19 +325,11 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   // the same relative path and the same blob (manifest.json may be rewritten: the archive records its commits). Such
   // a move, and the deletion it pairs with, are the explanation moving, not code. Anything else under the archive
   // counts as one change.
-  const ARCHIVED = /^(?:(.*)\/)?\.sidestory\/archive\/\d{4}-\d{2}-\d{2}-([^/]+)\/(.+)$/;
-  const deletedAt = new Map(sorted.filter((e) => e.status === 'D').map((e) => [e.path, e]));
   const completeAtBase = new Map<string, Promise<boolean>>();
   const archiveMoves = new Set<Entry>();
-  for (const e of sorted) {
-    const m = (e.status === 'R' || e.status === 'A') && isSafeRepoPath(e.path) ? ARCHIVED.exec(e.path) : null;
-    if (!m) continue;
-    const live = `${m[1] ? `${m[1]}/` : ''}.sidestory/${m[2]}/${m[3]}`;
-    const folder = sidestoryFolderOf(live);
-    if (!folder) continue;
-    const from = e.status === 'R' ? (e.oldPath === live ? e : undefined) : deletedAt.get(live);
-    if (!from || ZERO.test(from.oldId)) continue;
-    if (m[3] !== 'manifest.json' && from.oldId !== e.newId) {
+  for (const { entry: e, from, folder, file } of archiveMoveCandidates(sorted, isSafeRepoPath)) {
+    if (ZERO.test(from.oldId)) continue;
+    if (file !== 'manifest.json' && from.oldId !== e.newId) {
       // The working tree's side may have no id (or a stale one): compare the bytes on disk with the old blob.
       if (mode !== 'working') continue;
       const [disk, old] = [await git.readWorkingFile(e.path), (await git.blobs([from.oldId])).bytes.get(from.oldId)];

@@ -1,6 +1,6 @@
 // Which sidestories count toward a comparison (src/core/membership.ts, docs/CHANGES-PLAN.md §6.1).
 import { describe, expect, it } from 'vitest';
-import { belongs, countedChange, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
+import { archiveMoveCandidates, belongs, countedChange, countedPath, isArchivePath, isCompleteSidestory, ownedBySidestory, sidestoryFolderOf } from '../../src/core/membership.ts';
 import { isSafeFsPath, isSafeRepoPath, pathProblem } from '../../src/core/repo-path.ts';
 
 describe('isSafeRepoPath and isSafeFsPath (src/core/repo-path.ts)', () => {
@@ -58,6 +58,23 @@ describe('belongs', () => {
     expect(belongs({ presentAtMergeBase: false, presentAtHead: false, ownMergeBase: M, comparisonMergeBase: M, manifestHead: HEAD, comparisonHead: HEAD })).toBe(true);
     expect(belongs({ presentAtMergeBase: false, presentAtHead: true, ownMergeBase: M, comparisonMergeBase: M, manifestHead: HEAD, comparisonHead: OTHER })).toBe(false);
     expect(belongs({ presentAtMergeBase: false, presentAtHead: true, ownMergeBase: OTHER, comparisonMergeBase: M, manifestHead: HEAD, comparisonHead: HEAD })).toBe(false);
+  });
+});
+
+describe('archiveMoveCandidates (shared by the checker and the extension)', () => {
+  it('pairs a file moved under a dated archive folder with the rename or the deletion it came from', () => {
+    const del = { status: 'D', path: 'pkg/.sidestory/retry/manifest.json' };
+    const add = { status: 'A', path: 'pkg/.sidestory/archive/2026-01-02-retry/manifest.json' };
+    const ren = { status: 'R', oldPath: '.sidestory/retry/sidestory.html', path: '.sidestory/archive/2026-01-02-retry/sidestory.html' };
+    const stray = { status: 'A', path: '.sidestory/archive/2026-01-02-retry/extra.js' }; // nothing deleted at its live path
+    const wrongDate = { status: 'A', path: '.sidestory/archive/latest-retry/a.js' };
+    const elsewhere = { status: 'R', oldPath: 'src/a.ts', path: '.sidestory/archive/2026-01-02-retry/a.ts' };
+    const got = archiveMoveCandidates([del, add, ren, stray, wrongDate, elsewhere], () => true);
+    expect(got.map((m) => [m.entry.path, m.from.path, m.folder, m.file])).toEqual([
+      [add.path, del.path, 'pkg/.sidestory/retry', 'manifest.json'],
+      [ren.path, ren.path, '.sidestory/retry', 'sidestory.html'],
+    ]);
+    expect(archiveMoveCandidates([del, add], () => false)).toEqual([]);
   });
 });
 
