@@ -7,6 +7,8 @@
 import * as esbuild from 'esbuild';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { WIDGET_LIBRARIES } from '../src/shared/widget-imports.ts';
 
 const OUT = 'dist/widget-libs';
@@ -125,6 +127,6 @@ export async function buildWidgetLibs({ quiet = false } = {}) {
   return sizes;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await buildWidgetLibs({ quiet: process.argv.includes('--quiet') });
 }

@@ -1,5 +1,7 @@
 // The esbuild options for the Sidestory comments MCP server bundle (docs/COMMENTS-PLAN.md §9.1): one CommonJS file,
 // no native modules, Node 20+. Used by build.mjs (dist/mcp.cjs) and sync-skill.mjs (the plugin's committed copy).
+import { fileURLToPath } from 'node:url';
+
 export const PLUGIN_SERVER = 'plugins/sidestory-comments/server/mcp.cjs';
 
 export function mcpServerBuild(outfile, common = {}) {
@@ -18,7 +20,7 @@ export function mcpServerBuild(outfile, common = {}) {
         name: 'no-ajv',
         setup(build) {
           // The SDK's server imports Ajv only for elicitation, which this server never uses (src/mcp/no-ajv.ts).
-          build.onResolve({ filter: /validation\/ajv-provider\.js$/ }, () => ({ path: new URL('../src/mcp/no-ajv.ts', import.meta.url).pathname }));
+          build.onResolve({ filter: /validation\/ajv-provider\.js$/ }, () => ({ path: fileURLToPath(new URL('../src/mcp/no-ajv.ts', import.meta.url)) }));
         },
       },
     ],
