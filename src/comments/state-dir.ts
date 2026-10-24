@@ -4,14 +4,15 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, promises as fs, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, sep, win32 } from 'node:path';
 import { mkdirsNoFollow, readSmall, UnsafePathError } from './fsx.ts';
 
 /** The default location, per OS (a fixed path on Linux: XDG_STATE_HOME often differs between GUI and terminal). */
 export function defaultStateDir(platform: NodeJS.Platform = process.platform, home = homedir(), env: NodeJS.ProcessEnv = process.env): string {
-  if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'sidestory');
-  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'sidestory');
-  return join(home, '.local', 'state', 'sidestory');
+  // The given platform's separators, whatever OS this runs on.
+  if (platform === 'win32') return win32.join(env.LOCALAPPDATA || win32.join(home, 'AppData', 'Local'), 'sidestory');
+  if (platform === 'darwin') return posix.join(home, 'Library', 'Application Support', 'sidestory');
+  return posix.join(home, '.local', 'state', 'sidestory');
 }
 
 /** The state directory: the override the extension recorded in `override.json` at the default location, else the default. */

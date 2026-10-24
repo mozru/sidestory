@@ -46,6 +46,9 @@ async function json(args: string[], hooks = {}): Promise<{ code: number; coverag
   return { code: r.code, ...JSON.parse(r.out) };
 }
 
+/** Findings name files by their native path: compare with forward slashes on every OS. */
+const slash = (s: string) => s.replaceAll('\\', '/');
+
 const status = (c: CoverageJson) => Object.fromEntries(c.files.map((f) => [f.path, f.changes.map((x) => x.status).join(',') || f.kind]));
 
 describe('--coverage on the fixture', () => {
@@ -53,7 +56,7 @@ describe('--coverage on the fixture', () => {
     const r = await run(['--coverage', '--base', 'main', '--repo', fixture]);
     expect(r.code).toBe(3);
     expect(r.out).toMatch(/Coverage: base main, merge-base [0-9a-f]{7}, head: working tree; counting \.sidestory\/retry-jitter/);
-    expect(r.out).toMatch(/test\/retry\.test\.ts:11: warning unexplained: lines 11–40 \(\+30\) aren't explained by a sidestory of this branch\./);
+    expect(slash(r.out)).toMatch(/test\/retry\.test\.ts:11: warning unexplained: lines 11–40 \(\+30\) aren't explained by a sidestory of this branch\./);
     expect(r.out).toContain('3 explained · 2 trivial · 1 left, in 5 files.');
     expect(r.out).not.toContain('unused-anchor');
     // One summary line, last; no widget line when there are no widgets.
@@ -513,12 +516,12 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     const { dir, head } = withLanded();
     writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
     const r = await json(['--coverage', '--base', head, '--repo', dir]);
-    expect(ids(r)).toEqual([expect.objectContaining({ code: 'id-changed', severity: 'error', line: 3, file: expect.stringMatching(/\/copy\d+\/\.sidestory\/landed\/manifest\.json$/) })]);
+    expect(ids(r)).toEqual([expect.objectContaining({ code: 'id-changed', severity: 'error', line: 3, file: expect.stringMatching(/[/\\]copy\d+[/\\]\.sidestory[/\\]landed[/\\]manifest\.json$/) })]);
     expect(ids(r)[0]!.message).toContain(`it was "${A}" at the merge-base (${head.slice(0, 7)})`);
     expect(ids(r)[0]!.message).toContain(`Put back "id": "${A}"`);
     expect(r.code).toBe(1);
     const text = await run(['--coverage', '--base', head, '--repo', dir]);
-    expect(text.out).toMatch(/\.sidestory\/landed\/manifest\.json:3: error id-changed:/);
+    expect(slash(text.out)).toMatch(/\.sidestory\/landed\/manifest\.json:3: error id-changed:/);
   });
 
   it('a removed or invalid id is id-removed', async () => {
@@ -534,14 +537,14 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     writeFileSync(join(dir, '.sidestory/landed/manifest.json'), landed(B));
     git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Rewrite');
     const r = await json(['--coverage', '--base', head, '--committed', '--repo', dir]);
-    expect(ids(r).map((f) => [f.code, f.file.slice(-'.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', '.sidestory/landed/manifest.json']]);
+    expect(ids(r).map((f) => [f.code, slash(f.file).slice(-'.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', '.sidestory/landed/manifest.json']]);
     const moved = withLanded();
     mkdirSync(join(moved.dir, 'pkg'));
     git(moved.dir, 'mv', '.sidestory', 'pkg/.sidestory');
     writeFileSync(join(moved.dir, 'pkg/.sidestory/landed/manifest.json'), landed(B));
     git(moved.dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Move and rewrite');
     const m = await json(['--coverage', '--base', moved.head, '--committed', '--repo', moved.dir]);
-    expect(ids(m).map((f) => [f.code, f.file.slice(-'pkg/.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', 'pkg/.sidestory/landed/manifest.json']]);
+    expect(ids(m).map((f) => [f.code, slash(f.file).slice(-'pkg/.sidestory/landed/manifest.json'.length)])).toEqual([['id-changed', 'pkg/.sidestory/landed/manifest.json']]);
   });
 
   it('a manifest renamed into a folder of another name is not compared (git may pair two different sidestories)', async () => {

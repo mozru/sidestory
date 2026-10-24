@@ -164,7 +164,9 @@ export function safePathEntries(root: string, env: NodeJS.ProcessEnv = process.e
   const fold = (s: string) => (windows || platform === 'darwin' ? s.toLowerCase() : s);
   const real = (s: string) => {
     try {
-      return realpathSync(s);
+      // Native: on Windows it expands 8.3 short names (RUNNER~1), as findRepository's root is expanded, so a short
+      // spelling of a folder inside the repository is still recognised as inside it.
+      return realpathSync.native(s);
     } catch {
       return undefined;
     }

@@ -130,7 +130,7 @@ function cliRepo(calls: string[] = []): CliRepo {
       const path = p === '' ? t[(i += 2)]! : p!;
       stats.set(path, [ins === '-' ? 0 : Number(ins), del === '-' ? 0 : Number(del)]);
     }
-    return list.map((c) => ({ ...c, insertions: stats.get(rel(c.uri.path))?.[0] ?? 0, deletions: stats.get(rel(c.uri.path))?.[1] ?? 0 }));
+    return list.map((c) => ({ ...c, insertions: stats.get(rel(c.uri.fsPath))?.[0] ?? 0, deletions: stats.get(rel(c.uri.fsPath))?.[1] ?? 0 }));
   };
   const changed = new EventEmitter<void>();
   const state = {

@@ -20,6 +20,11 @@ const realGit = execFileSync('sh', ['-c', 'command -v git']).toString().trim();
 const cleanEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
 
+// The recording stand-in for git is a #! script named `git`. On Windows the checker runs git only as git.exe or
+// git.com (resolveGit: never a script or .cmd, by design), so the stand-in can't exist there; the tests that read
+// its log run on Linux and macOS. The behaviour they check is the same code on every OS.
+const recorded = process.platform !== 'win32';
+
 interface Call {
   argv: string[];
   cwd: string;
@@ -28,7 +33,9 @@ interface Call {
 }
 
 beforeAll(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'cx-hardening-')));
+  // The native real path: on Windows the temp folder may be an 8.3 short name (RUNNER~1) that only it expands, as
+  // findRepository does.
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'cx-hardening-')));
   fixture = join(base, 'fixture');
   execFileSync(process.execPath, [join(repo, 'test/fixtures/git-repo.mjs'), fixture, '--explained'], { env: cleanEnv });
   fakeDir = join(base, 'bin');
@@ -90,6 +97,8 @@ describe('every git call', () => {
     const dir = copy();
     const r = await run(['--coverage', '--base', 'main', '--repo', dir]);
     expect(r.code).toBe(3);
+    expect(existsSync(join(base, 'PAGER-MARKER'))).toBe(false);
+    if (!recorded) return;
     expect(r.calls.length).toBeGreaterThan(3);
     for (const c of r.calls) {
       expect(c.cwd).toBe(dir);
@@ -105,7 +114,7 @@ describe('every git call', () => {
     expect(existsSync(join(base, 'PAGER-MARKER'))).toBe(false);
   });
 
-  it('writes only hex ids to cat-file --batch, never paths', async () => {
+  it.runIf(recorded)('writes only hex ids to cat-file --batch, never paths', async () => {
     const r = await run(['--coverage', '--base', 'main', '--repo', copy()]);
     const batches = r.calls.filter((c) => c.argv.includes('cat-file'));
     expect(batches.some((c) => c.argv.includes('--batch'))).toBe(true);
@@ -120,16 +129,20 @@ describe('every git call', () => {
   it('a git planted in the repository never runs: relative, empty and in-repository PATH entries are skipped', async () => {
     const dir = copy();
     const marker = join(base, `PLANTED-MARKER-${n++}`);
+    // On Windows a planted git.exe (not a program: running it would fail the check), and the real git after it.
+    const name = recorded ? 'git' : 'git.exe';
     for (const d of [dir, join(dir, 'bin')]) {
       mkdirSync(d, { recursive: true });
-      writeFileSync(join(d, 'git'), `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
-      chmodSync(join(d, 'git'), 0o755);
+      writeFileSync(join(d, name), `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
+      chmodSync(join(d, name), 0o755);
     }
     const PATH = ['.', '', 'bin', dir, join(dir, 'bin'), fakeDir, process.env.PATH ?? ''].join(delimiter);
-    expect(await resolveGit(dir, { PATH })).toBe(join(fakeDir, 'git'));
+    const expected = recorded ? join(fakeDir, 'git') : await resolveGit(base, { PATH: process.env.PATH ?? '' });
+    expect(expected).toBeDefined();
+    expect(await resolveGit(dir, { PATH })).toBe(expected);
     const r = await run(['--coverage', '--base', 'main', '--repo', dir], { PATH });
     expect(r.code).toBe(3);
-    expect(r.calls.length).toBeGreaterThan(3);
+    if (recorded) expect(r.calls.length).toBeGreaterThan(3);
     expect(existsSync(marker)).toBe(false);
     // Nothing usable on PATH: an error, not a search of the working directory.
     expect(await resolveGit(dir, { PATH: ['.', dir].join(delimiter) })).toBeUndefined();
@@ -153,7 +166,7 @@ describe('every git call', () => {
     expect(await resolveGit(join(base, 'elsewhere'), { Path: `.;${join(dir, 'tools')}` }, 'win32')).toBeUndefined();
   });
 
-  it('working tree diffs ignore submodules (git never looks inside them)', async () => {
+  it.runIf(recorded)('working tree diffs ignore submodules (git never looks inside them)', async () => {
     const r = await run(['--coverage', '--base', 'main', '--repo', copy()]);
     expect(r.calls.find((c) => c.argv.includes('diff'))!.argv).toContain('--ignore-submodules=all');
   });
@@ -247,7 +260,8 @@ describe('clean filters', () => {
     writeFileSync(join(dir, '.gitattributes'), '*.ts filter=x\n');
     git(dir, 'add', '.gitattributes');
     git(dir, 'commit', '-q', '--no-verify', '-m', 'attributes');
-    git(dir, 'config', 'filter.x.clean', `sh -c 'touch ${marker}; cat'`);
+    // Forward slashes: git runs the filter through sh, where a Windows path's backslashes would be escapes.
+    git(dir, 'config', 'filter.x.clean', `sh -c 'touch ${marker.replaceAll('\\', '/')}; cat'`);
     // Same content, new time: git diff must re-read it, which runs the clean filter when one applies.
     const t = new Date(Date.now() + 5000);
     utimesSync(join(dir, 'src/retry/retry.ts'), t, t);
@@ -272,11 +286,12 @@ describe('clean filters', () => {
     const r = await run(['--coverage', '--base', 'main', '--repo', dir]);
     expect(r.code).toBe(3);
     expect(existsSync(marker)).toBe(false);
+    if (!recorded) return;
     const diff = r.calls.find((c) => c.argv.includes('diff'))!;
     expect(diff.argv.find((a) => a.startsWith('--attr-source='))).toMatch(/^--attr-source=[0-9a-f]{40}$/);
   });
 
-  it('on an older git, working tree mode refuses a filter other than git-lfs', async () => {
+  it.runIf(recorded)('on an older git, working tree mode refuses a filter other than git-lfs', async () => {
     const { dir, marker } = withFilter();
     const r = await run(['--coverage', '--base', 'main', '--repo', dir], { SIDESTORY_TEST_VERSION: '2.39.5' });
     expect(r.code).toBe(1);
