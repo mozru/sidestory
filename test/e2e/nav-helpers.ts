@@ -15,6 +15,10 @@ export async function openSidebar(page: Page): Promise<void> {
   await expect(icon).toBeVisible({ timeout: 30_000 });
   if (!(await sidebar(page).isVisible())) await icon.click();
   await expect(sidebar(page)).toBeVisible();
+  // Three views share the container since release 1b (Changes, Sidestories, This File): collapse Changes so the
+  // Sidestories tree has the height these specs assume (its rows are virtualized).
+  const changes = page.locator('.pane-header', { hasText: /^Changes/ }).first();
+  if ((await changes.count()) && (await changes.getAttribute('aria-expanded')) === 'true') await changes.click();
 }
 
 /** Labels of the visible rows, with their tree level. */
