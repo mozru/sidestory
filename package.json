@@ -217,6 +217,18 @@
         "category": "Sidestory"
       },
       {
+        "command": "sidestory.changes.openChanges",
+        "title": "Open Changes with Base",
+        "category": "Sidestory",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "sidestory.changes.openFile",
+        "title": "Open File",
+        "category": "Sidestory",
+        "icon": "$(go-to-file)"
+      },
+      {
         "command": "sidestory.changes.nextUnexplained",
         "title": "Next Unexplained Change",
         "category": "Sidestory",
@@ -566,9 +578,9 @@
           ],
           "enumDescriptions": [
             "Steps of a sidestory with a base open the branch’s merge diff, at the step’s side.",
-            "Steps open plain editors (removed code in a read-only view of the old file)."
+            "Steps open plain editors (removed code in a read-only view of the old file). **Open Changes with Base** in the editor’s title bar switches to the diff."
           ],
-          "default": "diff",
+          "default": "editor",
           "description": "Where the steps of a sidestory that explains a branch (one with a \"base\") open."
         },
         "sidestory.changes.suggestExplain": {
@@ -653,6 +665,16 @@
         "defaults": {
           "dark": "focusBorder",
           "light": "focusBorder",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "sidestory.diffFocusBorder",
+        "description": "Frame around the active step's lines in a diff editor, where a background would be lost among the diff's colors. Pick a color the diff's inserted and removed lines don't use.",
+        "defaults": {
+          "dark": "charts.purple",
+          "light": "charts.purple",
           "highContrast": "contrastActiveBorder",
           "highContrastLight": "contrastActiveBorder"
         }
@@ -845,6 +867,14 @@
         {
           "command": "sidestory.changes.openChange",
           "when": "false"
+        },
+        {
+          "command": "sidestory.changes.openChanges",
+          "when": "!isInDiffEditor && resourcePath in sidestory.changes.comparable"
+        },
+        {
+          "command": "sidestory.changes.openFile",
+          "when": "isInDiffEditor && sidestory.changes.activeFileChanged"
         },
         {
           "command": "sidestory.changes.copyExplainPrompt",
@@ -1310,6 +1340,18 @@
           "command": "sidestory.comments.cancelEdit",
           "group": "inline@2",
           "when": "commentController == sidestory"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "sidestory.changes.openChanges",
+          "group": "navigation@2",
+          "when": "!isInDiffEditor && resourcePath in sidestory.changes.comparable"
+        },
+        {
+          "command": "sidestory.changes.openFile",
+          "group": "navigation",
+          "when": "isInDiffEditor && resourceScheme == sidestory-git"
         }
       ],
       "editor/title/context": [

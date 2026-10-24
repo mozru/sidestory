@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Steps open the file itself, not the branch's diff.** A step in a file the branch added used to open a diff that colored the whole file green, hiding the step. Now every step opens a plain editor with its lines highlighted (a step about removed code opens a read-only view of the old file).
+- **Open Changes with Base** in the editor's title bar (the compare icon) switches a file the branch modified or renamed to its diff against the base, at the same lines; the panel keeps following the cursor there. **Open File** in the diff's title bar switches back.
+- **Steps stand out in diffs:** the step's lines get a purple frame, a mark in the scrollbar and the step's number and title after its first line, instead of a background lost among the diff's colors. The color is `sidestory.diffFocusBorder`.
+- To open steps in the diff as before, set `sidestory.changes.openStepsIn` to `"diff"`.
+
 ## 0.2.2 (2026-10-24)
 
 - **Code blocks use the grammars of your installed extensions.** A `<pre><code class="language-…">` block is colored with the same TextMate grammar the editor uses for that language: VS Code's built-in language extensions (about 70 languages, including Dockerfile, PHP, Ruby, Lua, Swift, PowerShell and LaTeX, which weren't colored before) and any language extension you installed (SystemVerilog, VHDL, TOML…). Languages are named as VS Code names them: an id, an alias or a file extension (`ts`, `py`, `sv`). Installing or removing an extension recolors open sidestories.

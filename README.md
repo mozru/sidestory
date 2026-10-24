@@ -150,13 +150,13 @@ A sidestory with a `"base"` in its manifest explains a branch: its steps cover t
 
 - **Coverage marks on files.** Each changed file gets a small badge wherever VS Code decorates files (Git Tree Compare, Source Control, the Explorer, tabs): `✓` every change explained, `–` all marked trivial, `◐` partly, `○` not yet, `!` code added since its step was written. The tooltip says how much (`2 of 3 changes explained · Step 3 of Retry with jitter`).
 - **This branch**, at the top of the Sidestories view: the sidestories that explain the branch with their totals (`vs main · 9 explained · 3 trivial · 1 left`), and **Copy Prompt: Update the Sidestory for New Changes** while something is left. With none yet, **Copy Prompt: Explain This Branch** copies a prompt for Claude Code (or your agent); **Don't Suggest on This Branch** hides it.
-- **Steps open the branch's diff** at their side: added code highlighted on the right, removed code on the left, and the cursor on either side moves the panel. Changed lines no step explains get a dotted mark in the gutter while the sidestory is open.
+- **Steps open the file itself**, the step's lines highlighted (removed code in a read-only view of the old file), and the cursor moves the panel. For a file the branch modified, **Open Changes with Base** in the editor's title bar switches to the branch's diff at the same place (the panel keeps following the cursor there) and **Open File** switches back. In a diff, the step's lines get a frame and the step's title, so they stand out among the diff's colors. Set `sidestory.changes.openStepsIn` to `"diff"` to open steps in the diff straight away. Changed lines no step explains get a dotted mark in the gutter while the sidestory is open.
 - **This File** lists every step, in any sidestory, that covers the file you're in, and for a changed file the changes not explained yet.
 - **One change at a time:** with the cursor in a change (in its diff or the changed file), the editor's context menu has **Copy Prompt: Explain This Change**, **Mark as Trivial…** (asks why, and writes it into the sidestory), and **Re-pin This Step** for a step whose code grew, once you've updated its prose.
 
 The base: **Sidestory: Set Base…** when you picked one for the branch, else the `"base"` of a sidestory added on the branch, else the branch base Git recorded, the `sidestory.changes.defaultBase` setting, the remote's default branch, or `main` (then `master`). When sidestories on the branch name different bases, **This branch** offers to switch.
 
-Tip: diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
+Tip: VS Code's diffs switch to inline view when they're narrow, which hides removed code's highlight. With the panel beside them, set `"diffEditor.useInlineViewWhenSpaceIsLimited": false` to keep them side by side.
 
 ## Commands
 
@@ -198,7 +198,7 @@ Tip: diffs switch to inline view when they're narrow, which hides removed code's
 | `sidestory.statusBar.enabled` | `true` | Name in the status bar the sidestory that explains the cursor's line, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A book in the gutter, and a mark in the overview ruler, on code a sidestory explains. |
 | `sidestory.sidebar.followPanel` | `true` | Select the sidestory a panel shows in the Sidestories view. |
-| `sidestory.changes.openStepsIn` | `"diff"` | Where steps of a sidestory with a base open: the branch's diff, or plain editors. |
+| `sidestory.changes.openStepsIn` | `"editor"` | Where steps of a sidestory with a base open: plain editors (**Open Changes with Base** switches to the diff), or the branch's diff. |
 | `sidestory.changes.suggestExplain` | `true` | Offer **Copy Prompt: Explain This Branch** under **This branch** when no sidestory explains the branch. |
 | `sidestory.changes.defaultBase` | `""` | The branch to compare with when none was set with **Set Base…**, no sidestory on the branch gives one, and Git recorded no base for the branch (empty: the remote's default branch, then `main` or `master`). |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes (staged, unstaged, untracked) in coverage and the diffs steps open. |

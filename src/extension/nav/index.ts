@@ -265,6 +265,16 @@ export class SidestoryIndex implements vscode.Disposable {
     return e?.outlined ? e.steps.length : undefined;
   }
 
+  /** The outline's step an anchor is in (its number from 1, and title), or undefined before the outline is known. */
+  stepOf(dir: vscode.Uri | string, anchorId: string): { n: number; title: string } | undefined {
+    const e = this.entry(dir);
+    if (!e?.outlined) return undefined;
+    const i = e.ids.indexOf(anchorId);
+    const si = i < 0 ? -1 : e.stepOf[i]!;
+    const step = si >= 0 ? e.steps[si] : undefined;
+    return step ? { n: si + 1, title: step.title } : undefined;
+  }
+
   /** The ids that are sections (inside a step), or undefined before the outline is known. */
   sections(e: IndexEntry): Set<string> | undefined {
     if (!e.outlined) return undefined;

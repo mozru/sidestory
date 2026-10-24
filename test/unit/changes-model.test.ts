@@ -152,6 +152,21 @@ describe('package.json', () => {
     }
   });
 
+  it('the settings tables of the README and the guide give the defaults package.json has', () => {
+    const confs = Array.isArray(pkg.contributes.configuration) ? pkg.contributes.configuration : [pkg.contributes.configuration];
+    const defaults = new Map<string, unknown>(confs.flatMap((c: { properties: Record<string, { default?: unknown }> }) => Object.entries(c.properties).map(([k, v]) => [k, v.default])));
+    let rows = 0;
+    for (const doc of ['README.md', 'docs/GUIDE.md']) {
+      for (const [, key, value] of readFileSync(doc, 'utf8').matchAll(/^\| `(sidestory\.[A-Za-z.]+)` \| `([^`]*)` \|/gm)) {
+        rows++;
+        // A string may be written bare (`local`) or as JSON (`"local"`).
+        const d = defaults.get(key!);
+        expect([JSON.stringify(d), ...(typeof d === 'string' ? [d] : [])], `${doc}: ${key}`).toContain(value);
+      }
+    }
+    expect(rows).toBeGreaterThan(5);
+  });
+
   it('the guide names the Next/Previous keys package.json binds', () => {
     const guide = readFileSync('docs/GUIDE.md', 'utf8');
     const kbd = (chord: string) =>

@@ -1,6 +1,7 @@
 // One way to open code (docs/CHANGES-PLAN.md §7.1–§7.2): `openTarget`, used by the session's reveals (steps and
-// inline refs) and by Next/Previous Unexplained Change. A target whose file is in the comparison opens the merge diff
-// with the comparison's two URIs (`ChangesService.diffUris`), so every opener reuses one tab; then the side's editor
+// inline refs) and by Next/Previous Unexplained Change. Steps open plain editors by default (`openStepsIn`, §7.2;
+// Open Changes with Base switches to the diff). In "diff" mode, and for Next/Previous Unexplained Change, a target whose
+// file is in the comparison opens the merge diff with the comparison's two URIs (`ChangesService.diffUris`), so every opener reuses one tab; then the side's editor
 // in that diff's group is awaited (vscode.diff returns before its editors are visible, at most 1 s) and revealed. A file the branch didn't
 // change opens a plain editor. When the left side has no editor (an inline diff, §7.5), the base-side lines are
 // revealed on the right at their mapped position.
@@ -31,7 +32,7 @@ export interface OpenOptions {
   moveCursor: boolean;
   viewColumn: vscode.ViewColumn;
   preserveFocus: boolean;
-  /** `sidestory.changes.openStepsIn`: "diff" (default) or "editor". */
+  /** `sidestory.changes.openStepsIn`: "editor" (default) or "diff". */
   mode: 'diff' | 'editor';
 }
 
@@ -47,7 +48,7 @@ export interface Opened {
 }
 
 export const STEPS_SETTING = 'changes.openStepsIn';
-export const openStepsIn = (): 'diff' | 'editor' => (vscode.workspace.getConfiguration('sidestory').get<string>(STEPS_SETTING, 'diff') === 'editor' ? 'editor' : 'diff');
+export const openStepsIn = (): 'diff' | 'editor' => (vscode.workspace.getConfiguration('sidestory').get<string>(STEPS_SETTING, 'editor') === 'diff' ? 'diff' : 'editor');
 
 /**
  * A visible editor showing `uri`, waiting for one at most `ms` (vscode.diff shows its editors a moment later). With
@@ -93,6 +94,20 @@ export function isDiffSide(uri: vscode.Uri): boolean {
     const input = g.activeTab?.input;
     return input instanceof vscode.TabInputTextDiff && (input.original.toString() === key || input.modified.toString() === key);
   });
+}
+
+/**
+ * Whether an editor is a side of a diff editor: its group's active tab is a diff of its document. A diff's left side
+ * may report no column: then any group showing such a diff.
+ */
+export function inDiffEditor(editor: vscode.TextEditor): boolean {
+  const key = editor.document.uri.toString();
+  const shows = (g: vscode.TabGroup) => {
+    const input = g.activeTab?.input;
+    return input instanceof vscode.TabInputTextDiff && (input.original.toString() === key || input.modified.toString() === key);
+  };
+  const groups = vscode.window.tabGroups.all;
+  return editor.viewColumn === undefined ? groups.some(shows) : groups.some((g) => g.viewColumn === editor.viewColumn && shows(g));
 }
 
 function reveal(editor: vscode.TextEditor, r: LineRange, moveCursor: boolean): void {

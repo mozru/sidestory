@@ -1,7 +1,10 @@
 // Desktop VS Code: steps of a sidestory with a base (docs/CHANGES-PLAN.md §7, §8, §9.10, §16.4, release 1b) on the
-// git fixture's `--explained` copy, through the real git extension: a step opens the merge diff and its side editor
-// gets the highlight (never dimmed), a base-side step highlights the left side (a read-only `sidestory-git:`
-// document), and This File follows a diff side. (The cursor on the left side needs a real click: the e2e suite.)
+// git fixture's `--explained` copy, through the real git extension. By default a step opens a plain editor (an added
+// file too; removed code in a read-only view of the old file); Open Changes with Base switches a modified file to the
+// merge diff at the same place (the step framed there, the panel following) and Open File goes back. With openStepsIn
+// "diff", a step opens the merge diff and its side editor gets the highlight (never dimmed), a base-side step
+// highlights the left side (a read-only `sidestory-git:` document), and This File follows a diff side. (The cursor
+// on the left side needs a real click: the e2e suite.)
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 
@@ -13,6 +16,8 @@ interface Focus {
   range?: { start: number; end: number };
   dim?: boolean;
   note?: string;
+  label?: string;
+  framed?: boolean;
 }
 const focus = async () => (await vscode.commands.executeCommand<Focus[]>('sidestory._focus'))[0];
 
@@ -72,6 +77,123 @@ export function diffStepsTests(): void {
       ]);
     });
 
+    it('by default a step opens the file itself: highlighted, faded around, no diff', async () => {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
+      const file = vscode.Uri.file(`${workspace}/src/retry/retry.ts`).toString();
+      const f = await until('the highlight in retry.ts', async () => ((await focus())?.uri === file ? focus() : undefined));
+      assert.deepEqual(f.range, { start: 4, end: 9 });
+      assert.equal(f.framed, false);
+      assert.equal(activeDiff(), undefined);
+      await until('a plain editor of retry.ts', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === file));
+    });
+
+    it('a step in a file the branch added opens a plain editor, not an all-green diff', async () => {
+      await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'jitter' });
+      const file = vscode.Uri.file(`${workspace}/src/retry/jitter.ts`).toString();
+      const f = await until('the highlight in jitter.ts', async () => ((await focus())?.uri === file ? focus() : undefined));
+      assert.deepEqual(f.range, { start: 1, end: 19 });
+      assert.equal(activeDiff(), undefined);
+      const tab = vscode.window.tabGroups.all.flatMap((g) => g.tabs).find((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === file);
+      assert.ok(tab, 'a text tab of jitter.ts');
+    });
+
+    it('a base-side step opens the old file read-only in a plain editor', async () => {
+      await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'old-sleep' });
+      const f = await until('the highlight in the old sleep.ts', async () => {
+        const v = await focus();
+        return v?.uri?.startsWith('sidestory-git:') && v.uri.includes('/legacy/sleep.ts') ? v : undefined;
+      });
+      assert.deepEqual(f.range, { start: 1, end: 24 });
+      assert.equal(activeDiff(), undefined);
+      const ed = await until('the old file’s editor', () => vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === f.uri));
+      assert.equal(ed.document.languageId, 'typescript');
+    });
+
+    it('Open Changes with Base is offered for a modified or renamed file, not an added, deleted or unchanged one', async () => {
+      const c = await vscode.commands.executeCommand<{ comparable: string[] }>('sidestory._changes');
+      const at = (p: string) => vscode.Uri.file(`${workspace}/${p}`).fsPath;
+      assert.ok(c.comparable.includes(at('src/retry/retry.ts')), 'retry.ts (modified)');
+      assert.ok(c.comparable.includes(at('src/retry/backoff.ts')), 'backoff.ts (renamed)');
+      assert.ok(!c.comparable.includes(at('src/retry/jitter.ts')), 'jitter.ts (added)');
+      assert.ok(!c.comparable.includes(at('README.md')), 'README.md (unchanged)');
+      // A deleted file's old side neither: its diff is all red.
+      assert.ok(!c.comparable.some((k) => k.replace(/\\/g, '/').endsWith('/legacy/sleep.ts')), 'legacy/sleep.ts (deleted)');
+      // Run on an added file anyway (the palette), it opens nothing.
+      const jitter = await vscode.window.showTextDocument(vscode.Uri.file(`${workspace}/src/retry/jitter.ts`));
+      await vscode.commands.executeCommand('sidestory.changes.openChanges', jitter.document.uri);
+      assert.equal(activeDiff(), undefined);
+    });
+
+    it('Open Changes with Base opens the merge diff in the same column at the same line, and the step gets the diff frame', async () => {
+      // (The panel following the cursor there needs a real click: the e2e suite.)
+      await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
+      const file = vscode.Uri.file(`${workspace}/src/retry/retry.ts`);
+      await until('the step in retry.ts', async () => (await focus())?.uri === file.toString());
+      const shown = await until('its editor', () => vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === file.toString()));
+      const plain = await vscode.window.showTextDocument(shown.document, { viewColumn: shown.viewColumn, selection: new vscode.Range(15, 0, 15, 0) });
+      const column = plain.viewColumn;
+      await vscode.commands.executeCommand('sidestory.changes.openChanges', file);
+      const d = await until('the diff of retry.ts', () => (activeDiff()?.modified.toString() === file.toString() ? activeDiff() : undefined));
+      assert.equal(d.original.scheme, 'sidestory-git');
+      const right = await until('the right side, active', () => (vscode.window.activeTextEditor?.document.uri.toString() === file.toString() ? vscode.window.activeTextEditor : undefined));
+      assert.equal(right.selection.active.line, 15);
+      assert.equal(vscode.window.tabGroups.activeTabGroup.viewColumn, column);
+      const f = await until('the step framed in the diff', async () => ((await focus())?.framed ? focus() : undefined));
+      assert.equal(f.active, 'retry-loop');
+      assert.match(f.label ?? '', /^◀ Step \d+ · The retry loop$/);
+    });
+
+    it('Open File (the git extension’s, in the diff’s title bar) goes back to the file at the same line', async () => {
+      const file = vscode.Uri.file(`${workspace}/src/retry/retry.ts`);
+      const line = vscode.window.activeTextEditor!.selection.active.line;
+      await vscode.commands.executeCommand('git.openFile', file);
+      await until('a plain editor of retry.ts', () => !activeDiff() && vscode.window.activeTextEditor?.document.uri.toString() === file.toString());
+      assert.equal(vscode.window.activeTextEditor!.selection.active.line, line);
+      assert.equal((await focus())?.framed, false);
+    });
+
+    it('in committed mode, Sidestory’s own Open File goes back from a diff whose right side is from git', async function () {
+      this.timeout(60_000);
+      const conf = vscode.workspace.getConfiguration('sidestory.changes');
+      await conf.update('includeUncommitted', false, vscode.ConfigurationTarget.Global);
+      try {
+        await until('the committed comparison', async () => {
+          const c = await vscode.commands.executeCommand<{ comparable: string[] }>('sidestory._changes');
+          return c.comparable.some((k) => k.replace(/\\/g, '/') === '/src/retry/retry.ts') && !c.comparable.includes(vscode.Uri.file(`${workspace}/src/retry/retry.ts`).fsPath);
+        });
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
+        const f = await until('the step in HEAD’s retry.ts', async () => {
+          const v = await focus();
+          return v?.uri?.startsWith('sidestory-git:') && v.uri.includes('/src/retry/retry.ts') ? v : undefined;
+        });
+        const blob = vscode.Uri.parse(f.uri!);
+        const ed = await until('its editor', () => vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === f.uri));
+        await vscode.window.showTextDocument(ed.document, { viewColumn: ed.viewColumn, selection: new vscode.Range(6, 0, 6, 0) });
+        await vscode.commands.executeCommand('sidestory.changes.openChanges', blob);
+        const d = await until('the committed diff', () => (activeDiff()?.modified.toString() === f.uri ? activeDiff() : undefined));
+        assert.equal(d.modified.scheme, 'sidestory-git');
+        await until('the right side, active', () => vscode.window.activeTextEditor?.document.uri.toString() === f.uri);
+        await vscode.commands.executeCommand('sidestory.changes.openFile', blob);
+        await until('the blob in a plain editor', () => !activeDiff() && vscode.window.activeTextEditor?.document.uri.toString() === f.uri);
+        assert.equal(vscode.window.activeTextEditor!.selection.active.line, 6);
+      } finally {
+        await conf.update('includeUncommitted', undefined, vscode.ConfigurationTarget.Global);
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      }
+    });
+  });
+
+  describe(`Steps with openStepsIn "diff" on desktop VS Code ${vscode.version} (${process.platform})`, () => {
+    before(async () => {
+      await vscode.workspace.getConfiguration('sidestory.changes').update('openStepsIn', 'diff', vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    });
+    after(async () => {
+      await vscode.workspace.getConfiguration('sidestory.changes').update('openStepsIn', undefined, vscode.ConfigurationTarget.Global);
+    });
+
     it('a head-side step opens the merge diff and highlights its right side, undimmed', async () => {
       await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
       const d = await until('the diff of retry.ts', () => (activeDiff()?.modified.path.endsWith('/src/retry/retry.ts') ? activeDiff() : undefined));
@@ -79,6 +201,7 @@ export function diffStepsTests(): void {
       const f = await until('the highlight', async () => ((await focus())?.uri === d.modified.toString() ? focus() : undefined));
       assert.deepEqual(f.range, { start: 4, end: 9 });
       assert.equal(f.dim, false);
+      assert.equal(f.framed, true);
       // The side editor is a visible text editor (decorations apply to it).
       await until('the right side editor', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === d.modified.toString()));
     });

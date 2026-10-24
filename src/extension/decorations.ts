@@ -1,6 +1,7 @@
 // Editor highlights for the active step. Colors come only from the theme (ThemeColor ids).
 import * as vscode from 'vscode';
 import type { LineRange } from '../core/manifest.ts';
+import { inDiffEditor } from './changes/open.ts';
 
 export interface Focus {
   uri: vscode.Uri;
@@ -12,6 +13,8 @@ export interface Focus {
   dim: boolean;
   /** A note before the first line: removed code shown at its place on the right of an inline diff (§7.5). */
   note?: string;
+  /** The step's number and title, shown after its first line in a diff editor's side ("◀ Step 2 · Jitter"). */
+  label?: string;
 }
 
 /** Lines (and identifiers) a widget highlights inside the current step's anchor (docs/WIDGETS-PLAN.md §5.3). */
@@ -57,6 +60,32 @@ export class Decorations implements vscode.Disposable {
     borderWidth: '1px',
     borderRadius: '3px',
   });
+  // In a diff editor's side the tint is lost among the diff's own colours (a file the branch added is green from top
+  // to bottom): a frame in a colour no diff uses marks the step there instead, with a label after its first line.
+  // Borders, not backgrounds, so high contrast themes (transparent backgrounds) show it too. Plain editors keep the tint.
+  private readonly diffBody = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
+    borderStyle: 'solid',
+    borderWidth: '0 0 0 4px',
+    overviewRulerColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
+    overviewRulerLane: vscode.OverviewRulerLane.Full,
+  });
+  private readonly diffTop = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
+    borderStyle: 'solid',
+    borderWidth: '2px 0 0 0',
+  });
+  private readonly diffBottom = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
+    borderStyle: 'solid',
+    borderWidth: '0 0 2px 0',
+  });
+  private readonly diffLabel = vscode.window.createTextEditorDecorationType({
+    after: { color: new vscode.ThemeColor('sidestory.diffFocusBorder'), fontStyle: 'italic', margin: '0 0 0 3em' },
+  });
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
   private current: Focus | undefined;
   private widget: WidgetHighlight | undefined;
@@ -85,9 +114,14 @@ export class Decorations implements vscode.Disposable {
     return this.current;
   }
 
+  /** Tests: whether a visible diff editor side shows the current highlight as the diff frame. */
+  framed(): boolean {
+    const f = this.current;
+    return !!f && vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === f.uri.toString() && inDiffEditor(e));
+  }
+
   /** Whether the current highlight fades the rest of the file. */
   isDimmed(): boolean {
-
     return this.current?.dim ?? false;
   }
 
@@ -110,9 +144,11 @@ export class Decorations implements vscode.Disposable {
     }
     const f = this.current;
     const mine = f !== undefined && editor.document.uri.toString() === f.uri.toString();
-    const focusType = f ? this.focusType(f.color) : undefined;
+    const diff = mine && inDiffEditor(editor);
+    const focusType = f && !diff ? this.focusType(f.color) : undefined;
     for (const t of this.focusTypes.values()) if (t !== focusType || !mine) editor.setDecorations(t, []);
-    if (!mine || !f || !focusType) {
+    if (!diff) for (const t of [this.diffBody, this.diffTop, this.diffBottom, this.diffLabel]) editor.setDecorations(t, []);
+    if (!mine || !f) {
       editor.setDecorations(this.chip, []);
       editor.setDecorations(this.dim, []);
       editor.setDecorations(this.noteType, []);
@@ -122,11 +158,21 @@ export class Decorations implements vscode.Disposable {
     const last = doc.lineCount - 1;
     const startLine = Math.min(f.range.start - 1, last);
     const endLine = Math.min(f.range.end - 1, last);
-    editor.setDecorations(focusType, [new vscode.Range(startLine, 0, endLine, doc.lineAt(endLine).text.length)]);
+    const lines = new vscode.Range(startLine, 0, endLine, doc.lineAt(endLine).text.length);
+    if (diff) {
+      editor.setDecorations(this.diffBody, [lines]);
+      editor.setDecorations(this.diffTop, [new vscode.Range(startLine, 0, startLine, 0)]);
+      editor.setDecorations(this.diffBottom, [new vscode.Range(endLine, 0, endLine, 0)]);
+      const end = doc.lineAt(startLine).range.end;
+      editor.setDecorations(this.diffLabel, f.label && !f.note ? [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: f.label } } }] : []);
+    } else if (focusType) {
+      editor.setDecorations(focusType, [lines]);
+    }
     editor.setDecorations(this.chip, identifierRanges(doc, f.highlight));
     editor.setDecorations(this.noteType, f.note ? [{ range: new vscode.Range(startLine, 0, startLine, 0), renderOptions: { before: { contentText: f.note } } }] : []);
     const outside: vscode.Range[] = [];
-    if (f.dim) {
+    // Never in a diff editor's side (docs/CHANGES-PLAN.md §7.3), even when the step opened in a plain editor first.
+    if (f.dim && !diff) {
       if (startLine > 0) outside.push(new vscode.Range(0, 0, startLine - 1, doc.lineAt(startLine - 1).text.length));
       if (endLine < last) outside.push(new vscode.Range(endLine + 1, 0, last, doc.lineAt(last).text.length));
     }
@@ -157,7 +203,10 @@ export class Decorations implements vscode.Disposable {
     this.dim.dispose();
     this.noteType.dispose();
     this.flashType.dispose();
-
+    this.diffBody.dispose();
+    this.diffTop.dispose();
+    this.diffBottom.dispose();
+    this.diffLabel.dispose();
     this.widgetType.dispose();
     this.widgetIds.dispose();
   }

@@ -11,6 +11,7 @@ const REVIEWED: Record<string, number> = {
   'changes/git-api.ts': 1,
   'changes/git-fs.ts': 1,
   'changes/probe.ts': 1,
+  'changes/service.ts': 1, // the resourcePath context key's values (Open Changes with Base): matched, never read
   'explainers.ts': 11,
   'extension.ts': 3,
   'highlight/service.ts': 4,

@@ -67,6 +67,8 @@ export interface SessionHost {
   prepared?: PreparedTextCache;
   /** The outline's step count for a sidestory (one number in the tree and the peek, §8.2). */
   stepCount?(dir: vscode.Uri): number | undefined;
+  /** The outline's step an anchor is in: its number (from 1) and title, for the step's label in diff editors. */
+  stepOf?(dir: vscode.Uri, anchorId: string): { n: number; title: string } | undefined;
   /** A sidestory's title from the workspace index, for trail crumbs of sidestories this panel hasn't loaded. */
   titleOf?(dir: vscode.Uri): string | undefined;
   /** A sidestory was shown in this panel (open, switch, dive): the recent list (§7.5). */
@@ -1305,7 +1307,9 @@ export class ExplainerSession implements vscode.Disposable {
       }
     }
     // No dimming in a diff editor's sides (§7.3): fading on top of the diff's colours makes it hard to read.
-    this.decorations.set({ uri, range: r.range, color: a.color, highlight: a.highlight, dim: dim && !isDiffSide(uri) });
+    const step = this.host.stepOf?.(this.ref.dir, a.id);
+    const label = step ? `◀ Step ${step.n} · ${step.title.length > 60 ? `${step.title.slice(0, 59)}…` : step.title}` : undefined;
+    this.decorations.set({ uri, range: r.range, color: a.color, highlight: a.highlight, dim: dim && !isDiffSide(uri), label });
   }
 
   /** Reveals one anchor at a time; while one is opening, only the latest request waits. */
@@ -1381,9 +1385,9 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   /** For tests (`sidestory._focus`): the highlight this panel set, and the step it shows. */
-  focusInfo(): { active: string | undefined; uri?: string; range?: LineRange; dim?: boolean; note?: string } {
+  focusInfo(): { active: string | undefined; uri?: string; range?: LineRange; dim?: boolean; note?: string; label?: string; framed?: boolean } {
     const f = this.decorations.focus;
-    return { active: this.active, ...(f ? { uri: f.uri.toString(), range: f.range, dim: f.dim, note: f.note } : {}) };
+    return { active: this.active, ...(f ? { uri: f.uri.toString(), range: f.range, dim: f.dim, note: f.note, label: f.label, framed: this.decorations.framed() } : {}) };
   }
 
   /** Whether the message was handed to the page. */

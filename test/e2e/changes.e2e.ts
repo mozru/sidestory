@@ -6,6 +6,7 @@
 import { expect, type FrameLocator, type Locator, type Page, test } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { command, inContainer } from './helpers.ts';
+import { openFile } from './nav-helpers.ts';
 
 const REPO = '/home/workspace/chgx';
 const SHOTS = process.env.CX_SHOTS;
@@ -19,6 +20,15 @@ const diff = (page: Page) => page.locator('.monaco-diff-editor:visible').first()
 const activeTab = (page: Page, text: string) => expect(page.locator('.tab.active', { hasText: text })).toBeVisible();
 /** Our whole-line decorations in an editor (the extension's decoration classes start with "ced-"). */
 const decorated = (editor: Locator) => editor.locator('.view-overlays [class*="ced-"]').count();
+/** An action in an editor title bar, by its title (VS Code shows them for the focused editor). */
+const titleAction = (page: Page, title: string) => page.locator(`.editor-group-container .editor-actions .action-label[aria-label^="${title}"]`);
+/** The editor of a document whose URI ends with `suffix`. */
+const codeEditor = (page: Page, suffix: string) => page.locator(`.editor-group-container .monaco-editor[data-uri$="${suffix}"]`).first();
+/** Whether the step is drawn as the diff frame in an editor: one of our whole-line decorations has a 4px left bar. */
+const framed = (editor: Locator) => editor.locator('.view-overlays [class*="ced-"]').evaluateAll((els) => els.some((el) => getComputedStyle(el).borderLeftWidth === '4px'));
+/** The text decorations draw after lines in an editor (CSS `content`), joined: where the step's label shows. */
+const labelOf = (editor: Locator) =>
+  editor.locator('.view-lines span').evaluateAll((els) => els.map((el) => getComputedStyle(el, '::after').content).filter((c) => c && c !== 'none' && c !== 'normal').join(' '));
 /** A row's file decoration badges, as VS Code draws them (the label's ::after content). */
 const badge = (r: Locator) => r.locator('.monaco-icon-label').first().evaluate((el) => getComputedStyle(el, '::after').content);
 
@@ -37,10 +47,10 @@ test.afterEach(async ({}, info) => {
   await info.attach('server-logs', { path: info.outputPath('server-logs.txt'), contentType: 'text/plain' });
 });
 
-async function openRepo(page: Page, prepare = ''): Promise<void> {
+async function openRepo(page: Page, prepare = '', extra: Record<string, unknown> = {}): Promise<void> {
   // Side-by-side diffs beside the panel (the README's tip), so the left side has an editor.
-  const settings = { ...JSON.parse(inContainer('cat /home/workspace/.settings.json')), 'diffEditor.useInlineViewWhenSpaceIsLimited': false };
-  inContainer(`rm -rf ${REPO} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.chg-explained ${REPO} && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/User/settings.json${prepare ? ` && cd ${REPO} && ${prepare}` : ''}`);
+  const settings = { ...JSON.parse(inContainer('cat /home/workspace/.settings.json')), 'diffEditor.useInlineViewWhenSpaceIsLimited': false, ...extra };
+  inContainer(`rm -rf ${REPO} ~/.openvscode-server/data/User/workspaceStorage && cp -r /home/workspace/.chg-explained ${REPO} && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/User/settings.json && echo '${JSON.stringify(settings)}' > ~/.openvscode-server/data/Machine/settings.json${prepare ? ` && cd ${REPO} && ${prepare}` : ''}`);
   await page.goto(`/?folder=${REPO}`);
   await page.locator('.monaco-workbench').waitFor({ timeout: 60_000 });
   const yes = page.getByRole('button', { name: 'Yes, I trust the authors' });
@@ -123,8 +133,68 @@ test.describe('side by side', () => {
   // Wide enough for side-by-side diffs beside the panel: the left side then has an editor (§7.5).
   test.use({ viewport: { width: 2400, height: 1000 } });
 
-  test('steps open the merge diff: the right side highlighted, a base-side step the left; the left-side cursor moves the panel', async ({ page }) => {
+  test('steps open plain editors; Open Changes with Base (modified files only) switches to the diff at the same line, the panel follows there, Open File goes back', async ({ page }) => {
     await openRepo(page);
+    await showSidestories(page);
+    await row(sidestories(page), 'Retry with jitter').click();
+    const panel = await panelFrame(page);
+    await expect(activeStep(panel)).toContainText('The retry loop');
+    // Step 1's file changed, but it opens as itself, highlighted.
+    await activeTab(page, 'retry.ts');
+    await expect(page.locator('.tab.active', { hasText: '↔' })).toHaveCount(0);
+    const plain = codeEditor(page, '/src/retry/retry.ts');
+    await expect.poll(() => decorated(plain)).toBeGreaterThan(0);
+    // The title bar's actions follow the focused editor (as the git extension's Open Changes does): in the editor, the button.
+    await plain.locator('.view-line', { hasText: 'export const retry line 20;' }).first().click();
+    await expect(titleAction(page, 'Open Changes with Base')).toBeVisible();
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/plain-step.png` });
+
+    // A file the branch added: plain, no button (its diff would be all green).
+    await panel.locator('.cx-step', { hasText: 'Jitter' }).first().click();
+    await activeTab(page, 'jitter.ts');
+    await expect(page.locator('.tab.active', { hasText: '↔' })).toHaveCount(0);
+    await codeEditor(page, '/src/retry/jitter.ts').locator('.view-line').first().click();
+    await page.waitForTimeout(500); // the title bar updates with the focus
+    await expect(titleAction(page, 'Open Changes with Base')).toHaveCount(0);
+    // Removed code: the old file, read-only, no button either (the file is deleted).
+    await panel.locator('.cx-step', { hasText: 'No more sleep' }).first().click();
+    const old = page.locator('.editor-group-container .monaco-editor[data-uri^="sidestory-git:"][data-uri*="/legacy/sleep.ts"]').first();
+    await expect(old).toBeVisible();
+    await old.locator('.view-line').first().click();
+    await page.waitForTimeout(500); // the title bar updates with the focus
+    await expect(titleAction(page, 'Open Changes with Base')).toHaveCount(0);
+    // An unchanged file: none.
+    await openFile(page, 'README.md');
+    await codeEditor(page, '/README.md').locator('.view-line').first().click();
+    await page.waitForTimeout(500); // the title bar updates with the focus
+    await expect(titleAction(page, 'Open Changes with Base')).toHaveCount(0);
+
+    // Back on retry.ts, below the step: the panel stays on the removed-code step.
+    await openFile(page, 'src/retry/retry.ts');
+    await page.locator('.editor-group-container .monaco-editor[data-uri$="/src/retry/retry.ts"] .view-line', { hasText: 'export const retry line 12;' }).first().click();
+    await expect(page.locator('.part.statusbar')).toContainText('Ln 15');
+    await titleAction(page, 'Open Changes with Base').click();
+    await activeTab(page, 'retry.ts (main ↔ working tree)');
+    await expect(page.locator('.part.statusbar')).toContainText('Ln 15');
+    await expect(activeStep(panel)).toContainText('No more sleep');
+    // In the diff: no Open Changes with Base, but the git extension's Open File.
+    await expect(titleAction(page, 'Open Changes with Base')).toHaveCount(0);
+    // A click in the diff's unchanged context on the left follows the step about the matching new lines.
+    await diff(page).locator('.editor.original .view-line', { hasText: 'export const retry line 4;' }).first().click();
+    await expect(activeStep(panel)).toContainText('The retry loop');
+    // The step is framed there (a 4px bar, not the plain editor's tint).
+    const right = diff(page).locator('.editor.modified .monaco-editor');
+    await expect.poll(() => framed(right)).toBe(true);
+    // Back to the file (the title bar has the git extension's Open File for a working tree file; the palette has
+    // Sidestory's for any diff): from the left side, at the matching new line.
+    await command(page, 'Sidestory: Open File', true);
+    await activeTab(page, 'retry.ts');
+    await expect(page.locator('.tab.active', { hasText: '↔' })).toHaveCount(0);
+    await expect(page.locator('.part.statusbar')).toContainText('Ln 4,');
+  });
+
+  test('with openStepsIn "diff", steps open the merge diff: the right side highlighted, a base-side step the left; the left-side cursor moves the panel', async ({ page }) => {
+    await openRepo(page, '', { 'sidestory.changes.openStepsIn': 'diff' });
     await showSidestories(page);
     await row(sidestories(page), 'Retry with jitter').click();
     const panel = await panelFrame(page);
@@ -133,6 +203,9 @@ test.describe('side by side', () => {
     await activeTab(page, 'retry.ts (main ↔ working tree)');
     const right = diff(page).locator('.editor.modified .monaco-editor');
     await expect.poll(() => decorated(right)).toBeGreaterThan(0);
+    await expect.poll(() => framed(right)).toBe(true);
+    // The focus is in the panel: the diff's title bar still offers no Open Changes with Base (it is the diff).
+    await expect(titleAction(page, 'Open Changes with Base')).toHaveCount(0);
 
     // The base-side step: the deleted file's diff, highlighted on the left.
     await panel.locator('.cx-step', { hasText: 'No more sleep' }).first().click();
@@ -152,10 +225,45 @@ test.describe('side by side', () => {
     await diff(page).locator('.editor.original .view-line', { hasText: 'export const retry line 4;' }).first().click();
     await expect(activeStep(panel)).toContainText('The retry loop');
   });
+
+  // A diff full of red and green around the step (lines changed right above and below it, more added after): the
+  // step's frame and label must still stand out, in dark, light and high contrast themes.
+  const HEAVY = "sed -i -e '1,3s/retry line/retry LINE (edited)/' -e '10,23s/;$/ + 1;/' -e '12d;16d' src/retry/retry.ts && for i in $(seq 1 25); do echo \"export const more$i = $i;\" >> src/retry/retry.ts; done";
+  for (const [theme, shot] of [['Default Dark Modern', 'dark'], ['Default Light Modern', 'light'], ['Default High Contrast', 'hc']] as const) {
+    test(`a step stands out in a heavily changed diff (${theme})`, async ({ page }) => {
+      await openRepo(page, HEAVY);
+      await command(page, 'Preferences: Color Theme');
+      await page.keyboard.type(theme);
+      await page.locator('.quick-input-list .monaco-list-row', { hasText: theme }).first().click();
+      await showSidestories(page);
+      await row(sidestories(page), 'Retry with jitter').click();
+      const panel = await panelFrame(page);
+      await expect(activeStep(panel)).toContainText('The retry loop');
+      await activeTab(page, 'retry.ts');
+      await codeEditor(page, '/src/retry/retry.ts').locator('.view-line', { hasText: 'export const retry line 6;' }).first().click();
+      await expect(titleAction(page, 'Open Changes with Base')).toBeVisible();
+      if (shot === 'dark' && SHOTS) {
+        // The title bar around the button, with its tooltip.
+        const button = titleAction(page, 'Open Changes with Base');
+        await button.hover();
+        await page.waitForTimeout(1200);
+        const box = (await button.boundingBox())!;
+        await page.screenshot({ path: `${SHOTS}/open-changes-button.png`, clip: { x: Math.max(0, box.x - 700), y: Math.max(0, box.y - 12), width: 900, height: 110 } });
+      }
+      await titleAction(page, 'Open Changes with Base').click();
+      await activeTab(page, 'retry.ts (main ↔ working tree)');
+      const right = diff(page).locator('.editor.modified .monaco-editor');
+      await expect.poll(() => framed(right)).toBe(true);
+      await expect.poll(() => labelOf(right)).toMatch(/◀\s*Step\s*1\s*·\s*The\s*retry\s*loop/);
+      // Lots of diff around it.
+      expect(await diff(page).locator('.line-insert, .line-delete').count()).toBeGreaterThan(10);
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/diff-step-${shot}.png` });
+    });
+  }
 });
 
 test('This File lists the steps covering a diff side, marks the one at the cursor, and the changes not explained yet', async ({ page }) => {
-  await openRepo(page);
+  await openRepo(page, '', { 'sidestory.changes.openStepsIn': 'diff' });
   await showSidestories(page);
   const tf = pane(page, 'This File');
   const header = tf.locator('.pane-header');

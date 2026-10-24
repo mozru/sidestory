@@ -20,7 +20,7 @@ import { CoverageService, isUnknownPath, type Belonging, type CoverageResult } f
 import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import { baseName, comparePaths, short, step, type ChangeEntry } from './model.ts';
-import { openTarget, type DiffContext } from './open.ts';
+import { editorFor, inDiffEditor, openTarget, type DiffContext } from './open.ts';
 import { fileRanks, nextChange, walkPos, type OpenChange } from './order.ts';
 import { changePrompt, COPIED, explainBranchPrompt, updatePrompt } from './prompts.ts';
 import { emptySideKey, gitSideKey, vscodeGitSideKey, type SideKey } from './targets.ts';
@@ -45,6 +45,11 @@ const setContext = (key: string, value: unknown) => void vscode.commands.execute
 const name = (s: string, max = 60) => displayText(s, max);
 const config = () => vscode.workspace.getConfiguration('sidestory.changes');
 const setting = () => config().get<string>('defaultBase')?.trim() || undefined;
+
+/** A file whose merge diff has two sides worth comparing: modified, renamed or copied (not added or deleted). */
+const hasTwoSides = (e: ChangeEntry) => e.status === 'M' || e.status === 'R' || e.status === 'C';
+/** A URI as the `resourcePath` context key holds it (VS Code sets it from `fsPath`, for every scheme): a key to match, never read from disk. */
+const resourcePath = (u: vscode.Uri) => u.fsPath;
 
 /** A change of the comparison with its file. */
 interface Found {
@@ -127,6 +132,7 @@ export class ChangesService implements vscode.Disposable {
       this.decorations,
       this.coverage.onDidChange(() => {
         setContext('sidestory.changes.layer', !!this.result()?.belonging.length);
+        this.updateComparable(); // an unstaged rename coverage paired
         this.paintUnexplained();
         this.decorations.update();
         this.diffsEmitter.fire();
@@ -376,6 +382,7 @@ export class ChangesService implements vscode.Disposable {
     this.holders.clear(); // sessions that still belong say so again when they ask (diffsEmitter below)
     setContext('sidestory.changes.repo', !!repo);
     setContext('sidestory.changes.activeFileChanged', false);
+    this.updateComparable();
     // The old repository's marks and rows go (repository closed, git turned off, another repository followed).
     this.coverage.clear();
     this.decorations.update();
@@ -400,6 +407,7 @@ export class ChangesService implements vscode.Disposable {
         // Coverage for a new snapshot only: the same one (new details, git busy) keeps its run (onDidRecheck re-reads files).
         if (c.snapshot && c.snapshot !== this.coverageAskedFor) this.scheduleCoverage();
         this.updateActiveFile();
+        this.updateComparable();
         this.diffsEmitter.fire();
         this.emitter.fire();
       }),
@@ -923,6 +931,103 @@ export class ChangesService implements vscode.Disposable {
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, ...(place?.editor.viewColumn ? { viewColumn: place.editor.viewColumn } : {}) });
   }
 
+  // ---- switching between a file and its merge diff (§7.1) ----
+
+  /**
+   * `sidestory.changes.comparable`, for **Open Changes with Base** in the editor's title bar (as the git extension's
+   * Open Changes): the documents (by `resourcePath`, as the title bar's context has it) whose file has a merge diff
+   * worth opening: modified or renamed, both sides. Not a file the branch added or deleted: its diff is one colour.
+   * Keyed by resource, not by the active editor, so the button stays while the focus is in a panel.
+   */
+  private updateComparable(): void {
+    const s = this.snapshot;
+    const keys: string[] = [];
+    for (const e of s?.entries ?? []) {
+      const entry = e.status === 'A' && s ? (this.pairedEntry(s, { path: e.path, side: 'head' }) ?? e) : e;
+      if (!s || !hasTwoSides(entry)) continue;
+      try {
+        const pair = this.diffUris(s, entry);
+        if (pair) keys.push(resourcePath(pair.left), resourcePath(pair.right));
+      } catch {
+        // an unsafe path: no button
+      }
+    }
+    const sig = keys.join('\0');
+    if (sig === this.comparableSig) return;
+    this.comparableSig = sig;
+    this.comparable = keys;
+    setContext('sidestory.changes.comparable', Object.fromEntries(keys.map((k) => [k, true])));
+  }
+
+  private comparableSig = '';
+  /** The `sidestory.changes.comparable` keys (tests). */
+  comparable: readonly string[] = [];
+
+  /** The editor showing `uri` (the title bar's resource): the active one when it does, else a visible plain one. */
+  private editorOf(uri: vscode.Uri | undefined): vscode.TextEditor | undefined {
+    const active = vscode.window.activeTextEditor;
+    if (!uri) return active;
+    const key = uri.toString();
+    if (active?.document.uri.toString() === key) return active;
+    return vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === key && !inDiffEditor(e));
+  }
+
+  /**
+   * Open Changes with Base: the merge diff of the file in the editor (`uri` from the title bar, else the active
+   * editor), in its column, at its cursor and scroll position, on the side it showed (a read-only old file: the left).
+   */
+  private async openChangesOf(uri: vscode.Uri | undefined): Promise<void> {
+    const s = this.snapshot;
+    const ed = this.editorOf(uri);
+    const doc = uri ?? ed?.document.uri;
+    const key = s && doc ? this.keyOf(s, doc) : undefined;
+    const entry = s && key ? this.entryFor(s, key) : undefined;
+    const pair = s && entry && hasTwoSides(entry) ? this.diffUris(s, entry) : undefined;
+    if (!key || !pair) {
+      vscode.window.setStatusBarMessage('This file has no changes from the base to compare', 3000);
+      return;
+    }
+    const { left, right, title } = pair;
+    const selection = ed?.selection;
+    const top = ed?.visibleRanges[0];
+    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, viewColumn: ed?.viewColumn ?? vscode.ViewColumn.Active });
+    const side = await editorFor(key.side === 'base' ? left : right, 1000, { left, right });
+    if (!side) return; // the left side of an inline diff has no editor
+    if (selection) side.selection = selection;
+    if (top) side.revealRange(top, vscode.TextEditorRevealType.AtTop);
+  }
+
+  /**
+   * Open File from a diff (`uri`: its right side, from the title bar; else the active diff tab's). In the title bar
+   * only for a right side from git (committed mode): with the working tree file on the right, the git extension's own
+   * Open File shows there; the palette has it for any diff of a changed file. The right side's document in a plain
+   * editor, at the cursor: the right side's, or the left side's line mapped to the new lines.
+   */
+  private async openFileOf(uri: vscode.Uri | undefined): Promise<void> {
+    const s = this.snapshot;
+    const active = vscode.window.activeTextEditor;
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    const target = uri ?? (tab instanceof vscode.TabInputTextDiff && tab.modified.scheme !== EMPTY_SCHEME ? tab.modified : undefined);
+    if (!target) return;
+    let selection: vscode.Selection | undefined;
+    let top: vscode.Range | undefined;
+    if (active?.document.uri.toString() === target.toString()) {
+      selection = active.selection;
+      top = active.visibleRanges[0];
+    } else if (active && s) {
+      // The left side: its cursor line on the new side.
+      const key = this.keyOf(s, active.document.uri);
+      const entry = key?.side === 'base' ? this.entryFor(s, key) : undefined;
+      const map = entry ? this.result(s)?.files.get(entry.path)?.diff : undefined;
+      if (map) {
+        const line = oldToNew(map, active.selection.active.line + 1) - 1;
+        selection = new vscode.Selection(line, 0, line, 0);
+      }
+    }
+    const ed = await vscode.window.showTextDocument(target, { viewColumn: active?.viewColumn ?? vscode.ViewColumn.Active, preview: false, selection });
+    if (top) ed.revealRange(top, vscode.TextEditorRevealType.AtTop);
+  }
+
   // ---- the "This branch" group (§9.6) ----
 
   private branchKey(s: Snapshot): string {
@@ -1288,6 +1393,8 @@ export class ChangesService implements vscode.Disposable {
       const one = got?.r ? await this.changeFrom(got.s, got.r, arg) : undefined;
       if (got?.r && one) await this.openChange(got.s, got.r, one.path, one.c.key);
     },
+    'sidestory.changes.openChanges': (arg?: unknown) => this.openChangesOf(arg instanceof vscode.Uri ? arg : undefined),
+    'sidestory.changes.openFile': (arg?: unknown) => this.openFileOf(arg instanceof vscode.Uri ? arg : undefined),
     'sidestory.changes.copyExplainPrompt': async () => {
       const s = await this.current();
       if (!s) {
