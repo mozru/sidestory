@@ -830,7 +830,9 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
     return true;
   };
   for (const r of [...(report ? [report] : []), ...others]) for (const f of r.findings) if (keep(f)) findings.push(f);
-  const covFindings = cov!.findings.filter(keep);
+  // An anchor the normal check already calls unused needs no second warning from coverage.
+  const unused = new Set(findings.filter((f) => f.code === 'unused-anchor').map((f) => `${f.file}\u0000${f.line}`));
+  const covFindings = cov!.findings.filter((f) => !(f.code === 'anchor-unused' && unused.has(`${f.file}\u0000${f.line}`))).filter(keep);
   const all = [...findings, ...covFindings];
   const errors = all.filter((f) => f.severity === 'error').length;
   const warnings = all.filter((f) => f.severity === 'warning').length;
