@@ -21,12 +21,26 @@ interface Focus {
 }
 const focus = async () => (await vscode.commands.executeCommand<Focus[]>('sidestory._focus'))[0];
 
-async function until<T>(what: string, check: () => Promise<T | undefined | false> | T | undefined | false, timeout = 30_000): Promise<T> {
-  const end = Date.now() + timeout;
+/** What the editor area and the panel show, for a wait that timed out (CI's runs are gone by the time anyone looks). */
+async function state(): Promise<string> {
+  const input = (i: unknown) =>
+    i instanceof vscode.TabInputTextDiff ? `diff ${i.original.toString()} ↔ ${i.modified.toString()}` : i instanceof vscode.TabInputText ? `text ${i.uri.toString()}` : i instanceof vscode.TabInputWebview ? `webview ${i.viewType}` : String(i);
+  const groups = vscode.window.tabGroups.all.map((g) => `  group ${g.viewColumn}${g.isActive ? ' (active)' : ''}: ${g.tabs.map((t) => `${t.isActive ? '*' : ''}${input(t.input)}`).join(' | ')}`);
+  const editors = vscode.window.visibleTextEditors.map((e) => `  editor col ${e.viewColumn}: ${e.document.uri.toString()}`);
+  const f = await Promise.resolve(vscode.commands.executeCommand('sidestory._focus')).catch((e) => String(e));
+  return [...groups, ...editors, `  focus: ${JSON.stringify(f)}`].join('\n');
+}
+
+async function until<T>(what: string, check: () => Promise<T | undefined | false> | T | undefined | false, timeout = 20_000): Promise<T> {
+  const t0 = Date.now();
+  const end = t0 + timeout;
   for (;;) {
     const v = await check();
-    if (v) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    if (v) {
+      if (Date.now() - t0 > 2000) console.log(`      (waited ${Date.now() - t0} ms for ${what})`);
+      return v;
+    }
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}\n${await state()}`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
