@@ -48,6 +48,12 @@ const activeDiff = () => {
   const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
   return input instanceof vscode.TabInputTextDiff ? input : undefined;
 };
+/**
+ * A diff showing in any group whose sides match. A step opens beside the panel without taking focus, so the active
+ * group may still be the panel's (seen on Windows runners): the diff is open and highlighted, just not in it.
+ */
+const shownDiff = (match: (d: vscode.TabInputTextDiff) => boolean) =>
+  vscode.window.tabGroups.all.map((g) => g.activeTab?.input).find((i): i is vscode.TabInputTextDiff => i instanceof vscode.TabInputTextDiff && match(i));
 const dir = () => vscode.Uri.file(`${workspace}/.sidestory/retry-jitter`).toString();
 
 export function diffStepsTests(): void {
@@ -237,7 +243,7 @@ export function diffStepsTests(): void {
 
     it('a head-side step opens the merge diff and highlights its right side, undimmed', async () => {
       await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'retry-loop' });
-      const d = await until('the diff of retry.ts', () => (activeDiff()?.modified.path.endsWith('/src/retry/retry.ts') ? activeDiff() : undefined));
+      const d = await until('the diff of retry.ts', () => shownDiff((i) => i.modified.path.endsWith('/src/retry/retry.ts')));
       assert.equal(d.original.scheme, 'sidestory-git');
       // The side editor is a visible text editor (decorations apply to it); once it shows, the step is framed there.
       await until('the right side editor', () => vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === d.modified.toString()));
@@ -251,7 +257,7 @@ export function diffStepsTests(): void {
 
     it('a base-side step highlights the left side: the merge-base blob, read-only', async () => {
       await vscode.commands.executeCommand('sidestory.openAt', { dir: dir(), anchor: 'old-sleep' });
-      const d = await until('the diff of sleep.ts', () => (activeDiff()?.original.path.endsWith('/legacy/sleep.ts') ? activeDiff() : undefined));
+      const d = await until('the diff of sleep.ts', () => shownDiff((i) => i.original.path.endsWith('/legacy/sleep.ts')));
       const f = await until('the highlight on the left', async () => ((await focus())?.uri === d.original.toString() ? focus() : undefined));
       assert.deepEqual(f.range, { start: 1, end: 24 });
       const left = await until('the left editor', () => vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === d.original.toString()));
