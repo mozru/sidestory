@@ -308,6 +308,7 @@ function syncTheme(): void {
   if (!frame) return;
   frame.root.setAttribute('style', document.documentElement.getAttribute('style') ?? '');
   frame.body.className = document.body.className;
+  svgClocks(content);
   syncTail();
   widgets?.onTheme();
 }
@@ -438,6 +439,7 @@ widgets = new WidgetFrames({
 widgets.bindContent(frame.root.ownerDocument);
 new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => svgClocks(content));
 new ResizeObserver(syncTail).observe(scroller);
 new ResizeObserver(onPanelResize).observe(scroller);
 new ResizeObserver(() => fitSteps()).observe(headerEl);
@@ -922,6 +924,7 @@ function decorate(): void {
   if (active && !steps.some((s) => s.id === active) && !anchors.has(active)) active = undefined;
   offscreen.disconnect(); // sections the morph replaced aren't watched forever
   for (const s of steps) offscreen.observe(s.el);
+  svgClocks(content);
   // Only after a render: `anchors` arrives on every keystroke in linked code, and changes no diagram.
   if (needsIndex) {
     needsIndex = false;
@@ -1265,10 +1268,25 @@ window.addEventListener('focus', () => {
 /* Animations in sections far off screen are paused: an explainer full of them shouldn't keep the CPU busy. */
 const offscreen = new IntersectionObserver(
   (entries) => {
-    for (const en of entries) (en.target as HTMLElement).toggleAttribute('data-cx-off', !en.isIntersecting);
+    for (const en of entries) {
+      (en.target as HTMLElement).toggleAttribute('data-cx-off', !en.isIntersecting);
+      svgClocks(en.target);
+    }
   },
   { rootMargin: '300px 0px' },
 );
+
+/**
+ * SVG animation (`<animate>` and the like) ignores the CSS that pauses animations: its clocks stop in sections far
+ * off screen, and everywhere for readers who asked for less motion (the drawing stays as it is before it starts).
+ */
+function svgClocks(root: ParentNode): void {
+  const less = reducedMotion();
+  for (const svg of root.querySelectorAll<SVGSVGElement>('svg')) {
+    if (less || svg.closest('[data-cx-off]')) svg.pauseAnimations();
+    else svg.unpauseAnimations();
+  }
+}
 
 // ---- input ----
 

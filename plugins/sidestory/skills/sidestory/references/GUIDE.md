@@ -305,7 +305,7 @@ The built-in styles are light: body text in the editor font and colors, code blo
 Interactivity without script works well, and readers keep what they set while you edit:
 - **Steppers, tabs and switches** built from radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` rules. A switch the reader flipped stays flipped when you edit another part of the sidestory; changing that control's own `checked` in the source resets it.
 - **Pop-outs and footnotes** with `:target`: in-page links (`<a href="#id">`) set the target as in a browser.
-- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation** and `@container` queries. Animations in sections far off screen pause until the reader gets there; honour `prefers-reduced-motion` for readers who ask for less motion.
+- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation**, **SVG animation** (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) and `@container` queries. Animations in sections far off screen pause until the reader gets there. Honour `prefers-reduced-motion` in CSS for readers who ask for less motion; for them SVG animation doesn't start at all, so make the drawing read well before it moves.
 
 #### Code blocks
 
@@ -331,7 +331,8 @@ Supported: HTML and CSS, inline `<style>`, stylesheets, images (SVG, PNG, JPEG, 
 Removed or ignored, for safety (see [SECURITY.md](https://github.com/mozru/sidestory/blob/main/SECURITY.md)):
 - scripts of any kind, event handler attributes, `javascript:` links;
 - `accesskey`, `autofocus` and invoker commands (`command`, `commandfor`, `interestfor`), which could move focus or fire a link the reader didn't aim at, and attributes starting with `data-cx-`, which belong to the panel;
-- `<iframe>`, `<object>`, `<embed>`, `<form>`, `<meta>`, `<base>`, popovers, SVG animation;
+- `<iframe>`, `<object>`, `<embed>`, `<form>`, `<meta>`, `<base>`, popovers, `<discard>`;
+- SVG animation that would change a link or another URL (`href`, `xlink:href`, `src`, …), an event handler, `style` or a `data-cx-` attribute, or whose values hold a `url()` other than an in-page `url(#id)`; an animation's own `href` must be an in-page `#id`;
 - anything from the network: remote images, fonts, stylesheets, `@import`;
 - links to `localhost` or private addresses.
 

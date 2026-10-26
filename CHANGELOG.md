@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- SVG animation (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) now plays in the panel. Animations that would change a link or other URL, an event handler, `style` or the panel's own attributes, or load a `url()`, are still removed. SVG animation pauses in sections far off screen and doesn't play for readers who asked for less motion.
+
 ## 0.2.3 (2026-10-26)
 
 - **Steps open the file itself, not the branch's diff.** A step in a file the branch added used to open a diff that colored the whole file green, hiding the step. Now steps open a plain editor by default, with their lines highlighted (a step about removed code opens a read-only view of the old file).

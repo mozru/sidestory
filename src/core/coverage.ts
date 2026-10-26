@@ -8,7 +8,7 @@ import { HtmlTokenizer, TreeBuilder, type Frame } from './html-scan.ts';
 import type { LineRange } from './manifest.ts';
 import type { AnchorState } from './resolve.ts';
 import { normalizeLine } from './text.ts';
-import { DROPPED_ELEMENTS } from '../shared/sanitize-lists.ts';
+import { UNSHOWN_ELEMENTS } from '../shared/sanitize-lists.ts';
 
 export type ChangeState = 'explained' | 'partly' | 'unexplained' | 'trivial' | 'needsLook';
 
@@ -336,7 +336,7 @@ function coverChange(f: FileInput, c: ChangeBlock, head: number[], base: number[
 /** Deterministic limits of the page scan: tokens read and ids kept. Past either, coverage is "incomplete". */
 export const USED_LIMITS = { tokens: 2_000_000, ids: 5000 } as const;
 
-const DROPPED = new Set<string>(DROPPED_ELEMENTS.map((n) => n.toLowerCase()));
+const DROPPED = new Set<string>(UNSHOWN_ELEMENTS.map((n) => n.toLowerCase()));
 
 interface UFrame extends Frame {
   dropped: boolean;

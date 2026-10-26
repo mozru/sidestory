@@ -216,6 +216,57 @@ test('the sanitizer refuses every way out of the explainer folder', async ({ pag
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });
 
+test('SVG animation plays, unless it would change a URL, a handler or panel state, or load a url()', async ({ page }) => {
+  await open(page, {
+    html: `<section data-explain-anchor="state">
+      <svg width="100" height="20">
+        <rect id="moving" width="10" height="10"><animate id="ok-move" attributeName="x" from="0" to="90" dur="1s" repeatCount="indefinite"></animate></rect>
+        <circle r="4"><animateMotion id="ok-path" dur="2s" repeatCount="indefinite"><mpath href="#track"></mpath></animateMotion></circle>
+        <rect width="5" height="5"><animateTransform id="ok-turn" attributeName="transform" type="rotate" from="0" to="360" dur="1s"></animateTransform></rect>
+        <rect width="5" height="5"><set id="ok-fill" attributeName="fill" to="url(#grad)" begin="0s"></set></rect>
+        <path id="track" d="M0 10 H100"></path>
+        <a id="link" href="#track"><text>t</text>
+          <set id="bad-href" attributeName="href" to="https://example.com"></set>
+          <set id="bad-xlink" attributeName="xlink:href" to="https://example.com"></set>
+          <animate id="bad-case" attributeName=" HREF " values="https://example.com"></animate>
+        </a>
+        <rect width="5" height="5">
+          <set id="bad-on" attributeName="onclick" to="window.__pwned=5"></set>
+          <set id="bad-style" attributeName="style" to="position:fixed"></set>
+          <set id="bad-panel" attributeName="data-cx-ref" to="x"></set>
+          <set id="bad-url" attributeName="fill" to="url(https://example.com/p.svg#g)"></set>
+          <animate id="bad-values" attributeName="filter" values="none;url( 'https://example.com/f.svg#f' )"></animate>
+          <set id="bad-escape" attributeName="fill" to="\\75 rl(https://example.com/p.svg#g)"></set>
+          <animate id="file-target" href="other.svg#x" attributeName="x" to="5"></animate>
+        </rect>
+        <discard id="gone" href="#moving"></discard>
+      </svg>
+    </section>`,
+  });
+  const host = frame(page).locator('body');
+  for (const id of ['ok-move', 'ok-path', 'ok-turn', 'ok-fill', 'file-target']) await expect(host.locator(`#${id}`)).toHaveCount(1);
+  for (const id of ['bad-href', 'bad-xlink', 'bad-case', 'bad-on', 'bad-style', 'bad-panel', 'bad-url', 'bad-values', 'bad-escape', 'gone']) await expect(host.locator(`#${id}`)).toHaveCount(0);
+  // An animation's own target is an element on the page, never a file.
+  await expect(host.locator('#file-target')).not.toHaveAttribute('href', /.*/);
+  await expect(host.locator('mpath')).toHaveAttribute('href', '#track');
+  // It really plays: the rect moves.
+  const x = () => frame(page).locator('#moving').evaluate((r) => (r as SVGRectElement).x.animVal.value);
+  await expect.poll(x).toBeGreaterThan(0);
+  await expect(host.locator('#link')).toHaveAttribute('href', '#track');
+  expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+});
+
+test('SVG animation stops for readers who asked for less motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await open(page, {
+    html: `<section data-explain-anchor="state"><svg width="100" height="20"><rect id="moving" width="10" height="10"><animate attributeName="x" from="0" to="90" dur="1s" repeatCount="indefinite"></animate></rect></svg></section>`,
+  });
+  const svg = frame(page).locator('svg');
+  await expect.poll(() => svg.evaluate((s) => (s as SVGSVGElement).animationsPaused())).toBe(true);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect.poll(() => svg.evaluate((s) => (s as SVGSVGElement).animationsPaused())).toBe(false);
+});
+
 test('explainer CSS cannot cover the panel controls', async ({ page }) => {
   await open(page, {
     html: `<style>:host{position:fixed!important;inset:0!important;z-index:2147483647!important;contain:none!important;transform:none!important}

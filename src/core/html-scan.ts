@@ -14,7 +14,7 @@
 // links and widgets, and is otherwise best effort (no foster parenting, no adoption agency).
 import { displayText, firstSentence } from './display-text.ts';
 import { stepTitle } from './step-title.ts';
-import { DROPPED_ELEMENTS } from '../shared/sanitize-lists.ts';
+import { UNSHOWN_ELEMENTS } from '../shared/sanitize-lists.ts';
 
 /** A copy of `s` that shares no memory with the string it was cut from. */
 export function flat(s: string): string {
@@ -488,11 +488,11 @@ export interface Outline {
 interface OFrame extends Frame {
   /** Has data-explain-anchor. */
   anchored: boolean;
-  /** Removed by the panel's sanitizer, with its contents. */
+  /** Never shown by the panel: removed by its sanitizer with its contents, or inside SVG animation. */
   dropped: boolean;
 }
 
-const DROPPED = new Set<string>(DROPPED_ELEMENTS.map((n) => n.toLowerCase()));
+const DROPPED = new Set<string>(UNSHOWN_ELEMENTS.map((n) => n.toLowerCase()));
 const HEADING = new Set(['h1', 'h2', 'h3', 'h4']);
 
 interface StepState {

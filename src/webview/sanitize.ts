@@ -5,7 +5,7 @@
 // Widget placeholders (<explain-widget>) are kept with their own attributes; their JSON props child is
 // lifted into an attribute before scripts are dropped (docs/WIDGETS-PLAN.md §2).
 import { isWidgetSrc } from '../shared/protocol.ts';
-import { DROPPED_ELEMENTS } from '../shared/sanitize-lists.ts';
+import { DROPPED_ELEMENTS, SVG_ANIMATION_ELEMENTS } from '../shared/sanitize-lists.ts';
 import { parseInert } from './trusted.ts';
 
 /** Removed with their contents; the list is shared with the outline scanner (src/core/html-scan.ts). */
@@ -26,6 +26,9 @@ const DROP_ATTRS = new Set(['popover', 'popovertarget', 'popovertargetaction', '
 const PANEL_ATTR_PREFIX = 'data-cx-';
 /** Elements whose `name` becomes a property of the document (DOM clobbering). */
 const NAMED = new Set(['img', 'embed', 'object', 'form', 'iframe', 'frame', 'frameset']);
+const ANIMATION = SVG_ANIMATION_ELEMENTS.join(', ');
+/** The attributes that give an SVG animation's values. */
+const ANIMATION_VALUES = ['from', 'to', 'by', 'values'];
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */
 const LINKS = new Set(['a', 'area']);
 
@@ -86,6 +89,7 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
   const doc = parseInert(html);
   for (const el of doc.querySelectorAll('explain-widget')) widgetPlaceholder(el, warnings);
   for (const el of doc.querySelectorAll(DROP)) el.remove();
+  for (const el of doc.querySelectorAll(ANIMATION)) if (!safeAnimation(el)) el.remove();
   for (const el of doc.querySelectorAll('*')) {
     const widget = el.localName === 'explain-widget';
     for (const attr of [...el.attributes]) {
@@ -99,6 +103,11 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
       if (name.startsWith('on') || DROP_ATTRS.has(name) || name.startsWith(PANEL_ATTR_PREFIX) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
       else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
+        // An animation's target: an element on the page, never a file.
+        if (ANIMATED.has(el.localName) && !attr.value.trim().startsWith('#')) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
         const fixed = rewriteUrl(el.localName, name, attr.value, baseUrl);
         if (fixed === null) el.removeAttribute(attr.name);
         else el.setAttribute(attr.name, fixed);
@@ -117,6 +126,31 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
     body: [...doc.body.childNodes].map((n) => importNode(n, true)),
     warnings,
   };
+}
+
+const ANIMATED = new Set<string>(SVG_ANIMATION_ELEMENTS);
+
+/**
+ * Whether an SVG animation element may stay. Animation rewrites an attribute after sanitizing, so it must not
+ * target one the sanitizer guards: a URL (`href`, `xlink:href`, `src`, …), an event handler, a dropped attribute,
+ * `style`, `name` or the panel's own `data-cx-` attributes. Nor may its values load anything: a `url()` other
+ * than an in-page `url(#id)` (`fill`, `filter`, `mask`, … take them), and no backslash (CSS escapes).
+ */
+function safeAnimation(el: Element): boolean {
+  const target = (el.getAttribute('attributeName') ?? '').trim().toLowerCase();
+  const bare = target.includes(':') ? target.slice(target.indexOf(':') + 1) : target;
+  for (const n of [target, bare]) {
+    if (URL_ATTRS.includes(n) || n.startsWith('on') || DROP_ATTRS.has(n) || n.startsWith(PANEL_ATTR_PREFIX) || n === 'style' || n === 'name') return false;
+  }
+  for (const a of ANIMATION_VALUES) {
+    const v = el.getAttribute(a);
+    if (v === null) continue;
+    // CSS escapes could spell url( in a way the check below can't see.
+    if (v.includes('\\')) return false;
+    // Every url() left once the in-page ones are taken out loads something.
+    if (/url\s*\(/i.test(v.replace(/url\s*\(\s*(['"]?)\s*#[^)]*\)/gi, ''))) return false;
+  }
+  return true;
 }
 
 /**
