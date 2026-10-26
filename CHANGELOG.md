@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 (2026-10-26)
 
 - **Steps open the file itself, not the branch's diff.** A step in a file the branch added used to open a diff that colored the whole file green, hiding the step. Now steps open a plain editor by default, with their lines highlighted (a step about removed code opens a read-only view of the old file).
 - **Open Changes with Base**, a compare button in the editor's title bar (and in the Command Palette), switches a file the branch modified or renamed to its diff against the base, at the same lines. The panel keeps following the cursor there, and later steps in that file stay in the diff. **Open File** in the diff's title bar switches back.
