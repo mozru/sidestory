@@ -671,12 +671,22 @@
       },
       {
         "id": "sidestory.diffFocusBorder",
-        "description": "Frame around the active step's lines in a diff editor, where a background would be lost among the diff's colors. Pick a color the diff's inserted and removed lines don't use.",
+        "description": "Frame, overview ruler mark and title of the active step's lines in a diff editor. Pick a color the diff's inserted and removed lines don't use.",
         "defaults": {
-          "dark": "charts.purple",
-          "light": "charts.purple",
+          "dark": "#b48eff",
+          "light": "#8250df",
           "highContrast": "contrastActiveBorder",
           "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "sidestory.diffFocusBackground",
+        "description": "Background of the active step's lines in a diff editor, over the diff's inserted and removed colors.",
+        "defaults": {
+          "dark": "#a371f773",
+          "light": "#8250df59",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
         }
       },
       {

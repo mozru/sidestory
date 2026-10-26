@@ -4,7 +4,7 @@
 
 - **Steps open the file itself, not the branch's diff.** A step in a file the branch added used to open a diff that colored the whole file green, hiding the step. Now steps open a plain editor by default, with their lines highlighted (a step about removed code opens a read-only view of the old file).
 - **Open Changes with Base**, a compare button in the editor's title bar (and in the Command Palette), switches a file the branch modified or renamed to its diff against the base, at the same lines. The panel keeps following the cursor there, and later steps in that file stay in the diff. **Open File** in the diff's title bar switches back.
-- **Steps stand out in diffs:** the step's lines get a purple frame, a mark in the scrollbar and the step's number and title after its first line, instead of a background lost among the diff's colors. The color is `sidestory.diffFocusBorder`.
+- **Steps stand out in diffs:** the step's lines get a purple tint and frame, a purple mark in the scrollbar and the step's number and title after its first line, so they show even in a file the branch added (all green) or among many changes. The colors are `sidestory.diffFocusBackground` and `sidestory.diffFocusBorder`; high contrast themes get the frame in their contrast border color.
 - To open steps in the diff as before, set `sidestory.changes.openStepsIn` to `"diff"`.
 
 ## 0.2.2 (2026-10-24)

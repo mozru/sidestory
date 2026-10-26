@@ -24,8 +24,8 @@ const decorated = (editor: Locator) => editor.locator('.view-overlays [class*="c
 const titleAction = (page: Page, title: string) => page.locator(`.editor-group-container .editor-actions .action-label[aria-label^="${title}"]`);
 /** The editor of a document whose URI ends with `suffix`. */
 const codeEditor = (page: Page, suffix: string) => page.locator(`.editor-group-container .monaco-editor[data-uri$="${suffix}"]`).first();
-/** Whether the step is drawn as the diff frame in an editor: one of our whole-line decorations has a 4px left bar. */
-const framed = (editor: Locator) => editor.locator('.view-overlays [class*="ced-"]').evaluateAll((els) => els.some((el) => getComputedStyle(el).borderLeftWidth === '4px'));
+/** Whether the step is drawn as the diff frame in an editor: one of our whole-line decorations has a 3px left bar. */
+const framed = (editor: Locator) => editor.locator('.view-overlays [class*="ced-"]').evaluateAll((els) => els.some((el) => getComputedStyle(el).borderLeftWidth === '3px'));
 /** The text decorations draw after lines in an editor (CSS `content`), joined: where the step's label shows. */
 const labelOf = (editor: Locator) =>
   editor.locator('.view-lines span').evaluateAll((els) => els.map((el) => getComputedStyle(el, '::after').content).filter((c) => c && c !== 'none' && c !== 'normal').join(' '));
@@ -182,7 +182,7 @@ test.describe('side by side', () => {
     // A click in the diff's unchanged context on the left follows the step about the matching new lines.
     await diff(page).locator('.editor.original .view-line', { hasText: 'export const retry line 4;' }).first().click();
     await expect(activeStep(panel)).toContainText('The retry loop');
-    // The step is framed there (a 4px bar, not the plain editor's tint).
+    // The step is framed there (a 3px bar, not the plain editor's tint).
     const right = diff(page).locator('.editor.modified .monaco-editor');
     await expect.poll(() => framed(right)).toBe(true);
     // Back to the file (the title bar has the git extension's Open File for a working tree file; the palette has
@@ -258,6 +258,23 @@ test.describe('side by side', () => {
       // Lots of diff around it.
       expect(await diff(page).locator('.line-insert, .line-delete').count()).toBeGreaterThan(10);
       if (SHOTS) await page.screenshot({ path: `${SHOTS}/diff-step-${shot}.png` });
+    });
+
+    // A file the branch added, in a diff (openStepsIn "diff"): green from top to bottom, the step must still show.
+    test(`a step stands out in a new file's all-green diff (${theme})`, async ({ page }) => {
+      await openRepo(page, '', { 'sidestory.changes.openStepsIn': 'diff' });
+      await command(page, 'Preferences: Color Theme');
+      await page.keyboard.type(theme);
+      await page.locator('.quick-input-list .monaco-list-row', { hasText: theme }).first().click();
+      await showSidestories(page);
+      await row(sidestories(page), 'Retry with jitter').click();
+      const panel = await panelFrame(page);
+      await panel.locator('.cx-step', { hasText: 'Jitter' }).first().click();
+      await activeTab(page, 'jitter.ts (main ↔ working tree)');
+      const right = diff(page).locator('.editor.modified .monaco-editor');
+      await expect.poll(() => framed(right)).toBe(true);
+      await expect.poll(() => labelOf(right)).toMatch(/◀\s*Step\s*2\s*·\s*Jitter/);
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/new-file-diff-step-${shot}.png` });
     });
   }
 });

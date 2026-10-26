@@ -60,16 +60,18 @@ export class Decorations implements vscode.Disposable {
     borderWidth: '1px',
     borderRadius: '3px',
   });
-  // In a diff editor's side the tint is lost among the diff's own colours (a file the branch added is green from top
-  // to bottom): a frame in a colour no diff uses marks the step there instead, with a label after its first line.
-  // Borders, not backgrounds, so high contrast themes (transparent backgrounds) show it too. Plain editors keep the tint.
+  // In a diff editor's side the plain tint is lost among the diff's own colours (a file the branch added is green from
+  // top to bottom): the step gets a frame and a tint in a colour no diff uses (purple), a full-width mark in the
+  // overview ruler, and a label after its first line. High contrast themes have no tint (transparent backgrounds):
+  // the frame, in their contrast border colour, carries it. Plain editors keep their look.
   private readonly diffBody = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
+    backgroundColor: new vscode.ThemeColor('sidestory.diffFocusBackground'),
     borderColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
     borderStyle: 'solid',
-    borderWidth: '0 0 0 4px',
+    borderWidth: '0 2px 0 3px',
     overviewRulerColor: new vscode.ThemeColor('sidestory.diffFocusBorder'),
-    overviewRulerLane: vscode.OverviewRulerLane.Left,
+    overviewRulerLane: vscode.OverviewRulerLane.Full,
   });
   private readonly diffTop = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -84,7 +86,7 @@ export class Decorations implements vscode.Disposable {
     borderWidth: '0 0 2px 0',
   });
   private readonly diffLabel = vscode.window.createTextEditorDecorationType({
-    after: { color: new vscode.ThemeColor('sidestory.diffFocusBorder'), fontStyle: 'italic', margin: '0 0 0 3em' },
+    after: { color: new vscode.ThemeColor('sidestory.diffFocusBorder'), fontStyle: 'italic', fontWeight: '600', margin: '0 0 0 3em' },
   });
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
   private current: Focus | undefined;
