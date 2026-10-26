@@ -27,8 +27,10 @@ const PANEL_ATTR_PREFIX = 'data-cx-';
 /** Elements whose `name` becomes a property of the document (DOM clobbering). */
 const NAMED = new Set(['img', 'embed', 'object', 'form', 'iframe', 'frame', 'frameset']);
 const ANIMATION = SVG_ANIMATION_ELEMENTS.join(', ');
-/** The attributes that give an SVG animation's values. */
-const ANIMATION_VALUES = ['from', 'to', 'by', 'values'];
+/** The attributes that give an SVG animation's values: CSS when it animates a property such as `fill`. */
+const ANIMATION_VALUES = new Set(['from', 'to', 'by', 'values']);
+/** SVG presentation attributes that take a `url()` (or, for `cursor`, an image): rewritten as CSS is. */
+const CSS_VALUE_ATTRS = new Set(['fill', 'stroke', 'filter', 'clip-path', 'mask', 'marker', 'marker-start', 'marker-mid', 'marker-end', 'cursor']);
 /** Elements whose href may point outside: a click opens the browser, nothing loads by itself. */
 const LINKS = new Set(['a', 'area']);
 
@@ -89,7 +91,11 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
   const doc = parseInert(html);
   for (const el of doc.querySelectorAll('explain-widget')) widgetPlaceholder(el, warnings);
   for (const el of doc.querySelectorAll(DROP)) el.remove();
-  for (const el of doc.querySelectorAll(ANIMATION)) if (!safeAnimation(el)) el.remove();
+  for (const el of doc.querySelectorAll(ANIMATION)) {
+    if (!safeAnimation(el)) el.remove();
+    // Animation renders no children, and the outline scanner skips them: so must the panel (only `<mpath>` counts).
+    else for (const child of [...el.children]) if (child.localName !== 'mpath') child.remove();
+  }
   for (const el of doc.querySelectorAll('*')) {
     const widget = el.localName === 'explain-widget';
     for (const attr of [...el.attributes]) {
@@ -101,7 +107,7 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
         continue;
       }
       if (name.startsWith('on') || DROP_ATTRS.has(name) || name.startsWith(PANEL_ATTR_PREFIX) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
-      else if (name === 'style') el.setAttribute('style', rewriteCss(attr.value, baseUrl));
+      else if (name === 'style' || CSS_VALUE_ATTRS.has(name) || (ANIMATED.has(el.localName) && ANIMATION_VALUES.has(name))) el.setAttribute(attr.name, rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
         // An animation's target: an element on the page, never a file.
         if (ANIMATED.has(el.localName) && !attr.value.trim().startsWith('#')) {
@@ -131,26 +137,17 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
 const ANIMATED = new Set<string>(SVG_ANIMATION_ELEMENTS);
 
 /**
- * Whether an SVG animation element may stay. Animation rewrites an attribute after sanitizing, so it must not
+ * Whether an SVG animation element may stay. Animation changes an attribute after sanitizing, so it must not
  * target one the sanitizer guards: a URL (`href`, `xlink:href`, `src`, …), an event handler, a dropped attribute,
- * `style`, `name` or the panel's own `data-cx-` attributes. Nor may its values load anything: a `url()` other
- * than an in-page `url(#id)` (`fill`, `filter`, `mask`, … take them), and no backslash (CSS escapes).
+ * `style`, `name`, `class` (the panel's own classes) or the panel's `data-cx-` attributes. Its values are rewritten
+ * as CSS (`url()` to the sidestory's folder only), like `style`.
  */
 function safeAnimation(el: Element): boolean {
   const target = (el.getAttribute('attributeName') ?? '').trim().toLowerCase();
   const bare = target.includes(':') ? target.slice(target.indexOf(':') + 1) : target;
-  for (const n of [target, bare]) {
-    if (URL_ATTRS.includes(n) || n.startsWith('on') || DROP_ATTRS.has(n) || n.startsWith(PANEL_ATTR_PREFIX) || n === 'style' || n === 'name') return false;
-  }
-  for (const a of ANIMATION_VALUES) {
-    const v = el.getAttribute(a);
-    if (v === null) continue;
-    // CSS escapes could spell url( in a way the check below can't see.
-    if (v.includes('\\')) return false;
-    // Every url() left once the in-page ones are taken out loads something.
-    if (/url\s*\(/i.test(v.replace(/url\s*\(\s*(['"]?)\s*#[^)]*\)/gi, ''))) return false;
-  }
-  return true;
+  return ![target, bare].some(
+    (n) => URL_ATTRS.includes(n) || n.startsWith('on') || DROP_ATTRS.has(n) || n.startsWith(PANEL_ATTR_PREFIX) || n === 'style' || n === 'name' || n === 'class',
+  );
 }
 
 /**

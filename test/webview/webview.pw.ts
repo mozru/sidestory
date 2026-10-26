@@ -216,7 +216,7 @@ test('the sanitizer refuses every way out of the explainer folder', async ({ pag
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 });
 
-test('SVG animation plays, unless it would change a URL, a handler or panel state, or load a url()', async ({ page }) => {
+test('SVG animation plays, unless it would change a URL, a handler or panel state; url()s go to the folder only', async ({ page }) => {
   await open(page, {
     html: `<section data-explain-anchor="state">
       <svg width="100" height="20">
@@ -234,18 +234,33 @@ test('SVG animation plays, unless it would change a URL, a handler or panel stat
           <set id="bad-on" attributeName="onclick" to="window.__pwned=5"></set>
           <set id="bad-style" attributeName="style" to="position:fixed"></set>
           <set id="bad-panel" attributeName="data-cx-ref" to="x"></set>
-          <set id="bad-url" attributeName="fill" to="url(https://example.com/p.svg#g)"></set>
-          <animate id="bad-values" attributeName="filter" values="none;url( 'https://example.com/f.svg#f' )"></animate>
-          <set id="bad-escape" attributeName="fill" to="\\75 rl(https://example.com/p.svg#g)"></set>
+          <set id="bad-class" attributeName="class" to="cx-active"></set>
+          <set id="url-remote" attributeName="fill" to="url(https://example.com/p.svg#g)"></set>
+          <animate id="url-list" attributeName="filter" values="none;url( 'https://example.com/f.svg#f' )"></animate>
+          <set id="url-escape" attributeName="fill" to="\\75 rl(https://example.com/p.svg#g)"></set>
+          <set id="url-comment" attributeName="filter" to="/*url(#a*/url(https://example.com/c.svg#f)"></set>
+          <set id="url-imageset" attributeName="cursor" to="-webkit-image-set('https://example.com/c.png' 1x), auto"></set>
+          <set id="url-local" attributeName="fill" to="url(assets/p.svg#g)"></set>
           <animate id="file-target" href="other.svg#x" attributeName="x" to="5"></animate>
         </rect>
         <discard id="gone" href="#moving"></discard>
+        <rect id="static" fill="url(https://example.com/s.svg#g)" cursor="url(https://example.com/s.png), auto" stroke="url(#grad)"></rect>
+        <set id="with-child" attributeName="x" to="1"><g id="child"></g></set>
       </svg>
     </section>`,
   });
   const host = frame(page).locator('body');
   for (const id of ['ok-move', 'ok-path', 'ok-turn', 'ok-fill', 'file-target']) await expect(host.locator(`#${id}`)).toHaveCount(1);
-  for (const id of ['bad-href', 'bad-xlink', 'bad-case', 'bad-on', 'bad-style', 'bad-panel', 'bad-url', 'bad-values', 'bad-escape', 'gone']) await expect(host.locator(`#${id}`)).toHaveCount(0);
+  for (const id of ['bad-href', 'bad-xlink', 'bad-case', 'bad-on', 'bad-style', 'bad-panel', 'bad-class', 'gone', 'child']) await expect(host.locator(`#${id}`)).toHaveCount(0);
+  // Values are rewritten as CSS is: remote url()s become none, image-set() is made invalid, local ones point at the folder.
+  for (const id of ['url-remote', 'url-list', 'url-escape', 'url-comment', 'url-imageset']) {
+    const v = await host.locator(`#${id}`).evaluate((el) => ['from', 'to', 'by', 'values'].map((a) => el.getAttribute(a) ?? '').join(' '));
+    expect(v, id).not.toMatch(/url\(\s*["']?[a-z]+:|image-set\(|\bimage\(/i);
+  }
+  await expect(host.locator('#url-local')).toHaveAttribute('to', /^url\("http:\/\/[^"]+\/bit-reader\/assets\/p\.svg#g"\)$/);
+  await expect(host.locator('#static')).not.toHaveAttribute('fill', /example/);
+  await expect(host.locator('#static')).not.toHaveAttribute('cursor', /example/);
+  await expect(host.locator('#static')).toHaveAttribute('stroke', 'url("#grad")');
   // An animation's own target is an element on the page, never a file.
   await expect(host.locator('#file-target')).not.toHaveAttribute('href', /.*/);
   await expect(host.locator('mpath')).toHaveAttribute('href', '#track');

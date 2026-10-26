@@ -52,3 +52,15 @@ test('an empty data-explain-title falls through to the heading, then the id, in 
   expect(shown).toEqual(['From the heading', 'b', 'Given']);
   expect(outlineHtml(html).steps.map((s) => s.title)).toEqual(shown);
 });
+
+test('a step inside SVG animation is no step, in the panel and the outline (animation renders no children)', async ({ page }) => {
+  const html = [
+    '<section data-explain-anchor="a"><h2>A</h2></section>',
+    '<svg><set attributeName="x" to="1"><g data-explain-anchor="ghost"><text>Ghost</text></g></set></svg>',
+    '<section data-explain-anchor="b"><h2>B</h2></section>',
+  ].join('\n');
+  await render(page, 'fixtures/sample-workspace/.sidestory/bit-reader', html);
+  const shown = (await panelSteps(page)).map((s) => s.id);
+  expect(shown).toEqual(['a', 'b']);
+  expect(outlineHtml(html).steps.map((s) => s.id)).toEqual(shown);
+});

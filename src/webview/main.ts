@@ -1278,11 +1278,13 @@ const offscreen = new IntersectionObserver(
 
 /**
  * SVG animation (`<animate>` and the like) ignores the CSS that pauses animations: its clocks stop in sections far
- * off screen, and everywhere for readers who asked for less motion (the drawing stays as it is before it starts).
+ * off screen, and everywhere for readers who asked for less motion (at about its first frame). Every `<svg>` has its
+ * own clock, nested ones too, so each is paused.
  */
-function svgClocks(root: ParentNode): void {
+function svgClocks(root: Element): void {
   const less = reducedMotion();
-  for (const svg of root.querySelectorAll<SVGSVGElement>('svg')) {
+  const svgs = [...(root.localName === 'svg' ? [root] : []), ...root.querySelectorAll('svg')] as SVGSVGElement[];
+  for (const svg of svgs) {
     if (less || svg.closest('[data-cx-off]')) svg.pauseAnimations();
     else svg.unpauseAnimations();
   }
