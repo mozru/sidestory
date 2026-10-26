@@ -94,7 +94,8 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
   for (const el of doc.querySelectorAll(ANIMATION)) {
     if (!safeAnimation(el)) el.remove();
     // Animation renders no children, and the outline scanner skips them: so must the panel (only `<mpath>` counts).
-    else for (const child of [...el.children]) if (child.localName !== 'mpath') child.remove();
+    else for (const child of [...el.children]) if (child.localName === 'mpath') child.replaceChildren();
+    else child.remove();
   }
   for (const el of doc.querySelectorAll('*')) {
     const widget = el.localName === 'explain-widget';
@@ -107,7 +108,7 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
         continue;
       }
       if (name.startsWith('on') || DROP_ATTRS.has(name) || name.startsWith(PANEL_ATTR_PREFIX) || (name === 'name' && NAMED.has(el.localName))) el.removeAttribute(attr.name);
-      else if (name === 'style' || CSS_VALUE_ATTRS.has(name) || (ANIMATED.has(el.localName) && ANIMATION_VALUES.has(name))) el.setAttribute(attr.name, rewriteCss(attr.value, baseUrl));
+      else if (cssValued(el.localName, name)) el.setAttribute(attr.name, rewriteCss(attr.value, baseUrl));
       else if (URL_ATTRS.includes(name)) {
         // An animation's target: an element on the page, never a file.
         if (ANIMATED.has(el.localName) && !attr.value.trim().startsWith('#')) {
@@ -135,6 +136,11 @@ export function sanitize(html: string, baseUrl: string, importNode: (node: Node,
 }
 
 const ANIMATED = new Set<string>(SVG_ANIMATION_ELEMENTS);
+
+/** Whether an attribute's value is CSS (`url()`s rewritten here, and made into blob: URLs by `Assets.localize`). */
+export function cssValued(tag: string, attr: string): boolean {
+  return attr === 'style' || CSS_VALUE_ATTRS.has(attr) || (ANIMATED.has(tag) && ANIMATION_VALUES.has(attr));
+}
 
 /**
  * Whether an SVG animation element may stay. Animation changes an attribute after sanitizing, so it must not

@@ -2,7 +2,7 @@
 // it can't load the explainer's images, fonts or stylesheets itself; the panel can't fetch them either
 // (cross-origin). The extension reads them (inside the repo, size-capped) and sends the bytes; the
 // panel hands the frame blob: URLs, and inlines linked stylesheets.
-import { rewriteCss } from './sanitize.ts';
+import { cssValued, rewriteCss } from './sanitize.ts';
 
 const MAX_TOTAL_BYTES = 20_000_000;
 const MAX_STYLESHEET_BYTES = 1_000_000;
@@ -113,8 +113,9 @@ export class Assets {
       }
       const srcset = el.getAttribute('srcset');
       if (srcset) jobs.push(this.srcset(srcset).then((s) => (s ? el.setAttribute('srcset', s) : el.removeAttribute('srcset'))));
-      const style = el.getAttribute('style');
-      if (style?.includes(this.baseUrl)) jobs.push(this.css(style).then((s) => el.setAttribute('style', s)));
+      for (const { name, value } of [...el.attributes]) {
+        if (cssValued(el.localName, name.toLowerCase()) && value.includes(this.baseUrl)) jobs.push(this.css(value).then((s) => el.setAttribute(name, s)));
+      }
       if (el.localName === 'style' && el.textContent?.includes(this.baseUrl)) {
         jobs.push(
           this.css(el.textContent).then((s) => {

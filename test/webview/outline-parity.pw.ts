@@ -57,6 +57,7 @@ test('a step inside SVG animation is no step, in the panel and the outline (anim
   const html = [
     '<section data-explain-anchor="a"><h2>A</h2></section>',
     '<svg><set attributeName="x" to="1"><g data-explain-anchor="ghost"><text>Ghost</text></g></set></svg>',
+    '<svg><circle r="3"><animateMotion dur="1s"><mpath href="#p"><g data-explain-anchor="ghost2"><text>G</text></g></mpath></animateMotion></circle></svg>',
     '<section data-explain-anchor="b"><h2>B</h2></section>',
   ].join('\n');
   await render(page, 'fixtures/sample-workspace/.sidestory/bit-reader', html);

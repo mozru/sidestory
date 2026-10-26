@@ -240,11 +240,12 @@ test('SVG animation plays, unless it would change a URL, a handler or panel stat
           <set id="url-escape" attributeName="fill" to="\\75 rl(https://example.com/p.svg#g)"></set>
           <set id="url-comment" attributeName="filter" to="/*url(#a*/url(https://example.com/c.svg#f)"></set>
           <set id="url-imageset" attributeName="cursor" to="-webkit-image-set('https://example.com/c.png' 1x), auto"></set>
-          <set id="url-local" attributeName="fill" to="url(assets/p.svg#g)"></set>
+          <set id="url-local" attributeName="fill" to="url(assets/dot.svg#g)"></set>
           <animate id="file-target" href="other.svg#x" attributeName="x" to="5"></animate>
         </rect>
         <discard id="gone" href="#moving"></discard>
         <rect id="static" fill="url(https://example.com/s.svg#g)" cursor="url(https://example.com/s.png), auto" stroke="url(#grad)"></rect>
+        <rect id="static-local" fill="url(assets/dot.svg#g)"></rect>
         <set id="with-child" attributeName="x" to="1"><g id="child"></g></set>
       </svg>
     </section>`,
@@ -257,7 +258,9 @@ test('SVG animation plays, unless it would change a URL, a handler or panel stat
     const v = await host.locator(`#${id}`).evaluate((el) => ['from', 'to', 'by', 'values'].map((a) => el.getAttribute(a) ?? '').join(' '));
     expect(v, id).not.toMatch(/url\(\s*["']?[a-z]+:|image-set\(|\bimage\(/i);
   }
-  await expect(host.locator('#url-local')).toHaveAttribute('to', /^url\("http:\/\/[^"]+\/bit-reader\/assets\/p\.svg#g"\)$/);
+  // The frame can't load the folder itself: local files arrive as blob: URLs, in these attributes as in style.
+  await expect(host.locator('#url-local')).toHaveAttribute('to', /^url\("blob:/);
+  await expect(host.locator('#static-local')).toHaveAttribute('fill', /^url\("blob:/);
   await expect(host.locator('#static')).not.toHaveAttribute('fill', /example/);
   await expect(host.locator('#static')).not.toHaveAttribute('cursor', /example/);
   await expect(host.locator('#static')).toHaveAttribute('stroke', 'url("#grad")');
