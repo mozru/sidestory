@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.6 (2026-10-27)
 
 - A shorter README with animated pictures of how a sidestory follows the code, what happens when the code changes, and how a branch's changes get explained.
 - The guide has a new "Moving parts" section, and the Claude Code skill now lists what a page can do (diagrams that follow the steps, CSS and SVG animation, widgets…), so agents use motion where it helps.
