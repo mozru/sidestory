@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
+import { SizeLru } from './lru.ts';
 
 /** The parts of the vscode.git API (version 1) used here. */
 export interface GitRepository {
@@ -63,6 +64,9 @@ async function gitDir(root: string): Promise<string> {
   return dot;
 }
 
+/** What `Git.headText` keeps, in characters. */
+export const HEAD_TEXT_CHARS = 32 * 1024 * 1024;
+
 const exists = (p: string) => stat(p).then(() => true, () => false);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,7 +74,11 @@ export class Git {
   private api: Promise<GitApi | undefined> | undefined;
   /** The latest status refresh per repository, and when it began. */
   private readonly refreshing = new Map<GitRepository, { at: number; done: Promise<void> }>();
-  private readonly headTexts = new Map<string, Promise<string | null>>();
+  /**
+   * HEAD texts by commit and file, bounded by their total length: files may be up to 10 MB each, and every HEAD
+   * move adds a copy of each file read again. Least recently used first out.
+   */
+  private readonly headTexts = new SizeLru<Promise<string | null>>(HEAD_TEXT_CHARS);
   private readonly headBlobs = new Map<string, Promise<string | null>>();
   private readonly ignores = new Map<string, Promise<boolean>>();
   /** For tests: the clock. */
@@ -157,7 +165,18 @@ export class Git {
   headText(repo: GitRepository, file: vscode.Uri): Promise<string | null> {
     const head = this.head(repo);
     if (!head) return Promise.resolve(null);
-    return this.cached(this.headTexts, `${head}\n${file.fsPath}`, () => repo.show(head, file.fsPath).then((t) => t, () => null));
+    const key = `${head}\n${file.fsPath}`;
+    let p = this.headTexts.get(key);
+    if (!p) {
+      const q = repo.show(head, file.fsPath).then((t) => t, () => null);
+      p = q;
+      // Weighed once it is read (one unit until then); one bigger than the whole cache isn't kept.
+      this.headTexts.set(key, q, 1);
+      void q.then((t) => {
+        if (this.headTexts.get(key) === q) this.headTexts.set(key, q, Math.max(1, t?.length ?? 0));
+      });
+    }
+    return p;
   }
 
   /**
