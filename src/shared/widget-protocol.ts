@@ -1,31 +1,36 @@
 // Messages between a widget frame (untrusted code + our runtime) and the panel. The panel validates
 // everything a widget frame sends with `fromWidgetSchema`, and accepts it only from that frame's window.
 // See docs/WIDGETS-PLAN.md §5.3 and §6.
-import { z } from 'zod';
-import { anchorIdSchema } from '../core/manifest.ts';
+// zod/mini, not zod: this module is in the panel's bundle, and classic zod would add ~450 KB to it.
+import * as z from 'zod/mini';
+import { ANCHOR_ID_RE } from '../core/paths.ts';
 
 export const MAX_WIDGET_STATE_BYTES = 64 * 1024;
 export const MAX_WIDGET_HEIGHT = 20_000;
 
-const lines = z.tuple([z.number().int().min(1).max(100_000), z.number().int().min(1).max(100_000)]);
-const identifier = z.string().regex(/^[A-Za-z_$][\w$]{0,99}$/);
+const lineNumber = z.int().check(z.minimum(1), z.maximum(100_000));
+const lines = z.tuple([lineNumber, lineNumber]);
+const identifier = z.string().check(z.regex(/^[A-Za-z_$][\w$]{0,99}$/));
+const identifiers = z.optional(z.array(identifier).check(z.maxLength(20)));
+const anchorId = z.string().check(z.regex(ANCHOR_ID_RE));
+const text = (max: number) => z.string().check(z.maxLength(max));
 
 export const fromWidgetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boot') }),
   z.object({ type: z.literal('ready') }),
-  z.object({ type: z.literal('height'), px: z.number().finite().min(0).max(MAX_WIDGET_HEIGHT) }),
-  z.object({ type: z.literal('highlight'), lines: lines.optional(), anchor: anchorIdSchema.optional(), identifiers: z.array(identifier).max(20).optional() }),
-  z.object({ type: z.literal('reveal'), id: z.number().int(), anchor: anchorIdSchema, lines: lines.optional(), highlight: z.array(identifier).max(20).optional() }),
-  z.object({ type: z.literal('step'), id: z.number().int(), anchor: anchorIdSchema }),
-  z.object({ type: z.literal('key'), id: z.number().int(), action: z.enum(['next', 'prev', 'back']) }),
-  z.object({ type: z.literal('state'), json: z.string().max(MAX_WIDGET_STATE_BYTES) }),
-  z.object({ type: z.literal('error'), message: z.string().max(2048), file: z.string().max(512).optional(), line: z.number().int().optional() }),
+  z.object({ type: z.literal('height'), px: z.number().check(z.minimum(0), z.maximum(MAX_WIDGET_HEIGHT)) }),
+  z.object({ type: z.literal('highlight'), lines: z.optional(lines), anchor: z.optional(anchorId), identifiers }),
+  z.object({ type: z.literal('reveal'), id: z.int(), anchor: anchorId, lines: z.optional(lines), highlight: identifiers }),
+  z.object({ type: z.literal('step'), id: z.int(), anchor: anchorId }),
+  z.object({ type: z.literal('key'), id: z.int(), action: z.enum(['next', 'prev', 'back']) }),
+  z.object({ type: z.literal('state'), json: text(MAX_WIDGET_STATE_BYTES) }),
+  z.object({ type: z.literal('error'), message: text(2048), file: z.optional(text(512)), line: z.optional(z.int()) }),
   z.object({ type: z.literal('activity') }),
   /** The reader pressed a pointer or key in the frame (the frame's own claim: spares it from being stopped, never grants anything). */
   z.object({ type: z.literal('input') }),
   z.object({ type: z.literal('focusExit'), dir: z.enum(['forward', 'backward', 'escape', 'pointer', 'shortcut']) }),
-  z.object({ type: z.literal('requestCode'), anchor: anchorIdSchema }),
-  z.object({ type: z.literal('pong'), n: z.number().int() }),
+  z.object({ type: z.literal('requestCode'), anchor: anchorId }),
+  z.object({ type: z.literal('pong'), n: z.int() }),
 ]);
 export type FromWidget = z.infer<typeof fromWidgetSchema>;
 

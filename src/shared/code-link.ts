@@ -1,7 +1,7 @@
 // Code links without a manifest anchor: `data-explain-code="rtl/dma_fifo.sv#driver(count_q)"` (docs/AUTHORING-PLAN.md
 // §8.1). The panel resolves `data-explain-code-file` inheritance and checks the syntax; the extension checks it again,
 // resolves real paths and finds the target. Shared by the panel, the protocol schemas and (later) the checker.
-import { isSafeRelativePath } from '../core/manifest.ts';
+import { isSafeRelativePath } from '../core/paths.ts';
 
 /** Line numbers above this are refused (a typo, or a page trying to make the host scan a huge range). */
 export const MAX_CODE_LINE = 10_000_000;

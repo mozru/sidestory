@@ -4,7 +4,7 @@
 // The result is handed over as nodes, never re-serialized and re-parsed (which invites mXSS).
 // Widget placeholders (<explain-widget>) are kept with their own attributes; their JSON props child is
 // lifted into an attribute before scripts are dropped (docs/WIDGETS-PLAN.md §2).
-import { isWidgetSrc } from '../shared/protocol.ts';
+import { isWidgetSrc } from '../shared/widget-imports.ts';
 import { DROPPED_ELEMENTS, SVG_ANIMATION_ELEMENTS } from '../shared/sanitize-lists.ts';
 import { parseInert } from './trusted.ts';
 

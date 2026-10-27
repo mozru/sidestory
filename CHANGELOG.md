@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The panel's script is about 70% smaller (614 KB → 176 KB), so sidestories open faster: the panel checks widget messages with zod's small build instead of the full library.
+
 ## 0.2.4 (2026-10-26)
 
 - SVG animation (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) now plays in the panel. Animations that would change a link or other URL, an event handler, `style`, `class` or the panel's own attributes are still removed, and a `url()` in their values (or in SVG attributes such as `fill`, `filter`, `mask` and `cursor`) can only point at the sidestory's own folder, as in CSS. SVG animation pauses in sections far off screen and stops at about its first frame for readers who asked for less motion.

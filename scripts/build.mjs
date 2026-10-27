@@ -22,7 +22,8 @@ const builds = [
   // content.css is bundled into the script as text: the sandboxed content frame isn't served by the
   // webview's resource loader, so it can't fetch stylesheets itself.
   // The widget frame's CSP names the bootstrap by hash; computed here so the srcdoc is a constant.
-  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm', loader: { '.css': 'text' },
+  // metafile: checked below for classic zod, which must stay out of the panel (zod/mini only).
+  { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview/main.js', platform: 'browser', format: 'esm', loader: { '.css': 'text' }, metafile: true,
     define: { __CX_BOOTSTRAP_HASH__: JSON.stringify(`sha256-${createHash('sha256').update(WIDGET_BOOTSTRAP, 'utf8').digest('base64')}`) } },
   { ...common, entryPoints: ['src/webview/main.css'], outfile: 'dist/webview/main.css' },
   // The widget compiler's worker (Sucrase, acorn); widget code is compiled there, never in the host thread.
@@ -48,7 +49,10 @@ for (const f of WIDGET_TYPE_FILES) cpSync(`src/widget-types/${f}`, `dist/widget-
 if (watch) {
   for (const b of builds) await (await esbuild.context(b)).watch();
 } else {
-  await Promise.all(builds.map((b) => esbuild.build(b)));
+  const results = await Promise.all(builds.map((b) => esbuild.build(b)));
+  const panelInputs = Object.entries(results[2].metafile.outputs['dist/webview/main.js'].inputs).filter(([, i]) => i.bytesInOutput > 0);
+  const classic = panelInputs.map(([p]) => p).find((p) => p.includes('node_modules/zod/') && !/node_modules\/zod\/v4\/(core|mini)\//.test(p));
+  if (classic) throw new Error(`dist/webview/main.js bundles ${classic}: import zod/mini, or move the constant into a zod-free module`);
 }
 
 // VS Code's default themes, for when the reader's color theme can't be read (docs/HIGHLIGHT-PLAN.md §3).

@@ -1,8 +1,8 @@
 // The formatting subset comment bodies get (docs/COMMENTS-PLAN.md §6.5). Bodies are untrusted text: this small
 // parser turns them into a tree of a few node types; the panel builds DOM from it with textContent only, and the
 // editor builds an escaped MarkdownString from it. No links, images, headings, tables or HTML, ever.
-import { isSafeRelativePath } from '../manifest.ts';
-import { CAPS } from './schema.ts';
+import { isSafeRelativePath } from '../paths.ts';
+import { CAPS } from './caps.ts';
 
 export type Inline =
   | { t: 'text'; text: string }

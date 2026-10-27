@@ -1,7 +1,7 @@
 // The explainer page. It renders author HTML in a sandboxed iframe, keeps the reader's place through
 // every update (DOM morphing, never a reload), and syncs the active section with the editor.
 import { Idiomorph } from 'idiomorph';
-import { anchorIdSchema } from '../core/manifest.ts';
+import { ANCHOR_ID_RE } from '../core/paths.ts';
 import { type CodeLink, formatCodeLink, MAX_CODE_LINKS, parseCodeLink } from '../shared/code-link.ts';
 import diagramTokensCss from '../shared/diagram-tokens.css';
 import type { AnchorView, DetailInfo, FromWebview, ToWebview, TrailItem } from '../shared/protocol.ts';
@@ -1361,7 +1361,7 @@ function markHere(): void {
 
 /** Tells the extension what the page links to, so cursor lighting knows what to look for (§8.2); only on change. */
 function sendCodeTargets(): void {
-  const valid = (id: string) => anchorIdSchema.safeParse(id).success;
+  const valid = (id: string) => ANCHOR_ID_RE.test(id);
   const distinct = (xs: string[]) => [...new Set(xs)].slice(0, MAX_CODE_LINKS);
   const sections = distinct([...content.querySelectorAll('[data-explain-anchor]')].map((el) => el.getAttribute('data-explain-anchor') ?? '').filter(valid));
   const refs = distinct(linkEls.filter((l) => l.key.startsWith('r:')).map((l) => l.key.slice(2)).filter(valid));

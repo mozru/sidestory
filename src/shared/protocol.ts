@@ -5,7 +5,7 @@ import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core
 import type { AnchorState } from '../core/resolve.ts';
 import { isCodeLink, MAX_CODE_LINKS, parseCodeTarget } from './code-link.ts';
 import { type HighlightStyle, LANG_NAME, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
-import { WIDGET_SOURCE_EXTENSIONS } from './widget-imports.ts';
+import { isWidgetSrc, MAX_WIDGETS } from './widget-imports.ts';
 import { MAX_WIDGET_STATE_BYTES, type WidgetCode } from './widget-protocol.ts';
 import { commentsFromWebviewSchemas, type CommentsFromWebview, type CommentsToWebview } from './comments-protocol.ts';
 
@@ -209,11 +209,7 @@ export function themeColorVar(colorId: string): string {
 /** How deep detours can nest. */
 export const MAX_TRAIL = 16;
 
-/** The most widgets an explainer may have; the rest show their fallback. */
-export const MAX_WIDGETS = 24;
-
-/** A widget's `src`: a relative path inside the explainer folder with a source extension. */
-export const isWidgetSrc = (s: string) => isSafeRelativePath(s) && WIDGET_SOURCE_EXTENSIONS.some((e) => s.toLowerCase().endsWith(e));
+export { isWidgetSrc, MAX_WIDGETS };
 const widgetSrcSchema = z.string().max(512).refine(isWidgetSrc);
 const lineRangeSchema = z.tuple([z.number().int().min(1).max(100_000), z.number().int().min(1).max(100_000)]);
 const identifierSchema = z.string().regex(/^[A-Za-z_$][\w$]{0,99}$/);

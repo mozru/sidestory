@@ -2,7 +2,10 @@
 // Spec: docs/DESIGN.md §4.2 and §12; anchor fields from docs/research/anchors.md §3.
 // Manifests are untrusted repo content: everything is validated and size-limited here.
 import { z } from 'zod';
+import { ANCHOR_ID_RE, isSafeRelativePath, MAX_PATH_CHARS } from './paths.ts';
 import { splitLines } from './text.ts';
+
+export { isSafeRelativePath, RESERVED_SEGMENT } from './paths.ts';
 
 /** Which side of a branch's merge diff an anchor's code is on (docs/CHANGES-PLAN.md §3.2). */
 export type Side = 'head' | 'base';
@@ -137,7 +140,7 @@ export type ParseResult =
 export const LIMITS = {
   manifestChars: 1_000_000,
   anchors: 500,
-  pathChars: 1024,
+  pathChars: MAX_PATH_CHARS,
   quoteChars: 64_000,
   quoteLines: 2000,
   contextChars: 1000,
@@ -213,17 +216,6 @@ export function requiredVersion(raw: { anchors?: unknown }): 2 | 3 {
   }
   return 2;
 }
-/** Windows device names, which no path segment may be (with or without an extension). */
-export const RESERVED_SEGMENT = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
-
-/** True for a canonical repo-relative POSIX path that can't escape the repo on any OS. */
-export function isSafeRelativePath(p: string): boolean {
-  if (p.length === 0 || p.length > LIMITS.pathChars) return false;
-  // Backslashes, drive letters, URLs, control characters, and glob syntax (paths become file watcher patterns).
-  if (/[\\:\x00-\x1f\x7f*?[\]{}]/.test(p)) return false;
-  return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..' && !/[. ]$/.test(seg) && !RESERVED_SEGMENT.test(seg) && seg.toLowerCase() !== '.git');
-}
-
 const line = z.number().int().min(1).max(10_000_000);
 const pos = z.tuple([line, z.number().int().min(0)]);
 
@@ -266,7 +258,7 @@ export const anchorSpecSchema = z.looseObject({
 /** An explainer's folder name under `.sidestory/`, as used in `data-explain-detail`. */
 export const explainerNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, 'sidestory names use letters, digits, ".", "-" and "_"');
 
-export const anchorIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/, 'anchor ids start with a letter and use letters, digits, - and _');
+export const anchorIdSchema = z.string().regex(ANCHOR_ID_RE, 'anchor ids start with a letter and use letters, digits, - and _');
 
 const manifestSchema = z.looseObject({
   version: z.number(),

@@ -6,7 +6,7 @@
 // frame's window and the schema, size-capped and rate-limited; navigation and focus need evidence that the
 // reader is interacting with that widget (activation.ts).
 import type { FromWebview, WidgetBuild, WidgetGate } from '../shared/protocol.ts';
-import { MAX_WIDGETS } from '../shared/protocol.ts';
+import { MAX_WIDGETS } from '../shared/widget-imports.ts';
 import type { FromWidget, ThemeKind, ToWidget, WidgetAnchor, WidgetCode } from '../shared/widget-protocol.ts';
 import { fromWidgetSchema } from '../shared/widget-protocol.ts';
 import { ActivationEvidence, ENTRY_PX, rayEntry, type Box } from './activation.ts';

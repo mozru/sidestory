@@ -4,6 +4,8 @@
 // the exact specifiers listed here; the runtime's `require` looks them up there.
 // See docs/WIDGETS-PLAN.md §2 and §3.
 
+import { isSafeRelativePath } from '../core/paths.ts';
+
 /** A prebuilt library: the file to send to a widget frame, and the specifiers it registers. */
 export interface WidgetLibrary {
   id: string;
@@ -61,6 +63,12 @@ export const UNAVAILABLE_IMPORTS: Record<string, string> = {
 export const WIDGET_SOURCE_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js'] as const;
 export const WIDGET_DATA_EXTENSIONS = ['.json'] as const;
 export const WIDGET_IMAGE_EXTENSIONS = ['.svg', '.png', '.webp', '.jpg', '.jpeg', '.gif'] as const;
+
+/** The most widgets an explainer may have; the rest show their fallback. */
+export const MAX_WIDGETS = 24;
+
+/** A widget's `src`: a relative path inside the explainer folder with a source extension. */
+export const isWidgetSrc = (s: string) => isSafeRelativePath(s) && WIDGET_SOURCE_EXTENSIONS.some((e) => s.toLowerCase().endsWith(e));
 
 /** The library id that provides a (non-relative) specifier, after aliases; undefined if not allowed. */
 export function libraryFor(specifier: string): string | undefined {

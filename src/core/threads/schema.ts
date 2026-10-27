@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { displayText } from '../display-text.ts';
 import { anchorIdSchema, isSafeRelativePath, ULID as MANIFEST_ULID } from '../manifest.ts';
+import { CAPS } from './caps.ts';
 
 /** Crockford base32, 26 characters: 48 bits of milliseconds, then 80 random bits. */
 const ULID = '[0-9A-HJKMNP-TV-Z]{26}';
@@ -46,16 +47,7 @@ export function encodeUlid(time: number, random: Uint8Array): string {
   return out;
 }
 
-export const CAPS = {
-  eventBytes: 32_000,
-  eventsPerThread: 200,
-  threadsPerSidestory: 1000,
-  threadsTotal: 5000,
-  bytesPerSidestory: 20_000_000,
-  bodyChars: 8000,
-  nameChars: 64,
-  edited: 20,
-} as const;
+export { CAPS } from './caps.ts';
 
 export type Trust = 'local_user' | 'claude' | 'agent' | 'repository';
 export type AuthorKind = 'human' | 'claude' | 'agent';
