@@ -246,51 +246,17 @@ export function decodePair(oldBytes: Uint8Array | undefined, newBytes: Uint8Arra
 
 const dropBom = (b: Uint8Array) => (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf ? b.subarray(3) : b);
 
+// The WHATWG decoder exists in Node, the extension host and browsers; core's ES2022 lib just doesn't declare it.
+declare const TextDecoder: new (label: 'utf-8', options: { fatal: true }) => { decode(bytes: Uint8Array): string };
+const utf8 = new TextDecoder('utf-8', { fatal: true });
+
 /** Strict UTF-8 (no overlongs, surrogates or code points past U+10FFFF), a leading BOM dropped; undefined when invalid. */
 export function decodeUtf8(bytes: Uint8Array): string | undefined {
-  let i = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
-  const n = bytes.length;
-  const parts: string[] = [];
-  const units: number[] = [];
-  const flush = () => {
-    if (units.length) parts.push(String.fromCharCode.apply(null, units));
-    units.length = 0;
-  };
-  while (i < n) {
-    const c = bytes[i]!;
-    let cp: number;
-    if (c < 0x80) {
-      cp = c;
-      i += 1;
-    } else if (c >= 0xc2 && c <= 0xdf) {
-      const c1 = bytes[i + 1];
-      if (c1 === undefined || (c1 & 0xc0) !== 0x80) return undefined;
-      cp = ((c & 0x1f) << 6) | (c1 & 0x3f);
-      i += 2;
-    } else if (c >= 0xe0 && c <= 0xef) {
-      const c1 = bytes[i + 1];
-      const c2 = bytes[i + 2];
-      if (c1 === undefined || c2 === undefined || (c1 & 0xc0) !== 0x80 || (c2 & 0xc0) !== 0x80) return undefined;
-      if ((c === 0xe0 && c1 < 0xa0) || (c === 0xed && c1 > 0x9f)) return undefined; // overlong, surrogate
-      cp = ((c & 0x0f) << 12) | ((c1 & 0x3f) << 6) | (c2 & 0x3f);
-      i += 3;
-    } else if (c >= 0xf0 && c <= 0xf4) {
-      const c1 = bytes[i + 1];
-      const c2 = bytes[i + 2];
-      const c3 = bytes[i + 3];
-      if (c1 === undefined || c2 === undefined || c3 === undefined || (c1 & 0xc0) !== 0x80 || (c2 & 0xc0) !== 0x80 || (c3 & 0xc0) !== 0x80) return undefined;
-      if ((c === 0xf0 && c1 < 0x90) || (c === 0xf4 && c1 > 0x8f)) return undefined; // overlong, past U+10FFFF
-      cp = ((c & 0x07) << 18) | ((c1 & 0x3f) << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
-      i += 4;
-    } else return undefined;
-    if (cp > 0xffff) {
-      cp -= 0x10000;
-      units.push(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
-    } else units.push(cp);
-    if (units.length >= 8192) flush();
+  try {
+    return utf8.decode(bytes);
+  } catch {
+    return undefined;
   }
-  flush();
-  return parts.join('');
 }
 
 export function decodeLatin1(bytes: Uint8Array): string {

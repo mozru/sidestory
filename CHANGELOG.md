@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The checker (`check.cjs`) no longer hangs on deeply nested pages: matching a selector such as `p div div div div div div div` against a widget inside 60 nested `<div>`s took about 35 seconds and now takes a millisecond. Large stylesheets are faster too (a 40,000-rule sheet: 38 s → 0.05 s), as is checking many widgets against them.
+- Files moved without `git mv` are paired faster in working-tree coverage, in the extension and in `check.cjs --coverage`: large files that can't be renames of each other are ruled out without comparing them line by line (two unrelated 20,000-line files: 1.1 s → 0.01 s). The pairs found are the same.
+
 ## 0.2.4 (2026-10-26)
 
 - SVG animation (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) now plays in the panel. Animations that would change a link or other URL, an event handler, `style`, `class` or the panel's own attributes are still removed, and a `url()` in their values (or in SVG attributes such as `fill`, `filter`, `mask` and `cursor`) can only point at the sidestory's own folder, as in CSS. SVG animation pauses in sections far off screen and stops at about its first frame for readers who asked for less motion.

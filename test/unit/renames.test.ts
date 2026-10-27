@@ -23,6 +23,18 @@ describe('pairUnstagedRenames', () => {
     const many = Array.from({ length: RENAME_PAIRING.maxEach + 1 }, (_, i) => ({ path: `d${i}` }));
     expect(pairUnstagedRenames(many, [{ path: 'b' }], () => body('a'), () => body('a'))).toEqual([]);
   });
+
+  it('skips the quadratic comparison for large files that share too few lines to pair', () => {
+    const d = Array.from({ length: 4 }, (_, i) => ({ path: `d${i}`, b: body(`old${i}`, 5000) }));
+    const a = Array.from({ length: 4 }, (_, i) => ({ path: `a${i}`, b: body(`new${i}`, 5000) }));
+    // A moved copy with a third of its lines changed still pairs (similarity ≈ 0.67).
+    const moved = enc(new TextDecoder().decode(d[2]!.b).split('\n').map((l, i) => (i % 3 ? l : `${l} edited`)).join('\n'));
+    a.push({ path: 'moved', b: moved });
+    const t0 = performance.now();
+    const pairs = pairUnstagedRenames(d, a, (x) => x.b, (x) => x.b);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(pairs.map((p) => [p.deleted.path, p.added.path])).toEqual([['d2', 'moved']]);
+  });
 });
 
 describe('what a side holds', () => {

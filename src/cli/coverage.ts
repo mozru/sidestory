@@ -776,6 +776,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const kinds = [...new Set(notCounted.map((e) => kindLabel(e.kind)))];
   const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
 
+  const countedAt = new Map(counted.map((e, i) => [e, i]));
   const json: CoverageJson = {
     base: { spec: resolved.spec, label: resolved.label, sha: resolved.sha },
     mergeBase,
@@ -784,8 +785,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     files: classified
       .filter((e) => e.kind !== 'sidestory')
       .map((e) => {
-        const fi = counted.indexOf(e);
-        const changes = fi < 0 ? [] : result.files[fi]!.changes.map((c, ci) => toJson(c, inputs[fi]!.changes[ci]!));
+        const fi = countedAt.get(e);
+        const changes = fi === undefined ? [] : result.files[fi]!.changes.map((c, ci) => toJson(c, inputs[fi]!.changes[ci]!));
         return { path: e.path, ...(e.oldPath !== undefined ? { oldPath: e.oldPath } : {}), status: e.detected ? 'R' : e.untracked ? 'A' : e.status, kind: e.kind, changes };
       }),
     totals,
