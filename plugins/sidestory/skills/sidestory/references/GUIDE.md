@@ -265,7 +265,7 @@ The checker (`check.cjs`) finds each anchor's code the same way, in the files on
 - `anchor-changed` (info): the code changed a little ("Code changed"); `--pin` re-pins it once you've checked the prose.
 - `anchor-unchecked` (info): the file wasn't read (a link out of the repository, a folder, too large), so the anchor wasn't checked.
 
-Code that is there, or only moved, is fine. When a widget reads an anchor whose code is lost or out of date, the anchor's finding is the only one. Base-side anchors are checked against the merge-base only for the sidestory the check compares (`--coverage`, `--pin` or `--accept` on a sidestory with a `base`); otherwise, and for the other sidestories `--coverage` checks, they're skipped. Their messages say how to re-anchor them.
+Code that is there, or only moved, is fine. When a widget reads a head-side anchor whose code is lost or out of date, the anchor's finding is the only one (an error when the file is missing, as the widget's would be); a base-side anchor keeps the widget's finding too, since widgets read the working tree. Base-side anchors are checked against the merge-base only for the sidestory the check compares (`--coverage`, `--pin` or `--accept` on a sidestory with a `base`); otherwise, and for the other sidestories `--coverage` checks, they're skipped. Their messages say how to re-anchor them.
 
 ### Styling
 

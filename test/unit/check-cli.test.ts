@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { anchorUses, checkExplainer, formatReport, main, type CheckReport } from '../../src/cli/check-widgets.ts';
+import { anchorUses, checkExplainer, formatReport, main, type CheckOptions, type CheckReport } from '../../src/cli/check-widgets.ts';
 import { matches, parseCss, parseSelector, placementProblems } from '../../src/cli/css.ts';
-import type { BaseText } from '../../src/cli/coverage.ts';
+import { commandPath, type BaseText } from '../../src/cli/coverage.ts';
 import { scanHtml } from '../../src/cli/html.ts';
 import { pinQuote } from '../../src/core/pin.ts';
 import { splitLines } from '../../src/core/text.ts';
@@ -63,8 +63,8 @@ const GOOD_WIDGET = [
   '',
 ].join('\n');
 
-async function check(dir: string, opts: { pin?: boolean; yesWidgetsMayRead?: boolean } = {}): Promise<CheckReport> {
-  return checkExplainer(dir, { ...opts, compiler: compilerOpts });
+async function check(dir: string, opts: Omit<CheckOptions, 'compiler'> = {}): Promise<CheckReport> {
+  return checkExplainer(dir, { cwd: join(dir, '../..'), ...opts, compiler: compilerOpts });
 }
 const codes = (r: CheckReport, severity?: string) => r.findings.filter((f) => !severity || f.severity === severity).map((f) => f.code);
 
@@ -413,12 +413,12 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
     const pinning = await check(dir, { pin: true });
     expect(pinning.pin!.skipped.map((s) => s.anchor)).toEqual(['refill', 'other']);
     expect(codes(pinning)).toEqual(['anchor-stale', 'anchor-stale']);
-    expect((await checkExplainer(dir, { accept: ['refill', 'other'], compiler: compilerOpts })).findings).toEqual([]);
+    expect((await check(dir, { accept: ['refill', 'other'] })).findings).toEqual([]);
   });
 
   it('pin-skipped stays for a reason anchor drift doesn\'t report, so --accept never fails silently', async () => {
     const dir = sidestory(ORIG, { blank: { file: 'src/a.ts', range: [3, 3] } });
-    const r = await checkExplainer(dir, { accept: ['blank'], compiler: compilerOpts });
+    const r = await check(dir, { accept: ['blank'] });
     expect(r.findings.map((f) => [f.code, f.message])).toEqual([['pin-skipped', 'Not pinned: blank (lines blank or too long to quote).']]);
   });
 
@@ -438,7 +438,7 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
   describe('base-side anchors', () => {
     const anchors = { refill: pinned({ side: 'base' }) };
     const branch = (t: BaseText) => ({ held: new Map(), baseText: async (f: string): Promise<BaseText> => (f === 'src/a.ts' ? t : { missing: true }) });
-    const at = (dir: string, t: BaseText) => checkExplainer(dir, { branch: branch(t), compiler: compilerOpts });
+    const at = (dir: string, t: BaseText) => check(dir, { branch: branch(t) });
 
     it('are resolved against the merge-base when the check has it, else skipped; never against the working tree', async () => {
       const dir = sidestory(undefined, anchors, undefined, {}, { base: 'main' });
@@ -467,8 +467,12 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
       const r = await check(withWidget('// nothing here\n'));
       expect(codes(r)).toEqual(['anchor-lost']);
       expect(r.findings[0]!.message).toMatch(/^Step "refill" \(anchor "refill"\): its code isn't in src\/a\.ts any more .* Widgets may read it \(useAnchorCode\)\.$/);
-      const missing = await check(withWidget(undefined));
-      expect(missing.findings.map((f) => [f.severity, f.code])).toEqual([['warning', 'anchor-lost']]);
+    });
+
+    it('a missing file stays an error, as the widget\'s finding was: the check fails', async () => {
+      const dir = withWidget(undefined);
+      expect((await check(dir)).findings.map((f) => [f.severity, f.code])).toEqual([['error', 'anchor-lost']]);
+      expect(await main([dir], { out: () => {}, err: () => {} }, compilerOpts)).toBe(1);
     });
 
     it('out of date: the --accept command carries --yes-widgets-may-read and asks for the user\'s go-ahead, and it works', async () => {
@@ -490,6 +494,24 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
       const r = await check(withWidget(ORIG.replace('item * 1', 'item * 2')));
       expect(codes(r)).toEqual(['changed']);
     });
+
+    it('changed a little but read only through a computed id: anchor-changed suggests --accept for that anchor, not a blanket --pin', async () => {
+      const computed = "import { useAnchorCode } from 'explainer';\nexport default function W({ id }: { id: string }) { useAnchorCode(id); return null; }\n";
+      const dir = sidestory(ORIG.replace('item * 1', 'item * 2'), undefined, page(section('refill', widgetEl('w.tsx'))), { '.sidestory/demo/w.tsx': computed });
+      const f = (await check(dir)).findings.find((x) => x.code === 'anchor-changed')!;
+      expect(f.message).toContain("If the prose still fits, run check.cjs .sidestory/demo --accept refill --yes-widgets-may-read, but only with the user's go-ahead");
+    });
+  });
+
+  it('commands name the folder from the working directory, quoted when the shell needs it', async () => {
+    const dir = repoWith({ 'pkg/src/a.ts': STALE, 'pkg/.sidestory/demo/manifest.json': JSON.stringify({ version: 2, title: 'Demo', anchors: { refill: pinned() } }), 'pkg/.sidestory/demo/sidestory.html': page(section('refill', '<p>x</p>')) });
+    const root = join(dir, '../..');
+    const nested = join(root, 'pkg/.sidestory/demo');
+    const message = async (cwd: string) => (await check(nested, { cwd })).findings.find((f) => f.code === 'anchor-stale')!.message;
+    expect(await message(root)).toContain('then run check.cjs pkg/.sidestory/demo --accept refill;');
+    expect(await message(join(root, 'pkg'))).toContain('then run check.cjs .sidestory/demo --accept refill;');
+    expect(await message(nested)).toContain('then run check.cjs . --accept refill;');
+    expect(commandPath('/r', "/r/my pkg/.sidestory/it's")).toBe("'my pkg/.sidestory/it'\\''s'");
   });
 
   it('--json lists them like every other finding', async () => {

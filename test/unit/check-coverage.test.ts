@@ -471,7 +471,7 @@ describe('--pin and --accept with a branch', () => {
     const m = manifest(dir);
     removedSince(m, 'retry-loop');
     writeFileSync(join(sd, 'manifest.json'), JSON.stringify(m, null, 2));
-    const r = await json([sd, '--coverage']);
+    const r = await json([sd, '--coverage'], { cwd: dir });
     expect(r.findings.map((f) => f.code)).not.toContain('explained-stale');
     expect(r.coverage.files.find((f) => f.path === 'src/retry/retry.ts')!.changes[0]).toMatchObject({ stale: true });
     const stale = r.findings.filter((f) => f.code === 'anchor-stale');
@@ -502,7 +502,7 @@ describe('--pin and --accept with a branch', () => {
     writeFileSync(retry, lines.join('\n'));
     const jitter = join(dir, 'src/retry/jitter.ts');
     writeFileSync(jitter, readFileSync(jitter, 'utf8').replace(/jitter line ([3-9]);/g, 'rewritten $1;'));
-    const r = await json([sd, '--coverage', '--committed']);
+    const r = await json([sd, '--coverage', '--committed'], { cwd: dir });
     expect(r.findings.filter((f) => f.code === 'anchor-stale').map((f) => [f.line, f.message.split(':')[0]])).toEqual([[1, 'Step "Jitter" (anchor "jitter")']]);
     const kept = r.findings.filter((f) => f.code === 'explained-stale');
     expect(kept.map((f) => slash(f.file).replace(/.*\/src\//, 'src/'))).toEqual(['src/retry/retry.ts']);

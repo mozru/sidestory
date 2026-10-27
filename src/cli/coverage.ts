@@ -46,6 +46,14 @@ export interface CoverageOptions {
   env?: NodeJS.ProcessEnv;
   /** --new-id: a new sidestory replaces one under the same folder name, so its `id` differs on purpose. */
   newId?: boolean;
+  /** The folder commands in messages are relative to (default: the working directory). */
+  cwd?: string;
+}
+
+/** A folder for a command line in a message: relative to `cwd`, quoted for a POSIX shell when it needs it. */
+export function commandPath(cwd: string, folder: string): string {
+  const p = pathRelative(cwd, folder).split(sep).join('/') || '.';
+  return /^[\w@%+=:,./-]+$/.test(p) ? p : `'${p.replaceAll("'", "'\\''")}'`;
 }
 
 export interface JsonChange {
@@ -676,6 +684,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const result = computeCoverage(inputs, targets);
   const staleTargets = new Set(targets.filter((t) => t.state === 'stale').map((t) => `${t.sidestory}\u0000${t.anchor}`));
   const staleExplained: StaleExplained[] = [];
+  // Commands in messages name folders from the working directory; the repository's paths are real ones.
+  const cwd = await realpath(opts.cwd ?? process.cwd()).catch(() => opts.cwd ?? process.cwd());
 
   // Findings per change, and per target.
   const title = (sidestory: string, anchor: string) => {
@@ -735,7 +745,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
         const stale = c.by.filter((b) => staleTargets.has(`${b.sidestory}\u0000${b.anchor}`));
         const ids = new Map<string, string[]>();
         for (const b of stale) ids.set(b.sidestory, [...(ids.get(b.sidestory) ?? []), b.anchor]);
-        const accept = [...ids].map(([folder, list]) => `check.cjs ${folder} --accept ${list.join(',')}`).join(' and ');
+        const accept = [...ids].map(([folder, list]) => `check.cjs ${commandPath(cwd, abs(folder))} --accept ${list.join(',')}`).join(' and ');
         add('warning', file, 'explained-stale', `${where} explained by ${names}, whose code changed a lot since it was pinned: check the prose still fits, then run ${accept}.`, at);
         staleExplained.push({ finding: findings.at(-1)!, anchors: stale.map((b) => ({ sidestory: abs(b.sidestory), anchor: b.anchor })) });
       }
