@@ -764,6 +764,8 @@ export class PanelWidgets {
   onInit(): void {
     this.served.clear();
     this.codeAnchors.clear();
+    // A new page has nothing mounted: the old one's last beat (frames up) mustn't leave the watchdog waiting for it.
+    this.watchdog.disarm();
     const ref = this.port.ref();
     this.dirs.add(ref.dir.toString());
     // Before anything mounts (widgets wait for the gate): the panel fills in what its own state lacks.

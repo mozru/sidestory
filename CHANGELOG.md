@@ -5,9 +5,9 @@
 - The panel's script is about 70% smaller (614 KB → 176 KB), so sidestories open faster: the panel checks widget messages with zod's small build instead of the full library.
 - While a comment waits for Claude's answer, the 2-second check for a missed reply now lists only that thread's folder (and re-reads it when a file arrived) instead of re-reading every thread in the repository. Views that ask for threads at the same moment share one read.
 - Branch coverage while you type re-reads only the file you are editing; the other changed files are kept from the last count instead of being read, decoded and hashed again on every pause. Diffs and coverage share one cache of files read from git, and an unsaved file is checked against the merge-base once rather than on every refresh.
-- Panels no longer wake up every second for widgets: the heartbeat and the extension's freeze watchdog run only while a widget is mounted and the panel is on screen (they used to run for any open sidestory with widgets, hidden or scrolled away). A widget that freezes the panel is still caught.
+- Panels no longer wake up every second when no widget is on screen: the heartbeat and the extension's freeze watchdog run only while a widget is mounted and the panel is visible (they used to run for any open sidestory with widgets, hidden or scrolled away). A widget that freezes the panel is still caught, also one that hangs as soon as it mounts.
 - `check.cjs --coverage` makes the same few git calls however many sidestories a change touches (it made several per sidestory folder: 69 instead of 12 for a change editing 12 of them), and finds manifest line numbers in one pass (a 3,000-anchor manifest took 0.6 s). A finding about an anchor whose id is also a manifest field (`base`, `title`, `quote`…) now points at the anchor, not the field.
-- The committed file texts kept for widgets' code access are capped at about 32 MB in all (they were capped at 500 files of up to 10 MB each).
+- The committed file texts kept for widgets' code access are capped at about 32 million characters in all (they were capped at 500 files of up to 10 MB each).
 
 ## 0.2.4 (2026-10-26)
 

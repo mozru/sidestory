@@ -922,6 +922,8 @@ export class WidgetFrames {
     w.win = f.contentWindow;
     this.mounting = w;
     this.setStatus(w, 'loading');
+    // A beat naming it before its code runs: if it hangs the panel at once, the watchdog is armed and suspects it.
+    this.sendBeat(0);
   }
 
   private onFrameLoad(w: Widget, f: HTMLIFrameElement): void {
@@ -1483,12 +1485,13 @@ export class WidgetFrames {
       this.focusTimer = undefined;
     }
     // The extension's watchdog is armed only by beats from a visible panel with widgets mounted (§4). Not tied to
-    // the gate: frames still saving their state after it turned off beat until they are removed, so the last beat
-    // always says why beats stop (hidden, or nothing mounted) and disarms.
+    // the gate: a frame stays until it is removed (after the gate turned off too), and beats go on while it does,
+    // so the last beat always says why beats stop (hidden, or nothing mounted) and disarms.
     const beating = mounted && document.visibilityState === 'visible';
     if (beating && this.heartbeatTimer === undefined) {
-      this.heartbeatDue = now() + HEARTBEAT_MS;
-      this.heartbeatTimer = setTimeout(() => this.heartbeat(), HEARTBEAT_MS);
+      // At once: a widget that hangs the panel right away must find the watchdog armed.
+      this.heartbeatDue = now();
+      this.heartbeat();
     }
     if (!beating && this.heartbeatTimer !== undefined) {
       clearTimeout(this.heartbeatTimer);
@@ -1517,14 +1520,6 @@ export class WidgetFrames {
     // A hidden page's timers are throttled, so its lateness says nothing.
     const visible = document.visibilityState === 'visible';
     this.panel.post({ type: 'heartbeat', delay: visible ? Math.round(delay) : 0, visible, ...this.breadcrumbs() });
-  }
-
-  /** A beat now, on time (visibility changed): the timer starts over. */
-  private beatNow(): void {
-    if (this.heartbeatTimer === undefined) return;
-    clearTimeout(this.heartbeatTimer);
-    this.heartbeatDue = now();
-    this.heartbeat();
   }
 
   /** Pongs stopping for 3 s while visible: tell the extension, which coordinates every panel (§4). */
@@ -1564,7 +1559,6 @@ export class WidgetFrames {
       this.schedule();
     }
     this.timers(); // hidden: a last beat, then none; visible: beats again, one at once
-    this.beatNow();
   }
 
   // ---- state and logs ----

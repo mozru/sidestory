@@ -338,6 +338,12 @@ describe('review regressions (extension side)', () => {
       beat(['widgets/backoff.tsx'], false);
       vi.advanceTimersByTime(1000);
       expect(timer()).toBeUndefined();
+      // The page is rebuilt (a reload) after a beat with a widget up: the new page has nothing mounted.
+      beat(['widgets/backoff.tsx']);
+      p.send({ type: 'ready' });
+      vi.advanceTimersByTime(25_000);
+      expect(recreated).toEqual([]);
+      expect(timer()).toBeUndefined();
       // A widget freezes the panel: no beat comes after this one, and 20 s later the panel is recovered.
       beat(['widgets/backoff.tsx']);
       vi.advanceTimersByTime(19_000);

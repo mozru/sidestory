@@ -886,9 +886,10 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
   test('hidden, the page sends one beat at once (visible: false, which disarms the watchdog), then none; shown, they start again at once', async ({ page }) => {
     await openProbe(page);
     await expect.poll(async () => (await posted(page)).some((m) => m.type === 'heartbeat')).toBe(true);
-    await clearPosted(page);
+    // Cleared and hidden in one go, so a beat from the running timer can't land in between.
     const setVisibility = (v: string) =>
       page.evaluate((v) => {
+        (window as unknown as { __posted: unknown[] }).__posted = [];
         Object.defineProperty(document, 'visibilityState', { value: v, configurable: true });
         document.dispatchEvent(new Event('visibilitychange'));
       }, v);
@@ -898,11 +899,30 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     expect((await beats())[0]).toMatchObject({ visible: false, delay: 0 });
     await page.waitForTimeout(2200);
     expect(await beats()).toHaveLength(1);
-    await clearPosted(page);
     await setVisibility('visible');
     await expect.poll(async () => (await beats()).length, { timeout: 200 }).toBe(1);
     expect((await beats())[0]).toMatchObject({ visible: true, mounted: ['w/probe.tsx'] });
     await expect.poll(async () => (await beats()).length, { timeout: 2500 }).toBeGreaterThanOrEqual(2);
+    expect((await beats()).every((b) => b.type === 'heartbeat' && b.visible)).toBe(true);
+  });
+
+  test('mounting a widget sends a beat naming it at once (a widget that hangs the panel right away is caught and suspected)', async ({ page }) => {
+    // One widget live at the top (its beats name no widget mounting), another far below.
+    await openWith(page, explainerHtml(probeTag(), { after: filler(120) + probeTag() }), builds, { active: 'ring' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').at(-1)).toMatchObject({ mounting: null });
+    // What had been posted when the second frame was added, before any timer could fire.
+    await page.evaluate(() => {
+      const w = window as unknown as { __posted: { type: string }[]; __atMount?: unknown[] };
+      new MutationObserver((_, obs) => {
+        if (document.querySelectorAll('iframe.cx-widget-frame').length < 2) return;
+        w.__atMount = w.__posted.filter((m) => m.type === 'heartbeat');
+        obs.disconnect();
+      }).observe(document.body, { childList: true, subtree: true });
+      w.__posted = [];
+    });
+    await page.locator('.cx-scroll').evaluate((s) => (s.scrollTop = s.scrollHeight));
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __atMount?: unknown[] }).__atMount)).toContainEqual(expect.objectContaining({ type: 'heartbeat', visible: true, mounting: 'w/probe.tsx' }));
   });
 
   test('beats only while a widget is mounted: scrolled far away, one last beat with nothing mounted, then none', async ({ page }) => {
