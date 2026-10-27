@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5 (2026-10-27)
 
 - The checker (`check.cjs`) now reports every anchor VS Code flags, not only those widgets read: code lost (`anchor-lost`) or out of date (`anchor-stale`) as warnings, and changed a little (`anchor-changed`) or not checked because its file can't be read (`anchor-unchecked`) as info, with the step, where the code was and is now, and the command that fixes it. `explained-stale` now gives the `--accept` command (`--pin` leaves such anchors alone), and `--yes-widgets-may-read` also goes with `--accept`.
 - Large sidestories open and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening about twice as fast, updates about three times).
