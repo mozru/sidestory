@@ -551,7 +551,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const sidestories: Sidestory[] = [];
   const notBelonging: string[] = [];
   // Which candidates' manifests the merge-base has, in one ls-tree.
-  const atMergeBase = candidates.size ? await git.lsTree(mergeBase, [...candidates.keys()].map((f) => `${f}/manifest.json`)) : new Map<string, unknown>();
+  // Compared in NFC: git may list a path in another Unicode form than the folder's (macOS writes NFD).
+  const atMergeBase = new Set([...(candidates.size ? await git.lsTree(mergeBase, [...candidates.keys()].map((f) => `${f}/manifest.json`)) : new Map()).keys()].map((p) => p.normalize('NFC')));
   for (const [folder, c] of [...candidates].sort(([a], [b]) => (a < b ? -1 : 1))) {
     // A review sidestory (--head) lives untracked beside the commit it describes; with --committed, a sidestory
     // counts only once it is committed, as in CI.
@@ -567,7 +568,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     }
     const m = parsed.manifest;
     const own = m.base !== undefined ? await ownMergeBase(m.base) : undefined;
-    const presentAtMergeBase = atMergeBase.has(`${folder}/manifest.json`);
+    const presentAtMergeBase = atMergeBase.has(`${folder}/manifest.json`.normalize('NFC'));
     const ok = belongs({ presentAtMergeBase, presentAtHead: true, ownMergeBase: own, comparisonMergeBase: mergeBase, manifestHead: m.head, comparisonHead: mode === 'head' ? headSha : undefined });
     if (!ok) {
       if (given?.folder === folder) {
@@ -1000,7 +1001,6 @@ function relative(root: string, p: string): string | undefined {
   return r.split(sep).join('/');
 }
 
-/** The line of `"key":` in a manifest's text (an anchor's key when `anchor`), for findings. */
 /**
  * The manifest's diagnostics for the branch fields (§3.4) and the id, as findings: a bad `base` and base-side
  * anchors without one are errors (they would show the sidestory, or its removed code, at the wrong place), as is

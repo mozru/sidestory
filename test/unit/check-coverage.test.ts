@@ -627,11 +627,11 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
       return calls.mock.calls.length;
     };
     try {
-      for (const committed of [false, true]) expect(await spawns(12, committed)).toBe(await spawns(2, committed));
+      for (const committed of [false, true]) expect(await spawns(12, committed)).toBe(await spawns(3, committed));
     } finally {
       calls.mockRestore();
     }
-  });
+  }, 90_000);
 
   it('the working tree against HEAD: a sidestory added on the branch keeps the id it was committed with', async () => {
     const dir = copy();

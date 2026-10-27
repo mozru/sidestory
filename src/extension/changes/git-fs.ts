@@ -1,22 +1,20 @@
 // Read-only documents from git (docs/CHANGES-PLAN.md §4.5): the old side of every diff, and the head side in
 // committed-only mode. `sidestory-git://<repoId>/<path>?<full commit id>` is served through the vscode.git API
 // (getObjectDetails, then buffer): regular files only (never a symlink, a submodule or a tree), with size caps, and
-// cached (git-blobs.ts, shared with coverage) because a URI's content never changes. `sidestory-empty:/<path>` is the empty side of an
-// added or deleted file. The git extension's own `git:` URIs aren't used: their query format is internal, other
+// cached (git-blobs.ts, shared with coverage) because a URI's content never changes. `sidestory-empty:/<path>` is
+// the empty side of an added or deleted file. The git extension's own `git:` URIs aren't used: their query format is internal, other
 // extensions decorate and lint them as the user's files, and they can't serve workspace.fs reads (release 2).
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { FULL_SHA } from './base.ts';
 import { isSafeRepoPath, repoKey } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';
-import { GitBlobs } from './git-blobs.ts';
+import { GitBlobs, MAX_BLOB_BYTES } from './git-blobs.ts';
 import { repoIdFor, SALT_KEY } from './probe.ts';
 
 export const GIT_SCHEME = 'sidestory-git';
 export const EMPTY_SCHEME = 'sidestory-empty';
 
-/** One cap for every reader: the provider can't know who asks (callers apply their own smaller caps). */
-export const MAX_BLOB_BYTES = 10 * 1024 * 1024;
 const READONLY_MESSAGE = 'Read-only: a version of this file from git';
 
 /**

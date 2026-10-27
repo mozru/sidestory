@@ -38,8 +38,6 @@ import { refReader, relPath } from './git-api.ts';
 import { GitBlobs } from './git-blobs.ts';
 import type { ChangeEntry } from './model.ts';
 
-export { isUnknownPath } from './git-blobs.ts';
-
 export const COVERAGE_WORK = {
   parallel: 4,
   bytesPerRecompute: 200 * 1024 * 1024,

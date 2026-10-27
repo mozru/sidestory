@@ -21,6 +21,9 @@ export function isUnknownPath(e: unknown): boolean {
 /** The repository's root, as the cache keys it: the git API hands out a new wrapper for the same repository. */
 const rootOf = (repo: GitRepo) => repo.rootUri.toString();
 
+/** One cap for every reader of the diff editors: the provider can't know who asks (callers apply smaller ones). */
+export const MAX_BLOB_BYTES = 10 * 1024 * 1024;
+
 export class GitBlobs {
   private readonly details = new SizeLru<Promise<BlobDetails | 'missing' | undefined>>(20_000);
   private readonly bytes: SizeLru<Uint8Array>;
@@ -35,14 +38,14 @@ export class GitBlobs {
     const key = `${rootOf(repo)}\n${sha}\n${path}`;
     let p = this.details.get(key);
     if (!p) {
+      // Not cached: a failure (or no answer) may be passing (a partial clone fetching, git busy).
+      const unsure = () => {
+        if (this.details.get(key) === q) this.details.delete(key);
+        return undefined;
+      };
       const q: Promise<BlobDetails | 'missing' | undefined> = repo.getObjectDetails(sha, apiPath(repo, path)).then(
-        (d) => ({ mode: d.mode, object: d.object, size: d.size }),
-        (e: unknown) => {
-          if (isUnknownPath(e)) return 'missing';
-          // Not cached: a failure may be passing (a partial clone fetching, git busy).
-          if (this.details.get(key) === q) this.details.delete(key);
-          return undefined;
-        },
+        (d) => (d ? { mode: d.mode, object: d.object, size: d.size } : unsure()),
+        (e: unknown) => (isUnknownPath(e) ? 'missing' : unsure()),
       );
       p = q;
       this.details.set(key, q, 1);
@@ -50,7 +53,10 @@ export class GitBlobs {
     return p;
   }
 
-  /** A blob's bytes (callers check `stat` for its mode and size first); rejects when git can't read it. */
+  /**
+   * A blob's bytes (callers check `stat` for its mode and size first); rejects when git can't read it. Output past
+   * MAX_BLOB_BYTES (a textconv driver can make it larger than the blob) is returned but not kept.
+   */
   read(repo: GitRepo, sha: string, path: string): Promise<Uint8Array> {
     const key = `${rootOf(repo)}\n${sha}\n${path}`;
     const kept = this.bytes.get(key);
@@ -62,7 +68,7 @@ export class GitBlobs {
           this.reading.delete(key);
           // A copy: a small Buffer is a view into a shared 8 KB pool the cache would otherwise keep alive.
           const out = new Uint8Array(b);
-          this.bytes.set(key, out, Math.max(1, out.byteLength));
+          if (out.byteLength <= MAX_BLOB_BYTES) this.bytes.set(key, out, Math.max(1, out.byteLength));
           return out;
         },
         (e: unknown) => {
@@ -73,10 +79,5 @@ export class GitBlobs {
       this.reading.set(key, p);
     }
     return p;
-  }
-
-  clear(): void {
-    this.details.clear();
-    this.bytes.clear();
   }
 }

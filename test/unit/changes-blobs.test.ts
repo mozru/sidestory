@@ -6,7 +6,7 @@ import { PreparedText } from '../../src/core/text.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 const vscode = await import('./vscode-stub.ts');
-const { GitBlobs } = await import('../../src/extension/changes/git-blobs.ts');
+const { GitBlobs, MAX_BLOB_BYTES } = await import('../../src/extension/changes/git-blobs.ts');
 const { GitFileSystem, RepoIds, gitUri } = await import('../../src/extension/changes/git-fs.ts');
 const { CoverageService } = await import('../../src/extension/changes/coverage-service.ts');
 
@@ -75,6 +75,24 @@ describe('GitBlobs', () => {
     expect(await src.oldBytes('link')).toBe('link');
     expect(calls).toEqual({ details: 4, buffer: 0 });
     svc.dispose();
+  });
+
+  it('a details answer of null is "git couldn’t say" (asked again), never a rejected promise kept', async () => {
+    let calls = 0;
+    const repo = { rootUri: vscode.Uri.file('/repo'), getObjectDetails: async () => (calls++, null), buffer: async () => new Uint8Array() };
+    const blobs = new GitBlobs();
+    expect(await blobs.stat(repo as never, SHA, 'a.ts')).toBeUndefined();
+    expect(await blobs.stat(repo as never, SHA, 'a.ts')).toBeUndefined();
+    expect(calls).toBe(2);
+  });
+
+  it('textconv output over 10 MB is returned but not kept', async () => {
+    let calls = 0;
+    const repo = { rootUri: vscode.Uri.file('/repo'), getObjectDetails: async () => ({ mode: '100644', object: OBJ, size: 10 }), buffer: async () => (calls++, new Uint8Array(MAX_BLOB_BYTES + 1)) };
+    const blobs = new GitBlobs(64 * 1024 * 1024);
+    expect((await blobs.read(repo as never, SHA, 'a.pdf')).byteLength).toBe(MAX_BLOB_BYTES + 1);
+    await blobs.read(repo as never, SHA, 'a.pdf');
+    expect(calls).toBe(2);
   });
 
   it('shares a read in flight and bounds the bytes it keeps', async () => {

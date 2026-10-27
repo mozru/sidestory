@@ -78,11 +78,16 @@ export class Git {
    * HEAD texts by commit and file, bounded by their total length: files may be up to 10 MB each, and every HEAD
    * move adds a copy of each file read again. Least recently used first out.
    */
-  private readonly headTexts = new SizeLru<Promise<string | null>>(HEAD_TEXT_CHARS);
+  private readonly headTexts: SizeLru<Promise<string | null>>;
   private readonly headBlobs = new Map<string, Promise<string | null>>();
   private readonly ignores = new Map<string, Promise<boolean>>();
   /** For tests: the clock. */
   now: () => number = Date.now;
+
+  /** `headTextChars`: what the HEAD text cache keeps, in characters. */
+  constructor(headTextChars = HEAD_TEXT_CHARS) {
+    this.headTexts = new SizeLru(headTextChars);
+  }
 
   private getApi(): Promise<GitApi | undefined> {
     if (!vscode.workspace.isTrusted) return Promise.resolve(undefined);

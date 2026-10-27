@@ -50,7 +50,8 @@ if (watch) {
   for (const b of builds) await (await esbuild.context(b)).watch();
 } else {
   const results = await Promise.all(builds.map((b) => esbuild.build(b)));
-  const panelInputs = Object.entries(results[2].metafile.outputs['dist/webview/main.js'].inputs).filter(([, i]) => i.bytesInOutput > 0);
+  const panel = results[builds.findIndex((b) => b.outfile === 'dist/webview/main.js')];
+  const panelInputs = Object.entries(panel.metafile.outputs['dist/webview/main.js'].inputs).filter(([, i]) => i.bytesInOutput > 0);
   const classic = panelInputs.map(([p]) => p).find((p) => p.includes('node_modules/zod/') && !/node_modules\/zod\/v4\/(core|mini)\//.test(p));
   if (classic) throw new Error(`dist/webview/main.js bundles ${classic}: import zod/mini, or move the constant into a zod-free module`);
 }

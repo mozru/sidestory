@@ -124,8 +124,10 @@ describe('code access asks git cheaply', () => {
   });
 
   it('HEAD texts are kept by their total length, least recently used out first', async () => {
-    const big = Math.floor(HEAD_TEXT_CHARS / 2.5);
-    const sizes: Record<string, number> = { 'a.ts': big, 'b.ts': big, 'c.ts': big, 'small.ts': 10, 'huge.ts': HEAD_TEXT_CHARS + 1 };
+    expect(HEAD_TEXT_CHARS).toBe(32 * 1024 * 1024); // the default; a small cap here
+    const cap = 1000;
+    const big = 400;
+    const sizes: Record<string, number> = { 'a.ts': big, 'b.ts': big, 'c.ts': big, 'small.ts': 10, 'huge.ts': cap + 1 };
     const shown: string[] = [];
     const repo = fakeRepo({
       show: async (_ref: string, path: string) => {
@@ -134,7 +136,7 @@ describe('code access asks git cheaply', () => {
         return 'x'.repeat(sizes[name]!);
       },
     });
-    const git = new Git();
+    const git = new Git(cap);
     const text = (name: string) => git.headText(repo as never, Uri.file(join(root, name)) as never);
     for (const n of ['small.ts', 'a.ts', 'b.ts', 'small.ts', 'a.ts']) await text(n);
     expect(shown).toEqual(['small.ts', 'a.ts', 'b.ts']);
@@ -144,7 +146,7 @@ describe('code access asks git cheaply', () => {
     await text('b.ts');
     expect(shown).toEqual(['small.ts', 'a.ts', 'b.ts', 'c.ts', 'b.ts']);
     // Larger than the whole cache: read, never kept.
-    expect((await text('huge.ts'))!.length).toBe(HEAD_TEXT_CHARS + 1);
+    expect((await text('huge.ts'))!.length).toBe(cap + 1);
     await text('huge.ts');
     expect(shown.filter((n) => n === 'huge.ts')).toHaveLength(2);
     // Another commit: read again.
