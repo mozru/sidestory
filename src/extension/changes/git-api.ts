@@ -62,7 +62,8 @@ export interface GitRepo {
   diffBetweenWithStats?(a: string, b: string): Promise<GitDiffChange[]>;
   /** `git diff --raw --numstat ref`: the working tree against ref, tracked files only (newer). */
   diffBetweenWithStats2?(ref: string): Promise<GitDiffChange[]>;
-  log(options: { maxEntries?: number; range?: string }): Promise<GitCommit[]>;
+  log(options: { maxEntries?: number; range?: string; path?: string }): Promise<GitCommit[]>;
+  checkIgnore(paths: string[]): Promise<Set<string>>;
   fetch?(options: { remote?: string; ref?: string }): Promise<void>;
 }
 export interface GitApi {

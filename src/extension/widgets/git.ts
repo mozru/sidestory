@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
-import { SizeLru } from './lru.ts';
+import { SizeLru } from '../lru.ts';
 
 /** The parts of the vscode.git API (version 1) used here. */
 export interface GitRepository {

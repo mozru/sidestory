@@ -4,7 +4,7 @@
 // against the widget's ancestor chain for selectors made of type, class, id and attribute selectors with
 // descendant and child combinators; rules with other selectors (state pseudo-classes, sibling combinators,
 // :has() …) are skipped rather than guessed. The panel checks the real layout at run time.
-import { describeElement, type Element } from './html.ts';
+import { describeElement, lineIndex, type Element } from './html.ts';
 
 export interface Declaration {
   prop: string;
@@ -32,8 +32,8 @@ export interface ParsedCss {
 }
 
 function stripComments(css: string): string {
-  // Keep newlines so line numbers survive.
-  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (c) => c.replace(/[^\n]/g, ' '));
+  // Keep line breaks so line numbers survive.
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (c) => c.replace(/[^\r\n]/g, ' '));
 }
 
 export function parseDeclarations(block: string): Declaration[] {
@@ -90,11 +90,8 @@ function blockEnd(css: string, open: number): number {
 /** Parses a stylesheet. `firstLine` is the line its text starts on. */
 export function parseCss(text: string, firstLine = 1, file?: string, into: ParsedCss = { rules: [], geometryKeyframes: new Set() }): ParsedCss {
   const css = stripComments(text);
-  const lineAt = (offset: number) => {
-    let n = firstLine;
-    for (let i = 0; i < offset; i++) if (css.charCodeAt(i) === 10) n++;
-    return n;
-  };
+  let lines: ((offset: number) => number) | undefined;
+  const lineAt = (offset: number) => firstLine - 1 + (lines ??= lineIndex(css))(offset);
   const walk = (from: number, to: number, conditions: string[]) => {
     let i = from;
     while (i < to) {
@@ -218,11 +215,19 @@ function matchesCompound(c: Compound, el: Element): boolean {
 
 /** Whether the selector matches chain[index], given its ancestors chain[0..index-1]. */
 export function matches(steps: Step[], chain: Element[], index: number): boolean {
+  if (steps.length === 1) return matchesCompound(steps[0]!.compound, chain[index]!);
+  // Memoized by (step, element): without it, descendant combinators over a deep chain backtrack
+  // exponentially (C(depth, steps) tries). 0 = not worked out yet, 1 = matches, 2 = doesn't.
+  const memo = new Int8Array(steps.length * (index + 1));
   const go = (k: number, at: number): boolean => {
-    if (!matchesCompound(steps[k]!.compound, chain[at]!)) return false;
-    if (k === 0) return true;
-    const comb = steps[k]!.combinator;
-    if (comb === '>') return at > 0 && go(k - 1, at - 1);
+    const slot = k * (index + 1) + at;
+    if (memo[slot]) return memo[slot] === 1;
+    const ok = matchesCompound(steps[k]!.compound, chain[at]!) && (k === 0 || rest(k, at));
+    memo[slot] = ok ? 1 : 2;
+    return ok;
+  };
+  const rest = (k: number, at: number): boolean => {
+    if (steps[k]!.combinator === '>') return at > 0 && go(k - 1, at - 1);
     for (let j = at - 1; j >= 0; j--) if (go(k - 1, j)) return true;
     return false;
   };
@@ -280,6 +285,35 @@ function classify(d: Declaration, keyframes: Set<string>): Kind | undefined {
   }
 }
 
+interface RelevantRule {
+  rule: Rule;
+  /** The rule's selectors this checker can match, parsed. */
+  selectors: { sel: string; steps: Step[] }[];
+}
+
+/** Per stylesheet: the rules with a declaration that can matter to a widget, and the sizes they were worked out at. */
+const relevant = new WeakMap<ParsedCss, { rules: number; keyframes: number; list: RelevantRule[] }>();
+
+/** The rules worth matching against widget ancestors, classified and parsed once per (unchanged) stylesheet. */
+function relevantRules(css: ParsedCss): RelevantRule[] {
+  const cached = relevant.get(css);
+  if (cached && cached.rules === css.rules.length && cached.keyframes === css.geometryKeyframes.size) return cached.list;
+  const parsed = new Map<string, Step[] | undefined>();
+  const list: RelevantRule[] = [];
+  for (const rule of css.rules) {
+    if (!rule.decls.some((d) => classify(d, css.geometryKeyframes))) continue;
+    const selectors: RelevantRule['selectors'] = [];
+    for (const sel of rule.selectors) {
+      if (!parsed.has(sel)) parsed.set(sel, parseSelector(sel));
+      const steps = parsed.get(sel);
+      if (steps) selectors.push({ sel, steps });
+    }
+    if (selectors.length) list.push({ rule, selectors });
+  }
+  relevant.set(css, { rules: css.rules.length, keyframes: css.geometryKeyframes.size, list });
+  return list;
+}
+
 /**
  * Problems for a widget whose ancestor chain is `ancestors` (outermost first) and whose own element is
  * `widget`. Inline styles and unconditional rules give errors (for unsupported ancestors); rules inside
@@ -288,7 +322,7 @@ function classify(d: Declaration, keyframes: Set<string>): Kind | undefined {
 export function placementProblems(ancestors: Element[], widget: Element, css: ParsedCss): PlacementProblem[] {
   const chain = [...ancestors, widget];
   const out: PlacementProblem[] = [];
-  const parsedSelectors = new Map<string, Step[] | undefined>();
+  const rules = relevantRules(css);
   const seen = new Set<string>();
   const add = (p: PlacementProblem) => {
     const key = `${chain.indexOf(p.element)}:${p.property}`;
@@ -309,12 +343,9 @@ export function placementProblems(ancestors: Element[], widget: Element, css: Pa
     };
     const style = el.attrs.get('style');
     if (style) for (const d of parseDeclarations(style)) consider(d, { kind: 'inline' });
-    for (const rule of css.rules) {
-      if (!rule.decls.some((d) => classify(d, css.geometryKeyframes))) continue;
-      for (const sel of rule.selectors) {
-        if (!parsedSelectors.has(sel)) parsedSelectors.set(sel, parseSelector(sel));
-        const steps = parsedSelectors.get(sel);
-        if (!steps || !matches(steps, chain, index)) continue;
+    for (const { rule, selectors } of rules) {
+      for (const { sel, steps } of selectors) {
+        if (!matches(steps, chain, index)) continue;
         for (const d of rule.decls) consider(d, { kind: 'rule', line: rule.line, file: rule.file, selector: sel, conditions: rule.conditions });
         break;
       }

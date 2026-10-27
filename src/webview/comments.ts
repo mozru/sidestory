@@ -258,8 +258,11 @@ export class CommentsPane {
       for (const t of this.threads) if (t.state === 'open' && t.target.step) byStep.set(t.target.step, { n: (byStep.get(t.target.step)?.n ?? 0) + 1, unread: (byStep.get(t.target.step)?.unread ?? false) || t.unread });
     }
     const have = new Map([...this.layer.querySelectorAll<HTMLElement>('.cx-badge')].map((b) => [b.dataset.step!, b]));
+    // Every read before any write: reading a rect after a badge write forces a layout per step.
     const width = this.hooks.contentFrame().clientWidth;
-    for (const s of this.hooks.steps()) {
+    const steps = this.hooks.steps();
+    const rects = steps.map((s) => s.el.getBoundingClientRect());
+    for (const [i, s] of steps.entries()) {
       let b = have.get(s.id);
       have.delete(s.id);
       const c = byStep.get(s.id);
@@ -276,7 +279,7 @@ export class CommentsPane {
       b.classList.toggle('cx-has', !!c);
       b.classList.toggle('cx-unread', !!c?.unread);
       b.setAttribute('aria-label', c ? `${c.n} comment thread${c.n === 1 ? '' : 's'} on ${s.label}` : `Comment on ${s.label}`);
-      const r = s.el.getBoundingClientRect();
+      const r = rects[i]!;
       b.style.top = `${Math.max(0, r.top + 4)}px`;
       b.style.left = `${Math.max(0, Math.min(width - 40, r.right - 40))}px`;
     }

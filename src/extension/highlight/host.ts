@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { type HighlightStyle, MAX_BLOCK_CHARS, MAX_BLOCK_LINES } from '../../shared/highlight-languages.ts';
-import { SizeLru } from '../widgets/lru.ts';
+import { SizeLru } from '../lru.ts';
 import type { GrammarSet } from './catalog.ts';
 import type { HighlightTheme } from './theme.ts';
 import { countLines } from './grammars.ts';

@@ -8,7 +8,7 @@ import { codeColumnFor } from '../../src/extension/columns.ts';
 import { branchRows, changeIcon, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, moveMarkNote, moveMarkTarget, problemRow, stateWords, WHOLE_WORDS } from '../../src/extension/changes/coverage-labels.ts';
 import { latchStep, sameBaseName, storyBasesOf, type StoryLatch } from '../../src/extension/changes/base.ts';
 import { changePrompt, explainBranchPrompt, explainFilePrompt, safePath, updatePrompt } from '../../src/extension/changes/prompts.ts';
-import { anchorAtSide, emptySideKey, gitSideKey, mapOldRange, vscodeGitSideKey, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
+import { anchorAtSide, emptySideKey, entryIndex, gitSideKey, mapOldRange, vscodeGitSideKey, targetKey, type SideKey } from '../../src/extension/changes/targets.ts';
 import { addTrivialAnchor, branchSlug } from '../../src/extension/changes/trivial.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
@@ -334,6 +334,28 @@ describe('other documents as sides (§8)', () => {
     expect(emptySideKey('legacy/sleep.ts', entries)).toEqual({ path: 'legacy/sleep.ts', side: 'base' });
     expect(emptySideKey('src/new.ts', entries)).toEqual({ path: 'src/new.ts', side: 'head' });
     expect(emptySideKey('src/a.ts', entries)).toBeUndefined();
+  });
+  it('indexes entries by side once per list, the first match winning as a scan would', () => {
+    const list = [
+      { path: 'b.ts', oldPath: 'a.ts', status: 'R' },
+      { path: 'a.ts', status: 'A' },
+      { path: 'a.ts', status: 'M' },
+      { path: 'gone.ts', status: 'D' },
+    ];
+    const ix = entryIndex(list);
+    expect(entryIndex(list)).toBe(ix);
+    expect(ix.head.get('a.ts')).toBe(list[1]);
+    expect(ix.base.get('a.ts')).toBe(list[0]);
+    expect(ix.head.has('gone.ts')).toBe(false);
+    expect(ix.base.get('gone.ts')).toBe(list[3]);
+    expect(ix.byPath.get('a.ts')).toBe(list[1]);
+    expect([...ix.renamedFrom]).toEqual(['a.ts']);
+    // 20,000 entries (the listing cap): lookups for all of them stay well under the quadratic scan's ~1 s.
+    const big = Array.from({ length: 20_000 }, (_, i) => ({ path: `f${i}.ts`, status: 'M' }));
+    const t0 = performance.now();
+    const found = big.filter((e) => entryIndex(big).head.get(e.path) === e).length;
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(found).toBe(big.length);
   });
   it('maps VS Code git: documents by their ref: only the merge-base, and HEAD’s commit in committed mode', () => {
     const rel = (p: string) => (p.startsWith('/r/') ? p.slice(3) : undefined);

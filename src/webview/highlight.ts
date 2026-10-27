@@ -3,6 +3,7 @@
 // and CSSOM. Nothing here turns a string into HTML or CSS text.
 import { HEX_COLOR, type HighlightStyle, langFromClass, MAX_BLOCK_CHARS, MAX_BLOCK_LINES, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from '../shared/highlight-languages.ts';
 import type { FromWebview, ToWebview } from '../shared/protocol.ts';
+import { randomToken } from './trusted.ts';
 
 /** Marks blocks this module colored. Its value is a random token per panel, so author HTML can't pass for one. */
 export const HL_ATTR = 'data-cx-hl';
@@ -102,7 +103,7 @@ export interface HighlighterHost {
 
 export class CodeHighlighter {
   /** The marker's value: unguessable by explainer content. */
-  readonly token = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  readonly token = randomToken();
   private theme: string | undefined;
   private readonly palettes = new Map<string, HighlightStyle[]>();
   private readonly cache = new TextLru<number[]>();

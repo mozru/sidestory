@@ -96,7 +96,8 @@ export class Decorations implements vscode.Disposable {
   setWidget(h: WidgetHighlight | undefined): void {
     if (!h && !this.widget) return;
     this.widget = h;
-    this.refresh();
+    // Only the widget's own decorations: widgets may highlight several times a second.
+    for (const editor of vscode.window.visibleTextEditors) this.applyWidget(editor);
   }
 
   /** Briefly marks lines (an inline reference's target) without changing the active step. */
@@ -132,18 +133,21 @@ export class Decorations implements vscode.Disposable {
     for (const editor of vscode.window.visibleTextEditors) this.apply(editor);
   }
 
-  private apply(editor: vscode.TextEditor): void {
+  private applyWidget(editor: vscode.TextEditor): void {
     const w = this.widget;
     if (w && editor.document.uri.toString() === w.uri.toString()) {
       const last = editor.document.lineCount - 1;
       const range = new vscode.Range(Math.min(w.range.start - 1, last), 0, Math.min(w.range.end - 1, last), 0);
-      const ids = identifierRanges(editor.document, w.identifiers).filter((r) => range.start.line <= r.start.line && r.start.line <= range.end.line);
       editor.setDecorations(this.widgetType, [range]);
-      editor.setDecorations(this.widgetIds, ids);
+      editor.setDecorations(this.widgetIds, identifierRanges(editor.document, w.identifiers, range.start.line, range.end.line));
     } else {
       editor.setDecorations(this.widgetType, []);
       editor.setDecorations(this.widgetIds, []);
     }
+  }
+
+  private apply(editor: vscode.TextEditor): void {
+    this.applyWidget(editor);
     const f = this.current;
     const mine = f !== undefined && editor.document.uri.toString() === f.uri.toString();
     const diff = mine && inDiffEditor(editor);
@@ -214,13 +218,13 @@ export class Decorations implements vscode.Disposable {
   }
 }
 
-/** Every whole-word occurrence of the given identifiers in the document. */
-function identifierRanges(doc: vscode.TextDocument, names: readonly string[]): vscode.Range[] {
+/** Every whole-word occurrence of the given identifiers in the document, or in lines `from`–`to` (0-based) of it. */
+function identifierRanges(doc: vscode.TextDocument, names: readonly string[], from = 0, to = doc.lineCount - 1): vscode.Range[] {
   if (names.length === 0) return [];
   const escaped = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const re = new RegExp(`(?<![\\w$])(?:${escaped.join('|')})(?![\\w$])`, 'g');
   const out: vscode.Range[] = [];
-  for (let i = 0; i < doc.lineCount; i++) {
+  for (let i = Math.max(0, from); i <= to; i++) {
     const text = doc.lineAt(i).text;
     for (const m of text.matchAll(re)) out.push(new vscode.Range(i, m.index, i, m.index + m[0].length));
   }

@@ -49,3 +49,8 @@ export function staticHtml(strings: TemplateStringsArray, ...values: never[]): T
 export function parseInert(html: string): Document {
   return new DOMParser().parseFromString(sanitizePolicy.createHTML(html) as unknown as string, 'text/html');
 }
+
+/** 24 random hex digits: a per-panel marker author HTML can't guess. */
+export function randomToken(): string {
+  return [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}

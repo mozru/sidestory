@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChangeEntry } from '../../src/extension/changes/model.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
-const { computeCoverage, belongingSidestories, CoverageService, ByteLru, COVERAGE_WORK } = await import('../../src/extension/changes/coverage-service.ts');
+const { computeCoverage, belongingSidestories, CoverageService, COVERAGE_WORK } = await import('../../src/extension/changes/coverage-service.ts');
 type Source = import('../../src/extension/changes/coverage-service.ts').CoverageSource;
 const vscode = await import('./vscode-stub.ts');
 
@@ -246,23 +246,8 @@ describe('the checker\'s rules in the extension', () => {
   });
 });
 
-describe('ByteLru', () => {
-  it('is bounded by bytes, evicting the least recently used; a value over the budget is not kept', () => {
-    const lru = new ByteLru<Uint8Array>(100, (b) => b.length);
-    lru.set('a', new Uint8Array(40));
-    lru.set('b', new Uint8Array(40));
-    lru.get('a');
-    lru.set('c', new Uint8Array(40));
-    expect([lru.get('a') !== undefined, lru.get('b') !== undefined, lru.get('c') !== undefined]).toEqual([true, false, true]);
-    expect(lru.bytes).toBe(80);
-    lru.set('a', new Uint8Array(10)); // replacing re-weighs
-    expect(lru.bytes).toBe(50);
-    lru.set('huge', new Uint8Array(101));
-    expect(lru.get('huge')).toBeUndefined();
-    expect(lru.bytes).toBe(50);
-  });
-
-  it('the service budgets diffs and blobs by bytes', () => {
+describe('coverage caches', () => {
+  it('the service budgets diffs and merge-base blobs by bytes', () => {
     expect(COVERAGE_WORK.diffCacheBytes).toBe(64 * 1024 * 1024);
     expect(COVERAGE_WORK.blobBytes).toBe(64 * 1024 * 1024);
   });

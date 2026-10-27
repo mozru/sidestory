@@ -151,6 +151,33 @@ describe('placement (CSS)', () => {
     expect(problems('x', 'position: sticky; top: 0')).toEqual(['error:position']);
     expect(problems('x', 'overflow: hidden; content-visibility: auto')).toEqual(['error:content-visibility']);
   });
+
+  it('matches descendant selectors over deep chains without backtracking (it used to take ~35 s)', () => {
+    const chain = [...Array.from({ length: 60 }, () => el('div')), el('explain-widget')];
+    const t0 = performance.now();
+    // No p ancestor, so every way of placing the divs fails: C(60, 7) tries without the memo.
+    expect(matches(parseSelector(`p ${'div '.repeat(7)}explain-widget`)!, chain, 60)).toBe(false);
+    expect(matches(parseSelector(`div ${'div '.repeat(20)}> explain-widget`)!, chain, 60)).toBe(true);
+    expect(placementProblems(chain.slice(0, -1), chain[60]!, parseCss(`p ${'div '.repeat(7)}{ transform: rotate(1deg) }`))).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
+
+  it('numbers rules in a large stylesheet in linear time, with line breaks counted as in the HTML', () => {
+    const big = Array.from({ length: 20_000 }, (_, i) => `.c${i} span {\n  transform: none;\n}\n`).join('');
+    const t0 = performance.now();
+    const css = parseCss(big, 3);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(css.rules.at(-1)!.line).toBe(3 + 3 * 19_999);
+    expect(parseCss('/* a\r\nb */ .x { color: red }\r\n.y { color: red }\r.z { color: red }/*\r*/\n.w { color: red }', 7).rules.map((r) => r.line)).toEqual([8, 9, 10, 12]);
+  });
+
+  it('classifies a stylesheet once for all widgets and ancestors', () => {
+    const css = parseCss(Array.from({ length: 10_000 }, (_, i) => `.c${i} span { color: red; margin: 0 }\n${i % 20 === 0 ? `.t${i} { transform: rotate(1deg) }\n` : ''}`).join(''));
+    const chain = Array.from({ length: 20 }, (_, i) => el('div', { class: i === 10 ? 't40' : 'a' }));
+    const t0 = performance.now();
+    for (let i = 0; i < 200; i++) expect(placementProblems(chain, el('explain-widget'), css).map((p) => p.property)).toEqual(['transform']);
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
 });
 
 describe('anchorUses', () => {

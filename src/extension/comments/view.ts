@@ -2,10 +2,10 @@
 // Resolved, Elsewhere. Labels are repository text cleaned once (displayText) and shown with icons escaped.
 import * as vscode from 'vscode';
 import { displayText, escapeIcons } from '../../core/display-text.ts';
-import { authorLabel } from '../../core/threads/reduce.ts';
+import { authorLabel, latestAsk } from '../../core/threads/reduce.ts';
 import type { CodeAnchor } from '../../core/threads/schema.ts';
 import type { SidestoryIndex } from '../nav/index.ts';
-import { codeAnchorLabel, type CommentService, type Entry } from './service.ts';
+import { codeAnchorLabel, threadRoots, type CommentService, type Entry } from './service.ts';
 
 type Group = 'forYou' | 'waiting' | 'open' | 'resolved' | 'elsewhere';
 const GROUPS: { id: Group; label: string; collapsed?: boolean }[] = [
@@ -47,16 +47,9 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
     this.timer = setTimeout(() => void this.rebuild().catch((e: unknown) => this.service.report(e, 'list comments')), 150);
   }
 
-  roots(): vscode.Uri[] {
-    const seen = new Map<string, vscode.Uri>();
-    for (const e of this.index.all()) seen.set(e.ref.root.toString(), e.ref.root);
-    for (const f of vscode.workspace.workspaceFolders ?? []) seen.set(f.uri.toString(), f.uri);
-    return [...seen.values()];
-  }
-
   /** Every thread, grouped. */
   async rebuild(): Promise<void> {
-    const entries = await this.service.allEntries(this.roots());
+    const entries = await this.service.allEntries(threadRoots(this.index));
     const known = new Map<string, { title: string; id?: string }>();
     for (const e of this.index.all()) known.set(`${e.ref.root.toString()}|${e.ref.name}`, { title: e.title, id: e.id });
     const groups = new Map<Group, CommentNode[]>(GROUPS.map((g) => [g.id, []]));
@@ -84,7 +77,7 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
       } else {
         if (this.service.isWaiting(e)) {
           const n = node('waiting') as Extract<CommentNode, { kind: 'thread' }>;
-          const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
+          const ask = latestAsk(e.thread);
           const d = ask ? await this.service.delivery(e, ask.id) : undefined;
           if (d) n.description = escapeIcons(d.text);
           groups.get('waiting')!.push(n);

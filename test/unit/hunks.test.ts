@@ -1,6 +1,6 @@
 // What a change is and the line maps (src/core/hunks.ts, docs/CHANGES-PLAN.md §5.2–5.3, tests of §16.1).
 import { describe, expect, it } from 'vitest';
-import { decodePair, DIFF_LIMITS, diffTexts, MAX_COMPARE_BYTES, newToOld, oldToNew, textLines, tooLargeChange, type FileDiff } from '../../src/core/hunks.ts';
+import { decodePair, decodeUtf8, DIFF_LIMITS, diffTexts, MAX_COMPARE_BYTES, newToOld, oldToNew, textLines, tooLargeChange, type FileDiff } from '../../src/core/hunks.ts';
 
 const L = (...lines: string[]) => lines.map((l) => `${l}\n`).join('');
 const range = (n: number, prefix = 'line') => Array.from({ length: n }, (_, i) => `${prefix} ${i + 1}`);
@@ -255,6 +255,17 @@ describe('decoding', () => {
     expect(decodePair(enc('héllo 😀\n'), undefined)).toEqual({ old: 'héllo 😀\n', new: '', latin1: false });
     expect(decodePair(new Uint8Array([0xc0, 0x80]), undefined).latin1).toBe(true);
     expect(decodePair(new Uint8Array([0xed, 0xa0, 0x80]), undefined).latin1).toBe(true);
+  });
+
+  it('decodeUtf8: strict, one leading BOM dropped, undefined when invalid', () => {
+    const bom = [0xef, 0xbb, 0xbf];
+    expect(decodeUtf8(new Uint8Array([...bom, 0x61]))).toBe('a');
+    expect(decodeUtf8(new Uint8Array([...bom, ...bom, 0x61]))).toBe('\ufeffa');
+    expect(decodeUtf8(new Uint8Array([0x61, ...bom]))).toBe('a\ufeff');
+    expect(decodeUtf8(new Uint8Array([0xf0, 0x9f, 0x98, 0x80]))).toBe('😀');
+    for (const bad of [[0xc0, 0x80], [0xe0, 0x80, 0x80], [0xed, 0xa0, 0x80], [0xf0, 0x80, 0x80, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xf5, 0x80, 0x80, 0x80], [0xe2, 0x82], [0x80], [0xff]]) {
+      expect(decodeUtf8(new Uint8Array(bad))).toBeUndefined();
+    }
   });
 
   it('text lines', () => {

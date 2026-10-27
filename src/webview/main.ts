@@ -12,7 +12,7 @@ import { stepTitle } from '../core/step-title.ts';
 import { DIAGRAM_CLASSES, Diagrams, litIds, MAX_TAGGED } from './diagram.ts';
 import { CodeHighlighter } from './highlight.ts';
 import { sanitize } from './sanitize.ts';
-import { staticHtml } from './trusted.ts';
+import { randomToken, staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
 import { CommentsPane } from './comments.ts';
 
@@ -94,7 +94,7 @@ const peeked = new Set<string>();
  * Marks the detail boxes this script made: author HTML can contain look-alikes, but can't guess this.
  * (An attribute, not a WeakSet: the morph may insert copies of the nodes it was given.)
  */
-const BOX_TOKEN = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+const BOX_TOKEN = randomToken();
 const ownBox = (el: Element | null | undefined): el is HTMLElement => el?.getAttribute('data-cx-box') === BOX_TOKEN;
 
 let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
@@ -660,9 +660,7 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     if (init.active && init.active !== state.active) state = { ...state, scroll: undefined };
     active = init.active ?? active;
     restoreScroll();
-    // Nothing chosen yet: the section at the reading line is the current one.
-    // At the top, that's the first step, however many short sections fit above the line.
-    if (!active) active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
+    if (!active) active = openingStep();
     markActive();
     // A section the page chose itself (not the one the extension sent): the extension shows its code when no
     // editor is open, and otherwise only highlights it, so opening a sidestory never takes over the reader's editor.
@@ -672,7 +670,7 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     for (const d of pendingSteps.splice(0)) step(d);
   } else if (initialized && !active && steps.length) {
     // The page had no steps when it opened (its content arrived after `init`): open at the first, as `init` does.
-    active = (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
+    active = openingStep();
     markActive();
     if (active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
   }
@@ -1177,6 +1175,14 @@ function hidePill(): void {
   delete pillEl.dataset.dive;
 }
 
+/**
+ * The step a sidestory opens at when nothing chose one: the section at the reading line. At the top, that's the
+ * first step, however many short sections fit above the line.
+ */
+function openingStep(): string | undefined {
+  return (scroller.scrollTop === 0 ? steps[0] : sectionAtReadingLine())?.id;
+}
+
 function sectionAtReadingLine(): Step | undefined {
   const view = scroller.getBoundingClientRect();
   if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return steps[steps.length - 1];
@@ -1333,14 +1339,7 @@ function codeLinkOf(el: Element): CodeLink | null {
 
 /** The linked elements of a tree, with what they point at: `r:<anchor>` for a ref (which wins), `c:<link>` for code. */
 function linkedElements(root: HTMLElement): { el: HTMLElement; key: string }[] {
-  const out: { el: HTMLElement; key: string }[] = [];
-  for (const el of root.querySelectorAll<HTMLElement>('[data-cx-ref]')) {
-    const ref = el.getAttribute('data-explain-ref');
-    const link = ref === null ? codeLinkOf(el) : null;
-    if (ref !== null) out.push({ el, key: `r:${ref}` });
-    else if (link) out.push({ el, key: `c:${formatCodeLink(link)}` });
-  }
-  return out;
+  return [...root.querySelectorAll<HTMLElement>('[data-cx-ref]')].map((el) => ({ el, key: linkKey(el) })).filter((l) => l.key);
 }
 
 function hereKeys(): Set<string> {

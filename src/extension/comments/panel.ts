@@ -1,7 +1,7 @@
 // Comment threads in the sidestory panel (docs/COMMENTS-PLAN.md §6): the host side. Builds the thread views for
 // the sidestory a panel shows, and carries out what the panel's host-chrome controls ask for, after checking it.
 import * as vscode from 'vscode';
-import { authorLabel } from '../../core/threads/reduce.ts';
+import { authorLabel, latestAsk } from '../../core/threads/reduce.ts';
 import type { ThreadAnchor } from '../../core/threads/schema.ts';
 import type { Location } from '../../comments/storage.ts';
 import type { CommentsContext, CommentsFromWebview, CommentsToWebview, CommentItemView, ThreadView } from '../../shared/comments-protocol.ts';
@@ -289,7 +289,7 @@ export async function threadAction(svc: CommentService, e: Entry, action: 'resol
       break;
     case 'copyPrompt': {
       await vscode.env.clipboard.writeText(svc.promptFor(e));
-      const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude');
+      const ask = latestAsk(e.thread);
       if (ask) await svc.markCopied(ask.id);
       vscode.window.setStatusBarMessage('Prompt copied: paste it into Claude Code', 4000);
       break;

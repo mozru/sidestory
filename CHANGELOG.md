@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Large sidestories open and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening about twice as fast, updates about three times).
+- Fixed: a sidestory's drift badge in the Sidestories view could stay out of date after an edit to a file with more than 2,000 anchors across all sidestories.
+- Less work while typing: editing a sidestory's prose no longer refreshes the Sidestories view, the CodeLenses and This File (only a change to its steps does), and a typing pause in a code file re-resolves the other visible files only when an anchor actually moved.
+- Branches with thousands of changed files stay responsive: finding a file's change no longer scans the whole list, so the compare buttons and Explorer badges update quickly.
+- Comment threads load faster (the record of which comments are yours is read once per read of a repository's threads). Fixed: in a thread whose latest comment to Claude was retracted, **Copy Prompt** marked that retracted comment as copied, though the prompt was about an earlier one; likewise, a reply from Claude through the comment tools that names no comment now answers the latest comment that wasn't retracted.
+- The checker (`check.cjs`) no longer hangs on deeply nested pages: a selector such as `p div div div div div div div` against a widget inside 60 nested `<div>`s took about 35 seconds and now takes a millisecond. Large stylesheets and many widgets are checked faster too.
+- Files moved without `git mv` are paired faster in working-tree coverage, in the extension and in `check.cjs --coverage`: large files that can't be renames of each other are ruled out without comparing them line by line. The pairs found are the same.
 - The panel's script is about 70% smaller (614 KB → 176 KB), so sidestories open faster: the panel checks widget messages with zod's small build instead of the full library.
 - While a comment waits for Claude's answer, the 2-second check for a missed reply now re-reads only that thread instead of every thread in the repository. Views that ask for threads at the same moment share one read.
 - Branch coverage while you type re-reads only the file you are editing; the other changed files are no longer read, decoded and hashed again on every pause. Diffs and coverage share one cache of files read from git, and an unsaved file is checked against the merge-base once rather than on every refresh.

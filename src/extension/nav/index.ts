@@ -136,6 +136,9 @@ export class SidestoryIndex implements vscode.Disposable {
   readonly onDidChange = this.emitter.event;
   private readonly stateEmitter = new vscode.EventEmitter<'loading' | 'empty' | 'ready'>();
   readonly onDidChangeState = this.stateEmitter.event;
+  private readonly pageEmitter = new vscode.EventEmitter<void>();
+  /** Fires once per batch that re-read pages whose outline stayed the same (a prose edit): nothing above changed. */
+  readonly onDidRereadPages = this.pageEmitter.event;
   private epoch = 0;
   private disposed = false;
   private debounce: { timer: ReturnType<typeof setTimeout>; first: number } | undefined;
@@ -173,6 +176,7 @@ export class SidestoryIndex implements vscode.Disposable {
       }),
       this.emitter,
       this.stateEmitter,
+      this.pageEmitter,
       this.quotes,
     );
   }
@@ -285,9 +289,14 @@ export class SidestoryIndex implements vscode.Disposable {
     return s;
   }
 
-  isAnchored(fileKey: string): boolean {
+  /** The keys of every sidestory anchoring a file: all of them, unlike `anchorsIn`'s capped table. */
+  sidestoriesAnchoring(fileKey: string): ReadonlySet<string> {
     const id = this.fileIds.get(fileKey);
-    return id !== undefined && (this.fileRefs.get(id)?.size ?? 0) > 0;
+    return (id !== undefined && this.fileRefs.get(id)) || new Set();
+  }
+
+  isAnchored(fileKey: string): boolean {
+    return this.sidestoriesAnchoring(fileKey).size > 0;
   }
 
   /**
@@ -637,13 +646,15 @@ export class SidestoryIndex implements vscode.Disposable {
     const budget: Budget = { manifestBytes: INDEX_LIMITS.manifestBytesPerBatch, pageBytes: INDEX_LIMITS.pageBytesPerBatch, scanMs: INDEX_LIMITS.scanMsPerBatch };
     const touched = new Set<string>(removed);
     const skipped: IndexEntry[] = [];
+    let reread = false;
     let next = 0;
     const worker = async () => {
       while (next < order.length) {
         const e = order[next++]!;
         if (epoch !== this.epoch || this.disposed) return;
         const r = await this.read(e, budget);
-        if (r === 'changed') touched.add(e.pkg);
+        if (r === 'page') reread = true;
+        else if (r === 'changed') touched.add(e.pkg);
         else if (r === 'budget') skipped.push(e);
         // Read (changed) but its page not read or outlined within the budget: it comes back in the follow-up too.
         if (r === 'changed' && (e.state === 'not-read' || e.state === 'not-outlined')) skipped.push(e);
@@ -656,6 +667,7 @@ export class SidestoryIndex implements vscode.Disposable {
     await Promise.all(Array.from({ length: INDEX_LIMITS.readsInFlight }, worker));
     if (epoch !== this.epoch || this.disposed) return;
     if (touched.size) this.commit(touched);
+    if (reread) this.pageEmitter.fire();
     this.setState(this.entries.size ? 'ready' : 'empty');
     if (skipped.length) {
       log.warn(`Sidestory index: ${skipped.length} sidestories not read or outlined this time (budget): ${skipped.slice(0, 20).map((e) => e.ref.name).join(', ')}${skipped.length > 20 ? ', …' : ''}`);
@@ -710,8 +722,8 @@ export class SidestoryIndex implements vscode.Disposable {
     this.capped = [...this.entries.values()].some((e) => e.capped) || sorted.some((p) => p.graph.edgesCapped);
   }
 
-  /** Reads one sidestory's manifest and page if they changed. */
-  private async read(e: IndexEntry, budget: Budget): Promise<'changed' | 'same' | 'budget' | 'gone'> {
+  /** Reads one sidestory's manifest and page if they changed: `page` when only its page was, with the same outline. */
+  private async read(e: IndexEntry, budget: Budget): Promise<'changed' | 'page' | 'same' | 'budget' | 'gone'> {
     const version = e.version;
     const current = () => !this.disposed && e.version === version && this.entries.get(e.key) === e;
     let changed = false;
@@ -799,7 +811,10 @@ export class SidestoryIndex implements vscode.Disposable {
       if (s && (pageStamp !== e.pageStamp || !e.outlined)) {
         if (s.size > MAX_HTML_BYTES) {
           html = '';
-          if (!e.errors.includes(TOO_LARGE)) e.errors = [...e.errors, TOO_LARGE].slice(0, 6);
+          if (!e.errors.includes(TOO_LARGE)) {
+            e.errors = [...e.errors, TOO_LARGE].slice(0, 6);
+            changed = true;
+          }
         } else if (s.size > budget.pageBytes) {
           e.state = 'not-read';
           return changed ? 'changed' : 'budget';
@@ -811,6 +826,7 @@ export class SidestoryIndex implements vscode.Disposable {
         }
       } else if (!s && e.pageStamp !== 'missing') html = '';
     }
+    let reread = false;
     if (html !== undefined) {
       if (budget.scanMs <= 0) {
         e.state = 'not-outlined';
@@ -830,6 +846,8 @@ export class SidestoryIndex implements vscode.Disposable {
         if (!current()) return 'same';
       }
       const o = scanner.result();
+      // Only an entry that was ready: one left not-read or not-outlined by a budget changes its label when it's read.
+      const was = e.outlined && e.state === 'ready' ? { steps: e.steps, details: e.details, truncated: e.truncated, stepsCapped: e.stepsCapped, stepOf: e.stepOf } : undefined;
       e.pageStamp = pageStamp;
       this.totals.steps -= e.steps.length;
       const room = Math.max(0, INDEX_LIMITS.steps - this.totals.steps);
@@ -850,10 +868,12 @@ export class SidestoryIndex implements vscode.Disposable {
         stepOf[i] = s !== undefined ? (stepIndex.get(s) ?? -1) : -1;
       });
       e.stepOf = stepOf;
-      changed = true;
+      // Most page edits are prose: an outline that came out the same isn't a change (each one re-resolves and rebuilds).
+      if (!was || !sameOutline(was, e)) changed = true;
+      else reread = true;
     }
     e.state = e.outlined ? 'ready' : e.state;
-    return changed ? 'changed' : 'same';
+    return changed ? 'changed' : reread ? 'page' : 'same';
   }
 
   /** Packs an entry's anchors (§6.1), within the total and per-file caps; keeps file references current. */
@@ -947,12 +967,30 @@ interface Budget {
   scanMs: number;
 }
 
+type Outlined = Pick<IndexEntry, 'steps' | 'details' | 'truncated' | 'stepsCapped' | 'stepOf'>;
+
+function sameOutline(a: Outlined, b: Outlined): boolean {
+  const same = <T>(x: ArrayLike<T>, y: ArrayLike<T>, eq: (p: T, q: T) => boolean = (p, q) => p === q) => {
+    if (x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (!eq(x[i]!, y[i]!)) return false;
+    return true;
+  };
+  return (
+    a.truncated === b.truncated &&
+    !!a.stepsCapped === !!b.stepsCapped &&
+    same(a.steps, b.steps, (p, q) => p.id === q.id && p.title === q.title && p.blurb === q.blurb) &&
+    same(a.details, b.details) &&
+    same(a.stepOf, b.stepOf)
+  );
+}
+
 function openDoc(uri: vscode.Uri): vscode.TextDocument | undefined {
   const s = uri.toString();
   return vscode.workspace.textDocuments.find((d) => d.uri.toString() === s);
 }
 
-async function statOf(uri: vscode.Uri): Promise<{ mtime: number; size: number } | undefined> {
+/** A file's mtime and size, or undefined when it can't be stat'ed. */
+export async function statOf(uri: vscode.Uri): Promise<{ mtime: number; size: number } | undefined> {
   try {
     const s = await vscode.workspace.fs.stat(uri);
     return { mtime: s.mtime, size: s.size };

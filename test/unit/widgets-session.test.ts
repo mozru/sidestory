@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ToWebview } from '../../src/shared/protocol.ts';
-import { counts, EventEmitter, events, modal, Uri, workspace } from './vscode-stub.ts';
+import { counts, EventEmitter, events, modal, Position, Range, Uri, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -213,6 +213,34 @@ describe('review regressions (extension side)', () => {
       expect(p.last('widget')?.build?.entry).toBe('widgets/extra.tsx');
     } finally {
       writeFileSync(`${dir}/sidestory.html`, html);
+    }
+  });
+
+  it('after a resolve, an anchor two widgets read is worked out once and sent to both', async () => {
+    const dir = `${root}/.sidestory/retry-backoff`;
+    const html = readFileSync(`${dir}/sidestory.html`, 'utf8');
+    writeFileSync(`${dir}/widgets/again.tsx`, readFileSync(`${dir}/widgets/backoff.tsx`, 'utf8'));
+    writeFileSync(`${dir}/sidestory.html`, html.replace('</section>', '<explain-widget src="widgets/again.tsx"></explain-widget></section>'));
+    const host = newHost();
+    try {
+      const p = await consented({ host });
+      modal.answer = 'Let Widgets Read';
+      p.send({ type: 'widgetConfirmAnchors' });
+      await vi.waitFor(() => expect(p.last('widgets')?.gate.unconfirmed).toBeNull());
+      const served = () => p.posted.filter((m) => m.type === 'widgetCode' && m.code.status === 'ok').map((m) => (m as Extract<ToWebview, { type: 'widgetCode' }>).src).sort();
+      for (const src of ['widgets/backoff.tsx', 'widgets/again.tsx']) p.send({ type: 'widgetCode', src, anchor: 'delay' });
+      await vi.waitFor(() => expect(served()).toEqual(['widgets/again.tsx', 'widgets/backoff.tsx']));
+      let worked = 0;
+      const codeFor = host.codeFor.bind(host);
+      host.codeFor = (port, id) => (worked++, codeFor(port, id));
+      const file = Uri.file(`${root}/src/retry.ts`);
+      events.documentChanged.fire({ document: { uri: file, lineCount: 1 }, contentChanges: [{ range: new Range(new Position(100_000, 0), new Position(100_000, 0)), text: '' }] });
+      await vi.waitFor(() => expect(served()).toHaveLength(4), { timeout: 5000 });
+      expect(served()).toEqual(['widgets/again.tsx', 'widgets/again.tsx', 'widgets/backoff.tsx', 'widgets/backoff.tsx']);
+      expect(worked).toBe(1);
+    } finally {
+      writeFileSync(`${dir}/sidestory.html`, html);
+      host.dispose();
     }
   });
 

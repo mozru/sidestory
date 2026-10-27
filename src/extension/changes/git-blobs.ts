@@ -2,7 +2,7 @@
 // merge-base and committed sides (coverage-service.ts) and the comparison's check for unsaved files
 // (comparison.ts). A (commit, path) never changes, so details and bytes are kept, by repository, commit and path
 // (textconv output depends on the path's attributes, not the blob alone); reads in flight are shared.
-import { SizeLru } from '../widgets/lru.ts';
+import { SizeLru } from '../lru.ts';
 import type { GitRepo } from './git-api.ts';
 import { apiPath } from './git-api.ts';
 

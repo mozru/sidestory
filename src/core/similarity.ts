@@ -1,5 +1,8 @@
 import { codeTokens } from './text.ts';
 
+/** Regions longer than this many lines are compared by line LCS (`lcsRatio`), shorter ones by tokens. */
+export const TOKEN_COMPARE_MAX_LINES = 20;
+
 /** Above this many cells, token edit distance is too slow; compare lines instead. */
 const MAX_CELLS = 100_000;
 
@@ -57,7 +60,7 @@ export function editDistance<T>(a: readonly T[], b: readonly T[]): number {
  * Token edit distance for short regions, line LCS for long or very wide ones.
  */
 export function contentSimilarity(a: readonly string[], b: readonly string[]): number {
-  if (Math.max(a.length, b.length) <= 20) {
+  if (Math.max(a.length, b.length) <= TOKEN_COMPARE_MAX_LINES) {
     const ta = codeTokens(a.join('\n'));
     const tb = codeTokens(b.join('\n'));
     const longest = Math.max(ta.length, tb.length);

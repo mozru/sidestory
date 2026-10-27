@@ -106,6 +106,31 @@ describe('thread files', () => {
     expect(await f.findThread(t)).toEqual([]);
   });
 
+  it('reads the ledger once per pass over locations, with the same trust as reading it per event', async () => {
+    const f = await files();
+    const mine = newId('t');
+    await f.write(LOCAL, open(mine), 'human');
+    await f.write(SHARED, open(newId('t')), 'claude');
+    const copied = newId('t');
+    const ev = open(copied);
+    await f.write(SHARED, ev, 'human');
+    // The same file under another path: not in the ledger there.
+    mkdirSync(join(root, '.sidestory/.local/retry/threads', copied), { recursive: true });
+    writeFileSync(join(root, '.sidestory/.local/retry/threads', copied, `${ev.id}.json`), readFileSync(join(root, '.sidestory/retry/threads', copied, `${ev.id}.json`)));
+    const trusts = (reads: { read: { events: { trust: string }[] } }[]) => reads.map((r) => r.read.events.map((e) => e.trust).join()).sort();
+    const direct = [...(await Promise.all([LOCAL, SHARED].map(async (l) => Promise.all((await f.threadIds(l)).map(async (t) => ({ read: await f.readThread(l, t) })))))).flat()];
+    let fullReads = 0;
+    const all = f.ledger.snapshot.bind(f.ledger);
+    f.ledger.snapshot = () => (fullReads++, all());
+    let gets = 0;
+    const get = f.ledger.get.bind(f.ledger);
+    f.ledger.get = (p, i) => (gets++, get(p, i));
+    const r = await allThreads([f]);
+    expect([fullReads, gets]).toEqual([1, 0]);
+    expect(trusts(r)).toEqual(trusts(direct));
+    expect(trusts(r)).toEqual(['claude', 'local_user', 'local_user', 'repository']);
+  });
+
   it('keeps ledger-known events when a flood of junk hits the cap', async () => {
     const f = await files();
     const t = newId('t');
