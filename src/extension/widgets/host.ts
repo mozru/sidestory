@@ -867,7 +867,9 @@ export class PanelWidgets {
     for (const key of this.codeAnchors) {
       const i = key.indexOf('\n');
       const id = key.slice(i + 1);
-      readers.set(id, [...(readers.get(id) ?? []), key.slice(0, i)]);
+      const srcs = readers.get(id);
+      if (srcs) srcs.push(key.slice(0, i));
+      else readers.set(id, [key.slice(0, i)]);
     }
     for (const [id, srcs] of readers) void this.sendCode(srcs, id);
   }
@@ -892,15 +894,18 @@ export class PanelWidgets {
   /** Sends an anchor's code to the widgets `srcs` that read it (and `not-requested` to those that don't). */
   private async sendCode(srcs: readonly string[], id: string): Promise<void> {
     const generation = this.port.generation();
-    const readers = srcs.filter((src) => {
-      if (this.reads(src, id)) return true;
+    const readers: string[] = [];
+    for (const src of srcs) {
+      if (this.reads(src, id)) {
+        readers.push(src);
+        continue;
+      }
       if (!this.loggedReasons.has(`${src}:${id}:not-read`)) {
         this.loggedReasons.add(`${src}:${id}:not-read`);
         log.warn(`${this.port.ref().name}: ${src} asked for the code of anchor '${id}', which it doesn't read with useAnchorCode('${id}'); it gets none.`);
       }
       this.port.post({ type: 'widgetCode', src, code: { anchor: id, status: 'unavailable', reason: 'not-requested' } });
-      return false;
-    });
+    }
     if (!readers.length) return;
     const code = await this.host.codeFor(this.port, id);
     if (this.disposed || generation !== this.port.generation() || !this.allowed()) return;

@@ -30,7 +30,6 @@ export interface GitCommit {
   readonly hash: string;
   readonly message: string;
   readonly parents: string[];
-  readonly authorName?: string;
 }
 export interface GitRepo {
   readonly rootUri: vscode.Uri;
@@ -64,7 +63,7 @@ export interface GitRepo {
   /** `git diff --raw --numstat ref`: the working tree against ref, tracked files only (newer). */
   diffBetweenWithStats2?(ref: string): Promise<GitDiffChange[]>;
   log(options: { maxEntries?: number; range?: string; path?: string }): Promise<GitCommit[]>;
-  checkIgnore?(paths: string[]): Promise<Set<string>>;
+  checkIgnore(paths: string[]): Promise<Set<string>>;
   fetch?(options: { remote?: string; ref?: string }): Promise<void>;
 }
 export interface GitApi {

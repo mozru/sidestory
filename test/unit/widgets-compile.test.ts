@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { relativize, WidgetCompiler, type CompileResult } from '../../src/extension/widgets/compile.ts';
 import { orderLibraries, WidgetCompilerCore } from '../../src/extension/widgets/compile-core.ts';
-import { SizeLru } from '../../src/extension/widgets/lru.ts';
+import { SizeLru } from '../../src/extension/lru.ts';
 import { isSecretFileName, isSecretPath } from '../../src/extension/widgets/secret-files.ts';
 import { normalizeEntry, resolveRelative } from '../../src/extension/widgets/specifiers.ts';
 import { suggest } from '../../src/extension/widgets/suggest.ts';

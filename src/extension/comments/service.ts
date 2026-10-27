@@ -566,8 +566,7 @@ export class CommentService implements vscode.Disposable {
    */
   promptFor(e: Entry): string {
     const a = e.thread.anchor;
-    const mine = [...e.thread.comments].reverse();
-    const ask = latestAsk(e.thread) ?? mine.find((c) => c.trust === 'local_user' && !c.retracted);
+    const ask = latestAsk(e.thread) ?? [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && !c.retracted);
     const intent = ask ? this.intentOf(ask.id) : 'answer';
     const info = {
       thread: e.thread.id,

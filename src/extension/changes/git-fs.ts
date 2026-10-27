@@ -6,7 +6,7 @@
 // extensions decorate and lint them as the user's files, and they can't serve workspace.fs reads (release 2).
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { SizeLru } from '../widgets/lru.ts';
+import { SizeLru } from '../lru.ts';
 import { FULL_SHA } from './base.ts';
 import { isSafeRepoPath, repoKey } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';

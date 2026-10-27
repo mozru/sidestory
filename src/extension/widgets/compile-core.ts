@@ -15,9 +15,9 @@ import {
   WIDGET_LIBRARIES,
   libraryFor,
 } from '../../shared/widget-imports.ts';
+import { SizeLru } from '../lru.ts';
 import { realPathInside } from '../paths.ts';
 import { analyzeSource, finishModule, type ModuleAnalysis } from './analyze.ts';
-import { SizeLru } from './lru.ts';
 import { isSecretFileName, isSecretPath } from './secret-files.ts';
 import { ALLOWED_EXTENSIONS, candidatesFor, extensionOf, isRelativeSpecifier, kindOf, lexicalProblem, normalizeEntry, resolveRelative, type FileKind } from './specifiers.ts';
 import { didYouMean } from './suggest.ts';

@@ -33,7 +33,7 @@ import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.t
 import { localPath } from '../local-path.ts';
 import { log } from '../log.ts';
 import { realPathInside } from '../paths.ts';
-import { SizeLru } from '../widgets/lru.ts';
+import { SizeLru } from '../lru.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
 import { apiPath, refReader, relPath } from './git-api.ts';
