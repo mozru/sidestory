@@ -7,7 +7,8 @@ import type { BaseSource, DefaultBaseInputs, ResolvedBase } from './base.ts';
 import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
 import { FULL_SHA, isValidBase, remoteDefault, resolveBase, resolveDefaultBase } from './base.ts';
 import type { GitApi, GitChange, GitDiffChange, GitRepo } from './git-api.ts';
-import { configValue, refReader, relPath } from './git-api.ts';
+import { apiPath, configValue, refReader, relPath } from './git-api.ts';
+import type { GitBlobs } from './git-blobs.ts';
 import type { ChangeEntry } from './model.ts';
 import { comparePaths, MAX_LISTED, statusLetter } from './model.ts';
 
@@ -119,6 +120,8 @@ export interface ComparisonOptions {
   sidestoryBase?(): string | undefined;
   /** Throttle for re-reading the base's commit on status refreshes. */
   baseTtlMs?: number;
+  /** Whether the merge-base has a path, kept per merge-base (git-blobs.ts); without it, git is asked each time. */
+  blobs?: GitBlobs;
 }
 
 const DEBOUNCE_MS = 300;
@@ -406,13 +409,19 @@ export class Comparison implements vscode.Disposable {
       // Unsaved edits are part of "uncommitted" (§4.4): a dirty document of a file at the merge-base.
       this.dirty.clear();
       for (const d of vscode.workspace.textDocuments) if (d.isDirty && d.uri.scheme === 'file' && relPath(repo, d.uri) !== undefined) this.dirty.add(d.uri.toString());
+      const byPath = new Map(entries.map((e) => [e.path, e]));
+      const atMergeBase = async (p: string) => {
+        if (!this.opts.blobs) return repo.getObjectDetails(mergeBase, apiPath(repo, p)).then(() => true, () => false);
+        const d = await this.opts.blobs.stat(repo, mergeBase, p);
+        return d !== undefined && d !== 'missing';
+      };
       for (const d of vscode.workspace.textDocuments) {
         if (!d.isDirty || d.uri.scheme !== 'file') continue;
         const p = relPath(repo, d.uri);
         if (!p || !isSafeRepoPath(p)) continue;
-        const listed = entries.find((e) => e.path === p);
+        const listed = byPath.get(p);
         if (listed) listed.unsaved = true;
-        else if (seen.size < MAX_LISTED && (await repo.getObjectDetails(mergeBase, d.uri.fsPath).then(() => true, () => false))) {
+        else if (seen.size < MAX_LISTED && (await atMergeBase(p))) {
           seen.add(p);
           entries.push({ path: p, status: 'M', unsaved: true });
         }

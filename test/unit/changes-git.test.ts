@@ -229,6 +229,30 @@ describe('the merge diff of the fixture branch', () => {
     c.dispose();
   });
 
+  it('an unsaved file the branch leaves alone is listed after one git call per merge-base, not one per recompute', async () => {
+    const { workspace } = await import('./vscode-stub.ts');
+    const { GitBlobs } = await import('../../src/extension/changes/git-blobs.ts');
+    const repo = cliRepo();
+    const real = repo.getObjectDetails.bind(repo);
+    // As the git extension answers for a path the commit doesn't have.
+    const details = vi.fn((treeish: string, path: string) => real(treeish, path).catch(() => Promise.reject(Object.assign(new Error('Path not known by git'), { gitErrorCode: 'UnknownPath' }))));
+    repo.getObjectDetails = details;
+    const docs = ['README.md', 'nowhere.ts'].map((p) => ({ uri: Uri.file(join(dir, p)), isDirty: true }));
+    workspace.textDocuments.push(...docs);
+    const c = new Comparison(repo, opts({ mode: () => 'workingTree', blobs: new GitBlobs() }));
+    try {
+      for (let i = 0; i < 3; i++) {
+        await c.refresh();
+        expect(c.snapshot!.entries.find((e) => e.path === 'README.md')).toMatchObject({ status: 'M', unsaved: true });
+        expect(c.snapshot!.entries.some((e) => e.path === 'nowhere.ts')).toBe(false);
+      }
+      expect(details).toHaveBeenCalledTimes(2);
+    } finally {
+      for (const d of docs) workspace.textDocuments.splice(workspace.textDocuments.indexOf(d), 1);
+      c.dispose();
+    }
+  });
+
   it('without numstat in the API (VS Code 1.95), the same files from names only', async () => {
     const repo = cliRepo();
     delete (repo as Partial<GitRepo>).diffBetweenWithStats;

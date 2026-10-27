@@ -262,9 +262,9 @@ describe('ByteLru', () => {
     expect(lru.bytes).toBe(50);
   });
 
-  it('the service budgets diffs and merge-base blobs by bytes', () => {
+  it('the service budgets diffs and blobs by bytes', () => {
     expect(COVERAGE_WORK.diffCacheBytes).toBe(64 * 1024 * 1024);
-    expect(COVERAGE_WORK.oldBlobBytes).toBe(64 * 1024 * 1024);
+    expect(COVERAGE_WORK.blobBytes).toBe(64 * 1024 * 1024);
   });
 });
 
@@ -328,7 +328,8 @@ describe('the coverage service', () => {
       const pageUri = vscode.Uri.file(join(sd, 'sidestory.html'));
       vscode.workspace.textDocuments.push({ uri: pageUri, isDirty: true, getText: () => '<p>unsaved</p>' } as never);
       try {
-        expect(await src.candidates()).toEqual([]);
+        // Open documents are looked up once per run: a new run's source sees it.
+        expect(await (svc as unknown as { source(s: unknown): Source }).source(snap).candidates()).toEqual([]);
       } finally {
         vscode.workspace.textDocuments.pop();
       }

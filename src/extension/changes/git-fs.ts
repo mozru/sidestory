@@ -1,16 +1,15 @@
 // Read-only documents from git (docs/CHANGES-PLAN.md §4.5): the old side of every diff, and the head side in
 // committed-only mode. `sidestory-git://<repoId>/<path>?<full commit id>` is served through the vscode.git API
 // (getObjectDetails, then buffer): regular files only (never a symlink, a submodule or a tree), with size caps, and
-// cached by blob id because a URI's content never changes. `sidestory-empty:/<path>` is the empty side of an
+// cached (git-blobs.ts, shared with coverage) because a URI's content never changes. `sidestory-empty:/<path>` is the empty side of an
 // added or deleted file. The git extension's own `git:` URIs aren't used: their query format is internal, other
 // extensions decorate and lint them as the user's files, and they can't serve workspace.fs reads (release 2).
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { SizeLru } from '../widgets/lru.ts';
 import { FULL_SHA } from './base.ts';
 import { isSafeRepoPath, repoKey } from './comparison.ts';
 import type { GitRepo } from './git-api.ts';
-import { apiPath } from './git-api.ts';
+import { GitBlobs } from './git-blobs.ts';
 import { repoIdFor, SALT_KEY } from './probe.ts';
 
 export const GIT_SCHEME = 'sidestory-git';
@@ -94,17 +93,17 @@ const REGULAR = new Set(['100644', '100755']);
 
 export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposable {
   private readonly ids: RepoIds;
-  private readonly stats = new SizeLru<Promise<{ object: string; size: number } | undefined>>(20_000);
-  private readonly blobs = new SizeLru<Uint8Array>(64 * 1024 * 1024);
+  private readonly blobs: GitBlobs;
   private readonly emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
   readonly onDidChangeFile = this.emitter.event;
 
-  constructor(ids: RepoIds) {
+  constructor(ids: RepoIds, blobs = new GitBlobs()) {
     this.ids = ids;
+    this.blobs = blobs;
   }
 
-  static register(ids: RepoIds): vscode.Disposable {
-    const fs = new GitFileSystem(ids);
+  static register(ids: RepoIds, blobs: GitBlobs): vscode.Disposable {
+    const fs = new GitFileSystem(ids, blobs);
     const empty = new EmptyFileSystem();
     return vscode.Disposable.from(
       fs,
@@ -120,22 +119,9 @@ export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposab
   }
 
   /** The blob at (sha, path) when it is a regular file; symlinks (120000), gitlinks (160000) and trees aren't. */
-  private details(repo: GitRepo, sha: string, path: string): Promise<{ object: string; size: number } | undefined> {
-    const key = `${this.ids.idOf(repo)}\n${sha}\n${path}`;
-    let p = this.stats.get(key);
-    if (!p) {
-      const q = repo.getObjectDetails(sha, apiPath(repo, path)).then(
-        (d) => (d && REGULAR.has(d.mode) && /^[0-9a-f]{40,64}$/.test(d.object) ? { object: d.object, size: d.size } : undefined),
-        // Not cached: a failure may be passing (a partial clone fetching, git busy).
-        () => {
-          if (this.stats.get(key) === q) this.stats.delete(key);
-          return undefined;
-        },
-      );
-      p = q;
-      this.stats.set(key, q, 1);
-    }
-    return p;
+  private async details(repo: GitRepo, sha: string, path: string): Promise<{ object: string; size: number } | undefined> {
+    const d = await this.blobs.stat(repo, sha, path);
+    return d && d !== 'missing' && REGULAR.has(d.mode) && /^[0-9a-f]{40,64}$/.test(d.object) ? { object: d.object, size: d.size } : undefined;
   }
 
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
@@ -150,17 +136,10 @@ export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposab
     const d = await this.details(repo, sha, path);
     if (!d) throw vscode.FileSystemError.FileNotFound(uri);
     if (d.size > MAX_BLOB_BYTES) throw vscode.FileSystemError.Unavailable(`${path} is larger than 10 MB`);
-    // Keyed by repository, commit and path: textconv output depends on the path's attributes, not the blob alone.
-    const blobKey = `${this.ids.idOf(repo)}\n${sha}\n${path}`;
-    const cached = this.blobs.get(blobKey);
-    if (cached) return cached;
-    const bytes = await repo.buffer(sha, apiPath(repo, path));
+    const bytes = await this.blobs.read(repo, sha, path);
     // A textconv driver can make the output larger than the blob: capped after the call too.
     if (bytes.byteLength > MAX_BLOB_BYTES) throw vscode.FileSystemError.Unavailable(`${path} is larger than 10 MB`);
-    // A copy: a small Buffer is a view into a shared 8 KB pool the cache would otherwise keep alive.
-    const out = new Uint8Array(bytes);
-    this.blobs.set(blobKey, out, out.byteLength);
-    return out;
+    return bytes;
   }
 
   readDirectory(): never {
@@ -184,8 +163,6 @@ export class GitFileSystem implements vscode.FileSystemProvider, vscode.Disposab
 
   dispose(): void {
     this.emitter.dispose();
-    this.stats.clear();
-    this.blobs.clear();
   }
 }
 

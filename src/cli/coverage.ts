@@ -5,15 +5,14 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
+import { coverageTargets, fileInput, PreparedTexts } from '../core/coverage-inputs.ts';
 import { globMatcher } from '../core/glob.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';
-import { FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseBranchFields, parseManifest, sideOf, type Diagnostic, type LineRange, type Manifest } from '../core/manifest.ts';
+import { decodePair, decodeUtf8, decodeLatin1, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, tooLargeChange, moveCarriers, moveFiles, moveGroups, moveLabel, type ChangeBlock, type MoveGroup } from '../core/hunks.ts';
+import { FULL_SHA, isValidBase, MAX_MANIFEST_BYTES, parseBranchFields, parseManifest, type Diagnostic, type LineRange, type Manifest, type Side } from '../core/manifest.ts';
 import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isCompleteSidestory, isOwnedFileName, isThreadEventBytes, SIDESTORY_FILES, sidestoryFolderOf, threadEventPath } from '../core/membership.ts';
 import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
-import { resolveAnchor } from '../core/resolve.ts';
-import { normalizeLines, PreparedText } from '../core/text.ts';
 import { resolveBase } from '../extension/changes/base.ts';
 import type { Finding, Severity } from './check-widgets.ts';
 import { findRepository, Git, GitError, isSafeFsPath, isSafeRepoPath, WorkingTreeRefused, type RawEntry } from './git.ts';
@@ -614,6 +613,12 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   }
   const targets: Target[] = [];
   const stepTitles = new Map<string, Map<string, string>>();
+  const textOf = (path: string, side: Side) => {
+    const e = side === 'head' ? byNew.get(path) : byOld.get(path);
+    if (!e || !e.diff) return undefined; // a file this branch doesn't change (or can't compare): nothing to cover
+    return side === 'head' ? e.newText : e.oldText;
+  };
+  const prepared = new PreparedTexts();
   for (const s of sidestories) {
     const used = s.htmlTooLarge ? { ids: new Set<string>(), incomplete: true } : usedAnchorIds(s.html);
     if (used.incomplete) {
@@ -628,42 +633,14 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       const line = manifestLineOf(s.manifestText, a.id, true);
       if (a.trivial && a.why === undefined) continue; // reported as trivial-why with the manifest's diagnostics
       if (a.trivial && steps.has(a.id)) add('warning', manifestFile, 'trivial-section', `Anchor "${a.id}" is a trivial mark, but sidestory.html has a section for it: trivial marks aren't steps. Remove the section, or drop "trivial" and explain the change.`, line);
-      if (!a.trivial && !used.ids.has(a.id)) {
-        if (!used.incomplete) add('warning', manifestFile, 'anchor-unused', `Anchor "${a.id}" isn't used by sidestory.html (no section, data-explain-ref or data-explain-on), so it explains no change. Refer to it from the prose, or remove it.`, line);
-        continue;
-      }
-      const side = sideOf(a);
-      const path = rel(s.prefix, a.file);
-      const e = side === 'head' ? byNew.get(path) : byOld.get(path);
-      if (!e || !e.diff) continue; // a file this branch doesn't change (or can't compare): nothing to cover
-      const text = side === 'head' ? e.newText! : e.oldText!;
-      const r = resolveAnchor(PreparedText.from(text), a);
-      targets.push({
-        sidestory: s.folder,
-        anchor: a.id,
-        path,
-        side,
-        range: r.range,
-        state: r.state,
-        ...(a.trivial ? { trivial: true, why: a.why } : {}),
-        ...(a.quote && side === 'head' ? { pinned: new Set(normalizeLines(textLines(a.quote.exact), 'ws')) } : {}),
-      });
+      if (!a.trivial && !used.ids.has(a.id) && !used.incomplete) add('warning', manifestFile, 'anchor-unused', `Anchor "${a.id}" isn't used by sidestory.html (no section, data-explain-ref or data-explain-on), so it explains no change. Refer to it from the prose, or remove it.`, line);
     }
+    targets.push(...coverageTargets(s, used.ids, textOf, prepared));
   }
 
-  const inputs: FileInput[] = counted.map((e) => {
-    const newLines = e.newText !== undefined ? textLines(e.newText) : [];
-    const oldLines = e.oldText !== undefined ? textLines(e.oldText) : [];
-    return {
-      path: e.path,
-      ...(e.oldPath !== undefined ? { oldPath: e.oldPath } : {}),
-      changes: e.diff?.changes ?? [tooLargeChange(e.path, 0, 0)],
-      newLine: (l) => newLines[l - 1] ?? '',
-      oldLine: (l) => oldLines[l - 1] ?? '',
-      trivialFile: isTrivialFile(e.path),
-      newLines: newLines.length,
-    };
-  });
+  const inputs: FileInput[] = counted.map((e) =>
+    fileInput({ path: e.path, oldPath: e.oldPath, changes: e.diff?.changes ?? [tooLargeChange(e.path, 0, 0)], old: e.oldText, new: e.newText, trivialFile: isTrivialFile(e.path) }),
+  );
   // Moves (§5.1): one change per (old folder → new folder), carried by the group's first file.
   // Archive changes and unsupported paths are counted already, one change each: never in a move group too.
   const inputPaths = new Set(inputs.map((f) => f.path));

@@ -18,25 +18,27 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { coverage, normLine, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
+import { coverage, usedAnchorIds, type FileCoverage, type FileInput, type Target, type Totals } from '../../core/coverage.ts';
+import { coverageTargets, fileInput, PreparedTexts } from '../../core/coverage-inputs.ts';
 import { globMatcher } from '../../core/glob.ts';
 import { outlineHtml } from '../../core/html-scan.ts';
-import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, textLines, tooLargeChange, moveCarriers, moveGroups, type ChangeBlock, type FileDiff, type MoveGroup } from '../../core/hunks.ts';
-import type { Manifest } from '../../core/manifest.ts';
-import { parseManifest, sideOf } from '../../core/manifest.ts';
+import { decodeLatin1, decodePair, decodeUtf8, diffTexts, isBinary, isLfsChange, MAX_COMPARE_BYTES, tooLargeChange, moveCarriers, moveGroups, type ChangeBlock, type FileDiff, type MoveGroup } from '../../core/hunks.ts';
+import type { Manifest, Side } from '../../core/manifest.ts';
+import { parseManifest } from '../../core/manifest.ts';
 import { archiveMoveCandidates, belongs, countedChange, isArchivedManifest, isArchivePath, isOwnedFileName, isThreadEventBytes, SIDESTORY_FILES, sidestoryFolderOf, threadEventPath } from '../../core/membership.ts';
 import { pairUnstagedRenames } from '../../core/renames.ts';
 import { isSafeFsPath, isSafeRepoPath } from '../../core/repo-path.ts';
-import { resolveAnchor } from '../../core/resolve.ts';
-import { PreparedText } from '../../core/text.ts';
 import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.ts';
 import { localPath } from '../local-path.ts';
 import { log } from '../log.ts';
 import { realPathInside } from '../paths.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
-import { apiPath, refReader, relPath } from './git-api.ts';
+import { refReader, relPath } from './git-api.ts';
+import { GitBlobs } from './git-blobs.ts';
 import type { ChangeEntry } from './model.ts';
+
+export { isUnknownPath } from './git-blobs.ts';
 
 export const COVERAGE_WORK = {
   parallel: 4,
@@ -47,8 +49,10 @@ export const COVERAGE_WORK = {
   debounceMs: 300,
   /** Diffs and their texts kept between recomputes, by estimated size (one entry per path in working tree mode). */
   diffCacheBytes: 64 * 1024 * 1024,
-  /** Merge-base blobs kept between recomputes, by size. */
-  oldBlobBytes: 64 * 1024 * 1024,
+  /** Blobs kept between recomputes, by size (git-blobs.ts: shared with the diff editors). */
+  blobBytes: 64 * 1024 * 1024,
+  /** Working tree files kept from one recompute to the next, so an edit reads only its own file; the rest are read again. */
+  keptBytes: 64 * 1024 * 1024,
 } as const;
 
 /**
@@ -273,6 +277,16 @@ function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
 }
 
 const sideSize = (b: SideBytes) => (b instanceof Uint8Array ? b.length : 0);
+
+/** A side's content hash, once per bytes object: a file whose bytes were kept from the last run isn't hashed again. */
+const hashes = new WeakMap<Uint8Array, string>();
+const NO_BYTES = new Uint8Array();
+function sha256(b: Uint8Array | undefined): string {
+  const bytes = b ?? NO_BYTES;
+  let h = hashes.get(bytes);
+  if (h === undefined) hashes.set(bytes, (h = createHash('sha256').update(bytes).digest('base64')));
+  return h;
+}
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** One change spanning nothing: only a trivialFiles match covers it (the checker's `tooLargeChange`). */
@@ -284,7 +298,7 @@ const wholeDiff = (path: string): FileDiff => ({ changes: [tooLargeChange(path, 
  */
 export async function computeCoverage(
   src: CoverageSource,
-  opts: { order?: readonly string[]; cache?: DiffCache; isCurrent?: () => boolean; onProgress?: (r: CoverageResult) => void } = {},
+  opts: { order?: readonly string[]; cache?: DiffCache; isCurrent?: () => boolean; onProgress?: (r: CoverageResult) => void; prepared?: PreparedTexts } = {},
 ): Promise<CoverageResult | undefined> {
   const isCurrent = opts.isCurrent ?? (() => true);
   const cache: DiffCache = opts.cache ?? new Map();
@@ -436,18 +450,20 @@ export async function computeCoverage(
       texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: c.whole });
       return;
     }
+    // Committed mode: immutable blobs, keyed by commit. Working tree mode: one slot per path, replaced when the
+    // content (or the merge-base, the old path or the status) changes. Decoded only on a miss: the texts depend
+    // on the bytes alone.
+    const slot = key ?? `wt\0${e.path}`;
+    const content = key ? undefined : `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.status}\0${sha256(c.nb)}`;
+    const cached = cache.get(slot);
+    if (cached && cached.content === content) {
+      texts.set(e.path, { entry: e, diff: cached.diff, texts: cached.texts });
+      return;
+    }
     const d = decodePair(c.ob, c.nb);
     const t: Texts = { old: e.status === 'A' ? undefined : d.old, new: e.status === 'D' ? undefined : d.new };
-    // Committed mode: immutable blobs, keyed by commit. Working tree mode: one slot per path, replaced when the
-    // content (or the merge-base, the old path or the status) changes.
-    const slot = key ?? `wt\0${e.path}`;
-    const content = key ? undefined : `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.status}\0${createHash('sha256').update(d.new).digest('base64')}`;
-    const cached = cache.get(slot);
-    let diff = cached && cached.content === content ? cached.diff : undefined;
-    if (!diff) {
-      diff = diffTexts(e.path, d.old, d.new);
-      cache.set(slot, { diff, texts: t, ...(content !== undefined ? { content } : {}) });
-    }
+    const diff = diffTexts(e.path, d.old, d.new);
+    cache.set(slot, { diff, texts: t, ...(content !== undefined ? { content } : {}) });
     texts.set(e.path, { entry: e, diff, texts: t });
   });
   if (!isCurrent()) return undefined;
@@ -475,6 +491,8 @@ export async function computeCoverage(
   });
   const targets: Target[] = [];
   const belonging: Belonging[] = [];
+  const textOf = (p: string, side: Side) => (side === 'head' ? byNew.get(p)?.texts.new : byOld.get(p)?.texts.old);
+  const prepared = opts.prepared ?? new PreparedTexts();
   for (const s of found) {
     // The checker's caps: a page read up to MAX_COMPARE_BYTES and scanned with usedAnchorIds' own limits.
     const used = s.htmlTooLarge ? { ids: new Set<string>(), incomplete: true } : usedAnchorIds(s.html);
@@ -489,26 +507,7 @@ export async function computeCoverage(
       stepOf: outline.anchorStep,
       totals: { changes: 0, explained: 0, trivial: 0, left: 0, needsLook: 0, files: 0 },
     });
-    for (const a of s.manifest.anchors.values()) {
-      if (a.trivial && a.why === undefined) continue;
-      if (!a.trivial && !used.ids.has(a.id)) continue; // explains nothing (anchor-unused)
-      const side = sideOf(a);
-      const p = join(s.prefix, a.file);
-      const t = side === 'head' ? byNew.get(p) : byOld.get(p);
-      const text = side === 'head' ? t?.texts.new : t?.texts.old;
-      if (!t || text === undefined) continue; // a file this branch doesn't change: nothing to cover
-      const r = resolveAnchor(PreparedText.from(text), a);
-      targets.push({
-        sidestory: s.folder,
-        anchor: a.id,
-        path: p,
-        side,
-        range: r.range,
-        state: r.state,
-        ...(a.trivial ? { trivial: true, why: a.why } : {}),
-        ...(a.quote && side === 'head' ? { pinned: new Set(textLines(a.quote.exact).map(normLine)) } : {}),
-      });
-    }
+    targets.push(...coverageTargets(s, used.ids, textOf, prepared));
   }
   // Moves (§5.1), as the checker counts them: one change per (old folder → new folder), on the group's first file.
   // Archive changes and unsupported paths are counted already, one change each: never in a move group too.
@@ -519,19 +518,9 @@ export async function computeCoverage(
     const carrier = g.files.find((f) => carried.has(f.path))?.path;
     if (carrier) for (const f of g.files) if (f.path !== carrier) movedWith.set(f.path, carrier);
   }
-  const inputs: FileInput[] = done.map(({ entry, diff, texts: t }) => {
-    const newLines = t.new !== undefined ? textLines(t.new) : [];
-    const oldLines = t.old !== undefined ? textLines(t.old) : [];
-    return {
-      path: entry.path,
-      ...(entry.oldPath !== undefined ? { oldPath: entry.oldPath } : {}),
-      changes: carried.has(entry.path) ? [carried.get(entry.path)!, ...diff.changes] : diff.changes,
-      newLine: (l: number) => newLines[l - 1] ?? '',
-      oldLine: (l: number) => oldLines[l - 1] ?? '',
-      trivialFile: isTrivialFile(entry.path),
-      newLines: newLines.length,
-    };
-  });
+  const inputs: FileInput[] = done.map(({ entry, diff, texts: t }) =>
+    fileInput({ path: entry.path, oldPath: entry.oldPath, changes: carried.has(entry.path) ? [carried.get(entry.path)!, ...diff.changes] : diff.changes, old: t.old, new: t.new, trivialFile: isTrivialFile(entry.path) }),
+  );
   // Paths the comparison couldn't list: one change each, coverable only by trivialFiles; never in `files`.
   const unsupported = (src.unsupported ?? []).filter((u) => !texts.has(u.path)).sort((a, b) => byPath(a.path, b.path));
   for (const u of unsupported) {
@@ -601,11 +590,19 @@ export class CoverageService implements vscode.Disposable {
   private readonly cache = new ByteLru<DiffCacheEntry>(COVERAGE_WORK.diffCacheBytes, diffEntryBytes);
   /** Merge-bases by (base spec, head): resolving a base costs a few git calls. */
   private readonly own = new Map<string, Promise<string | undefined>>();
-  /** Whether the merge-base holds a path: immutable per merge-base. */
-  private readonly present = new Map<string, Promise<boolean | undefined>>();
-  /** Merge-base sides read so far (immutable), bounded by bytes; reads in flight are shared. */
-  private readonly oldTexts = new ByteLru<SideBytes>(COVERAGE_WORK.oldBlobBytes, (b) => (b instanceof Uint8Array ? b.length : 64));
-  private readonly oldInFlight = new Map<string, Promise<SideBytes>>();
+  /** Blobs and whether a commit has a path (immutable), shared with the diff editors and the comparison. */
+  private readonly blobs: GitBlobs;
+  /**
+   * The new sides the last finished run read in working tree mode, for `newFor`: a run for the same snapshot that
+   * only documents' edits asked for (`edited`) reads those files again and keeps the rest (§4.4: only the edited file
+   * is recomputed). Anything else that asks for a run (`schedule`) reads them all.
+   */
+  private newSides = new Map<string, SideBytes>();
+  private newFor: Snapshot | undefined;
+  private edited = new Set<string>();
+  private readAll = true;
+  /** The last run's prepared texts: an anchored file that didn't change isn't split and indexed again. */
+  private prepared = new PreparedTexts();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
   private running = false;
@@ -615,15 +612,19 @@ export class CoverageService implements vscode.Disposable {
   /** The snapshot the result was computed for, once the run drained its queue (skipped files included). */
   resultFor: Snapshot | undefined;
 
-  constructor(host: CoverageHost) {
+  constructor(host: CoverageHost, blobs = new GitBlobs(COVERAGE_WORK.blobBytes)) {
     this.host = host;
+    this.blobs = blobs;
     this.subs.push(
       this.emitter,
       vscode.workspace.onDidChangeTextDocument((e) => {
-        if (e.contentChanges.length && this.result && this.affects(e.document.uri)) this.schedule();
+        if (e.contentChanges.length && this.result && this.affects(e.document.uri)) this.scheduleEdit(e.document.uri);
       }),
       vscode.workspace.onDidSaveTextDocument((d) => {
-        if (this.result && this.affects(d.uri)) this.schedule();
+        if (this.result && this.affects(d.uri)) this.scheduleEdit(d.uri);
+      }),
+      vscode.workspace.onDidCloseTextDocument((d) => {
+        if (this.result && this.affects(d.uri)) this.scheduleEdit(d.uri);
       }),
     );
   }
@@ -642,6 +643,7 @@ export class CoverageService implements vscode.Disposable {
   clear(): void {
     clearTimeout(this.timer);
     this.seq++;
+    this.readAll = true;
     const had = !!this.result;
     this.result = undefined;
     this.resultFor = undefined;
@@ -682,8 +684,22 @@ export class CoverageService implements vscode.Disposable {
     return !!p && (s.entries.some((e) => e.path === p) || isSidestoryPath(p));
   }
 
-  /** Recompute soon (the comparison changed, a sidestory changed, an edit). */
+  /** Recompute soon (the comparison changed, a sidestory changed, files changed on disk): every file is read again. */
   schedule(delay: number = COVERAGE_WORK.debounceMs): void {
+    this.readAll = true;
+    this.later(delay);
+  }
+
+  /** Recompute soon for an edit in an open document: only that file is read again. */
+  private scheduleEdit(uri: vscode.Uri): void {
+    const s = this.host.snapshot();
+    const p = s && relPath(s.repo, uri);
+    if (p) this.edited.add(p);
+    else this.readAll = true;
+    this.later(COVERAGE_WORK.debounceMs);
+  }
+
+  private later(delay: number): void {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.run(), delay);
   }
@@ -701,20 +717,20 @@ export class CoverageService implements vscode.Disposable {
     return p;
   }
 
-  private source(s: Snapshot): CoverageSource {
+  private source(s: Snapshot, kept?: ReadonlyMap<string, SideBytes>, read?: Map<string, SideBytes>): CoverageSource {
     const repo = s.repo;
     const blob = async (sha: string, p: string): Promise<SideBytes> => {
-      try {
-        // The mode first: a link's blob is its target's path and a gitlink has none; each counts as one change.
-        const details = await repo.getObjectDetails(sha, apiPath(repo, p));
-        if (details.mode === '160000') return 'submodule';
-        if (details.mode === '120000') return 'link';
-        if (details.size > COVERAGE_WORK.fileBytes) return 'tooLarge';
-        return await repo.buffer(sha, apiPath(repo, p));
-      } catch {
-        return undefined; // missing or unreadable
-      }
+      // The mode first: a link's blob is its target's path and a gitlink has none; each counts as one change.
+      const details = await this.blobs.stat(repo, sha, p);
+      if (!details || details === 'missing') return undefined; // missing or unreadable
+      if (details.mode === '160000') return 'submodule';
+      if (details.mode === '120000') return 'link';
+      if (details.size > COVERAGE_WORK.fileBytes) return 'tooLarge';
+      return this.blobs.read(repo, sha, p).catch(() => undefined);
     };
+    // Open documents, by URI, looked up once per run rather than per file.
+    let docs: Map<string, vscode.TextDocument> | undefined;
+    const docOf = (uri: vscode.Uri) => (docs ??= new Map(vscode.workspace.textDocuments.map((d) => [d.uri.toString(), d]))).get(uri.toString());
     const fileUri = (p: string) => vscode.Uri.joinPath(repo.rootUri, ...p.split('/'));
     const disk = async (uri: vscode.Uri): Promise<SideBytes> => {
       try {
@@ -739,34 +755,36 @@ export class CoverageService implements vscode.Disposable {
       if (!(bytes === undefined || bytes instanceof Uint8Array)) return bytes;
       // Unsaved edits count in working tree mode (§9.7): the open document's text, but only while the file on disk
       // is UTF-8. A Latin-1 file's text re-encoded as UTF-8 would turn every non-ASCII line into a change (§5.2).
-      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+      const doc = docOf(uri);
       if (doc?.isDirty && (!bytes || decodeUtf8(bytes) !== undefined)) return new TextEncoder().encode(doc.getText());
       return bytes;
+    };
+    // Working tree mode: the last run's bytes for a file no document edit touched since (`kept`); what this run
+    // reads goes into `read` for the next one.
+    let keptBytes = 0;
+    const newSide = async (p: string): Promise<SideBytes> => {
+      const b = kept?.has(p) ? kept.get(p) : await working(p);
+      if (b !== undefined && read && (keptBytes += sideSize(b)) <= COVERAGE_WORK.keptBytes) read.set(p, b);
+      return b;
     };
     return {
       mergeBase: s.mergeBase,
       entries: s.entries,
       // The comparison's entries left out for their paths (comparison.ts: `unsupported`): one change each.
       unsupported: s.unsupported,
-      candidates: () => this.candidates(s),
-      presentAtMergeBase: (p) => {
-        const key = `${s.mergeBase}\0${p}`;
-        let v = this.present.get(key);
-        if (!v) {
-          v = repo.getObjectDetails(s.mergeBase, apiPath(repo, p)).then(
-            () => true,
-            (e: unknown) => (isUnknownPath(e) ? false : undefined),
-          );
-          if (this.present.size > 2000) this.present.clear();
-          this.present.set(key, v);
-        }
-        return v;
+      candidates: () => this.candidates(s, docOf),
+      presentAtMergeBase: async (p) => {
+        const d = await this.blobs.stat(repo, s.mergeBase, p);
+        return d === undefined ? undefined : d !== 'missing';
       },
       ownMergeBase: (spec) => this.ownMergeBase(s, spec),
       completeSidestory: async (folder) => {
         const files = SIDESTORY_FILES.map((n) => `${folder}/${n}`);
         const regularAt = async (sha: string) =>
-          (await Promise.all(files.map((p) => repo.getObjectDetails(sha, apiPath(repo, p)).then((d) => d.mode === '100644' || d.mode === '100755', () => false)))).every(Boolean);
+          (await Promise.all(files.map(async (p) => {
+            const d = await this.blobs.stat(repo, sha, p);
+            return !!d && d !== 'missing' && (d.mode === '100644' || d.mode === '100755');
+          }))).every(Boolean);
         // On disk as the checker's isWorkingFile: a safe path, a regular file (never a link).
         const onDisk = async (p: string) => {
           if (!isSafeFsPath(p)) return false;
@@ -779,34 +797,16 @@ export class CoverageService implements vscode.Disposable {
         const head = s.mode === 'workingTree' ? (await Promise.all(files.map(onDisk))).every(Boolean) : await regularAt(s.head.sha);
         return { head, mergeBase: await regularAt(s.mergeBase) };
       },
-      oldBytes: (p) => this.oldSide(s.mergeBase, p, () => blob(s.mergeBase, p)),
-      newBytes: (p) => (s.mode === 'workingTree' ? working(p) : blob(s.head.sha, p)),
+      oldBytes: (p) => blob(s.mergeBase, p),
+      newBytes: (p) => (s.mode === 'workingTree' ? newSide(p) : blob(s.head.sha, p)),
       newDiskBytes: (p) => (s.mode === 'workingTree' ? (isSafeFsPath(p) ? disk(fileUri(p)) : Promise.resolve('unsupported' as const)) : blob(s.head.sha, p)),
       // Committed mode: both sides are immutable blobs.
       diffKey: (e) => (s.mode === 'committed' ? `${s.mergeBase}\0${s.head.sha}\0${e.oldPath ?? e.path}\0${e.path}\0${e.status}` : undefined),
     };
   }
 
-  /** A merge-base side: never changes, so kept across recomputes within COVERAGE_WORK.oldBlobBytes. */
-  private oldSide(mergeBase: string, p: string, readIt: () => Promise<SideBytes>): Promise<SideBytes> {
-    const key = `${mergeBase}\0${p}`;
-    const kept = this.oldTexts.get(key);
-    if (kept !== undefined) return Promise.resolve(kept);
-    let v = this.oldInFlight.get(key);
-    if (!v) {
-      v = readIt().then((b) => {
-        this.oldInFlight.delete(key);
-        // An unreadable side is asked again next time (a fetch may bring it).
-        if (b !== undefined) this.oldTexts.set(key, b);
-        return b;
-      });
-      this.oldInFlight.set(key, v);
-    }
-    return v;
-  }
-
   /** Sidestory folders in this repository, read where the comparison's head is: the working tree, or HEAD. */
-  private async candidates(s: Snapshot): Promise<Candidate[]> {
+  private async candidates(s: Snapshot, docOf: (uri: vscode.Uri) => vscode.TextDocument | undefined): Promise<Candidate[]> {
     const out: Candidate[] = [];
     // The checker's decoding: UTF-8, else Latin-1 byte for byte.
     const decode = (b: Uint8Array) => decodeUtf8(b) ?? decodeLatin1(b);
@@ -822,16 +822,15 @@ export class CoverageService implements vscode.Disposable {
       if (s.mode === 'workingTree') {
         const root = vscode.Uri.joinPath(s.repo.rootUri, ...(prefix ? prefix.split('/') : []));
         manifestText = await readInside(vscode.Uri.joinPath(dir, 'manifest.json'), root, MAX_MANIFEST_BYTES);
-        html = await readPage(vscode.Uri.joinPath(dir, 'sidestory.html'), root, decode);
+        html = await readPage(vscode.Uri.joinPath(dir, 'sidestory.html'), root, decode, docOf);
       } else {
         const read = async (name: string, max: number): Promise<string | 'tooLarge' | undefined> => {
-          try {
-            const p = apiPath(s.repo, `${folder}/${name}`);
-            if ((await s.repo.getObjectDetails(s.head.sha, p)).size > max) return 'tooLarge';
-            return decode(await s.repo.buffer(s.head.sha, p));
-          } catch {
-            return undefined;
-          }
+          const p = `${folder}/${name}`;
+          const d = await this.blobs.stat(s.repo, s.head.sha, p);
+          if (!d || d === 'missing') return undefined;
+          if (d.size > max) return 'tooLarge';
+          const b = await this.blobs.read(s.repo, s.head.sha, p).catch(() => undefined);
+          return b && decode(b);
         };
         const m = await read('manifest.json', MAX_MANIFEST_BYTES);
         manifestText = m === 'tooLarge' ? undefined : m;
@@ -854,14 +853,28 @@ export class CoverageService implements vscode.Disposable {
     this.running = true;
     const mine = ++this.seq;
     const live = () => mine === this.seq && this.host.snapshot() === s;
+    // Only documents' edits since the last finished run for this snapshot: keep the other files' bytes.
+    let kept: Map<string, SideBytes> | undefined;
+    if (!this.readAll && this.newFor === s && s.mode === 'workingTree') {
+      kept = new Map(this.newSides);
+      for (const p of this.edited) kept.delete(p);
+    }
+    this.readAll = false;
+    this.edited = new Set();
+    const read = new Map<string, SideBytes>();
+    const prepared = new PreparedTexts(this.prepared);
     try {
-      const r = await computeCoverage(this.source(s), { order: this.host.order(), cache: this.cache, isCurrent: live });
+      const r = await computeCoverage(this.source(s, kept, read), { order: this.host.order(), cache: this.cache, isCurrent: live, prepared });
       if (r && live()) {
         this.result = r;
         this.resultFor = s;
+        this.newSides = read;
+        this.newFor = s;
+        this.prepared = prepared;
         this.emitter.fire();
-      }
+      } else this.readAll = true; // dropped part way: the next run reads everything
     } catch (e) {
+      this.readAll = true;
       log.warn(`coverage: ${(e as Error).message}`);
       // Commands wait for a result for this snapshot: give them one, empty and marked incomplete, rather than leave
       // them waiting out their timeout. Never an older result: it may be another merge-base's.
@@ -874,7 +887,7 @@ export class CoverageService implements vscode.Disposable {
       this.running = false;
       if (this.again) {
         this.again = false;
-        this.schedule(0);
+        this.later(0); // what asked meanwhile (an edit, or everything) is still noted
       }
     }
   }
@@ -887,26 +900,20 @@ export class CoverageService implements vscode.Disposable {
   }
 }
 
-/** The git extension's answer for a path a commit doesn't have (`GitErrorCodes.UnknownPath`), as opposed to an error. */
-export function isUnknownPath(e: unknown): boolean {
-  const x = e as { gitErrorCode?: unknown; message?: unknown } | undefined;
-  return x?.gitErrorCode === 'UnknownPath' || (typeof x?.message === 'string' && /not known by git|does not exist in|exists on disk, but not in/i.test(x.message));
-}
-
 /**
  * A sidestory's page from the working tree with the checker's cap and decoding. As the checker reads it: never a
  * link, and only inside `root` (checked before anything else, an open document's unsaved text included); then the
  * open document's text when it is dirty, else the file's bytes; 'tooLarge' past COVERAGE_WORK.htmlBytes; undefined
  * when missing, a link or outside.
  */
-async function readPage(uri: vscode.Uri, root: vscode.Uri, decode: (b: Uint8Array) => string): Promise<string | 'tooLarge' | undefined> {
+async function readPage(uri: vscode.Uri, root: vscode.Uri, decode: (b: Uint8Array) => string, docOf: (uri: vscode.Uri) => vscode.TextDocument | undefined): Promise<string | 'tooLarge' | undefined> {
   if (uri.scheme === 'file' && root.scheme === 'file') {
     const file = localPath(uri);
     const info = await lstat(file).catch(() => undefined);
     if (!info || info.isSymbolicLink() || !info.isFile()) return undefined;
     if (!(await realPathInside(file, localPath(root)))) return undefined;
   }
-  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  const open = docOf(uri);
   if (open?.isDirty) {
     const text = open.getText();
     return Buffer.byteLength(text, 'utf8') > COVERAGE_WORK.htmlBytes ? 'tooLarge' : text;

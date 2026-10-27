@@ -16,8 +16,9 @@ import { trivialGlobFor } from '../../core/manifest.ts';
 import { isStoryBase, isValidBase, latchStep, resolveBase, storyBasesOf, type BaseSource, type StoryLatch } from './base.ts';
 import { chooseRepository, Comparison, headSideReadable, isSafeFsPath, repoKey, sameRepo, type ComparisonState, type Snapshot } from './comparison.ts';
 import { branchRows, changeKind, changeLabel, COVERAGE_COLORS, everyChangeMessage, fileDecoration, isDone, moveMarkNote, moveMarkTarget, WHOLE_WORDS, type BranchProblem, type BranchRow, type CoverageMark } from './coverage-labels.ts';
-import { CoverageService, isUnknownPath, type Belonging, type CoverageResult } from './coverage-service.ts';
+import { COVERAGE_WORK, CoverageService, isUnknownPath, type Belonging, type CoverageResult } from './coverage-service.ts';
 import { apiPath, gitApi, refReader, relPath, type GitApi, type GitRepo } from './git-api.ts';
+import { GitBlobs } from './git-blobs.ts';
 import { emptyUri, EMPTY_SCHEME, GitFileSystem, gitUri, GIT_SCHEME, parseGitUri, RepoIds } from './git-fs.ts';
 import { baseName, comparePaths, short, step, type ChangeEntry } from './model.ts';
 import { editorFor, inDiffEditor, openTarget, type DiffContext } from './open.ts';
@@ -75,6 +76,8 @@ export interface ChangesHost {
 export class ChangesService implements vscode.Disposable {
   private readonly memento: vscode.Memento;
   readonly ids: RepoIds;
+  /** Blobs read through git, shared by the diff editors, coverage and the comparison. */
+  private readonly blobs = new GitBlobs(COVERAGE_WORK.blobBytes);
   readonly coverage: CoverageService;
   readonly decorations: CoverageDecorations;
   private readonly host: ChangesHost;
@@ -126,7 +129,7 @@ export class ChangesService implements vscode.Disposable {
     this.memento = context.workspaceState;
     this.host = host;
     this.ids = new RepoIds(context.globalState);
-    this.coverage = new CoverageService({ snapshot: () => this.snapshot, order: () => this.openPaths(), sidestoryDirs: () => this.host.sidestoryDirs() });
+    this.coverage = new CoverageService({ snapshot: () => this.snapshot, order: () => this.openPaths(), sidestoryDirs: () => this.host.sidestoryDirs() }, this.blobs);
     this.decorations = new CoverageDecorations(this);
     this.subscriptions.push(
       this.coverage,
@@ -142,7 +145,7 @@ export class ChangesService implements vscode.Disposable {
         this.diffsEmitter.fire();
         this.emitter.fire();
       }),
-      GitFileSystem.register(this.ids),
+      GitFileSystem.register(this.ids, this.blobs),
       vscode.window.registerFileDecorationProvider(this.decorations),
       vscode.window.onDidChangeVisibleTextEditors(() => {
         this.paintUnexplained();
@@ -404,6 +407,7 @@ export class ChangesService implements vscode.Disposable {
       mode: () => (config().get<boolean>('includeUncommitted', true) ? 'workingTree' : 'committed'),
       setting,
       sidestoryBase: () => this.storyBase(repo),
+      blobs: this.blobs,
     });
     this.comparison = c;
     this.comparisonSubs.push(
@@ -693,13 +697,10 @@ export class ChangesService implements vscode.Disposable {
       read: async (file) => {
         const p = relPath(s.repo, vscode.Uri.joinPath(root, ...file.split('/')));
         if (!p) return undefined;
-        try {
-          if ((await s.repo.getObjectDetails(mb, apiPath(s.repo, p))).size > 10_000_000) return undefined;
-          const b = await s.repo.buffer(mb, apiPath(s.repo, p));
-          return decodePair(b, b).old;
-        } catch {
-          return undefined;
-        }
+        const d = await this.blobs.stat(s.repo, mb, p);
+        if (!d || d === 'missing' || d.size > 10_000_000) return undefined;
+        const b = await this.blobs.read(s.repo, mb, p).catch(() => undefined);
+        return b && decodePair(b, b).old;
       },
     };
   }

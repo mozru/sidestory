@@ -387,3 +387,51 @@ describe.skipIf(process.platform === 'win32')('the checker and the extension cou
     expect(pick(r.totals)).toEqual(pick(c.totals));
   });
 });
+
+describe.skipIf(process.platform === 'win32')('coverage while typing', () => {
+  it('an edit in an open document reads only that file again, and counts as a full recompute would', async () => {
+    const root = copy();
+    const mergeBase = git(root, 'merge-base', 'main', 'HEAD').trim();
+    const { entries, unsupported } = listing(root, mergeBase, true);
+    const snap = { repo: fakeRepo(root), mergeBase, head: { sha: git(root, 'rev-parse', 'HEAD').trim() }, mode: 'workingTree', entries, unsupported };
+    const svc = new CoverageService({ snapshot: () => snap as never, order: () => [], sidestoryDirs: () => [vscode.Uri.file(join(root, '.sidestory/retry-jitter')) as never] });
+    svc.ownMergeBase = async (_s, spec) => (spec === 'main' ? mergeBase : undefined);
+    const next = () => new Promise<void>((resolve) => svc.onDidChange(() => resolve()));
+    const reads = vi.spyOn(vscode.workspace.fs, 'readFile');
+    const codeReads = () => reads.mock.calls.map(([u]) => relative(root, (u as { fsPath: string }).fsPath)).filter((p) => !p.startsWith('.sidestory')).sort();
+    const text = readFileSync(join(root, 'test/retry.test.ts'), 'utf8') + 'test retry line 11;\n';
+    const doc = { uri: vscode.Uri.file(join(root, 'test/retry.test.ts')), isDirty: true, getText: () => text };
+    try {
+      let done = next();
+      svc.want('test', true);
+      await done;
+      const all = codeReads();
+      const lines = svc.result!.files.get('test/retry.test.ts')!.diff.newLines;
+      expect(all.length).toBeGreaterThan(3);
+      reads.mockClear();
+
+      vscode.workspace.textDocuments.push(doc);
+      done = next();
+      vscode.events.documentChanged.fire({ document: doc, contentChanges: [{}] });
+      await done;
+      expect(codeReads()).toEqual(['test/retry.test.ts']);
+      expect(svc.result!.files.get('test/retry.test.ts')!.diff.newLines).toBe(lines + 1);
+      const fresh = (await computeCoverage((svc as unknown as { source(s: unknown): never }).source(snap)))!;
+      expect(extensionStates(svc.result!)).toEqual(extensionStates(fresh));
+      expect(svc.result!.totals).toEqual(fresh.totals);
+      expect(svc.result!.targets.map((t) => [t.anchor, t.range, t.state])).toEqual(fresh.targets.map((t) => [t.anchor, t.range, t.state]));
+      reads.mockClear();
+
+      // Anything else (a status refresh, a sidestory edit) reads every file again.
+      done = next();
+      svc.schedule(0);
+      await done;
+      expect(codeReads()).toEqual(all);
+    } finally {
+      const i = vscode.workspace.textDocuments.indexOf(doc);
+      if (i >= 0) vscode.workspace.textDocuments.splice(i, 1);
+      reads.mockRestore();
+      svc.dispose();
+    }
+  });
+});
