@@ -162,6 +162,30 @@ describe('watching', () => {
     expect(index.size).toBe(0);
   });
 
+  it('a page edit that leaves the outline alone is only a re-read, not a change; a new step title is', async () => {
+    const anchors = { x: { file: 'a.ts', range: [1, 2] as [number, number] } };
+    const html = (title: string, prose: string) => `<section data-explain-anchor="x"><h2>${title}</h2><p>About x.</p><p>${prose}</p></section>`;
+    story(root, '', 'a', { title: 'A', anchors, html: html('Step x', 'Some prose.') });
+    await start();
+    let changes = 0;
+    let rereads = 0;
+    index.onDidChange(() => changes++);
+    index.onDidRereadPages(() => rereads++);
+    const page = join(dirOf('', 'a'), 'sidestory.html');
+    const stamp = entryOf('', 'a')!.pageStamp;
+    edit(page, html('Step x', 'Reworded prose, a little longer.'));
+    fire('change', page);
+    await waitFor(() => entryOf('', 'a')!.pageStamp !== stamp);
+    await new Promise((r) => setTimeout(r, 150));
+    expect([changes, rereads]).toEqual([0, 1]);
+    expect(entryOf('', 'a')!.steps.map((s) => s.title)).toEqual(['Step x']);
+    expect(entryOf('', 'a')!.state).toBe('ready');
+    edit(page, html('Renamed', 'Reworded prose, a little longer.'));
+    fire('change', page);
+    await waitFor(() => changes > 0);
+    expect(entryOf('', 'a')!.steps.map((s) => s.title)).toEqual(['Renamed']);
+  });
+
   it('coalesces folder deletes: one change event, only the packages they touched rebuilt', async () => {
     story(root, 'p1', 'a', { title: 'A' });
     story(root, 'p2', 'b', { title: 'B' });

@@ -6,7 +6,7 @@ import { parseManifest, sideOf, type Anchor } from '../../core/manifest.ts';
 import { resolveAnchor } from '../../core/resolve.ts';
 import { PreparedText } from '../../core/text.ts';
 import { manifestUri, MAX_MANIFEST_BYTES, readInside, uriKey } from '../explainers.ts';
-import type { IndexEntry, SidestoryIndex } from './index.ts';
+import { statOf, type IndexEntry, type SidestoryIndex } from './index.ts';
 
 export const DRIFT_LIMITS = {
   queue: 200,
@@ -65,9 +65,6 @@ export class DriftQueue implements vscode.Disposable {
       vscode.workspace.onDidCloseTextDocument((d) => {
         if (d.uri.scheme === 'file') this.invalidateFile(uriKey(d.uri));
       }),
-      index.onDidChange(() => {
-        // A manifest change shows up as a new stamp; nothing else to do.
-      }),
     );
   }
 
@@ -91,9 +88,9 @@ export class DriftQueue implements vscode.Disposable {
   }
 
   private invalidateFile(fileKey: string): void {
-    if (!this.index.isAnchored(fileKey)) return;
-    for (const s of this.index.anchorsIn(fileKey)) {
-      if (this.cache.has(s.entry.key)) this.markDirty(s.entry.key);
+    // Every sidestory anchoring the file, not the capped table `anchorsIn` keeps for lenses.
+    for (const key of this.index.sidestoriesAnchoring(fileKey)) {
+      if (this.cache.has(key)) this.markDirty(key);
     }
   }
 
@@ -161,7 +158,7 @@ export class DriftQueue implements vscode.Disposable {
   private async compute(e: IndexEntry): Promise<Cached | undefined> {
     const version = e.version;
     const mUri = manifestUri(e.ref);
-    const mStat = await stat(mUri);
+    const mStat = await statOf(mUri);
     if (!mStat) return undefined;
     // Files' stamps: reuse the cached result while they all still match.
     const files = new Map<string, vscode.Uri>();
@@ -187,7 +184,7 @@ export class DriftQueue implements vscode.Disposable {
     // Open documents by URI, once per computation.
     const open = new Map(vscode.workspace.textDocuments.map((d) => [d.uri.toString(), d] as const));
     for (const [f, u] of files) {
-      const s = await stat(u);
+      const s = await statOf(u);
       // An open document is read from its buffer: its size (for the byte budget) is the buffer's, and its version
       // is part of the stamp, so unsaved edits count.
       const doc = open.get(u.toString());
@@ -277,15 +274,6 @@ function hashStats(stats: Map<string, FileStamp | undefined>): string {
   };
   for (const [f, s] of stats) mix(`${f}\u0000${s ? `${s.mtime}:${s.size}${s.version !== undefined ? `:d${s.version}` : ''}` : '-'}\u0000`);
   return `${stats.size}:${(h >>> 0).toString(36)}`;
-}
-
-async function stat(uri: vscode.Uri): Promise<{ mtime: number; size: number } | undefined> {
-  try {
-    const s = await vscode.workspace.fs.stat(uri);
-    return { mtime: s.mtime, size: s.size };
-  } catch {
-    return undefined;
-  }
 }
 
 /**

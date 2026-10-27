@@ -226,6 +226,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       syncWants();
       changes.indexChanged();
     }),
+    // A prose edit of a page isn't an index change, but the anchors the page uses may be different.
+    index.onDidRereadPages(() => changes.pagesChanged()),
   );
   syncWants();
   selectionSides = async (uri, ref) => {

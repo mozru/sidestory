@@ -179,7 +179,7 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDisposeEmitter.event;
   private readonly resolveEmitter = new vscode.EventEmitter<string>();
-  /** A file's anchors were resolved again (its URI string): the index's overlay reads `resolutionsFor`. */
+  /** A file's anchors resolved to other states or ranges (its URI string): the index's overlay reads `resolutionsFor`. */
   readonly onDidResolve = this.resolveEmitter.event;
   private readonly switchEmitter = new vscode.EventEmitter<void>();
   /** The panel moved to another sidestory (dive, Back, `openAt`): overlays from before are void. */
@@ -821,7 +821,8 @@ export class ExplainerSession implements vscode.Disposable {
         else this.requestReveal(waiting, false);
       }
     }
-    this.resolveEmitter.fire(uri);
+    // Only when something moved: ExplainedHere re-resolves every visible document for it.
+    if (changed) this.resolveEmitter.fire(uri);
     if (changed && this.active && this.anchorsIn(uri).some((a) => a.id === this.active)) this.decorateActive(this.decorations.isDimmed());
     this.widgets?.onResolved(uri);
   }

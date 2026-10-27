@@ -1,11 +1,11 @@
 // An explainer panel's session over a long life: diving and coming back, edits elsewhere, closing.
 // Nothing it sets up may outlive the explainer it belongs to, and work per edit mustn't grow with the manifest.
-import { cpSync, mkdtempSync, realpathSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ToWebview } from '../../src/shared/protocol.ts';
-import { counts, EventEmitter, events, Uri, window, workspace } from './vscode-stub.ts';
+import { counts, EventEmitter, events, Position, Range, Uri, window, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -110,6 +110,34 @@ describe('ExplainerSession lifecycle', () => {
     // The cursor in the detail's code still finds its section (an anchor the overview doesn't have).
     events.selectionChanged.fire({ textEditor: { document: { uri: Uri.file(`${root}/rtl/bit_reader.sv`) } }, selections: [{ active: { line: 35 } }], kind: 1 });
     await vi.waitFor(() => expect(posted).toContainEqual({ type: 'syncTo', anchorId: 'refill' }));
+  });
+});
+
+describe('resolving again', () => {
+  it('says a file resolved again only when its anchors moved or changed state', async () => {
+    const { session, lastInit, send } = open('bit-reader');
+    await session.load();
+    send({ type: 'ready' });
+    await vi.waitFor(() => expect(lastInit()?.anchors.every((a) => a.state !== 'pending')).toBe(true));
+    const resolved: string[] = [];
+    session.onDidResolve((u) => resolved.push(u));
+    const uri = Uri.file(`${root}/rtl/bit_reader.sv`);
+    // An edit that moves nothing (past the end, empty): the anchors resolve as before.
+    const at = new Position(100_000, 0);
+    events.documentChanged.fire({ document: { uri, lineCount: 1 }, contentChanges: [{ range: new Range(at, at), text: '' }] });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(resolved).toEqual([]);
+    // Two lines inserted at the top: the anchors move.
+    const file = `${root}/rtl/bit_reader.sv`;
+    const text = readFileSync(file, 'utf8');
+    try {
+      writeFileSync(file, `\n\n${text}`);
+      const top = new Position(0, 0);
+      events.documentChanged.fire({ document: { uri, lineCount: 1 }, contentChanges: [{ range: new Range(top, top), text: '\n\n' }] });
+      await vi.waitFor(() => expect(resolved).toEqual([uri.toString()]));
+    } finally {
+      writeFileSync(file, text);
+    }
   });
 });
 

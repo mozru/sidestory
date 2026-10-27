@@ -326,6 +326,11 @@ export class ChangesService implements vscode.Disposable {
     this.emitter.fire();
   }
 
+  /** Sidestory pages changed and their outlines didn't: only coverage (the anchors a page uses) can differ. */
+  pagesChanged(): void {
+    this.scheduleCoverage();
+  }
+
   /** Coverage soon, noting the snapshot it is for. */
   private scheduleCoverage(delay?: number): void {
     this.coverageAskedFor = this.snapshot;

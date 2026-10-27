@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Large sidestories render and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening 430 → 190 ms, a content update 210 → 70 ms, an anchor update 85 → 15 ms).
+- Fixed: a sidestory's drift badge in the Sidestories view could stay out of date after an edit to a file that many sidestories anchor (past 2,000 anchors in the file, or 200 from one sidestory).
+- Less work while typing: editing a sidestory's prose no longer refreshes the Sidestories view, the CodeLenses and This File (only a change to its steps does), and a typing pause in a code file re-resolves the other visible files only when an anchor actually moved.
 - Branches with thousands of changed files stay responsive: finding a file's change no longer scans the whole list, so updating the compare buttons and the Explorer badges after a change takes milliseconds instead of up to a second (20,000 files).
 - Comment threads load faster: a read of a repository's threads reads the record of which comments are yours once, not once per location and twice per comment (500 threads: about 1 s → 0.25 s). Records of deleted local threads are cleaned up.
 - Fixed: **Copy Prompt** in a thread whose latest comment to Claude was retracted marked that retracted comment as copied, though the prompt was about an earlier one.

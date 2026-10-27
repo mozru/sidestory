@@ -70,6 +70,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const d of owned.splice(0)) d.dispose();
   Object.assign(drifts, savedDrift, { typingPauseMs: 50 });
+  Object.assign(limits, savedIndex, { debounceMs: 20 });
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -116,6 +117,17 @@ describe('drift', () => {
     write(join(root, 'f.ts'), code(50, 'other'));
     events.documentChanged.fire({ document: { uri: Uri.file(join(root, 'f.ts')) }, contentChanges: [{}] });
     expect(drift.get(entry('b'))).toBeUndefined();
+    await waitFor(() => drift.peek(entry('b').key)?.lost === 1);
+  });
+
+  it('an edit makes every sidestory anchoring the file dirty, past the per-file anchor cap too', async () => {
+    limits.anchorsPerFile = 2; // a's anchors fill f.ts's table: b has none in it
+    await start();
+    expect(index.anchorsIn(uriKey(Uri.file(join(root, 'f.ts')) as never)).map((s) => s.entry.ref.name)).toEqual(['a', 'a']);
+    await driftOf('b');
+    write(join(root, 'f.ts'), code(50, 'other'));
+    events.documentChanged.fire({ document: { uri: Uri.file(join(root, 'f.ts')) }, contentChanges: [{}] });
+    expect(drift.get(entry('b'))).toBeUndefined(); // dirty: not shown stale
     await waitFor(() => drift.peek(entry('b').key)?.lost === 1);
   });
 
