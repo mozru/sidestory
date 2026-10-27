@@ -296,8 +296,7 @@ export class SidestoryIndex implements vscode.Disposable {
   }
 
   isAnchored(fileKey: string): boolean {
-    const id = this.fileIds.get(fileKey);
-    return id !== undefined && (this.fileRefs.get(id)?.size ?? 0) > 0;
+    return this.sidestoriesAnchoring(fileKey).size > 0;
   }
 
   /**
@@ -827,6 +826,7 @@ export class SidestoryIndex implements vscode.Disposable {
         }
       } else if (!s && e.pageStamp !== 'missing') html = '';
     }
+    let reread = false;
     if (html !== undefined) {
       if (budget.scanMs <= 0) {
         e.state = 'not-outlined';
@@ -846,7 +846,8 @@ export class SidestoryIndex implements vscode.Disposable {
         if (!current()) return 'same';
       }
       const o = scanner.result();
-      const was = e.outlined ? { steps: e.steps, details: e.details, truncated: e.truncated, stepsCapped: e.stepsCapped, stepOf: e.stepOf } : undefined;
+      // Only an entry that was ready: one left not-read or not-outlined by a budget changes its label when it's read.
+      const was = e.outlined && e.state === 'ready' ? { steps: e.steps, details: e.details, truncated: e.truncated, stepsCapped: e.stepsCapped, stepOf: e.stepOf } : undefined;
       e.pageStamp = pageStamp;
       this.totals.steps -= e.steps.length;
       const room = Math.max(0, INDEX_LIMITS.steps - this.totals.steps);
@@ -869,13 +870,10 @@ export class SidestoryIndex implements vscode.Disposable {
       e.stepOf = stepOf;
       // Most page edits are prose: an outline that came out the same isn't a change (each one re-resolves and rebuilds).
       if (!was || !sameOutline(was, e)) changed = true;
-      else if (!changed) {
-        e.state = 'ready';
-        return 'page';
-      }
+      else reread = true;
     }
     e.state = e.outlined ? 'ready' : e.state;
-    return changed ? 'changed' : 'same';
+    return changed ? 'changed' : reread ? 'page' : 'same';
   }
 
   /** Packs an entry's anchors (§6.1), within the total and per-file caps; keeps file references current. */

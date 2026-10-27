@@ -45,12 +45,12 @@ export interface ScannedHtml {
   anchors: string[];
 }
 
-/** 1-based line of each offset, by binary search over line starts. A lone `\r` ends a line unless `lfOnly`. */
-export function lineIndex(text: string, lfOnly = false): (offset: number) => number {
+/** 1-based line of each offset, by binary search over line starts. */
+export function lineIndex(text: string): (offset: number) => number {
   const starts = [0];
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
-    if (c === 10 || (!lfOnly && c === 13 && text.charCodeAt(i + 1) !== 10)) starts.push(i + 1);
+    if (c === 10 || (c === 13 && text.charCodeAt(i + 1) !== 10)) starts.push(i + 1);
   }
   return (offset: number) => {
     let lo = 0;

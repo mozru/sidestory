@@ -353,8 +353,9 @@ describe('other documents as sides (§8)', () => {
     // 20,000 entries (the listing cap): lookups for all of them stay well under the quadratic scan's ~1 s.
     const big = Array.from({ length: 20_000 }, (_, i) => ({ path: `f${i}.ts`, status: 'M' }));
     const t0 = performance.now();
-    for (const e of big) expect(entryIndex(big).head.get(e.path)).toBe(e);
+    const found = big.filter((e) => entryIndex(big).head.get(e.path) === e).length;
     expect(performance.now() - t0).toBeLessThan(500);
+    expect(found).toBe(big.length);
   });
   it('maps VS Code git: documents by their ref: only the merge-base, and HEAD’s commit in committed mode', () => {
     const rel = (p: string) => (p.startsWith('/r/') ? p.slice(3) : undefined);

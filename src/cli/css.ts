@@ -32,8 +32,8 @@ export interface ParsedCss {
 }
 
 function stripComments(css: string): string {
-  // Keep newlines so line numbers survive.
-  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (c) => c.replace(/[^\n]/g, ' '));
+  // Keep line breaks so line numbers survive.
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (c) => c.replace(/[^\r\n]/g, ' '));
 }
 
 export function parseDeclarations(block: string): Declaration[] {
@@ -91,7 +91,7 @@ function blockEnd(css: string, open: number): number {
 export function parseCss(text: string, firstLine = 1, file?: string, into: ParsedCss = { rules: [], geometryKeyframes: new Set() }): ParsedCss {
   const css = stripComments(text);
   let lines: ((offset: number) => number) | undefined;
-  const lineAt = (offset: number) => firstLine - 1 + (lines ??= lineIndex(css, true))(offset);
+  const lineAt = (offset: number) => firstLine - 1 + (lines ??= lineIndex(css))(offset);
   const walk = (from: number, to: number, conditions: string[]) => {
     let i = from;
     while (i < to) {
@@ -215,6 +215,7 @@ function matchesCompound(c: Compound, el: Element): boolean {
 
 /** Whether the selector matches chain[index], given its ancestors chain[0..index-1]. */
 export function matches(steps: Step[], chain: Element[], index: number): boolean {
+  if (steps.length === 1) return matchesCompound(steps[0]!.compound, chain[index]!);
   // Memoized by (step, element): without it, descendant combinators over a deep chain backtrack
   // exponentially (C(depth, steps) tries). 0 = not worked out yet, 1 = matches, 2 = doesn't.
   const memo = new Int8Array(steps.length * (index + 1));

@@ -3,7 +3,7 @@
 // file counts as a rename (its unchanged lines need no explanation) in the checker and in the extension alike.
 // Pure: no vscode or node import.
 import { decodeLatin1, decodeUtf8, textLines } from './hunks.ts';
-import { contentSimilarity } from './similarity.ts';
+import { contentSimilarity, TOKEN_COMPARE_MAX_LINES } from './similarity.ts';
 import { normalizeLines } from './text.ts';
 
 export const RENAME_PAIRING = {
@@ -39,10 +39,10 @@ export function pairUnstagedRenames<D extends { readonly path: string }, A exten
     added.forEach((a, i) => {
       const al = addedLines[i];
       if (!al?.length) return;
-      // Above 20 lines the score is the line LCS ratio, which is quadratic. The LCS is at most the shared lines
-      // counted as a multiset (and that at most the shorter file), so the same ratio over those is an exact upper
-      // bound: a pair it rules out could never reach the minimum.
-      if (Math.max(dl.length, al.length) > 20) {
+      // Past TOKEN_COMPARE_MAX_LINES the score is the line LCS ratio, which is quadratic. The LCS is at most the shared
+      // lines counted as a multiset (and that at most the shorter file), so the same ratio over those is an exact
+      // upper bound: a pair it rules out could never reach the minimum.
+      if (Math.max(dl.length, al.length) > TOKEN_COMPARE_MAX_LINES) {
         const tooLow = (shared: number) => (2 * shared) / (dl.length + al.length) < RENAME_PAIRING.minScore;
         if (tooLow(Math.min(dl.length, al.length))) return;
         if (tooLow(sharedLines((dc ??= lineCounts(dl)), (addedCounts[i] ??= lineCounts(al))))) return;

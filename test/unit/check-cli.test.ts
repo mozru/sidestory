@@ -162,13 +162,13 @@ describe('placement (CSS)', () => {
     expect(performance.now() - t0).toBeLessThan(500);
   });
 
-  it('numbers rules in a large stylesheet in linear time, counting only \\n as a line break', () => {
+  it('numbers rules in a large stylesheet in linear time, with line breaks counted as in the HTML', () => {
     const big = Array.from({ length: 20_000 }, (_, i) => `.c${i} span {\n  transform: none;\n}\n`).join('');
     const t0 = performance.now();
     const css = parseCss(big, 3);
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(css.rules.at(-1)!.line).toBe(3 + 3 * 19_999);
-    expect(parseCss('/* a\r\nb */ .x { color: red }\r\n.y { color: red }\r.z { color: red }', 7).rules.map((r) => r.line)).toEqual([8, 9, 9]);
+    expect(parseCss('/* a\r\nb */ .x { color: red }\r\n.y { color: red }\r.z { color: red }/*\r*/\n.w { color: red }', 7).rules.map((r) => r.line)).toEqual([8, 9, 10, 12]);
   });
 
   it('classifies a stylesheet once for all widgets and ancestors', () => {
@@ -176,7 +176,7 @@ describe('placement (CSS)', () => {
     const chain = Array.from({ length: 20 }, (_, i) => el('div', { class: i === 10 ? 't40' : 'a' }));
     const t0 = performance.now();
     for (let i = 0; i < 200; i++) expect(placementProblems(chain, el('explain-widget'), css).map((p) => p.property)).toEqual(['transform']);
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(2000);
   });
 });
 

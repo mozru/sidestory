@@ -346,6 +346,24 @@ describe('budgets and caps', () => {
     await waitFor(() => [...index.all()].every((e) => e.outlined && e.state === 'ready'));
   });
 
+  it('a page the budget left not outlined is a change once outlined, even with the same outline', async () => {
+    const html = (prose: string) => `<section data-explain-anchor="x"><h2>Step x</h2><p>About x.</p><p>${prose}</p></section>`;
+    story(root, '', 'a', { title: 'A', anchors: { x: { file: 'a.ts', range: [1, 2] } }, html: html('Some prose.') });
+    await start();
+    let changes = 0;
+    index.onDidChange(() => changes++);
+    limits.scanMsPerBatch = 0;
+    limits.followUpMs = 50;
+    const page = join(dirOf('', 'a'), 'sidestory.html');
+    edit(page, html('Reworded prose, a little longer.'));
+    fire('change', page);
+    await waitFor(() => entryOf('', 'a')!.state === 'not-outlined');
+    const before = changes;
+    limits.scanMsPerBatch = saved.scanMsPerBatch!;
+    await waitFor(() => entryOf('', 'a')!.state === 'ready');
+    await waitFor(() => changes > before); // the tree shows it ready again
+  });
+
   it('caches the sorted package list until packages change', async () => {
     story(root, '', 'a', {});
     story(root, 'svc', 'b', {});

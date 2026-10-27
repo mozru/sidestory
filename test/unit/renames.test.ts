@@ -1,7 +1,14 @@
 // Shared core for both tools: unstaged rename pairing (src/core/renames.ts) and what a side holds (src/core/hunks.ts).
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isBinary, isLfsChange, isLfsPointer } from '../../src/core/hunks.ts';
 import { pairUnstagedRenames, RENAME_PAIRING } from '../../src/core/renames.ts';
+import { contentSimilarity } from '../../src/core/similarity.ts';
+
+// Counted: the quadratic comparison runs only for pairs the prefilter can't rule out.
+vi.mock('../../src/core/similarity.ts', async (load) => {
+  const real = await load<typeof import('../../src/core/similarity.ts')>();
+  return { ...real, contentSimilarity: vi.fn(real.contentSimilarity) };
+});
 
 const enc = (t: string) => new TextEncoder().encode(t);
 const body = (tag: string, n = 20) => enc(Array.from({ length: n }, (_, i) => `${tag} line ${i}`).join('\n') + '\n');
@@ -30,9 +37,9 @@ describe('pairUnstagedRenames', () => {
     // A moved copy with a third of its lines changed still pairs (similarity ≈ 0.67).
     const moved = enc(new TextDecoder().decode(d[2]!.b).split('\n').map((l, i) => (i % 3 ? l : `${l} edited`)).join('\n'));
     a.push({ path: 'moved', b: moved });
-    const t0 = performance.now();
+    vi.mocked(contentSimilarity).mockClear();
     const pairs = pairUnstagedRenames(d, a, (x) => x.b, (x) => x.b);
-    expect(performance.now() - t0).toBeLessThan(500);
+    expect(vi.mocked(contentSimilarity)).toHaveBeenCalledTimes(1); // of 20 pairs, only d2 and the moved copy
     expect(pairs.map((p) => [p.deleted.path, p.added.path])).toEqual([['d2', 'moved']]);
   });
 });
