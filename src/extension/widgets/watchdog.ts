@@ -1,6 +1,7 @@
 // The extension-side widget watchdog (docs/WIDGETS-PLAN.md §4), for when widgets share the panel's thread
-// and a hung widget freezes the panel itself. The panel beats every second while visible; the watchdog is
-// armed only while beats flow from a visible panel, ignores gaps its own timer also saw (sleep, debugger, a
+// and a hung widget freezes the panel itself. The panel beats every second while visible with a widget mounted
+// (and once more as that ends, which disarms); the watchdog is armed only while such beats flow, and the
+// extension's timer runs only while some watchdog is armed. It ignores gaps its own timer also saw (sleep, debugger, a
 // busy extension host) and quiet periods (one of our modal dialogs open, and just after; a new gate mounting
 // widgets), and trips only on the panel's own evidence: beats that stopped for 10 s and came back late by the
 // panel's own clock (its timer fired seconds late: it was frozen), beats still missing after 20 s, or beats
@@ -87,6 +88,16 @@ export class HeartbeatWatchdog {
   private silent = false;
   /** The latest breadcrumbs, for picking a suspect. */
   last: Beat | undefined;
+
+  /** Beats from a visible panel with widgets mounted: silence would count against it, so the timer must run. */
+  get isArmed(): boolean {
+    return this.armed;
+  }
+
+  /** The extension's timer starts again after a pause (no watchdog was armed): no drift to judge against. */
+  restartClock(): void {
+    this.lastTick = -Infinity;
+  }
 
   beat(b: Beat, at: number, quiet = false): 'trip' | undefined {
     const wasSilent = this.silent;

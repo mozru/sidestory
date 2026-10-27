@@ -5,6 +5,7 @@
 - The panel's script is about 70% smaller (614 KB → 176 KB), so sidestories open faster: the panel checks widget messages with zod's small build instead of the full library.
 - While a comment waits for Claude's answer, the 2-second check for a missed reply now lists only that thread's folder (and re-reads it when a file arrived) instead of re-reading every thread in the repository. Views that ask for threads at the same moment share one read.
 - Branch coverage while you type re-reads only the file you are editing; the other changed files are kept from the last count instead of being read, decoded and hashed again on every pause. Diffs and coverage share one cache of files read from git, and an unsaved file is checked against the merge-base once rather than on every refresh.
+- Panels no longer wake up every second for widgets: the heartbeat and the extension's freeze watchdog run only while a widget is mounted and the panel is on screen (they used to run for any open sidestory with widgets, hidden or scrolled away). A widget that freezes the panel is still caught.
 
 ## 0.2.4 (2026-10-26)
 

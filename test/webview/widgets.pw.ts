@@ -883,19 +883,41 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     expect(await placeholder(page).evaluate((e) => e.clientHeight)).toBeGreaterThan(200);
   });
 
-  test('heartbeats go on while the page is hidden (visible: false), and one is sent at once on the change', async ({ page }) => {
+  test('hidden, the page sends one beat at once (visible: false, which disarms the watchdog), then none; shown, they start again at once', async ({ page }) => {
     await openProbe(page);
     await expect.poll(async () => (await posted(page)).some((m) => m.type === 'heartbeat')).toBe(true);
     await clearPosted(page);
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').length, { timeout: 200 }).toBeGreaterThan(0);
+    const setVisibility = (v: string) =>
+      page.evaluate((v) => {
+        Object.defineProperty(document, 'visibilityState', { value: v, configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }, v);
+    const beats = async () => (await posted(page)).filter((m) => m.type === 'heartbeat');
+    await setVisibility('hidden');
+    await expect.poll(async () => (await beats()).length, { timeout: 200 }).toBe(1);
+    expect((await beats())[0]).toMatchObject({ visible: false, delay: 0 });
     await page.waitForTimeout(2200);
-    const beats = (await posted(page)).filter((m) => m.type === 'heartbeat');
-    expect(beats.length).toBeGreaterThanOrEqual(3);
-    expect(beats.every((b) => b.type === 'heartbeat' && !b.visible)).toBe(true);
+    expect(await beats()).toHaveLength(1);
+    await clearPosted(page);
+    await setVisibility('visible');
+    await expect.poll(async () => (await beats()).length, { timeout: 200 }).toBe(1);
+    expect((await beats())[0]).toMatchObject({ visible: true, mounted: ['w/probe.tsx'] });
+    await expect.poll(async () => (await beats()).length, { timeout: 2500 }).toBeGreaterThanOrEqual(2);
+  });
+
+  test('beats only while a widget is mounted: scrolled far away, one last beat with nothing mounted, then none', async ({ page }) => {
+    await openWith(page, explainerHtml(probeTag(), { after: filler(120) }), builds, { active: 'ring' });
+    await expect(out(widgetFrame(page))).toContainText('w:0');
+    await expect.poll(async () => (await posted(page)).some((m) => m.type === 'heartbeat')).toBe(true);
+    await page.locator('.cx-scroll').evaluate((s) => (s.scrollTop = s.scrollHeight));
+    await expect(frames(page)).toHaveCount(0);
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').at(-1)).toMatchObject({ visible: true, mounted: [], mounting: null });
+    await clearPosted(page);
+    await page.waitForTimeout(2200);
+    expect((await posted(page)).filter((m) => m.type === 'heartbeat')).toEqual([]);
+    // Back on screen: beating again.
+    await page.locator('.cx-scroll').evaluate((s) => (s.scrollTop = 0));
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').at(-1), { timeout: 3000 }).toMatchObject({ visible: true, mounted: ['w/probe.tsx'] });
   });
 
   test('a highlight waiting in the rate limit is dropped when the step changes', async ({ page }) => {

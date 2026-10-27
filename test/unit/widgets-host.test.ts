@@ -407,6 +407,21 @@ describe('watchdog (§4)', () => {
     expect(v.tick(26_000)).toBeUndefined();
   });
 
+  it('says when it is armed (the extension’s timer runs only then); after a pause in that timer, silence counts from the last beat', () => {
+    const w = new HeartbeatWatchdog();
+    expect(w.isArmed).toBe(false);
+    w.beat(beat(), 0);
+    expect(w.isArmed).toBe(true);
+    w.beat({ ...beat(), mounted: [] }, 1000); // the last beat as the widgets go off screen
+    expect(w.isArmed).toBe(false);
+    w.tick(2000);
+    // The timer stopped; a minute later a widget mounts and the timer starts again.
+    w.beat(beat(), 60_000);
+    w.restartClock();
+    for (let t = 61_000; t < 80_000; t += 1000) expect(w.tick(t)).toBeUndefined();
+    expect(w.tick(80_000)).toBe('trip');
+  });
+
   it('a modal dialog of ours open (and 5 s after it closes) is a quiet period: silence and late beats aren’t held against the panel', () => {
     const q = new QuietPeriods();
     const w = new HeartbeatWatchdog();

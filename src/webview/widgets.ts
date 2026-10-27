@@ -1457,7 +1457,7 @@ export class WidgetFrames {
 
   // ---- watchdogs and timers ----
 
-  /** Timers run only while something is mounted (or for heartbeats, while the explainer has widgets). */
+  /** Timers run only while something is mounted (and for heartbeats, on screen with the gate on). */
   private timers(): void {
     const mounted = [...this.widgets.values()].some((w) => w.frame);
     if (mounted && !this.measureTimer) this.measureTimer = setInterval(() => this.schedule(), MEASURE_MS);
@@ -1482,7 +1482,8 @@ export class WidgetFrames {
       clearInterval(this.focusTimer);
       this.focusTimer = undefined;
     }
-    const beating = this.widgets.size > 0 && this.gate.status === 'on';
+    // The extension's watchdog is armed only by beats from a visible panel with widgets mounted (§4).
+    const beating = mounted && this.gate.status === 'on' && document.visibilityState === 'visible';
     if (beating && this.heartbeatTimer === undefined) {
       this.heartbeatDue = now() + HEARTBEAT_MS;
       this.heartbeatTimer = setTimeout(() => this.heartbeat(), HEARTBEAT_MS);
@@ -1490,6 +1491,8 @@ export class WidgetFrames {
     if (!beating && this.heartbeatTimer !== undefined) {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
+      // One last beat (hidden, or nothing mounted), which disarms the watchdog: silence while armed is a hang.
+      this.sendBeat(0);
     }
   }
 
@@ -1498,14 +1501,17 @@ export class WidgetFrames {
     return { mounted: [...new Set(mounted)].slice(0, MAX_WIDGETS), mounting: this.mounting?.frame ? this.mounting.src : null, recent: this.recent?.frame ? this.recent.src : null };
   }
 
-  /** Every second while visible: how late this timer fired, and which widgets are mounted (§4). */
+  /** Every second while visible with a widget mounted: how late this timer fired, and which widgets are mounted (§4). */
   private heartbeat(): void {
     const t = now();
     const delay = Math.max(0, t - this.heartbeatDue);
     this.heartbeatDue = t + HEARTBEAT_MS;
     this.heartbeatTimer = setTimeout(() => this.heartbeat(), HEARTBEAT_MS);
     this.checkFocus();
-    // Also while hidden (the extension's watchdog disarms on visible: false; silence would look like a hang).
+    this.sendBeat(delay);
+  }
+
+  private sendBeat(delay: number): void {
     // A hidden page's timers are throttled, so its lateness says nothing.
     const visible = document.visibilityState === 'visible';
     this.panel.post({ type: 'heartbeat', delay: visible ? Math.round(delay) : 0, visible, ...this.breadcrumbs() });
@@ -1555,6 +1561,7 @@ export class WidgetFrames {
       this.lastPingAt = 0;
       this.schedule();
     }
+    this.timers(); // hidden: a last beat, then none; visible: beats again, one at once
     this.beatNow();
   }
 

@@ -158,12 +158,22 @@ export class WidgetHost implements vscode.Disposable {
   attach(port: WidgetSessionPort): PanelWidgets {
     const p = new PanelWidgets(this, port);
     this.panels.add(p);
-    this.tickTimer ??= setInterval(() => {
+    return p;
+  }
+
+  /** The watchdogs' 1 s timer, while some panel's watchdog is armed (its widgets mounted and on screen). */
+  ticking(): void {
+    if (this.tickTimer) return;
+    for (const x of this.panels) x.watchdog.restartClock();
+    this.tickTimer = setInterval(() => {
       const at = Date.now();
       const quiet = QUIET.active(at);
       for (const x of this.panels) if (x.watchdog.tick(at, true, quiet) === 'trip') void this.trip(x);
+      if (![...this.panels].some((x) => x.watchdog.isArmed)) {
+        clearInterval(this.tickTimer);
+        this.tickTimer = undefined;
+      }
     }, TICK_MS);
-    return p;
   }
 
   detach(p: PanelWidgets): void {
@@ -968,11 +978,13 @@ export class PanelWidgets {
       case 'heartbeat': {
         const at = Date.now();
         if (this.watchdog.beat({ delay: m.delay, visible: m.visible, mounted: m.mounted, mounting: m.mounting, recent: m.recent }, at, QUIET.active(at)) === 'trip') void this.host.trip(this);
-        else if (this.port.recovered && m.visible && m.delay < 1000) {
-          // A recovered panel that has beaten on time for a minute works again: a later hang gets recovered too.
+        else if (this.port.recovered && this.watchdog.isArmed && m.delay < 1000) {
+          // A recovered panel that has beaten on time for a minute (with widgets mounted, the only time it beats)
+          // works again: a later hang gets recovered too.
           this.healthySince ??= at;
           if (at - this.healthySince > 60_000) this.port.healthy?.();
         } else this.healthySince = undefined;
+        if (this.watchdog.isArmed) this.host.ticking();
         return true;
       }
       case 'widgetsUnresponsive':

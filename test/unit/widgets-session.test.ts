@@ -315,6 +315,41 @@ describe('review regressions (extension side)', () => {
     expect(gateAt === -1 || at < gateAt).toBe(true);
   });
 
+  it('the extension’s watchdog timer runs only while a panel beats with widgets on screen, and still catches a frozen panel', async () => {
+    const host = newHost();
+    closers.push(() => host.dispose());
+    const recreated: unknown[] = [];
+    host.recreate = (port) => recreated.push(port);
+    const p = await consented({ host });
+    const timer = () => (host as unknown as { tickTimer: unknown }).tickTimer;
+    const beat = (mounted: string[], visible = true) => p.send({ type: 'heartbeat', delay: 0, visible, mounted, mounting: null, recent: mounted[0] ?? null });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      QUIET.clear();
+      expect(timer()).toBeUndefined(); // a panel alone, nothing mounted: no timer
+      beat(['widgets/backoff.tsx']);
+      expect(timer()).toBeDefined();
+      // The widgets scrolled away: the page's last beat disarms, and the timer stops at its next tick.
+      beat([]);
+      vi.advanceTimersByTime(1000);
+      expect(timer()).toBeUndefined();
+      // Hidden: the same.
+      beat(['widgets/backoff.tsx']);
+      beat(['widgets/backoff.tsx'], false);
+      vi.advanceTimersByTime(1000);
+      expect(timer()).toBeUndefined();
+      // A widget freezes the panel: no beat comes after this one, and 20 s later the panel is recovered.
+      beat(['widgets/backoff.tsx']);
+      vi.advanceTimersByTime(19_000);
+      expect(recreated).toEqual([]);
+      vi.advanceTimersByTime(2000);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(recreated).toHaveLength(1), { timeout: 5000 });
+    expect(timer()).toBeUndefined(); // tripped: disarmed
+  }, 30_000);
+
   it('a hang nobody can attribute (no widget mounting or recently active) blames no explainer: panels just remount', async () => {
     const p = await consented();
     unresponsive(p, { mounted: ['widgets/backoff.tsx'], mounting: null, recent: null });
