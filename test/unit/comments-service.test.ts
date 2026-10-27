@@ -114,3 +114,86 @@ describe('delivery states', () => {
     expect(svc.isWaiting(again)).toBe(true);
   });
 });
+
+describe('the backstop while an ask is pending', () => {
+  type Backstop = { backstop(): Promise<void> };
+  const tick = () => (svc as unknown as Backstop).backstop();
+  const settle = () => new Promise((r) => setTimeout(r, 120)); // the write's own re-read (75 ms)
+
+  async function pending() {
+    await presence('likely');
+    const { e } = await asked();
+    await settle();
+    await svc.entries(root);
+    return e;
+  }
+
+  async function claudeReplies(e: { thread: { id: string }; location: import('../../src/comments/storage.ts').Location }) {
+    const files = svc.repo(root).files;
+    await files.write(e.location, { v: 1, id: newId('e'), thread: e.thread.id, type: 'comment', at: new Date().toISOString(), by: { kind: 'claude', name: '' }, body: 'Because.' }, 'claude');
+  }
+
+  it('shows a reply the watcher missed, reading only that thread', async () => {
+    const e = await pending();
+    const files = svc.repo(root).files;
+    const location = vi.spyOn(files, 'readLocation');
+    const thread = vi.spyOn(files, 'readThread');
+    await tick();
+    expect(thread).not.toHaveBeenCalled(); // nothing new: a folder listing only
+    await claudeReplies(e);
+    let fired = 0;
+    svc.onDidChange(() => fired++);
+    await tick();
+    expect(fired).toBe(1);
+    expect(thread).toHaveBeenCalledTimes(1);
+    const now = (await svc.findEntry(root, e.thread.id))!;
+    expect(now.thread.comments.map((c) => [c.body, c.trust])).toEqual([['Why?', 'local_user'], ['Because.', 'claude']]);
+    await tick(); // read once more (a ledger entry written just after its file), then not again
+    await tick();
+    expect(thread).toHaveBeenCalledTimes(2);
+    expect(location).not.toHaveBeenCalled();
+  });
+
+  it('a send recorded without its thread re-reads the whole repository, as before', async () => {
+    const e = await pending();
+    const memento = (svc as unknown as { memento: Memento }).memento;
+    const sends = memento.get<Record<string, { thread?: string }>>('sidestory.comments.sends')!;
+    for (const r of Object.values(sends)) delete r.thread;
+    await claudeReplies(e);
+    const location = vi.spyOn(svc.repo(root).files, 'readLocation');
+    await tick();
+    expect((await svc.findEntry(root, e.thread.id))!.thread.comments).toHaveLength(2);
+    expect(location).toHaveBeenCalled();
+  });
+
+  it('overlapping reads of a root share one', async () => {
+    await svc.entries(root);
+    svc.invalidate(root);
+    const locations = vi.spyOn(svc.repo(root).files, 'locations');
+    const [a, b, c] = await Promise.all([svc.entries(root), svc.entries(root), svc.allEntries([root])]);
+    expect(locations).toHaveBeenCalledTimes(1);
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+  });
+
+  it('a read that was dropped while in flight is not cached', async () => {
+    const e = await pending();
+    const files = svc.repo(root).files;
+    const real = files.readLocation.bind(files);
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    vi.spyOn(files, 'readLocation').mockImplementationOnce(async (...a) => {
+      const out = await real(...a);
+      await gate;
+      return out;
+    });
+    svc.invalidate(root);
+    const first = svc.entries(root);
+    await new Promise((r) => setTimeout(r, 20));
+    svc.invalidate(root); // e.g. a watcher event during the read
+    await claudeReplies(e);
+    open();
+    expect((await first).find((x) => x.thread.id === e.thread.id)!.thread.comments).toHaveLength(1);
+    expect((await svc.findEntry(root, e.thread.id))!.thread.comments).toHaveLength(2);
+  });
+});

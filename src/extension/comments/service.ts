@@ -6,10 +6,10 @@ import { unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { displayText, plainForMessage } from '../../core/display-text.ts';
 import { copyPrompt, type Intent } from '../../core/threads/prompt.ts';
-import { isAnswered, type Thread } from '../../core/threads/reduce.ts';
-import { cleanAuthorName, cleanBody, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
+import { isAnswered, reduceThread, type Thread } from '../../core/threads/reduce.ts';
+import { cleanAuthorName, cleanBody, EVENT_ID_RE, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
 import { liveness, RECORD_MAX_AGE_MS, StateStore, type Presence, type Send } from '../../comments/delivery.ts';
-import { newId, writeReplace } from '../../comments/fsx.ts';
+import { listDir, newId, writeReplace } from '../../comments/fsx.ts';
 import { Ledger } from '../../comments/ledger.ts';
 import { canonical, defaultStateDir, ensureStateDir, repoKeyFor, servesPath, sweepOld } from '../../comments/state-dir.ts';
 import { locationKey, ThreadFiles, threadsSegments, type Location } from '../../comments/storage.ts';
@@ -35,6 +35,8 @@ interface SendRecord {
   intent?: Intent;
   /** The repository root (the backstop re-reads only roots with sends in flight). */
   root?: string;
+  /** The thread asked in (the backstop re-reads only that thread's folder); older records have none. */
+  thread?: string;
   /** Answered, cancelled or stopped: no longer polled. */
   done?: boolean;
   /** The reader dismissed the session picker. */
@@ -61,6 +63,12 @@ export class CommentService implements vscode.Disposable {
   private readonly memento: vscode.Memento;
   private readonly repos = new Map<string, { root: vscode.Uri; files: ThreadFiles; key: string }>();
   private readonly cache = new Map<string, Map<string, Entry[]>>();
+  /** Reads in flight, by root: overlapping callers share one, and a newer drop makes its result uncached. */
+  private readonly reading = new Map<string, Promise<Map<string, Entry[]>>>();
+  /** The backstop's last listing of each pending thread's folder, by `root\0thread`. */
+  private listed = new Map<string, string>();
+  /** Threads the backstop found changed: read once more on its next tick, for a ledger entry written just after. */
+  private readonly recheck = new Set<string>();
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -113,6 +121,7 @@ export class CommentService implements vscode.Disposable {
       this.unusable = true;
       for (const r of this.repos.values()) r.files.ledger.disabled = true;
       this.cache.clear();
+      this.reading.clear();
       log.error(`Comments: the state directory ${this.stateDir} can't be used: ${(e as Error).message}`);
       throw e;
     });
@@ -158,14 +167,14 @@ export class CommentService implements vscode.Disposable {
   }
 
   private flush(again = true) {
-    for (const r of this.dirtyRoots) this.cache.delete(r);
+    for (const r of this.dirtyRoots) this.drop(r);
     // A writer records its ledger entry just after the file (§9.4): read once more so a fresh reply isn't left
     // showing repository trust.
     if (again && this.dirtyRoots.size) {
       const roots = [...this.dirtyRoots];
       clearTimeout(this.againTimer);
       this.againTimer = setTimeout(() => {
-        for (const r of roots) this.cache.delete(r);
+        for (const r of roots) this.drop(r);
         this.emitter.fire();
       }, 1500);
     }
@@ -175,18 +184,67 @@ export class CommentService implements vscode.Disposable {
 
   /** Re-reads now (after this window wrote). */
   invalidate(root: vscode.Uri): void {
-    this.cache.delete(localPath(root));
+    this.drop(localPath(root));
     clearTimeout(this.changeTimer);
     this.changeTimer = setTimeout(() => this.flush(), 75);
   }
 
+  private drop(root: string) {
+    this.cache.delete(root);
+    this.reading.delete(root);
+  }
+
+  /**
+   * While sends are in flight (§9.4): a reply the watcher missed (WSL, network mounts) still shows. Lists only the
+   * asked threads' folders and re-reads a thread whose event files changed; the fire refreshes the delivery lines.
+   */
   private async backstop() {
     const sends = this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {};
-    // Only sends still in flight (not answered, cancelled or stopped) and recent; only their repositories.
-    const roots = new Set(Object.values(sends).filter((r) => r.send && !r.done && r.root && this.now() - r.at < 30 * 60_000).map((r) => r.root!));
-    if (!roots.size) return;
-    for (const k of roots) this.cache.delete(k);
+    // Only sends still in flight (not answered, cancelled or stopped) and recent; only their threads.
+    const pending = Object.values(sends).filter((r) => r.send && !r.done && r.root && this.now() - r.at < 30 * 60_000);
+    if (!pending.length) return;
+    const threads = new Map<string, Set<string> | null>();
+    for (const r of pending) {
+      const ids = threads.get(r.root!);
+      if (ids === null) continue;
+      // A record without its thread: the whole repository, as before.
+      if (!r.thread) threads.set(r.root!, null);
+      else threads.set(r.root!, (ids ?? new Set()).add(r.thread));
+    }
+    const listed = new Map<string, string>();
+    for (const [root, ids] of threads) {
+      if (ids === null) this.drop(root);
+      else for (const id of ids) await this.rereadThread(root, id, listed).catch(() => this.drop(root));
+    }
+    this.listed = listed;
     this.emitter.fire();
+  }
+
+  /** Re-reads one cached thread when its folder's event files changed since the last tick (or it was just re-read). */
+  private async rereadThread(root: string, threadId: string, listed: Map<string, string>): Promise<void> {
+    const byLoc = this.cache.get(root);
+    const at = byLoc && [...byLoc.values()].find((list) => list.some((e) => e.thread.id === threadId));
+    if (!byLoc || !at) return; // not read yet (or not readable): the next entries() reads the whole root
+    const i = at.findIndex((e) => e.thread.id === threadId);
+    const e = at[i]!;
+    const key = `${root}\0${threadId}`;
+    const names = (await listDir(join(root, ...threadsSegments(e.location), threadId))).filter((f) => f.endsWith('.json') && EVENT_ID_RE.test(f.slice(0, -5)));
+    const now = names.sort().join('/');
+    listed.set(key, now);
+    // First tick for this thread: compare with the events that were read.
+    const before = this.listed.get(key) ?? [...e.paths.values()].map((p) => p.slice(p.lastIndexOf('/') + 1)).sort().join('/');
+    const changed = now !== before;
+    if (!changed && !this.recheck.delete(key)) return;
+    if (changed) this.recheck.add(key);
+    const read = await e.files.readThread(e.location, threadId);
+    const thread = reduceThread(read.events, this.now());
+    // Dropped or replaced meanwhile: that read wins.
+    if (this.cache.get(root) !== byLoc) return;
+    if (!thread) {
+      this.drop(root);
+      return;
+    }
+    at[i] = { ...e, thread, paths: read.paths };
   }
 
   /** Every thread under a repository root, by location. */
@@ -194,16 +252,35 @@ export class CommentService implements vscode.Disposable {
     // Threads are files on this machine: a remote or virtual root has none here (docs/CHANGES-PLAN.md §15).
     if (root.scheme !== 'file') return [];
     await this.init().catch(() => undefined);
-    const r = this.repo(root);
-    let byLoc = this.cache.get(localPath(root));
+    const k = localPath(root);
+    let byLoc = this.cache.get(k);
     if (!byLoc) {
-      byLoc = new Map();
-      for (const location of await r.files.locations()) {
-        const list: Entry[] = [];
-        for (const { read, thread } of await r.files.readLocation(location, this.now())) if (thread) list.push({ root, files: r.files, location, thread, paths: read.paths });
-        byLoc.set(locationKey(location), list);
+      let p = this.reading.get(k);
+      if (!p) {
+        const files = this.repo(root).files;
+        p = (async () => {
+          const out = new Map<string, Entry[]>();
+          for (const location of await files.locations()) {
+            const list: Entry[] = [];
+            for (const { read, thread } of await files.readLocation(location, this.now())) if (thread) list.push({ root, files, location, thread, paths: read.paths });
+            out.set(locationKey(location), list);
+          }
+          return out;
+        })();
+        const mine = p;
+        this.reading.set(k, mine);
+        void mine.then(
+          (out) => {
+            if (this.reading.get(k) !== mine) return;
+            this.reading.delete(k);
+            this.cache.set(k, out);
+          },
+          () => {
+            if (this.reading.get(k) === mine) this.reading.delete(k);
+          },
+        );
       }
-      this.cache.set(localPath(root), byLoc);
+      byLoc = await p;
     }
     return [...byLoc.values()].flat();
   }
@@ -428,7 +505,7 @@ export class CommentService implements vscode.Disposable {
     };
     if (!send.via) delete send.via;
     await this.state.writeSend(send);
-    await this.putRecord(eventId, { send: send.send, route: route.serverId, at: this.now(), intent: send.intent, root: localPath(e.root) });
+    await this.putRecord(eventId, { send: send.send, route: route.serverId, at: this.now(), intent: send.intent, root: localPath(e.root), thread: e.thread.id });
     const ts = this.memento.get<Record<string, string>>(THREAD_SESSION_KEY) ?? {};
     await this.memento.update(THREAD_SESSION_KEY, { ...ts, [e.thread.id]: route.serverId });
     this.emitter.fire();

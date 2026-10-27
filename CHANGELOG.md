@@ -3,6 +3,7 @@
 ## Unreleased
 
 - The panel's script is about 70% smaller (614 KB → 176 KB), so sidestories open faster: the panel checks widget messages with zod's small build instead of the full library.
+- While a comment waits for Claude's answer, the 2-second check for a missed reply now lists only that thread's folder (and re-reads it when a file arrived) instead of re-reading every thread in the repository. Views that ask for threads at the same moment share one read.
 
 ## 0.2.4 (2026-10-26)
 
