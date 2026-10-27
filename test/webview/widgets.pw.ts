@@ -918,6 +918,13 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     // Back on screen: beating again.
     await page.locator('.cx-scroll').evaluate((s) => (s.scrollTop = 0));
     await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').at(-1), { timeout: 3000 }).toMatchObject({ visible: true, mounted: ['w/probe.tsx'] });
+    // The gate turns off: the frame saves its state, goes, and the last beat says nothing is mounted.
+    await send(page, { type: 'widgets', gate: { ...ON, status: 'untrusted' } });
+    await expect(frames(page)).toHaveCount(0);
+    await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'heartbeat').at(-1)).toMatchObject({ visible: true, mounted: [], mounting: null });
+    await clearPosted(page);
+    await page.waitForTimeout(1500);
+    expect((await posted(page)).filter((m) => m.type === 'heartbeat')).toEqual([]);
   });
 
   test('a highlight waiting in the rate limit is dropped when the step changes', async ({ page }) => {

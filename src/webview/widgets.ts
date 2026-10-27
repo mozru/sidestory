@@ -1457,7 +1457,7 @@ export class WidgetFrames {
 
   // ---- watchdogs and timers ----
 
-  /** Timers run only while something is mounted (and for heartbeats, on screen with the gate on). */
+  /** Timers run only while something is mounted (and for heartbeats, on screen). */
   private timers(): void {
     const mounted = [...this.widgets.values()].some((w) => w.frame);
     if (mounted && !this.measureTimer) this.measureTimer = setInterval(() => this.schedule(), MEASURE_MS);
@@ -1482,8 +1482,10 @@ export class WidgetFrames {
       clearInterval(this.focusTimer);
       this.focusTimer = undefined;
     }
-    // The extension's watchdog is armed only by beats from a visible panel with widgets mounted (§4).
-    const beating = mounted && this.gate.status === 'on' && document.visibilityState === 'visible';
+    // The extension's watchdog is armed only by beats from a visible panel with widgets mounted (§4). Not tied to
+    // the gate: frames still saving their state after it turned off beat until they are removed, so the last beat
+    // always says why beats stop (hidden, or nothing mounted) and disarms.
+    const beating = mounted && document.visibilityState === 'visible';
     if (beating && this.heartbeatTimer === undefined) {
       this.heartbeatDue = now() + HEARTBEAT_MS;
       this.heartbeatTimer = setTimeout(() => this.heartbeat(), HEARTBEAT_MS);
