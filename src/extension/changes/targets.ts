@@ -53,9 +53,49 @@ export function mapOldRange(diff: FileDiff, r: LineRange): LineRange {
   return { start, end };
 }
 
+interface EntryLike {
+  readonly path: string;
+  readonly oldPath?: string;
+  readonly status: string;
+}
+
+/** A comparison's entries by path, each map holding the first match (as a scan in list order would find). */
+export interface EntryIndex<E extends EntryLike> {
+  byPath: ReadonlyMap<string, E>;
+  /** Not deleted, by path: the head side. */
+  head: ReadonlyMap<string, E>;
+  /** Not added, by old path (or path): the base side. */
+  base: ReadonlyMap<string, E>;
+  /** The old paths of renames. */
+  renamedFrom: ReadonlySet<string>;
+}
+
+const indexes = new WeakMap<readonly EntryLike[], EntryIndex<EntryLike>>();
+
+/** The index of an entry list, built once per list (a snapshot's list never changes once it's set). */
+export function entryIndex<E extends EntryLike>(entries: readonly E[]): EntryIndex<E> {
+  let ix = indexes.get(entries) as EntryIndex<E> | undefined;
+  if (!ix) {
+    const byPath = new Map<string, E>();
+    const head = new Map<string, E>();
+    const base = new Map<string, E>();
+    const renamedFrom = new Set<string>();
+    const first = (m: Map<string, E>, k: string, e: E) => m.has(k) || m.set(k, e);
+    for (const e of entries) {
+      first(byPath, e.path, e);
+      if (e.status !== 'D') first(head, e.path, e);
+      if (e.status !== 'A') first(base, e.oldPath ?? e.path, e);
+      if (e.status === 'R' && e.oldPath !== undefined) renamedFrom.add(e.oldPath);
+    }
+    ix = { byPath, head, base, renamedFrom };
+    indexes.set(entries, ix);
+  }
+  return ix;
+}
+
 /** The empty side of an added or deleted file's diff (`sidestory-empty:/<path>`) as the file's other side. */
-export function emptySideKey(path: string, entries: readonly { path: string; oldPath?: string; status: string }[]): SideKey | undefined {
-  const e = entries.find((x) => x.path === path);
+export function emptySideKey(path: string, entries: readonly EntryLike[]): SideKey | undefined {
+  const e = entryIndex(entries).byPath.get(path);
   return e?.status === 'D' ? { path: e.oldPath ?? e.path, side: 'base' } : e?.status === 'A' ? { path: e.path, side: 'head' } : undefined;
 }
 

@@ -33,10 +33,12 @@ import { MAX_MANIFEST_BYTES, readBytesInside, readInside } from '../explainers.t
 import { localPath } from '../local-path.ts';
 import { log } from '../log.ts';
 import { realPathInside } from '../paths.ts';
+import { SizeLru } from '../widgets/lru.ts';
 import { resolveBase } from './base.ts';
 import type { Snapshot } from './comparison.ts';
 import { apiPath, refReader, relPath } from './git-api.ts';
 import type { ChangeEntry } from './model.ts';
+import { entryIndex } from './targets.ts';
 
 export const COVERAGE_WORK = {
   parallel: 4,
@@ -191,60 +193,10 @@ export interface DiffCacheEntry {
   content?: string;
 }
 
-/** Where diffs are kept between calls: a Map in tests, a `ByteLru` in the service. */
+/** Where diffs are kept between calls: a Map in tests, a `SizeLru` by `diffEntryBytes` in the service. */
 export interface DiffCache {
   get(key: string): DiffCacheEntry | undefined;
   set(key: string, value: DiffCacheEntry): void;
-}
-
-/**
- * A least-recently-used map bounded by total bytes (`sizeOf` each value), not by entry count: a few huge files and
- * thousands of small ones cost what they weigh. A value larger than the whole budget isn't kept.
- */
-export class ByteLru<V> {
-  private readonly map = new Map<string, { v: V; n: number }>();
-  private total = 0;
-  readonly maxBytes: number;
-  private readonly sizeOf: (v: V) => number;
-  constructor(maxBytes: number, sizeOf: (v: V) => number) {
-    this.maxBytes = maxBytes;
-    this.sizeOf = sizeOf;
-  }
-  get(key: string): V | undefined {
-    const e = this.map.get(key);
-    if (!e) return undefined;
-    this.map.delete(key);
-    this.map.set(key, e);
-    return e.v;
-  }
-  set(key: string, v: V): void {
-    this.delete(key);
-    const n = Math.max(1, this.sizeOf(v));
-    if (n > this.maxBytes) return;
-    this.map.set(key, { v, n });
-    this.total += n;
-    while (this.total > this.maxBytes) {
-      const [k, e] = this.map.entries().next().value!;
-      this.map.delete(k);
-      this.total -= e.n;
-    }
-  }
-  delete(key: string): void {
-    const e = this.map.get(key);
-    if (!e) return;
-    this.map.delete(key);
-    this.total -= e.n;
-  }
-  clear(): void {
-    this.map.clear();
-    this.total = 0;
-  }
-  get bytes(): number {
-    return this.total;
-  }
-  get size(): number {
-    return this.map.size;
-  }
 }
 
 /** A cached diff's weight: its texts (up to 2 bytes a character) and its blocks. */
@@ -598,13 +550,14 @@ export class CoverageService implements vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private readonly subs: vscode.Disposable[] = [];
-  private readonly cache = new ByteLru<DiffCacheEntry>(COVERAGE_WORK.diffCacheBytes, diffEntryBytes);
+  private readonly diffs = new SizeLru<DiffCacheEntry>(COVERAGE_WORK.diffCacheBytes);
+  private readonly cache: DiffCache = { get: (k) => this.diffs.get(k), set: (k, v) => this.diffs.set(k, v, Math.max(1, diffEntryBytes(v))) };
   /** Merge-bases by (base spec, head): resolving a base costs a few git calls. */
   private readonly own = new Map<string, Promise<string | undefined>>();
   /** Whether the merge-base holds a path: immutable per merge-base. */
   private readonly present = new Map<string, Promise<boolean | undefined>>();
   /** Merge-base sides read so far (immutable), bounded by bytes; reads in flight are shared. */
-  private readonly oldTexts = new ByteLru<SideBytes>(COVERAGE_WORK.oldBlobBytes, (b) => (b instanceof Uint8Array ? b.length : 64));
+  private readonly oldTexts = new SizeLru<SideBytes>(COVERAGE_WORK.oldBlobBytes);
   private readonly oldInFlight = new Map<string, Promise<SideBytes>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private seq = 0;
@@ -679,7 +632,7 @@ export class CoverageService implements vscode.Disposable {
     const s = this.host.snapshot();
     if (!s || s.mode !== 'workingTree') return false;
     const p = relPath(s.repo, uri);
-    return !!p && (s.entries.some((e) => e.path === p) || isSidestoryPath(p));
+    return !!p && (entryIndex(s.entries).byPath.has(p) || isSidestoryPath(p));
   }
 
   /** Recompute soon (the comparison changed, a sidestory changed, an edit). */
@@ -797,7 +750,7 @@ export class CoverageService implements vscode.Disposable {
       v = readIt().then((b) => {
         this.oldInFlight.delete(key);
         // An unreadable side is asked again next time (a fetch may bring it).
-        if (b !== undefined) this.oldTexts.set(key, b);
+        if (b !== undefined) this.oldTexts.set(key, b, b instanceof Uint8Array ? Math.max(1, b.length) : 64);
         return b;
       });
       this.oldInFlight.set(key, v);

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Large sidestories render and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening 430 → 190 ms, a content update 210 → 70 ms, an anchor update 85 → 15 ms).
+- Branches with thousands of changed files stay responsive: finding a file's change no longer scans the whole list, so updating the compare buttons and the Explorer badges after a change takes milliseconds instead of up to a second (20,000 files).
 - Comment threads load faster: a read of a repository's threads reads the record of which comments are yours once, not once per location and twice per comment (500 threads: about 1 s → 0.25 s). Records of deleted local threads are cleaned up.
 - Fixed: **Copy Prompt** in a thread whose latest comment to Claude was retracted marked that retracted comment as copied, though the prompt was about an earlier one.
 - The checker (`check.cjs`) no longer hangs on deeply nested pages: matching a selector such as `p div div div div div div div` against a widget inside 60 nested `<div>`s took about 35 seconds and now takes a millisecond. Large stylesheets are faster too (a 40,000-rule sheet: 38 s → 0.05 s), as is checking many widgets against them.

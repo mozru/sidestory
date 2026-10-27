@@ -483,8 +483,11 @@ describe('widget compiler helpers', () => {
     expect(lru.get('b')).toBeUndefined();
     expect(lru.get('a')).toBe('a');
     expect(lru.size).toBe(8);
+    lru.set('a', 'a', 1); // replacing re-weighs
+    expect(lru.size).toBe(5);
     lru.set('huge', 'h', 11);
     expect(lru.get('huge')).toBeUndefined();
+    expect(lru.size).toBe(5);
   });
 
   it('orders libraries with dependencies first', () => {

@@ -23,7 +23,7 @@ import { baseName, comparePaths, short, step, type ChangeEntry } from './model.t
 import { editorFor, inDiffEditor, openTarget, type DiffContext } from './open.ts';
 import { fileRanks, nextChange, walkPos, type OpenChange } from './order.ts';
 import { changePrompt, COPIED, explainBranchPrompt, updatePrompt } from './prompts.ts';
-import { emptySideKey, gitSideKey, vscodeGitSideKey, type SideKey } from './targets.ts';
+import { emptySideKey, entryIndex, gitSideKey, vscodeGitSideKey, type SideKey } from './targets.ts';
 import { markTrivial } from './trivial.ts';
 import type { SessionDiffs } from '../session.ts';
 import { branchDiffersFromBase, PICKS_KEY, watchBranches } from './probe.ts';
@@ -558,9 +558,9 @@ export class ChangesService implements vscode.Disposable {
     const r = this.result(s);
     if (r && k.side === 'base') {
       const f = r.files.get(k.path);
-      if (f?.entry.status === 'D' && s.entries.some((e) => e.oldPath === k.path && e.status === 'R')) return f.entry;
+      if (f?.entry.status === 'D' && entryIndex(s.entries).renamedFrom.has(k.path)) return f.entry;
     }
-    return k.side === 'head' ? s.entries.find((e) => e.path === k.path && e.status !== 'D') : s.entries.find((e) => (e.oldPath ?? e.path) === k.path && e.status !== 'A');
+    return entryIndex(s.entries)[k.side].get(k.path);
   }
 
   private pairedEntry(s: Snapshot, k: SideKey): ChangeEntry | undefined {
