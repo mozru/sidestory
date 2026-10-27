@@ -2,14 +2,13 @@
 
 ## Unreleased
 
-- Large sidestories render and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening 430 → 190 ms, a content update 210 → 70 ms, an anchor update 85 → 15 ms).
-- Fixed: a sidestory's drift badge in the Sidestories view could stay out of date after an edit to a file that many sidestories anchor (past 2,000 anchors in the file, or 200 from one sidestory).
+- Large sidestories open and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening about twice as fast, updates about three times).
+- Fixed: a sidestory's drift badge in the Sidestories view could stay out of date after an edit to a file with more than 2,000 anchors across all sidestories.
 - Less work while typing: editing a sidestory's prose no longer refreshes the Sidestories view, the CodeLenses and This File (only a change to its steps does), and a typing pause in a code file re-resolves the other visible files only when an anchor actually moved.
-- Branches with thousands of changed files stay responsive: finding a file's change no longer scans the whole list, so updating the compare buttons and the Explorer badges after a change takes milliseconds instead of up to a second (20,000 files).
-- Comment threads load faster: a read of a repository's threads reads the record of which comments are yours once, not once per location and twice per comment (500 threads: about 1 s → 0.25 s). Records of deleted local threads are cleaned up.
-- Fixed: **Copy Prompt** in a thread whose latest comment to Claude was retracted marked that retracted comment as copied, though the prompt was about an earlier one.
-- The checker (`check.cjs`) no longer hangs on deeply nested pages: matching a selector such as `p div div div div div div div` against a widget inside 60 nested `<div>`s took about 35 seconds and now takes a millisecond. Large stylesheets are faster too (a 40,000-rule sheet: 38 s → 0.05 s), as is checking many widgets against them.
-- Files moved without `git mv` are paired faster in working-tree coverage, in the extension and in `check.cjs --coverage`: large files that can't be renames of each other are ruled out without comparing them line by line (two unrelated 20,000-line files: 1.1 s → 0.01 s). The pairs found are the same.
+- Branches with thousands of changed files stay responsive: finding a file's change no longer scans the whole list, so the compare buttons and Explorer badges update quickly.
+- Comment threads load faster (the record of which comments are yours is read once per read of a repository's threads). Fixed: in a thread whose latest comment to Claude was retracted, **Copy Prompt** marked that retracted comment as copied, though the prompt was about an earlier one; likewise, a reply from Claude through the comment tools that names no comment now answers the latest comment that wasn't retracted.
+- The checker (`check.cjs`) no longer hangs on deeply nested pages: a selector such as `p div div div div div div div` against a widget inside 60 nested `<div>`s took about 35 seconds and now takes a millisecond. Large stylesheets and many widgets are checked faster too.
+- Files moved without `git mv` are paired faster in working-tree coverage, in the extension and in `check.cjs --coverage`: large files that can't be renames of each other are ruled out without comparing them line by line. The pairs found are the same.
 
 ## 0.2.4 (2026-10-26)
 

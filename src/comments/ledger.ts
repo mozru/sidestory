@@ -127,21 +127,16 @@ export class Ledger {
     for (const e of moved) await this.drop(e.path, e.id);
   }
 
-  /**
-   * Drops entries for local-tier event files that are gone (a deleted thread). Only the local tier: checkouts never
-   * touch it, while a shared thread's files also vanish on a branch without them and come back with it. Entries
-   * younger than `minAgeMs` stay, so a move between `prepareMove` and the rename (in any process) keeps its new ones.
-   */
-  async sweep(root: string, minAgeMs = 10 * 60_000, now = Date.now()): Promise<number> {
+  /** Drops entries whose file is gone. */
+  async sweep(root: string): Promise<number> {
     let n = 0;
-    for (const { name, entry } of await this.files()) {
-      if (typeof entry.path !== 'string' || !entry.path.startsWith('.sidestory/.local/')) continue;
-      const gone = await fs.lstat(join(root, ...entry.path.split('/'))).then(() => false, () => true);
-      if (!gone) continue;
-      const recorded = await fs.lstat(join(this.dir(), name)).catch(() => undefined);
-      if (!recorded || now - recorded.mtimeMs < minAgeMs) continue;
-      await fs.unlink(join(this.dir(), name)).catch(() => undefined);
-      n++;
+    for (const e of await this.all()) {
+      try {
+        await fs.lstat(join(root, ...e.path.split('/')));
+      } catch {
+        await this.drop(e.path, e.id);
+        n++;
+      }
     }
     return n;
   }

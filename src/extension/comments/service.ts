@@ -143,8 +143,6 @@ export class CommentService implements vscode.Disposable {
       ledger.disabled = this.unusable;
       r = { root, files: new ThreadFiles(localPath(root), ledger), key };
       this.repos.set(k, r);
-      // Ledger entries of deleted local threads go once a session per repository (§5.2): every read pays for them.
-      void this.init().then(() => ledger.sweep(localPath(root))).catch(() => undefined);
     }
     return r;
   }

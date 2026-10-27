@@ -131,20 +131,6 @@ describe('thread files', () => {
     expect(trusts(r)).toEqual(['claude', 'local_user', 'local_user', 'repository']);
   });
 
-  it('sweeps ledger entries of deleted local threads only, and only old ones', async () => {
-    const f = await files();
-    const [gone, kept, shared] = [newId('t'), newId('t'), newId('t')];
-    await f.write(LOCAL, open(gone), 'human');
-    await f.write(LOCAL, open(kept), 'human');
-    await f.write(SHARED, open(shared), 'human');
-    await f.deleteThread(LOCAL, gone);
-    rmSync(join(root, '.sidestory/retry/threads'), { recursive: true }); // as on a branch without the shared thread
-    const threads = async () => (await f.ledger.all()).map((e) => e.path.split('/').at(-2)).sort();
-    expect(await f.ledger.sweep(root)).toBe(0); // just recorded: could be a move in progress
-    expect(await f.ledger.sweep(root, 10 * 60_000, Date.now() + 11 * 60_000)).toBe(1);
-    expect(await threads()).toEqual([kept, shared].sort());
-  });
-
   it('keeps ledger-known events when a flood of junk hits the cap', async () => {
     const f = await files();
     const t = newId('t');
