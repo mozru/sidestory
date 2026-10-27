@@ -116,9 +116,11 @@ describe('delivery states', () => {
 });
 
 describe('the backstop while an ask is pending', () => {
-  type Backstop = { backstop(): Promise<void> };
+  type Backstop = { backstop(): Promise<void>; pollTimer: ReturnType<typeof setInterval> };
   const tick = () => (svc as unknown as Backstop).backstop();
   const settle = () => new Promise((r) => setTimeout(r, 120)); // the write's own re-read (75 ms)
+  // Ticks are the test's own: the service's 2 s timer would race them.
+  beforeEach(() => clearInterval((svc as unknown as Backstop).pollTimer));
 
   async function pending() {
     await presence('likely');
@@ -138,8 +140,6 @@ describe('the backstop while an ask is pending', () => {
     const files = svc.repo(root).files;
     const location = vi.spyOn(files, 'readLocation');
     const thread = vi.spyOn(files, 'readThread');
-    await tick();
-    expect(thread).not.toHaveBeenCalled(); // nothing new: a folder listing only
     await claudeReplies(e);
     let fired = 0;
     svc.onDidChange(() => fired++);
@@ -148,10 +148,37 @@ describe('the backstop while an ask is pending', () => {
     expect(thread).toHaveBeenCalledTimes(1);
     const now = (await svc.findEntry(root, e.thread.id))!;
     expect(now.thread.comments.map((c) => [c.body, c.trust])).toEqual([['Why?', 'local_user'], ['Because.', 'claude']]);
-    await tick(); // read once more (a ledger entry written just after its file), then not again
-    await tick();
-    expect(thread).toHaveBeenCalledTimes(2);
     expect(location).not.toHaveBeenCalled();
+  });
+
+  it('a reply read before its ledger entry was written shows its trust on the next tick', async () => {
+    const e = await pending();
+    const files = svc.repo(root).files;
+    const record = files.ledger.record.bind(files.ledger);
+    let late: (() => Promise<void>) | undefined;
+    vi.spyOn(files.ledger, 'record').mockImplementationOnce(async (x) => void (late = () => record(x)));
+    await claudeReplies(e);
+    await tick();
+    expect((await svc.findEntry(root, e.thread.id))!.thread.comments.at(-1)!.trust).toBe('repository');
+    await late!();
+    await tick();
+    expect((await svc.findEntry(root, e.thread.id))!.thread.comments.at(-1)!.trust).toBe('claude');
+  });
+
+  it('a thread missing from what was read (moved, or new) re-reads the repository; overlapping ticks read once', async () => {
+    const e = await pending();
+    const files = svc.repo(root).files;
+    const location = vi.spyOn(files, 'readLocation');
+    const thread = vi.spyOn(files, 'readThread');
+    await Promise.all([tick(), tick()]);
+    expect(thread).toHaveBeenCalledTimes(1); // the second tick skipped: the first was still reading
+    const memento = (svc as unknown as { memento: Memento }).memento;
+    const sends = memento.get<Record<string, { thread?: string }>>('sidestory.comments.sends')!;
+    for (const r of Object.values(sends)) r.thread = 't_01JC0000000000000000000000';
+    await tick();
+    await svc.entries(root);
+    expect(location).toHaveBeenCalled();
+    expect((await svc.findEntry(root, e.thread.id))!.thread.comments).toHaveLength(1);
   });
 
   it('a send recorded without its thread re-reads the whole repository, as before', async () => {

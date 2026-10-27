@@ -7,9 +7,9 @@ import { isAbsolute, join } from 'node:path';
 import { displayText, plainForMessage } from '../../core/display-text.ts';
 import { copyPrompt, type Intent } from '../../core/threads/prompt.ts';
 import { isAnswered, reduceThread, type Thread } from '../../core/threads/reduce.ts';
-import { cleanAuthorName, cleanBody, EVENT_ID_RE, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
+import { CAPS, cleanAuthorName, cleanBody, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
 import { liveness, RECORD_MAX_AGE_MS, StateStore, type Presence, type Send } from '../../comments/delivery.ts';
-import { listDir, newId, writeReplace } from '../../comments/fsx.ts';
+import { newId, writeReplace } from '../../comments/fsx.ts';
 import { Ledger } from '../../comments/ledger.ts';
 import { canonical, defaultStateDir, ensureStateDir, repoKeyFor, servesPath, sweepOld } from '../../comments/state-dir.ts';
 import { locationKey, ThreadFiles, threadsSegments, type Location } from '../../comments/storage.ts';
@@ -35,7 +35,7 @@ interface SendRecord {
   intent?: Intent;
   /** The repository root (the backstop re-reads only roots with sends in flight). */
   root?: string;
-  /** The thread asked in (the backstop re-reads only that thread's folder); older records have none. */
+  /** The thread asked in (the backstop re-reads only that thread); older records have none. */
   thread?: string;
   /** Answered, cancelled or stopped: no longer polled. */
   done?: boolean;
@@ -65,10 +65,8 @@ export class CommentService implements vscode.Disposable {
   private readonly cache = new Map<string, Map<string, Entry[]>>();
   /** Reads in flight, by root: overlapping callers share one, and a newer drop makes its result uncached. */
   private readonly reading = new Map<string, Promise<Map<string, Entry[]>>>();
-  /** The backstop's last listing of each pending thread's folder, by `root\0thread`. */
-  private listed = new Map<string, string>();
-  /** Threads the backstop found changed: read once more on its next tick, for a ledger entry written just after. */
-  private readonly recheck = new Set<string>();
+  /** A backstop pass is reading: the next tick skips. */
+  private backstopping = false;
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -195,10 +193,11 @@ export class CommentService implements vscode.Disposable {
   }
 
   /**
-   * While sends are in flight (§9.4): a reply the watcher missed (WSL, network mounts) still shows. Lists only the
-   * asked threads' folders and re-reads a thread whose event files changed; the fire refreshes the delivery lines.
+   * While sends are in flight (§9.4): a reply the watcher missed (WSL, network mounts) still shows. Re-reads only
+   * the asked threads (one folder each), not their repositories; the fire refreshes the delivery lines.
    */
   private async backstop() {
+    if (this.backstopping) return; // the last pass is still reading
     const sends = this.memento.get<Record<string, SendRecord>>(SENDS_KEY) ?? {};
     // Only sends still in flight (not answered, cancelled or stopped) and recent; only their threads.
     const pending = Object.values(sends).filter((r) => r.send && !r.done && r.root && this.now() - r.at < 30 * 60_000);
@@ -211,32 +210,31 @@ export class CommentService implements vscode.Disposable {
       if (!r.thread) threads.set(r.root!, null);
       else threads.set(r.root!, (ids ?? new Set()).add(r.thread));
     }
-    const listed = new Map<string, string>();
-    for (const [root, ids] of threads) {
-      if (ids === null) this.drop(root);
-      else for (const id of ids) await this.rereadThread(root, id, listed).catch(() => this.drop(root));
+    this.backstopping = true;
+    try {
+      for (const [root, ids] of threads) {
+        if (ids === null) this.drop(root);
+        else for (const id of ids) await this.rereadThread(root, id).catch(() => this.drop(root));
+      }
+    } finally {
+      this.backstopping = false;
     }
-    this.listed = listed;
     this.emitter.fire();
   }
 
-  /** Re-reads one cached thread when its folder's event files changed since the last tick (or it was just re-read). */
-  private async rereadThread(root: string, threadId: string, listed: Map<string, string>): Promise<void> {
+  /** Re-reads one thread of a root that was read; a thread that isn't there (moved, or new) re-reads the root. */
+  private async rereadThread(root: string, threadId: string): Promise<void> {
     const byLoc = this.cache.get(root);
-    const at = byLoc && [...byLoc.values()].find((list) => list.some((e) => e.thread.id === threadId));
-    if (!byLoc || !at) return; // not read yet (or not readable): the next entries() reads the whole root
+    if (!byLoc) return; // not read yet: the next entries() reads the whole root
+    const at = [...byLoc.values()].find((list) => list.some((e) => e.thread.id === threadId));
+    if (!at) {
+      this.drop(root);
+      return;
+    }
     const i = at.findIndex((e) => e.thread.id === threadId);
     const e = at[i]!;
-    const key = `${root}\0${threadId}`;
-    const names = (await listDir(join(root, ...threadsSegments(e.location), threadId))).filter((f) => f.endsWith('.json') && EVENT_ID_RE.test(f.slice(0, -5)));
-    const now = names.sort().join('/');
-    listed.set(key, now);
-    // First tick for this thread: compare with the events that were read.
-    const before = this.listed.get(key) ?? [...e.paths.values()].map((p) => p.slice(p.lastIndexOf('/') + 1)).sort().join('/');
-    const changed = now !== before;
-    if (!changed && !this.recheck.delete(key)) return;
-    if (changed) this.recheck.add(key);
-    const read = await e.files.readThread(e.location, threadId);
+    // With the caps a location's read gives one thread (§3.3).
+    const read = await e.files.readThread(e.location, threadId, { bytes: CAPS.bytesPerSidestory, threads: CAPS.threadsPerSidestory });
     const thread = reduceThread(read.events, this.now());
     // Dropped or replaced meanwhile: that read wins.
     if (this.cache.get(root) !== byLoc) return;
