@@ -459,20 +459,25 @@ describe('--pin and --accept with a branch', () => {
     expect(accepted.code).toBe(3); // the test file is still unexplained
   });
 
-  it('an out-of-date step that explains changes is one anchor-stale finding, naming the changes; --accept settles it', async () => {
+  /** Pinned long ago, over code that has mostly gone since: the branch's lines are in the quote, so they're explained. */
+  const removedSince = (m: { anchors: Record<string, { quote: { exact: string } }> }, id: string) => {
+    m.anchors[id]!.quote.exact = [m.anchors[id]!.quote.exact, ...REMOVED].join('\n');
+  };
+  const REMOVED = Array.from({ length: 8 }, (_, i) => `export const removedSince${i} = ${i};`);
+
+  it('an out-of-date step that explains changes is one anchor-stale finding; --accept settles it', async () => {
     const dir = copy();
     const sd = join(dir, '.sidestory/retry-jitter');
-    // Pinned long ago, over code that has mostly gone since: the branch's lines are in the quote, so they're explained.
     const m = manifest(dir);
-    const q = m.anchors['retry-loop'].quote;
-    q.exact = [q.exact, ...Array.from({ length: 8 }, (_, i) => `export const removedSince${i} = ${i};`)].join('\n');
+    removedSince(m, 'retry-loop');
     writeFileSync(join(sd, 'manifest.json'), JSON.stringify(m, null, 2));
     const r = await json([sd, '--coverage']);
     expect(r.findings.map((f) => f.code)).not.toContain('explained-stale');
+    expect(r.coverage.files.find((f) => f.path === 'src/retry/retry.ts')!.changes[0]).toMatchObject({ stale: true });
     const stale = r.findings.filter((f) => f.code === 'anchor-stale');
     expect(stale).toHaveLength(1);
     expect(slash(stale[0]!.file)).toMatch(/\.sidestory\/retry-jitter\/manifest\.json$/);
-    expect(stale[0]!.message).toMatch(/^Step "The retry loop" \(anchor "retry-loop"\): the code in src\/retry\/retry\.ts changed a lot since it was pinned .*--accept retry-loop\..* It explains this branch's changes at src\/retry\/retry\.ts lines 5–8\.$/);
+    expect(stale[0]!.message).toMatch(/^Step "The retry loop" \(anchor "retry-loop"\): the code in src\/retry\/retry\.ts changed a lot since it was pinned at lines 4–9 \("Out of date" in VS Code\); it is now at lines 4–17\. Check the prose still fits, then run check\.cjs \.sidestory\/retry-jitter --accept retry-loop; /);
     // Without the sidestory's own check (no sidestory named), the same.
     const all = await json(['--coverage', '--base', 'main', '--repo', dir]);
     expect(all.findings.map((f) => f.code).filter((c) => c.endsWith('stale'))).toEqual(['anchor-stale']);
@@ -480,6 +485,28 @@ describe('--pin and --accept with a branch', () => {
     const accepted = await json([sd, '--accept', 'retry-loop', '--coverage']);
     expect(accepted.pin!.pinned.map((p) => p.anchor)).toEqual(['retry-loop']);
     expect(accepted.findings.map((f) => f.code).filter((c) => c.endsWith('stale'))).toEqual([]);
+  });
+
+  it('explained-stale stays when its step isn\'t anchor-stale, matched by anchor id even in a one-line manifest', async () => {
+    const dir = copy();
+    const sd = join(dir, '.sidestory/retry-jitter');
+    // The retry loop out of date at HEAD, every anchor on line 1.
+    const m = manifest(dir);
+    removedSince(m, 'retry-loop');
+    writeFileSync(join(sd, 'manifest.json'), JSON.stringify(m));
+    git(dir, 'commit', '-q', '-a', '--no-verify', '-m', 'Old pins');
+    // In the working tree, the other way round: the retry loop's code is back as pinned, and jitter's is rewritten.
+    const retry = join(dir, 'src/retry/retry.ts');
+    const lines = readFileSync(retry, 'utf8').split('\n');
+    lines.splice(9, 0, ...REMOVED);
+    writeFileSync(retry, lines.join('\n'));
+    const jitter = join(dir, 'src/retry/jitter.ts');
+    writeFileSync(jitter, readFileSync(jitter, 'utf8').replace(/jitter line ([3-9]);/g, 'rewritten $1;'));
+    const r = await json([sd, '--coverage', '--committed']);
+    expect(r.findings.filter((f) => f.code === 'anchor-stale').map((f) => [f.line, f.message.split(':')[0]])).toEqual([[1, 'Step "Jitter" (anchor "jitter")']]);
+    const kept = r.findings.filter((f) => f.code === 'explained-stale');
+    expect(kept.map((f) => slash(f.file).replace(/.*\/src\//, 'src/'))).toEqual(['src/retry/retry.ts']);
+    expect(kept[0]!.message).toMatch(/whose code changed a lot since it was pinned: check the prose still fits, then run check\.cjs \.sidestory\/retry-jitter --accept retry-loop\.$/);
   });
 
   it('--accept an unknown anchor is an error', async () => {

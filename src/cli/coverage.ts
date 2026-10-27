@@ -96,23 +96,24 @@ export interface CoverageResult {
   sidestoryDirs: string[];
   /** For --pin and --accept on the given sidestory: its anchors with changed-since-pinned lines, and the merge-base texts. */
   branch?: BranchContext;
-  /** The explained-stale findings with their out-of-date anchors, so the normal check's anchor-stale can take them in. */
+  /** The explained-stale findings with their out-of-date anchors, so that the normal check's anchor-stale replaces them. */
   staleExplained?: StaleExplained[];
 }
 
 export interface StaleExplained {
   finding: Finding;
-  /** The change: `src/a.ts lines 3–7`. */
-  place: string;
-  /** Where its out-of-date anchors are: their manifest and line, as the normal check's findings put them. */
-  anchors: { manifest: string; line: number | undefined }[];
+  /** Its out-of-date anchors: the sidestory's absolute folder and the anchor id. */
+  anchors: { sidestory: string; anchor: string }[];
 }
+
+/** A file at the merge-base: its text; not a file there; or there but not read (too large, the read budget spent, missing objects). */
+export type BaseText = { text: string } | { missing: true } | { unchecked: string };
 
 export interface BranchContext {
   /** Anchors (of the given sidestory) with lines added after they were pinned, and those lines. */
   held: Map<string, number[]>;
   /** The merge-base text of a path relative to the sidestory's root (the folder holding .sidestory/), for base-side pins. */
-  baseText(file: string): Promise<string | undefined>;
+  baseText(file: string): Promise<BaseText>;
   /** The id the given sidestory's manifest had at the merge-base or HEAD: --pin puts it back rather than writing a new one. */
   previousId?: string;
 }
@@ -732,15 +733,11 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
         const names = c.by.map((b) => title(b.sidestory, b.anchor)).join(', ');
         // --pin leaves out-of-date code alone: --accept re-pins it where it is now.
         const stale = c.by.filter((b) => staleTargets.has(`${b.sidestory}\u0000${b.anchor}`));
-        add('warning', file, 'explained-stale', `${where} explained by ${names}, whose code changed a lot since it was pinned: check the prose still fits, then --accept ${(stale.length ? stale : c.by).map((b) => b.anchor).join(',')}.`, at);
-        staleExplained.push({
-          finding: findings.at(-1)!,
-          place: `${f.path} ${where}`,
-          anchors: stale.map((b) => {
-            const s = sidestories.find((x) => x.folder === b.sidestory)!;
-            return { manifest: abs(`${s.folder}/manifest.json`), line: s.lines.anchor(b.anchor) };
-          }),
-        });
+        const ids = new Map<string, string[]>();
+        for (const b of stale) ids.set(b.sidestory, [...(ids.get(b.sidestory) ?? []), b.anchor]);
+        const accept = [...ids].map(([folder, list]) => `check.cjs ${folder} --accept ${list.join(',')}`).join(' and ');
+        add('warning', file, 'explained-stale', `${where} explained by ${names}, whose code changed a lot since it was pinned: check the prose still fits, then run ${accept}.`, at);
+        staleExplained.push({ finding: findings.at(-1)!, anchors: stale.map((b) => ({ sidestory: abs(b.sidestory), anchor: b.anchor })) });
       }
     });
   });
@@ -758,7 +755,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     const held = new Map<string, number[]>();
     for (const f of result.files) for (const c of f.changes) for (const n of c.needsLook ?? []) if (n.sidestory === given.folder) held.set(n.anchor, [...(held.get(n.anchor) ?? []), ...n.lines]);
     const prefix = given.prefix;
-    const cache = new Map<string, Promise<string | undefined>>();
+    const cache = new Map<string, Promise<BaseText>>();
     const previousId = opts.newId ? undefined : previousIds.get(`${given.folder}/manifest.json`);
     branch = {
       held,
@@ -767,14 +764,17 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
         const path = rel(prefix, file);
         let p = cache.get(path);
         if (!p) {
-          p = (async () => {
+          p = (async (): Promise<BaseText> => {
             const e = byOld.get(path);
-            if (e?.oldText !== undefined) return e.oldText;
+            if (e?.oldText !== undefined) return { text: e.oldText };
             const t = await git.lsTree(mergeBase, [path]);
             const id = t.get(path);
-            if (!id || !REGULAR.has(id.mode)) return undefined;
-            const b = (await git.blobs([id.id])).bytes.get(id.id);
-            return b ? (decodeUtf8(b) ?? decodeLatin1(b)) : undefined;
+            if (!id || !REGULAR.has(id.mode)) return { missing: true };
+            const { bytes, skipped } = await git.blobs([id.id]);
+            const b = bytes.get(id.id);
+            if (b) return { text: decodeUtf8(b) ?? decodeLatin1(b) };
+            const why = skipped.get(id.id);
+            return why === 'not-a-blob' ? { missing: true } : { unchecked: why === 'too-large' ? 'too large to read' : why === 'budget' ? "past the run's read budget" : "its object isn't in the repository" };
           })();
           cache.set(path, p);
         }

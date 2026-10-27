@@ -1,6 +1,6 @@
 // The standalone widget checker (docs/WIDGETS-PLAN.md §2 "Checking"), bundled as dist/check.cjs:
 //
-//   node <extension>/dist/check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]]
+//   node <extension>/dist/check.cjs <sidestory-dir> [--json] [--types] [--pin] [--accept <ids>] [--yes-widgets-may-read]
 //
 // Finds sidestory.html's <explain-widget> elements, compiles each with the extension's widget compiler,
 // validates their props, checks the anchor ids widget code names against manifest.json, reports anchors
@@ -18,14 +18,14 @@
 // with code added since they were pinned are left alone: --accept <ids> re-pins those (docs/CHANGES-PLAN.md
 // §13.1). --pin also writes a stable `id` when the manifest has none (docs/COMMENTS-PLAN.md §3.1).
 //
-// Every check also resolves each manifest anchor as the panel and the sidebar's drift badges do, and warns about
-// code that is lost (anchor-lost) or out of date (anchor-stale).
+// Every check also resolves each manifest anchor as the panel and the sidebar's drift badges do, and reports code
+// that is lost (anchor-lost), out of date (anchor-stale) or changed a little (anchor-changed).
 //
 //   node check.cjs [<sidestory-dir>] --coverage [--base <ref>] [--committed | --head <sha>] [--repo <dir>] [--json]
 //
 // --coverage checks the branch's merge diff against the sidestories that belong to it (src/cli/coverage.ts) and
 // exits 3 when there are no errors but some change isn't explained or marked trivial.
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
 import { simple } from 'acorn-walk';
@@ -48,7 +48,7 @@ import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { manifestLines, type ManifestLines } from './manifest-lines.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 import { newUlid } from '../comments/fsx.ts';
-import { manifestDiagnosticFindings, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
+import { manifestDiagnosticFindings, runCoverage, type BaseText, type BranchContext, type CoverageResult } from './coverage.ts';
 
 export type Severity = 'error' | 'warning' | 'info';
 
@@ -111,6 +111,8 @@ export interface CheckOptions {
   yesWidgetsMayRead?: boolean;
   /** Where the compiler's worker and data are (default: next to the bundle). */
   compiler?: WidgetCompilerOptions;
+  /** Code files already read in this run (shared by the sidestories one run checks). */
+  files?: CodeFiles;
 }
 
 /** Same caps as the panel (docs/WIDGETS-PLAN.md §2, §3). */
@@ -238,13 +240,16 @@ interface Context {
   htmlFile: string;
   manifestFile: string;
   findings: Finding[];
-  /** Code files read so far (repository-relative path → contents), each read and prepared once per check. */
-  files: Map<string, Promise<CodeFile>>;
-  /** The same for merge-base texts (base-side anchors). */
-  bases: Map<string, Promise<PreparedText | undefined>>;
+  /** Code files read so far, each read and prepared once per run (shared by the sidestories one run checks). */
+  files: CodeFiles;
+  /** Merge-base texts (base-side anchors), prepared once per check. */
+  bases: Map<string, Promise<PreparedText | BaseText>>;
 }
 
-type CodeFile = { text: string; real: string; doc: PreparedText } | { error: string };
+/** A code file: prepared, or why it wasn't read (`missing`: there is nothing at that path). */
+type CodeFile = { real: string; doc: PreparedText } | { error: string; missing: boolean };
+/** Code files by `<root>\0<repository-relative path>`. */
+export type CodeFiles = Map<string, Promise<CodeFile>>;
 
 function add(ctx: Context, f: Finding) {
   if (ctx.findings.some((g) => g.file === f.file && g.line === f.line && g.code === f.code && g.message === f.message)) return;
@@ -259,37 +264,38 @@ async function readText(file: string): Promise<string | undefined> {
   }
 }
 
-const TOO_LARGE = 'file too large';
-
-/** Reads a file of the repository through its real path, refusing links out of the repository and huge files. */
-async function readInRepo(root: string, rel: string): Promise<{ text: string; real: string } | { error: string }> {
-  const real = await realPathInside(join(root, rel), root);
-  if (!real) return { error: 'file missing or outside the repository' };
-  try {
-    const st = await stat(real);
-    if (!st.isFile()) return { error: 'not a file' };
-    if (st.size > CHECK_LIMITS.codeBytes) return { error: TOO_LARGE };
-    return { text: await readFile(real, 'utf8'), real };
-  } catch {
-    return { error: "file can't be read" };
-  }
-}
-
-/** A code file of the repository, read through `readInRepo` once per check and prepared once for every anchor in it. */
+/**
+ * Reads and prepares a file of the repository through its real path, refusing links out of the repository and huge
+ * files; once per run.
+ */
 function codeFile(ctx: Context, rel: string): Promise<CodeFile> {
-  let p = ctx.files.get(rel);
+  const key = `${ctx.root}\u0000${rel}`;
+  let p = ctx.files.get(key);
   if (!p) {
-    p = readInRepo(ctx.root, rel).then((f) => ('error' in f ? f : { ...f, doc: PreparedText.from(f.text) }));
-    ctx.files.set(rel, p);
+    p = (async (): Promise<CodeFile> => {
+      const path = join(ctx.root, rel);
+      const real = await realPathInside(path, ctx.root);
+      // Nothing there at all, or something (a link out of the repository) that isn't read.
+      if (!real) return { error: 'file missing or outside the repository', missing: !(await lstat(path).then(() => true, () => false)) };
+      try {
+        const st = await stat(real);
+        if (!st.isFile()) return { error: 'not a file', missing: false };
+        if (st.size > CHECK_LIMITS.codeBytes) return { error: 'file too large', missing: false };
+        return { real, doc: PreparedText.from(await readFile(real, 'utf8')) };
+      } catch {
+        return { error: "file can't be read", missing: false };
+      }
+    })();
+    ctx.files.set(key, p);
   }
   return p;
 }
 
-/** A file's merge-base text, prepared once per check; undefined when it isn't a file there. */
-function baseFile(ctx: Context, branch: BranchContext, rel: string): Promise<PreparedText | undefined> {
+/** A file's merge-base text, prepared once per check, or why there is none. */
+function baseFile(ctx: Context, branch: BranchContext, rel: string): Promise<PreparedText | BaseText> {
   let p = ctx.bases.get(rel);
   if (!p) {
-    p = branch.baseText(rel).then((t) => (t === undefined ? undefined : PreparedText.from(t)));
+    p = branch.baseText(rel).then((t) => ('text' in t ? PreparedText.from(t.text) : t));
     ctx.bases.set(rel, p);
   }
   return p;
@@ -427,15 +433,11 @@ async function compileAndScan(ctx: Context, widgets: WidgetElement[], compiler: 
   return { uses, mayReadAny, read };
 }
 
-/**
- * Why useAnchorCode won't serve an anchor, judged from the manifest and the file on disk, or undefined. `drift` is the
- * anchor's anchor-lost or anchor-stale finding: a lost or changed result then says where the code is and how to fix it.
- */
-async function servingProblem(ctx: Context, a: Anchor, drift?: Drift): Promise<{ severity: Severity; code: string; message: string } | undefined> {
+/** Why useAnchorCode won't serve an anchor, judged from the manifest and the file on disk, or undefined. */
+async function servingProblem(ctx: Context, a: Anchor): Promise<{ severity: Severity; code: string; message: string } | undefined> {
   if (isSecretPath(a.file)) return { severity: 'error', code: 'secret-file', message: `useAnchorCode('${a.id}') will never get code: ${a.file} has a secret-looking name, and widgets never read those.` };
   const file = await codeFile(ctx, a.file);
-  const fix = (plain: string) => (drift ? ` (${drift.where}). ${drift.fix}` : plain);
-  if ('error' in file) return { severity: 'error', code: 'lost', message: `useAnchorCode('${a.id}'): ${a.file}: ${file.error}${fix('.')}` };
+  if ('error' in file) return { severity: 'error', code: 'lost', message: `useAnchorCode('${a.id}'): ${a.file}: ${file.error}.` };
   if (isSecretFileName(basename(file.real))) return { severity: 'error', code: 'secret-file', message: `useAnchorCode('${a.id}') will never get code: ${a.file} links to a file with a secret-looking name.` };
   if (!a.quote) {
     return { severity: 'warning', code: 'not-pinned', message: `useAnchorCode('${a.id}') returns {status: 'unavailable', reason: 'not-pinned'} until the anchor is pinned. Pin it with --pin --yes-widgets-may-read, but only after showing the user which lines widgets could then read and getting their go-ahead (${GUIDE}).` };
@@ -444,70 +446,62 @@ async function servingProblem(ctx: Context, a: Anchor, drift?: Drift): Promise<{
     return { severity: 'warning', code: 'not-pinned', message: `useAnchorCode('${a.id}'): the anchor's quote is case-insensitive (norm "${a.quote.norm}"), which doesn't count as pinned for widgets; re-pin it (norm "ws").` };
   }
   const r = resolveAnchor(file.doc, a);
-  if (!r.range) return { severity: 'warning', code: 'lost', message: `useAnchorCode('${a.id}') returns unavailable (lost): the pinned code isn't in ${a.file}${fix('. Re-anchor or re-pin it.')}` };
+  if (!r.range) return { severity: 'warning', code: 'lost', message: `useAnchorCode('${a.id}') returns unavailable (lost): the pinned code isn't in ${a.file}. Re-anchor or re-pin it.` };
   // The extension measures the anchor where it resolves now, as here.
   const lines = r.range.end - r.range.start + 1;
   if (lines > CHECK_LIMITS.quoteLines) return { severity: 'warning', code: 'too-large', message: `useAnchorCode('${a.id}'): widgets get at most ${CHECK_LIMITS.quoteLines} lines; this anchor spans ${lines}.` };
   if (r.state !== 'exact' && r.state !== 'moved') {
-    return { severity: 'warning', code: 'changed', message: `useAnchorCode('${a.id}'): the code in ${a.file} changed since it was pinned (${r.state}). Widgets then get it only if git tracks the file and the quote matches its committed version: otherwise the reason is 'changed-untracked' (not tracked) or 'changed-since-commit' (the committed version differs too). ${drift ? `${capitalize(drift.where)}. ${drift.fix}` : 'Re-pin it.'}` };
+    return { severity: 'warning', code: 'changed', message: `useAnchorCode('${a.id}'): the code in ${a.file} changed since it was pinned (${r.state}). Widgets then get it only if git tracks the file and the quote matches its committed version: otherwise the reason is 'changed-untracked' (not tracked) or 'changed-since-commit' (the committed version differs too). Re-pin it.` };
   }
   return undefined;
 }
 
-// ---- drift: anchors whose code is lost or out of date ----
+// ---- drift: anchors whose code is lost, out of date or changed ----
 
-/** An anchor's anchor-lost or anchor-stale finding, in parts, so that a widget's lost or changed finding can carry it instead. */
-interface Drift {
-  code: 'anchor-lost' | 'anchor-stale';
-  /** `Step "Title" (anchor "id")`, or `Anchor "id"` for one that isn't a step. */
-  who: string;
-  what: string;
-  /** `last pinned at lines 2–4`, `pinned at lines 2–4, now lines 3–6` … */
-  where: string;
-  fix: string;
-  line?: number;
-}
-
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** The anchor id of each drift finding, so coverage's explained-stale can be matched to the anchor-stale it repeats. */
+const driftAnchor = new WeakMap<Finding, string>();
 const span = (r: LineRange) => (r.start === r.end ? `line ${r.start}` : `lines ${r.start}–${r.end}`);
 
 /**
  * Resolves every anchor as a fresh open of the panel does (and the sidebar's drift badges, src/extension/nav/drift.ts),
- * so the checker warns where VS Code shows "Code not found" or "Out of date". Code that is there, moved, or changed so
- * little that --pin would re-pin it by itself is fine. Base-side anchors are resolved against the merge-base when the
- * check has the branch comparison, and skipped otherwise; secret-looking and too large files are skipped.
+ * and reports what VS Code flags: "Code not found" (anchor-lost) and "Out of date" or changed more than --pin re-pins
+ * by itself (anchor-stale) as warnings, a small change --pin would re-pin (anchor-changed) as info. A file that isn't
+ * read (a link out of the repository, too large …) is anchor-unchecked, as the sidebar counts it; secret-looking ones
+ * are skipped. Base-side anchors are resolved against the merge-base when the check has the branch comparison, and
+ * skipped otherwise. `widgetsRead`: whether widgets may read an anchor, so pinning it needs the user's go-ahead.
  */
-async function anchorDrift(ctx: Context, manifest: Manifest, steps: ReadonlyMap<string, string>, lines: ManifestLines | undefined, branch: BranchContext | undefined): Promise<Map<string, Drift>> {
-  const out = new Map<string, Drift>();
+async function anchorDrift(ctx: Context, manifest: Manifest, steps: ReadonlyMap<string, string>, lines: ManifestLines | undefined, branch: BranchContext | undefined, widgetsRead: (id: string) => boolean): Promise<Map<string, Finding>> {
+  const out = new Map<string, Finding>();
+  const folder = `${basename(dirname(ctx.dir))}/${basename(ctx.dir)}`;
   for (const a of manifest.anchors.values()) {
     if (isSecretPath(a.file)) continue;
     const base = sideOf(a) === 'base';
     if (base && !branch) continue;
     const title = steps.get(a.id);
-    const it = title !== undefined ? 'the step' : 'the anchor';
-    const who = title !== undefined ? `Step "${title}" (anchor "${a.id}")` : `Anchor "${a.id}"`;
-    const pinned = a.quote || a.snippet ? `last pinned at ${span(a.range)}` : `its range is ${span(a.range)}`;
-    const reanchor = base
-      ? 'set its "file" and "range" to the code as it is at the merge-base, delete its "quote" and run --pin'
-      : 'select the code in VS Code and run Re-anchor Section to Selection, or set the anchor\'s "file" and "range" to the code, delete its "quote" and run --pin';
-    const line = lines?.anchor(a.id);
-    const lost = (what: string): Drift => ({
-      code: 'anchor-lost', who, what, where: pinned, line,
-      fix: `If the code moved or was rewritten, re-anchor ${it}: ${reanchor}. If it was removed on purpose, remove ${title !== undefined ? 'the step' : 'the anchor and what refers to it'}.`,
-    });
+    const report = (code: string, severity: Severity, message: string) => {
+      const line = lines?.anchor(a.id);
+      const f: Finding = { severity, file: ctx.manifestFile, ...(line ? { line } : {}), code, message: `${title !== undefined ? `Step "${title}" (anchor "${a.id}")` : `Anchor "${a.id}"`}: ${message}` };
+      driftAnchor.set(f, a.id);
+      out.set(a.id, f);
+    };
+    const reanchor = `re-anchor it: set the anchor's "file" and "range" to the code${base ? ' as it is at the merge-base' : ''}, delete its "quote" and run --pin${base ? '' : ' (or Re-anchor Section to Selection in VS Code)'}`;
+    const run = (args: string) => `check.cjs ${folder} ${args}${widgetsRead(a.id) ? " --yes-widgets-may-read, but only with the user's go-ahead (widgets can then read its code)" : ''}`;
+    const pinnedAt = a.quote || a.snippet ? `last pinned at ${span(a.range)}` : `its range is ${span(a.range)}`;
+    const lost = (what: string) =>
+      report('anchor-lost', 'warning', `${what}. If it moved or was rewritten, ${reanchor}; if it was removed on purpose, remove ${title !== undefined ? 'the step' : 'the anchor and what refers to it'}.${widgetsRead(a.id) ? ' Widgets may read it (useAnchorCode).' : ''}`);
+    const unchecked = (why: string) => report('anchor-unchecked', 'info', `${why}, so its code wasn't checked.`);
     let doc: PreparedText;
     if (base) {
-      const text = await baseFile(ctx, branch!, a.file);
-      if (!text) {
-        out.set(a.id, lost(`${a.file} isn't a file at the merge-base`));
-        continue;
-      }
-      doc = text;
+      const t = await baseFile(ctx, branch!, a.file);
+      if ('missing' in t) lost(`${a.file} isn't a file at the merge-base (${pinnedAt})`);
+      else if ('unchecked' in t) unchecked(`${a.file} at the merge-base is ${t.unchecked}`);
+      if (!(t instanceof PreparedText)) continue;
+      doc = t;
     } else {
       const file = await codeFile(ctx, a.file);
       if ('error' in file) {
-        // Too large to read is unchecked, as in the sidebar, not lost.
-        if (file.error !== TOO_LARGE) out.set(a.id, lost(`${a.file}: ${file.error}`));
+        if (file.missing) lost(`${a.file} doesn't exist (${pinnedAt})`);
+        else unchecked(`${a.file}: ${file.error}`);
         continue;
       }
       if (isSecretFileName(basename(file.real))) continue;
@@ -515,27 +509,34 @@ async function anchorDrift(ctx: Context, manifest: Manifest, steps: ReadonlyMap<
     }
     const r = resolveAnchor(doc, a);
     if (!r.range) {
-      out.set(a.id, lost(a.quote || a.snippet ? `its code isn't in ${a.file}${base ? ' at the merge-base' : ''} any more` : `${a.file} has only ${doc.lines.length} lines`));
+      lost(a.quote || a.snippet ? `its code isn't in ${a.file}${base ? ' at the merge-base' : ''} any more (${pinnedAt})` : `its range (${span(a.range)}) is past the end of ${a.file} (${doc.lines.length} lines)`);
       continue;
     }
-    // The bar --pin re-pins by itself at: anything above it is fine.
-    if (r.state === 'exact' || r.state === 'moved' || (r.state === 'changed' && r.similarity >= 0.9)) continue;
-    const what = r.state === 'stale' ? `the code in ${a.file} changed a lot since it was pinned ("Out of date" in VS Code)` : `the code in ${a.file} changed since it was pinned ("Code changed" in VS Code), too much for --pin to re-pin it`;
+    if (r.state === 'exact' || r.state === 'moved') continue;
+    const now = r.range.start === a.range.start && r.range.end === a.range.end ? '' : `; it is now at ${span(r.range)}`;
+    // What --pin re-pins by itself; VS Code still says "Code changed".
+    if (r.state === 'changed' && r.similarity >= 0.9 && !r.ambiguous) {
+      report('anchor-changed', 'info', `the code in ${a.file} changed a little since it was pinned at ${span(a.range)} ("Code changed" in VS Code)${now}. If the prose still fits, run ${run('--pin')}.`);
+      continue;
+    }
+    const what = r.state === 'stale' ? 'changed a lot since it was pinned' : 'changed since it was pinned';
+    const badge = r.state === 'stale' ? '"Out of date" in VS Code' : '"Code changed" in VS Code, too much for --pin to re-pin by itself';
     const fix = r.ambiguous
-      ? `It matches more than one place about equally well, so --accept can't pick one: re-anchor ${it}: ${reanchor}.`
-      : `Check that the prose still fits the code where it is now, then re-pin it there with --accept ${a.id}. If that isn't the code ${it} is about, re-anchor ${it}: ${reanchor}.`;
-    out.set(a.id, { code: 'anchor-stale', who, what, where: `pinned at ${span(a.range)}, now ${span(r.range)}`, fix, line });
+      ? `It matches more than one place about equally well, so --accept can't pick one: ${reanchor}.`
+      : `Check the prose still fits, then run ${run(`--accept ${a.id}`)}; if that isn't the code ${title !== undefined ? 'the step' : 'the anchor'} is about, ${reanchor}.`;
+    report('anchor-stale', 'warning', `the code in ${a.file} ${what} at ${span(a.range)} (${badge})${now}. ${fix}`);
   }
   return out;
 }
 
-function driftFinding(ctx: Context, d: Drift): Finding {
-  return { severity: 'warning', file: ctx.manifestFile, ...(d.line ? { line: d.line } : {}), code: d.code, message: `${d.who}: ${d.what} (${d.where}). ${d.fix}` };
-}
-
-/** Checks the anchors widget code names. Drift that a widget's lost or changed finding carries is taken out of `drift`. */
-async function checkAnchors(ctx: Context, manifest: Manifest | undefined, scan: Scan, steps: ReadonlySet<string>, drift: Map<string, Drift>) {
-  if (!manifest) return;
+/**
+ * Checks the anchors widget code names. Returns the head-side anchors (widgets read the working tree) whose
+ * useAnchorCode finding is lost or changed; that finding is left out when the anchor's anchor-lost or anchor-stale in
+ * `drift` already says it.
+ */
+async function checkAnchors(ctx: Context, manifest: Manifest | undefined, scan: Scan, steps: ReadonlySet<string>, drift: ReadonlyMap<string, Finding>): Promise<Set<string>> {
+  const broken = new Set<string>();
+  if (!manifest) return broken;
   const has = (id: string) => manifest.anchors.has(id);
   const served = new Map<string, Awaited<ReturnType<typeof servingProblem>> | null>();
   for (const u of scan.uses) {
@@ -551,18 +552,19 @@ async function checkAnchors(ctx: Context, manifest: Manifest | undefined, scan: 
       add(ctx, { severity: 'warning', ...at, code: 'not-a-step', message: `${call}: "${u.id}" isn't a step (a top-level element with data-explain-anchor in sidestory.html), so it never becomes the current step.` });
     }
     if (u.kind === 'useAnchorCode') {
-      if (!served.has(u.id)) {
-        const d = drift.get(u.id);
-        const p = (await servingProblem(ctx, manifest.anchors.get(u.id)!, d)) ?? null;
-        // One finding per anchor: the widget's, now saying where the code is and how to fix it.
-        if (d && (p?.code === 'lost' || p?.code === 'changed')) drift.delete(u.id);
-        served.set(u.id, p);
-      }
+      const a = manifest.anchors.get(u.id)!;
+      if (!served.has(u.id)) served.set(u.id, (await servingProblem(ctx, a)) ?? null);
       const p = served.get(u.id);
+      if ((p?.code === 'lost' || p?.code === 'changed') && sideOf(a) === 'head') {
+        broken.add(u.id);
+        const d = drift.get(u.id)?.code;
+        if (d === 'anchor-lost' || d === 'anchor-stale') continue;
+      }
       if (p) add(ctx, { ...p, ...at });
       else add(ctx, { severity: 'info', ...at, code: 'unconfirmed', message: `useAnchorCode('${u.id}') is pinned. Until the manifest with exactly this quote is committed, or the reader confirms it in VS Code ("Let widgets read …"), the reason is 'unconfirmed'. A file git ignores is never served ('ignored'); this check can't ask git, so look at .gitignore if widgets get nothing.` });
     }
   }
+  return broken;
 }
 
 // ---- --pin ----
@@ -579,8 +581,10 @@ interface PinWhat {
   newId?: () => string;
 }
 
-async function pin(ctx: Context, manifestText: string, manifest: Manifest, widgetRead: (id: string) => boolean, yes: boolean, what: PinWhat): Promise<PinReport> {
+/** `unresolved`: anchors skipped because their code or file wasn't found as it was pinned (what anchor drift reports). */
+async function pin(ctx: Context, manifestText: string, manifest: Manifest, widgetRead: (id: string) => boolean, yes: boolean, what: PinWhat): Promise<{ report: PinReport; unresolved: Set<string> }> {
   const report: PinReport = { pinned: [], unchanged: [], skipped: [], needsConsent: [], widgetsMayRead: [], held: [] };
+  const unresolved = new Set<string>();
   const patches = new Map<string, AnchorPatch>();
   for (const a of manifest.anchors.values()) {
     const accepting = what.accept.has(a.id);
@@ -603,14 +607,16 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
         continue;
       }
       const text = await baseFile(ctx, what.branch, a.file);
-      if (!text) {
-        report.skipped.push({ anchor: a.id, reason: `${a.file} isn't a file at the merge-base` });
+      if (!(text instanceof PreparedText)) {
+        unresolved.add(a.id);
+        report.skipped.push({ anchor: a.id, reason: 'unchecked' in text ? `${a.file} at the merge-base is ${text.unchecked}` : `${a.file} isn't a file at the merge-base` });
         continue;
       }
       doc = text;
     } else {
       const file = await codeFile(ctx, a.file);
       if ('error' in file) {
+        unresolved.add(a.id);
         report.skipped.push({ anchor: a.id, reason: `${a.file}: ${file.error}` });
         continue;
       }
@@ -624,6 +630,7 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
     // --accept takes the code where the anchor is now, changed or not (the author has checked the prose).
     const confident = !!r.range && !r.ambiguous && (accepting ? r.state !== 'lost' : r.state === 'exact' || r.state === 'moved' || (r.state === 'changed' && r.similarity >= 0.9));
     if (!confident) {
+      unresolved.add(a.id);
       const why = !r.range ? 'code not found' : r.ambiguous ? 'ambiguous' : r.state === 'changed' ? 'code changed' : r.state === 'stale' ? 'out of date' : 'code not found';
       report.skipped.push({ anchor: a.id, reason: `${why}; use Re-anchor Section to Selection or Pin Anchors in VS Code, which let you accept intended changes` });
       continue;
@@ -655,7 +662,7 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
   const id = what.all && manifest.raw.id === undefined ? (what.branch?.previousId ?? (what.newId ?? newUlid)()) : undefined;
   if (patches.size || id) await writeFileAtomic(ctx.manifestFile, patchManifest(manifestText, patches, { id }));
   if (id) report.id = id;
-  return report;
+  return { report, unresolved };
 }
 
 // ---- entry ----
@@ -663,7 +670,7 @@ async function pin(ctx: Context, manifestText: string, manifest: Manifest, widge
 export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): Promise<CheckReport> {
   let dir = resolve(dirArg);
   if (/sidestory\.html$|manifest\.json$/.test(dir)) dir = dirname(dir);
-  const ctx: Context = { dir, root: dirname(dirname(dir)), htmlFile: join(dir, 'sidestory.html'), manifestFile: join(dir, 'manifest.json'), findings: [], files: new Map(), bases: new Map() };
+  const ctx: Context = { dir, root: dirname(dirname(dir)), htmlFile: join(dir, 'sidestory.html'), manifestFile: join(dir, 'manifest.json'), findings: [], files: opts.files ?? new Map(), bases: new Map() };
   const report: CheckReport = { sidestory: dir, widgets: [], findings: ctx.findings, errors: 0, warnings: 0 };
 
   if (basename(dirname(dir)) !== '.sidestory') {
@@ -731,9 +738,11 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   if (manifest) {
     for (const id of accept) if (!manifest.anchors.has(id)) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'accept', message: `--accept ${id}: no anchor "${id}" in manifest.json.` });
   }
+  const read = new Set([...scan.read, ...scan.uses.filter((u) => u.kind === 'useAnchorCode' && u.id).map((u) => u.id!)]);
+  const widgetsRead = (id: string) => scan.mayReadAny || read.has(id);
+  let unresolved = new Set<string>();
   if ((opts.pin || accept.size) && manifest && manifestText !== undefined) {
-    const read = new Set([...scan.read, ...scan.uses.filter((u) => u.kind === 'useAnchorCode' && u.id).map((u) => u.id!)]);
-    report.pin = await pin(ctx, manifestText, manifest, (id) => scan.mayReadAny || read.has(id), !!opts.yesWidgetsMayRead, { all: !!opts.pin, accept, branch: opts.branch, newId: opts.newId });
+    ({ report: report.pin, unresolved } = await pin(ctx, manifestText, manifest, widgetsRead, !!opts.yesWidgetsMayRead, { all: !!opts.pin, accept, branch: opts.branch, newId: opts.newId }));
     if (report.pin.needsConsent.length) {
       const list = report.pin.needsConsent.map((e) => `${e.file} lines ${e.range.start}–${e.range.end} (${e.lines} lines, anchor ${e.anchor})`).join('; ');
       add(ctx, {
@@ -752,13 +761,17 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   }
 
   const lines = manifestText === undefined ? undefined : manifestLines(manifestText);
-  // Code lost or out of date, as VS Code shows it. Pin's own reasons for skipping such an anchor would only repeat it.
-  const drift = manifest ? await anchorDrift(ctx, manifest, new Map(report.steps!.map((s) => [s.id, s.title])), lines, opts.branch) : new Map<string, Drift>();
+  // Code lost, out of date or changed, as VS Code shows it. One finding per anchor: pin skipping it because of that,
+  // or a widget not getting its code, would only repeat it.
+  const drift = manifest ? await anchorDrift(ctx, manifest, new Map(report.steps!.map((s) => [s.id, s.title])), lines, opts.branch, widgetsRead) : new Map<string, Finding>();
   for (const s of report.pin?.skipped ?? []) {
-    if (!drift.has(s.anchor)) add(ctx, { severity: 'warning', file: ctx.manifestFile, code: 'pin-skipped', message: `Not pinned: ${s.anchor} (${s.reason}).` });
+    if (!(unresolved.has(s.anchor) && drift.has(s.anchor))) add(ctx, { severity: 'warning', file: ctx.manifestFile, code: 'pin-skipped', message: `Not pinned: ${s.anchor} (${s.reason}).` });
   }
-  await checkAnchors(ctx, manifest, scan, new Set(scanned.steps), drift);
-  for (const d of drift.values()) add(ctx, driftFinding(ctx, d));
+  const broken = await checkAnchors(ctx, manifest, scan, new Set(scanned.steps), drift);
+  for (const [id, f] of drift) {
+    // A widget's lost or changed finding says more than a note that the code changed a little or wasn't checked.
+    if (f.severity === 'warning' || !broken.has(id)) add(ctx, f);
+  }
   if (manifest) {
     // Both ways: the page's ids are in the manifest, and each manifest anchor is used by the page or a widget.
     const widgetIds = scan.mayReadAny || scan.uses.some((u) => u.dynamic) ? 'any' : new Set(scan.uses.flatMap((u) => (u.id ? [u.id] : [])));
@@ -847,7 +860,7 @@ export function formatReport(report: CheckReport, cwd = process.cwd(), coverage 
 }
 
 const USAGE = [
-  'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin [--yes-widgets-may-read]] [--accept <anchor>[,…]]',
+  'usage: node check.cjs <sidestory-dir> [--json] [--types] [--pin] [--accept <anchor>[,…]] [--yes-widgets-may-read]',
   '                      [--coverage [--base <ref>] [--committed | --head <sha>] [--new-id]]',
   '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--new-id] [--json]',
   '       node check.cjs threads [<root>] [--waiting] [--all] [--json]',
@@ -903,7 +916,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   };
   if (unknown.length) return usage(`unknown option ${unknown.join(', ')}`);
   if (args.length > 1 || (args.length === 0 && !coverage)) return usage();
-  if (flags.has('--yes-widgets-may-read') && !flags.has('--pin')) return usage('--yes-widgets-may-read only goes with --pin');
+  if (flags.has('--yes-widgets-may-read') && !flags.has('--pin') && !flags.has('--accept')) return usage('--yes-widgets-may-read only goes with --pin or --accept');
   if (!coverage && ['--base', '--committed', '--head', '--repo', '--new-id'].some((f) => flags.has(f))) return usage('--base, --committed, --head, --repo and --new-id go with --coverage');
   if (flags.has('--committed') && flags.has('--head')) return usage('--committed and --head are two different heads: give one');
   if (args.length === 0 && !flags.has('--base')) return usage('--coverage without a sidestory needs --base <branch>');
@@ -936,8 +949,10 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   else if (dir && (flags.has('--pin') || accept.length) && (await hasBase(dir))) cov = await runCoverage({ ...covOpts, sidestory: dir });
 
   let report: CheckReport | undefined;
+  // A file anchored by several sidestories is read and prepared once.
+  const files: CodeFiles = new Map();
   if (dir) {
-    report = await checkExplainer(dir, { pin: flags.has('--pin'), accept, branch: cov?.branch, newId: hooks.newId, yesWidgetsMayRead: flags.has('--yes-widgets-may-read'), compiler });
+    report = await checkExplainer(dir, { pin: flags.has('--pin'), accept, branch: cov?.branch, newId: hooks.newId, yesWidgetsMayRead: flags.has('--yes-widgets-may-read'), compiler, files });
     // Pinning moved or re-quoted anchors: count again with the manifest as it is now.
     if (coverage && report.pin && (report.pin.pinned.length || report.pin.id)) cov = await runCoverage({ ...covOpts, sidestory: dir });
   }
@@ -951,7 +966,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   const real = (p: string) => realpath(p).catch(() => p);
   const self = dir === undefined ? undefined : await real(dir);
   const others: CheckReport[] = [];
-  for (const d of cov!.sidestoryDirs) if (d !== dir && (await real(d)) !== self) others.push(await checkExplainer(d, { compiler }));
+  for (const d of cov!.sidestoryDirs) if (d !== dir && (await real(d)) !== self) others.push(await checkExplainer(d, { compiler, files }));
   const findings: Finding[] = [];
   const seen = new Set<string>();
   const keep = (f: Finding) => {
@@ -964,20 +979,21 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   // An anchor the normal check already calls unused needs no second warning from coverage.
   const unused = new Set(findings.filter((f) => f.code === 'unused-anchor').map((f) => `${f.file}\u0000${f.line}`));
   let covFindings = cov!.findings.filter((f) => !(f.code === 'anchor-unused' && unused.has(`${f.file}\u0000${f.line}`))).filter(keep);
-  // A change explained by out-of-date anchors that the normal check already reports (anchor-stale): one finding per
-  // anchor, which also names the changes it explains.
-  const staleAt = new Map<string, number>();
-  for (const [i, f] of findings.entries()) if (f.code === 'anchor-stale') staleAt.set(`${await real(f.file)}\u0000${f.line}`, i);
-  const explains = new Map<number, string[]>();
-  const folded = new Set<Finding>();
-  for (const s of cov!.staleExplained ?? []) {
-    const at = await Promise.all(s.anchors.map(async (a) => staleAt.get(`${await real(a.manifest)}\u0000${a.line}`)));
-    if (!at.length || at.some((i) => i === undefined)) continue;
-    folded.add(s.finding);
-    for (const i of at) explains.set(i!, [...(explains.get(i!) ?? []), s.place]);
+  // A change explained by out-of-date anchors that the normal check already reports (anchor-stale) needs no second
+  // warning: matched by sidestory folder and anchor id (`--json` still marks the change stale).
+  const staleIds = new Set<string>();
+  for (const r of [...(report ? [report] : []), ...others]) {
+    for (const f of r.findings) {
+      const id = driftAnchor.get(f);
+      if (f.code === 'anchor-stale' && id !== undefined) staleIds.add(`${await real(r.sidestory)}\u0000${id}`);
+    }
   }
-  for (const [i, places] of explains) findings[i] = { ...findings[i]!, message: `${findings[i]!.message} It explains this branch's changes at ${places.join('; ')}.` };
-  covFindings = covFindings.filter((f) => !folded.has(f));
+  const repeated = new Set<Finding>();
+  for (const s of cov!.staleExplained ?? []) {
+    const keys = await Promise.all(s.anchors.map(async (a) => `${await real(a.sidestory)}\u0000${a.anchor}`));
+    if (keys.length && keys.every((k) => staleIds.has(k))) repeated.add(s.finding);
+  }
+  covFindings = covFindings.filter((f) => !repeated.has(f));
   const all = [...findings, ...covFindings];
   const errors = all.filter((f) => f.severity === 'error').length;
   const warnings = all.filter((f) => f.severity === 'warning').length;
