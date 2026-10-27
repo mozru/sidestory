@@ -16,7 +16,7 @@ const OBJ = 'b'.repeat(40);
 function counting(files: Record<string, string | { mode: string }>, opts: { failOnce?: boolean } = {}) {
   const calls = { details: 0, buffer: 0 };
   let fail = opts.failOnce;
-  const rel = (abs: string) => abs.slice('/repo/'.length);
+  const rel = (abs: string) => abs.replace(/\\/g, '/').replace(/^.*?\/repo\//, ''); // `C:\repo\src\a.ts` on Windows
   return {
     calls,
     repo: {
