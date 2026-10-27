@@ -96,6 +96,16 @@ export interface CoverageResult {
   sidestoryDirs: string[];
   /** For --pin and --accept on the given sidestory: its anchors with changed-since-pinned lines, and the merge-base texts. */
   branch?: BranchContext;
+  /** The explained-stale findings with their out-of-date anchors, so the normal check's anchor-stale can take them in. */
+  staleExplained?: StaleExplained[];
+}
+
+export interface StaleExplained {
+  finding: Finding;
+  /** The change: `src/a.ts lines 3–7`. */
+  place: string;
+  /** Where its out-of-date anchors are: their manifest and line, as the normal check's findings put them. */
+  anchors: { manifest: string; line: number | undefined }[];
 }
 
 export interface BranchContext {
@@ -663,6 +673,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     if (move) f.changes = [move, ...f.changes];
   }
   const result = computeCoverage(inputs, targets);
+  const staleTargets = new Set(targets.filter((t) => t.state === 'stale').map((t) => `${t.sidestory}\u0000${t.anchor}`));
+  const staleExplained: StaleExplained[] = [];
 
   // Findings per change, and per target.
   const title = (sidestory: string, anchor: string) => {
@@ -718,7 +730,17 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       }
       if (c.stale && (c.state === 'explained' || c.state === 'trivial')) {
         const names = c.by.map((b) => title(b.sidestory, b.anchor)).join(', ');
-        add('warning', file, 'explained-stale', `${where} explained by ${names}, whose code changed a lot since it was pinned: check the prose still fits, then re-pin (--pin).`, at);
+        // --pin leaves out-of-date code alone: --accept re-pins it where it is now.
+        const stale = c.by.filter((b) => staleTargets.has(`${b.sidestory}\u0000${b.anchor}`));
+        add('warning', file, 'explained-stale', `${where} explained by ${names}, whose code changed a lot since it was pinned: check the prose still fits, then --accept ${(stale.length ? stale : c.by).map((b) => b.anchor).join(',')}.`, at);
+        staleExplained.push({
+          finding: findings.at(-1)!,
+          place: `${f.path} ${where}`,
+          anchors: stale.map((b) => {
+            const s = sidestories.find((x) => x.folder === b.sidestory)!;
+            return { manifest: abs(`${s.folder}/manifest.json`), line: s.lines.anchor(b.anchor) };
+          }),
+        });
       }
     });
   });
@@ -790,6 +812,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     done: totals.left === 0 && !incomplete,
     sidestoryDirs: sidestories.map((s) => abs(s.folder)),
     branch,
+    staleExplained,
   };
 }
 

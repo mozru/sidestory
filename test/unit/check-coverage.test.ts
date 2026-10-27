@@ -459,6 +459,29 @@ describe('--pin and --accept with a branch', () => {
     expect(accepted.code).toBe(3); // the test file is still unexplained
   });
 
+  it('an out-of-date step that explains changes is one anchor-stale finding, naming the changes; --accept settles it', async () => {
+    const dir = copy();
+    const sd = join(dir, '.sidestory/retry-jitter');
+    // Pinned long ago, over code that has mostly gone since: the branch's lines are in the quote, so they're explained.
+    const m = manifest(dir);
+    const q = m.anchors['retry-loop'].quote;
+    q.exact = [q.exact, ...Array.from({ length: 8 }, (_, i) => `export const removedSince${i} = ${i};`)].join('\n');
+    writeFileSync(join(sd, 'manifest.json'), JSON.stringify(m, null, 2));
+    const r = await json([sd, '--coverage']);
+    expect(r.findings.map((f) => f.code)).not.toContain('explained-stale');
+    const stale = r.findings.filter((f) => f.code === 'anchor-stale');
+    expect(stale).toHaveLength(1);
+    expect(slash(stale[0]!.file)).toMatch(/\.sidestory\/retry-jitter\/manifest\.json$/);
+    expect(stale[0]!.message).toMatch(/^Step "The retry loop" \(anchor "retry-loop"\): the code in src\/retry\/retry\.ts changed a lot since it was pinned .*--accept retry-loop\..* It explains this branch's changes at src\/retry\/retry\.ts lines 5–8\.$/);
+    // Without the sidestory's own check (no sidestory named), the same.
+    const all = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(all.findings.map((f) => f.code).filter((c) => c.endsWith('stale'))).toEqual(['anchor-stale']);
+
+    const accepted = await json([sd, '--accept', 'retry-loop', '--coverage']);
+    expect(accepted.pin!.pinned.map((p) => p.anchor)).toEqual(['retry-loop']);
+    expect(accepted.findings.map((f) => f.code).filter((c) => c.endsWith('stale'))).toEqual([]);
+  });
+
   it('--accept an unknown anchor is an error', async () => {
     const r = await run([join(fixture, '.sidestory/retry-jitter'), '--accept', 'nope']);
     expect(r.code).toBe(1);

@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { anchorUses, checkExplainer, formatReport, main, type CheckReport } from '../../src/cli/check-widgets.ts';
 import { matches, parseCss, parseSelector, placementProblems } from '../../src/cli/css.ts';
 import { scanHtml } from '../../src/cli/html.ts';
+import { pinQuote } from '../../src/core/pin.ts';
+import { splitLines } from '../../src/core/text.ts';
 import type { WidgetCompilerOptions } from '../../src/extension/widgets/compile.ts';
 import { WidgetCompiler } from '../../src/extension/widgets/compile.ts';
 
@@ -345,6 +347,117 @@ describe('checkExplainer', () => {
   it('reports a missing sidestory.html', async () => {
     const r = await check(join(base, 'nowhere/.sidestory/demo'));
     expect(codes(r, 'error')).toEqual(['not-found']);
+  });
+});
+
+describe('anchor drift (lost and out-of-date code, as VS Code shows it)', () => {
+  const fn = (k = '1', name = 'refill') => [`function ${name}(items, limit) {`, '  const out = [];', '  for (const item of items) {', '    if (out.length >= limit) break;', `    out.push(item * ${k});`, '  }', '  return out;', '}'];
+  const ORIG = ['// header', 'import x from "y";', '', ...fn(), '', 'const tail = 1;', 'export { refill };', ''].join('\n');
+  const RANGE = { start: 4, end: 11 };
+  const pinned = (extra: Record<string, unknown> = {}) => ({ file: 'src/a.ts', range: [RANGE.start, RANGE.end], quote: pinQuote(splitLines(ORIG), RANGE)!, ...extra });
+  const drift = (r: CheckReport) => r.findings.filter((f) => f.code.startsWith('anchor-'));
+  const sidestory = (code: string | undefined, anchors: Record<string, unknown> = { refill: pinned() }, html = page(Object.keys(anchors).map((id) => section(id, '<p>x</p>')).join('\n')), more: Record<string, string> = {}, top: Record<string, unknown> = {}) =>
+    repoWith({
+      ...(code === undefined ? {} : { 'src/a.ts': code }),
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 3, title: 'Demo', ...top, anchors }, null, 2),
+      '.sidestory/demo/sidestory.html': html,
+      ...more,
+    });
+
+  it('code that is there, moved or changed a little is fine', async () => {
+    const moved = ['// header', ...Array.from({ length: 30 }, (_, i) => `// pad ${i}`), 'import x from "y";', '', ...fn(), ''].join('\n');
+    for (const code of [ORIG, moved, ORIG.replace('item * 1', 'item * 2')]) {
+      const r = await check(sidestory(code));
+      expect(r.findings).toEqual([]);
+    }
+  });
+
+  it('lost code is anchor-lost: which step, the file, the last pinned range and how to fix it', async () => {
+    const dir = sidestory(['// header', 'import x from "y";', '', 'const tail = 1;', ''].join('\n'));
+    const r = await check(dir);
+    expect(drift(r)).toEqual([{
+      severity: 'warning', file: join(dir, 'manifest.json'), line: 5, code: 'anchor-lost',
+      message: 'Step "refill" (anchor "refill"): its code isn\'t in src/a.ts any more (last pinned at lines 4–11). If the code moved or was rewritten, re-anchor the step: select the code in VS Code and run Re-anchor Section to Selection, or set the anchor\'s "file" and "range" to the code, delete its "quote" and run --pin. If it was removed on purpose, remove the step.',
+    }]);
+    expect(r.errors).toBe(0);
+  });
+
+  it('a missing file, and a range-only anchor past the end of its file, are lost too; a secret-looking file is never read', async () => {
+    const r = await check(sidestory(ORIG, { gone: pinned({ file: 'src/gone.ts' }), past: { file: 'src/a.ts', range: [50, 60] }, env: { file: 'src/.env', range: [50, 60] } }));
+    const by = Object.fromEntries(drift(r).map((f) => [f.message.split(':')[0], f]));
+    expect(Object.keys(by).sort()).toEqual(['Step "gone" (anchor "gone")', 'Step "past" (anchor "past")']);
+    expect(by['Step "gone" (anchor "gone")']!.message).toContain('src/gone.ts: file missing or outside the repository (last pinned at lines 4–11).');
+    expect(by['Step "past" (anchor "past")']!.message).toContain('src/a.ts has only 15 lines (its range is lines 50–60).');
+  });
+
+  it('out-of-date code is anchor-stale: where it is now and --accept, which then re-pins it', async () => {
+    const stale = ORIG.replace('  const out = [];\n  for (const item of items) {\n    if (out.length >= limit) break;', '  const out = items.slice(0, limit);\n  // rewritten\n  for (let i = 0; i < out.length; i++) {\n    out[i] = transform(out[i]);');
+    const changed = ORIG.replace('item * 1', 'item * 2 + offset').replace('const out = [];', 'const out = new Array();');
+    const dir = sidestory(stale, { refill: pinned(), other: pinned({ file: 'src/b.ts' }) }, undefined, { 'src/b.ts': changed });
+    const r = await check(dir);
+    const [a, b] = drift(r);
+    expect(a!.code).toBe('anchor-stale');
+    expect(a!.message).toBe('Step "refill" (anchor "refill"): the code in src/a.ts changed a lot since it was pinned ("Out of date" in VS Code) (pinned at lines 4–11, now lines 4–12). Check that the prose still fits the code where it is now, then re-pin it there with --accept refill. If that isn\'t the code the step is about, re-anchor the step: select the code in VS Code and run Re-anchor Section to Selection, or set the anchor\'s "file" and "range" to the code, delete its "quote" and run --pin.');
+    // Changed past what --pin re-pins by itself: also out of date for the checker.
+    expect(b!.code).toBe('anchor-stale');
+    expect(b!.message).toMatch(/^Step "other" \(anchor "other"\): the code in src\/b\.ts changed since it was pinned \("Code changed" in VS Code\), too much for --pin to re-pin it \(pinned at lines 4–11, now lines 4–11\)\. .*--accept other\./);
+    // --pin leaves them, without repeating them as pin-skipped; --accept re-pins them, and they are fine.
+    const pinning = await check(dir, { pin: true });
+    expect(pinning.pin!.skipped.map((s) => s.anchor)).toEqual(['refill', 'other']);
+    expect(codes(pinning)).toEqual(['anchor-stale', 'anchor-stale']);
+    const accepted = await checkExplainer(dir, { accept: ['refill', 'other'], compiler: compilerOpts });
+    expect(accepted.findings).toEqual([]);
+  });
+
+  it('two equal copies: as VS Code shows it, fine when unchanged; out of date when changed, and --accept can\'t pick one', async () => {
+    const copies = (k: string) => ['// other', ...fn(k), '// middle', '// m', ...fn(k), '// end', ''].join('\n');
+    expect((await check(sidestory(copies('1')))).findings).toEqual([]);
+    const [f] = drift(await check(sidestory(copies('3'))));
+    expect(f!.code).toBe('anchor-stale');
+    expect(f!.message).toContain("It matches more than one place about equally well, so --accept can't pick one: re-anchor the step:");
+  });
+
+  it('an anchor that isn\'t a step is named as an anchor', async () => {
+    const [f] = drift(await check(sidestory('', { refill: pinned() }, page('<p><a data-explain-ref="refill">x</a></p>'))));
+    expect(f!.message).toMatch(/^Anchor "refill": its code isn't in src\/a\.ts any more .* If it was removed on purpose, remove the anchor and what refers to it\.$/);
+  });
+
+  it('base-side anchors: resolved against the merge-base when the check has it, else skipped', async () => {
+    const anchors = { refill: pinned({ side: 'base' }) };
+    // The working tree no longer has the file: that is what a base-side anchor is about.
+    const dir = sidestory(undefined, anchors, undefined, {}, { base: 'main' });
+    expect(drift(await check(dir))).toEqual([]);
+    const branch = (text: string | undefined) => ({ held: new Map(), baseText: async (f: string) => (f === 'src/a.ts' ? text : undefined) });
+    expect(drift(await checkExplainer(dir, { branch: branch(ORIG), compiler: compilerOpts }))).toEqual([]);
+    const lost = drift(await checkExplainer(dir, { branch: branch('// nothing here\n'), compiler: compilerOpts }));
+    expect(lost.map((f) => f.code)).toEqual(['anchor-lost']);
+    expect(lost[0]!.message).toContain("its code isn't in src/a.ts at the merge-base any more (last pinned at lines 4–11). If the code moved or was rewritten, re-anchor the step: set its \"file\" and \"range\" to the code as it is at the merge-base");
+    const gone = drift(await checkExplainer(dir, { branch: branch(undefined), compiler: compilerOpts }));
+    expect(gone[0]!.message).toContain("src/a.ts isn't a file at the merge-base");
+  });
+
+  it('an anchor a widget reads with useAnchorCode gets one finding, the widget\'s, with where the code was and the fix', async () => {
+    const widget = "import { useAnchorCode } from 'explainer';\nexport default function W() { useAnchorCode('refill'); return null; }\n";
+    const html = page(section('refill', widgetEl('w.tsx')));
+    const lost = await check(sidestory('// nothing here\n', undefined, html, { '.sidestory/demo/w.tsx': widget }));
+    expect(codes(lost)).toEqual(['lost']);
+    expect(lost.findings[0]!.message).toMatch(/^useAnchorCode\('refill'\) returns unavailable \(lost\): the pinned code isn't in src\/a\.ts \(last pinned at lines 4–11\)\. If the code moved or was rewritten, re-anchor the step:/);
+    const missing = await check(sidestory(undefined, undefined, html, { '.sidestory/demo/w.tsx': widget }));
+    expect(codes(missing)).toEqual(['lost']);
+    expect(missing.findings[0]!.severity).toBe('error');
+    expect(missing.findings[0]!.message).toContain('src/a.ts: file missing or outside the repository (last pinned at lines 4–11). If the code moved');
+    const changed = await check(sidestory(ORIG.replace('item * 1', 'item * 2 + offset').replace('const out = [];', 'const out = new Array();'), undefined, html, { '.sidestory/demo/w.tsx': widget }));
+    expect(codes(changed)).toEqual(['changed']);
+    expect(changed.findings[0]!.message).toMatch(/Pinned at lines 4–11, now lines 4–11\. Check that the prose still fits .* --accept refill\./);
+  });
+
+  it('--json lists them like every other finding', async () => {
+    const dir = sidestory('// nothing here\n');
+    const out: string[] = [];
+    expect(await main([dir, '--json'], { out: (s) => out.push(s), err: (s) => out.push(s) }, compilerOpts)).toBe(0);
+    const r = JSON.parse(out.join('\n')) as CheckReport;
+    expect(r.warnings).toBe(1);
+    expect(r.findings).toEqual([{ severity: 'warning', file: join(dir, 'manifest.json'), line: 5, code: 'anchor-lost', message: expect.stringMatching(/^Step "refill" \(anchor "refill"\): its code isn't in src\/a\.ts any more/) }]);
   });
 });
 
