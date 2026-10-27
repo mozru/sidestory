@@ -257,6 +257,13 @@ A box in a diagram often deserves a link to its code without a manifest entry or
 
 This works on unsaved edits too, as you type.
 
+The checker (`check.cjs`) finds each anchor's code the same way, in the files on disk, and warns where the panel would show a problem:
+
+- `anchor-lost`: the code isn't in the file any more, or the file is gone. The message names the step, the file and the range it was last pinned at. Re-anchor the step (**Re-anchor Section to Selection**, or set the anchor's `file` and `range` to the code, delete its `quote` and run `--pin`); if the code was removed on purpose, remove the step.
+- `anchor-stale`: the code changed a lot since it was pinned ("Out of date"), or more than `--pin` re-pins by itself. The message says where the code is now. Check that the prose still fits it, then re-pin it there with `--accept <anchor>`; if it found the wrong code, re-anchor it.
+
+Code that moved or changed a little is fine. An anchor a widget reads gets the widget's `lost` or `changed` finding instead, with the same details. Base-side anchors are checked against the merge-base when the check compares the branch (`--coverage`, or `--pin` in a sidestory with a `base`), and skipped otherwise.
+
 ### Styling
 
 Use VS Code's theme variables so your sidestory looks right in every theme:
@@ -454,6 +461,7 @@ node "$CHECK" .sidestory/retry-jitter --pin --coverage
 - The working tree is compared by default, untracked files included (ignored ones aren't), and a deleted file paired with a similar untracked one counts as a rename. `--committed` compares `HEAD` instead (what CI sees); `--head <commit>` compares that commit.
 - `--json` adds `coverage`: every file and change with its lines, status (`explained`, `partly`, `unexplained`, `trivial`, `needsLook`) and the anchors that explain it.
 - `--pin` pins base-side anchors against the merge-base, never the working tree, and never re-pins an anchor with lines added since it was pinned; `--accept <anchor>[,…]` does, once you've updated the step.
+- A change explained by a step whose code changed a lot since it was pinned is `explained-stale`; when that step is already reported as `anchor-stale`, its finding lists the changes instead.
 - Every manifest the branch edits keeps its `id` (`id-changed`, `id-removed`); `--new-id` turns that check off for the run, for a new sidestory that replaces a deleted one under the same folder name.
 - Exit codes: **0** clean, **1** errors, **2** bad arguments, **3** no errors but some change isn't explained or marked trivial.
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The checker (`check.cjs`) now warns about every anchor whose code VS Code would show as "Code not found" (`anchor-lost`) or "Out of date" (`anchor-stale`), not only those widgets read, with the step, where the code was and is now, and how to fix it. `explained-stale` now says to re-pin with `--accept` (`--pin` leaves such anchors alone).
 - Large sidestories open and update faster in the panel: placing the comment badges no longer forces a layout per step (500 sections: opening about twice as fast, updates about three times).
 - Fixed: a sidestory's drift badge in the Sidestories view could stay out of date after an edit to a file with more than 2,000 anchors across all sidestories.
 - Less work while typing: editing a sidestory's prose no longer refreshes the Sidestories view, the CodeLenses and This File (only a change to its steps does), and a typing pause in a code file re-resolves the other visible files only when an anchor actually moved.
