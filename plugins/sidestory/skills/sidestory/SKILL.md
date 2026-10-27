@@ -67,7 +67,8 @@ If none is found, the extension isn't installed here: tell the user to install `
    - `partly-explained`: widen the anchor, or give the uncovered lines their own step.
    - `changed-since-pinned`: read that step, make its prose cover the new lines, then `node "$CHECK" .sidestory/<branch-slug> --accept <anchor> --coverage`. **Only after updating the prose.**
    - `anchor-broad`: narrow the anchor to the code the step is about.
-   - `anchor-stale` / `explained-stale`: as in file mode (step 5 below).
+   - `anchor-stale` / `explained-stale`: the step's code changed a lot since it was pinned. Read the code where it is now, update the step's prose, then `node "$CHECK" .sidestory/<branch-slug> --accept <anchor> --coverage` (the message names the anchor and folder). **Only after updating the prose.**
+   - `anchor-lost`, `anchor-changed`: as in file mode (step 5 below).
    - `id-changed` / `id-removed`: a manifest's `id` differs from, or is missing compared with, the one it had at the merge-base (or at HEAD): put back the `id` the message names (`--pin` puts back a missing one). Comment threads find their sidestory by it. **Never pass `--new-id` on your own:** ask the user whether this really is a new sidestory replacing a deleted one under the same folder name.
    - Errors and other warnings as in file mode (step 5 below), including the rule on `--yes-widgets-may-read`.
 6. **Tell the user** the sidestory's name and the checker's last line (`9 explained · 2 trivial · 0 left, in 6 files.`), that they open it with **Sidestory: Open Sidestory**, and that they should **commit `.sidestory/<branch-slug>/` with the branch** so reviewers get it with the PR. Don't commit unless they ask.
@@ -94,8 +95,9 @@ If none is found, the extension isn't installed here: tell the user to install `
    ```
 
    Fix every error and read every warning, then run it again until it's clean. It checks every `data-explain-code` link too: when it says a symbol isn't found, its message says what to link instead (an input port, a connection in the parent, a name in a later `` `ifdef `` arm).
-   - `anchor-lost`: the step's code (or its file) is gone. If it moved or was rewritten, point the anchor at it: set `file` and `range`, delete its `quote`, and pin again. If it was removed on purpose, remove the step.
-   - `anchor-stale` (or a widget's `changed`): the step's code changed a lot since it was pinned; the message says where it is now. Read the code there, update the step's prose, and only then run `node "$CHECK" .sidestory/<name> --accept <anchor>` (`--pin` leaves such anchors alone). If the anchor found the wrong code, re-anchor it as for `anchor-lost`.
+   - `anchor-lost`: the anchor's code (or its file) is gone. If it moved or was rewritten, point the anchor at it: set `file` and `range`, delete its `quote`, and run `--pin`. If it was removed on purpose, remove the step (for an anchor that isn't a step, remove it and the links to it).
+   - `anchor-stale`: the code changed a lot since it was pinned; the message says where it is now. Read the code there, update the prose, and only then run the `--accept <anchor>` command the message gives (`--pin` leaves such anchors alone). If it includes `--yes-widgets-may-read`, the rule below applies. If the anchor found the wrong code, re-anchor it as for `anchor-lost`.
+   - `anchor-changed` (info): the code changed a little. Check the prose still fits; `--pin` re-pins it.
    - If no checker is found, the extension isn't installed here. Tell the user to install `paperkite.sidestory`, and in VS Code run **Sidestory: Pin Anchors to the Current Code**.
    - **Never pass `--yes-widgets-may-read` on your own.** If the checker says some anchors weren't pinned because widgets read their code, show the user the files and line ranges, explain that the widgets will be able to read that code, and add the flag only if they agree.
 6. **Tell the user** the sidestory's name, and that they open it with **Sidestory: Open Sidestory**. If it has widgets, also say that VS Code will ask them once before running the widgets.
@@ -117,4 +119,4 @@ Readers comment on steps and code lines in VS Code. The `sidestory-comments` plu
 - Explain *why* and *how it fits together*, not a line-by-line paraphrase. The code is right beside the text.
 - Keep each step short enough to read while looking at the code: a heading, a few sentences, and at most one figure.
 - Name real signals, functions and variables in `<span class="mono">` or `<code>`, and make the anchors point at exactly the code the step talks about.
-- When updating an existing sidestory after code changes, run the checker first. It reports anchors whose code was lost (`anchor-lost`) or changed a lot (`anchor-stale`). Fix the text and the ranges, then pin again (`--accept` for out-of-date steps whose prose you updated).
+- When updating an existing sidestory after code changes, run the checker first. It reports anchors whose code was lost (`anchor-lost`), changed a lot (`anchor-stale`) or changed a little (`anchor-changed`). Fix the text and the ranges, then pin again (`--accept` for out-of-date steps whose prose you updated).
