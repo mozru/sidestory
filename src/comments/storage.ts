@@ -7,7 +7,7 @@ import { explainerNameSchema } from '../core/manifest.ts';
 import { reduceThread, type Thread, type TrustedEvent } from '../core/threads/reduce.ts';
 import { CAPS, EVENT_ID_RE, isThreadId, parseEvent, serializeEvent, type AuthorKind, type Tier, type ThreadEvent } from '../core/threads/schema.ts';
 import { listDir, mkdirsNoFollow, readSmall, realInside, retrying, UnsafePathError, writeNoReplace } from './fsx.ts';
-import { hashText, type Ledger } from './ledger.ts';
+import { hashText, trustFrom, type Ledger, type LedgerEntry, type LedgerSnapshot, type LedgerView } from './ledger.ts';
 
 export type Scope = { kind: 'sidestory'; name: string } | { kind: 'code' } | { kind: 'review'; slug: string };
 export interface Location {
@@ -126,7 +126,7 @@ export class ThreadFiles {
   }
 
   /** Thread ids in a location, newest first, with threads the ledger knows first (so junk can't push them out). */
-  async threadIds(l: Location, known?: Set<string>): Promise<string[]> {
+  async threadIds(l: Location, known?: ReadonlySet<string>): Promise<string[]> {
     const ids = (await listDir(join(this.root, ...threadsSegments(l)))).filter(isThreadId).sort().reverse();
     if (!known) return ids;
     return [...ids.filter((i) => known.has(i)), ...ids.filter((i) => !known.has(i))];
@@ -140,8 +140,11 @@ export class ThreadFiles {
     return out;
   }
 
-  /** Reads one thread's events with their trust (caps: 200 events, ledger-known and newest kept). */
-  async readThread(l: Location, threadId: string, budget?: ReadBudget): Promise<ThreadRead> {
+  /**
+   * Reads one thread's events with their trust (caps: 200 events, ledger-known and newest kept). A pass over many
+   * threads passes one ledger snapshot; otherwise each event's entry is read from the ledger once.
+   */
+  async readThread(l: Location, threadId: string, budget?: ReadBudget, ledger: LedgerView = this.ledger): Promise<ThreadRead> {
     const diagnostics: string[] = [];
     const paths = new Map<string, string>();
     const dir = join(this.root, ...threadsSegments(l), threadId);
@@ -149,7 +152,12 @@ export class ThreadFiles {
     const names = (await listDir(dir)).filter((f) => f.endsWith('.json') && EVENT_ID_RE.test(f.slice(0, -5))).sort().reverse();
     const known: string[] = [];
     const rest: string[] = [];
-    for (const n of names) ((await this.ledger.get(`${rel}/${n}`, n.slice(0, -5))) ? known : rest).push(n);
+    const entries = new Map<string, LedgerEntry | undefined>();
+    for (const n of names) {
+      const entry = await ledger.get(`${rel}/${n}`, n.slice(0, -5));
+      entries.set(n, entry);
+      (entry ? known : rest).push(n);
+    }
     const pick = [...known, ...rest].slice(0, CAPS.eventsPerThread);
     if (names.length > pick.length) diagnostics.push(`only ${pick.length} of ${names.length} events read`);
     const events: TrustedEvent[] = [];
@@ -173,20 +181,20 @@ export class ThreadFiles {
       }
       const path = `${rel}/${n}`;
       paths.set(id, path);
-      events.push({ event: p.event, trust: await this.ledger.trustOf(path, id, hashText(text)) });
+      events.push({ event: p.event, trust: trustFrom(entries.get(n), hashText(text)) });
     }
     return { location: l, threadId, events, diagnostics, paths };
   }
 
-  /** Reads and reduces every thread in a location, within the caps of §3.3. */
-  async readLocation(l: Location, now = Date.now(), budget: ReadBudget = { bytes: CAPS.bytesPerSidestory, threads: CAPS.threadsPerSidestory }): Promise<{ read: ThreadRead; thread: Thread | null }[]> {
-    const known = new Set((await this.ledger.all()).map((e) => e.path.split('/').at(-2) ?? ''));
-    const ids = await this.threadIds(l, known);
+  /** Reads and reduces every thread in a location, within the caps of §3.3. A pass over several locations passes one ledger snapshot. */
+  async readLocation(l: Location, now = Date.now(), budget: ReadBudget = { bytes: CAPS.bytesPerSidestory, threads: CAPS.threadsPerSidestory }, ledger?: LedgerSnapshot): Promise<{ read: ThreadRead; thread: Thread | null }[]> {
+    ledger ??= await this.ledger.snapshot();
+    const ids = await this.threadIds(l, ledger.threads);
     const out: { read: ThreadRead; thread: Thread | null }[] = [];
     for (const id of ids) {
       if (budget.threads <= 0 || budget.bytes <= 0) break;
       budget.threads--;
-      const read = await this.readThread(l, id, budget);
+      const read = await this.readThread(l, id, budget, ledger);
       out.push({ read, thread: reduceThread(read.events, now) });
     }
     return out;

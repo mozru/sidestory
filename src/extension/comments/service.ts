@@ -6,8 +6,8 @@ import { unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { displayText, plainForMessage } from '../../core/display-text.ts';
 import { copyPrompt, type Intent } from '../../core/threads/prompt.ts';
-import { isAnswered, type Thread } from '../../core/threads/reduce.ts';
-import { cleanAuthorName, cleanBody, isPlainPath, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
+import { isAnswered, latestAsk, type Thread } from '../../core/threads/reduce.ts';
+import { cleanAuthorName, cleanBody, isPlainPath, isSafeBranch, ulidTime, type CodeAnchor, type ThreadAnchor, type ThreadEvent } from '../../core/threads/schema.ts';
 import { liveness, RECORD_MAX_AGE_MS, StateStore, type Presence, type Send } from '../../comments/delivery.ts';
 import { newId, writeReplace } from '../../comments/fsx.ts';
 import { Ledger } from '../../comments/ledger.ts';
@@ -15,6 +15,7 @@ import { canonical, defaultStateDir, ensureStateDir, repoKeyFor, servesPath, swe
 import { locationKey, ThreadFiles, threadsSegments, type Location } from '../../comments/storage.ts';
 import type { DeliveryView } from '../../shared/comments-protocol.ts';
 import { log } from '../log.ts';
+import type { SidestoryIndex } from '../nav/index.ts';
 import { localPath } from '../local-path.ts';
 import { gitHead, gitIgnores, gitTracks, gitUserName } from './git.ts';
 
@@ -142,6 +143,8 @@ export class CommentService implements vscode.Disposable {
       ledger.disabled = this.unusable;
       r = { root, files: new ThreadFiles(localPath(root), ledger), key };
       this.repos.set(k, r);
+      // Ledger entries of deleted local threads go once a session per repository (§5.2): every read pays for them.
+      void this.init().then(() => ledger.sweep(localPath(root))).catch(() => undefined);
     }
     return r;
   }
@@ -198,9 +201,10 @@ export class CommentService implements vscode.Disposable {
     let byLoc = this.cache.get(localPath(root));
     if (!byLoc) {
       byLoc = new Map();
+      const ledger = await r.files.ledger.snapshot();
       for (const location of await r.files.locations()) {
         const list: Entry[] = [];
-        for (const { read, thread } of await r.files.readLocation(location, this.now())) if (thread) list.push({ root, files: r.files, location, thread, paths: read.paths });
+        for (const { read, thread } of await r.files.readLocation(location, this.now(), undefined, ledger)) if (thread) list.push({ root, files: r.files, location, thread, paths: read.paths });
         byLoc.set(locationKey(location), list);
       }
       this.cache.set(localPath(root), byLoc);
@@ -237,7 +241,7 @@ export class CommentService implements vscode.Disposable {
 
   async createThread(root: vscode.Uri, location: Location, anchor: ThreadAnchor, body: string, opts: { toClaude: boolean; sidestoryId?: string }): Promise<{ thread: string; event: string }> {
     const head = vscode.workspace.isTrusted ? await gitHead(root) : {};
-    const origin = location.tier === 'local' ? { ...(head.branch && /^[A-Za-z0-9._/-]{1,100}$/.test(head.branch) ? { branch: head.branch } : {}), ...(head.commit && /^[0-9a-f]{40}$/.test(head.commit) ? { head: head.commit } : {}), ...(opts.sidestoryId ? { sidestory: opts.sidestoryId } : {}) } : undefined;
+    const origin = location.tier === 'local' ? { ...(isSafeBranch(head.branch) ? { branch: head.branch } : {}), ...(head.commit && /^[0-9a-f]{40}$/.test(head.commit) ? { head: head.commit } : {}), ...(opts.sidestoryId ? { sidestory: opts.sidestoryId } : {}) } : undefined;
     const thread = newId('t');
     const event: ThreadEvent = {
       v: 1,
@@ -417,7 +421,7 @@ export class CommentService implements vscode.Disposable {
       text: cleanBody(text),
       intent: e.location.scope.kind === 'review' ? 'answer' : intent,
       mode: e.location.scope.kind === 'review' ? 'review' : head.branch ? 'branch' : 'file',
-      ...(head.branch && /^[A-Za-z0-9._/-]{1,100}$/.test(head.branch) && !head.branch.includes('..') ? { branch: head.branch } : {}),
+      ...(isSafeBranch(head.branch) ? { branch: head.branch } : {}),
       ...(e.location.scope.kind === 'review' && a.kind === 'code' && a.commit ? { commit: a.commit } : {}),
       via: (await this.authorName(e.root)) || undefined,
       workspaceTrusted: vscode.workspace.isTrusted,
@@ -491,7 +495,7 @@ export class CommentService implements vscode.Disposable {
 
   /** Stop Waiting / Mark as Answered: for the thread's latest ask only; a later ask waits again. */
   async stopWaiting(e: Entry): Promise<void> {
-    const ask = latestAsk(e);
+    const ask = latestAsk(e.thread);
     if (!ask) return;
     const off = { ...(this.memento.get<Record<string, string>>(WAIT_OFF_KEY) ?? {}) };
     off[e.thread.id] = ask.id;
@@ -505,7 +509,7 @@ export class CommentService implements vscode.Disposable {
   isWaiting(e: Entry): boolean {
     const off = this.memento.get<Record<string, string> | string[]>(WAIT_OFF_KEY);
     const stopped = off && !Array.isArray(off) ? off[e.thread.id] : undefined;
-    return e.thread.waitingForClaude && (!stopped || stopped !== latestAsk(e)?.id);
+    return e.thread.waitingForClaude && (!stopped || stopped !== latestAsk(e.thread)?.id);
   }
 
   /** The delivery line for one of the reader's comments to Claude (§9.8), or undefined when there's none to show. */
@@ -517,7 +521,7 @@ export class CommentService implements vscode.Disposable {
       return undefined;
     };
     if (!c || c.trust !== 'local_user' || c.to !== 'claude' || isAnswered(e.thread, eventId) || !this.isWaiting(e)) return finish();
-    if (latestAsk(e)?.id !== eventId) return finish(); // the delivery line is on the latest send
+    if (latestAsk(e.thread)?.id !== eventId) return finish(); // the delivery line is on the latest send
     const now = this.now();
     if (this.unusable) return { state: 'not-answered', text: "Ask Claude is off: its records folder failed its safety checks (see Output › Sidestory)", actions: ['copyPrompt'] };
     if (!rec) {
@@ -565,7 +569,7 @@ export class CommentService implements vscode.Disposable {
   promptFor(e: Entry): string {
     const a = e.thread.anchor;
     const mine = [...e.thread.comments].reverse();
-    const ask = mine.find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted) ?? mine.find((c) => c.trust === 'local_user' && !c.retracted);
+    const ask = latestAsk(e.thread) ?? mine.find((c) => c.trust === 'local_user' && !c.retracted);
     const intent = ask ? this.intentOf(ask.id) : 'answer';
     const info = {
       thread: e.thread.id,
@@ -616,13 +620,17 @@ export class CommentService implements vscode.Disposable {
   }
 }
 
-function latestAsk(e: Entry) {
-  return [...e.thread.comments].reverse().find((x) => x.trust === 'local_user' && x.to === 'claude' && !x.retracted);
-}
-
 export function targetOf(a: ThreadAnchor): Send['target'] {
   if (a.kind === 'code') return { ...(isPlainPath(a.file) ? { file: a.file } : {}), lines: a.range, side: a.side };
   return { step: a.step };
+}
+
+/** The roots threads can be under: every sidestory's root and every workspace folder. */
+export function threadRoots(index: SidestoryIndex): vscode.Uri[] {
+  const seen = new Map<string, vscode.Uri>();
+  for (const e of index.all()) seen.set(e.ref.root.toString(), e.ref.root);
+  for (const f of vscode.workspace.workspaceFolders ?? []) seen.set(f.uri.toString(), f.uri);
+  return [...seen.values()];
 }
 
 export function codeAnchorLabel(a: CodeAnchor): string {

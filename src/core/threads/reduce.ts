@@ -169,6 +169,15 @@ export function reduceThread(events: readonly TrustedEvent[], now: number): Thre
   };
 }
 
+/** The reader's latest comment to Claude that is still there (not retracted): the one a send or a prompt is about. */
+export function latestAsk(thread: Thread): CommentView | undefined {
+  for (let i = thread.comments.length - 1; i >= 0; i--) {
+    const c = thread.comments[i]!;
+    if (c.trust === 'local_user' && c.to === 'claude' && !c.retracted) return c;
+  }
+  return undefined;
+}
+
 /** Whether a comment has been answered by this machine's Claude (§9.8 Answered). */
 export function isAnswered(thread: Thread, eventId: string): boolean {
   const i = thread.comments.findIndex((c) => c.id === eventId);

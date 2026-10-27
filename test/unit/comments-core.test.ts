@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseBody, toEditorMarkdown, stripJoiners, parseCodeRef, type Block, type Inline } from '../../src/core/threads/markdown.ts';
 import { channelContent, channelMeta, claudeCommand, copyPrompt, safeJson, SERVER_INSTRUCTIONS, type PushInput } from '../../src/core/threads/prompt.ts';
-import { authorLabel, isAnswered, reduceThread, type TrustedEvent } from '../../src/core/threads/reduce.ts';
+import { authorLabel, isAnswered, latestAsk, reduceThread, type TrustedEvent } from '../../src/core/threads/reduce.ts';
 import { canonicalJson, cleanAuthorName, cleanBody, encodeUlid, parseEvent, ulidTime, type ThreadEvent, type Trust } from '../../src/core/threads/schema.ts';
 
 const NOW = Date.UTC(2026, 9, 23, 12);
@@ -107,6 +107,17 @@ describe('reducer', () => {
     expect(authorLabel(t.comments[0]!)).toBe('you');
     for (const name of ['you', 'Сlaude (via Alex)', 'yоu', 'CLAUDE']) expect(authorLabel({ by: { kind: 'human', name }, trust: 'repository' })).toContain('(from the repository)');
     expect(authorLabel({ by: { kind: 'human', name: 'Sam' }, trust: 'repository' })).toBe('Sam');
+  });
+  it("the latest ask is the reader's newest comment to Claude that wasn't retracted", () => {
+    const open = ev(eid(-9000), 'open', { to: 'claude' });
+    const theirs = ev(eid(-8000), 'comment', { to: 'claude', by: { kind: 'human', name: 'Sam' } });
+    const second = ev(eid(-7000), 'comment', { to: 'claude' });
+    const note = ev(eid(-6000), 'comment');
+    const events = [te(open, 'local_user'), te(second, 'local_user'), te(note, 'local_user'), te(theirs)];
+    expect(latestAsk(reduceThread(events, NOW)!)?.id).toBe(second.id);
+    const retract = te(ev(eid(-5000), 'retract', { target: second.id }), 'local_user');
+    expect(latestAsk(reduceThread([...events, retract], NOW)!)?.id).toBe(open.id);
+    expect(latestAsk(reduceThread([te(open)], NOW)!)).toBeUndefined();
   });
   it('resolve and reopen record who and with what trust', () => {
     const r = ev(eid(-1000), 'resolve', { by: { kind: 'human', name: 'Sam' } });

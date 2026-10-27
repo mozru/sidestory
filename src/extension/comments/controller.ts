@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { join } from 'node:path';
 import { pinQuote, trimBlankLines } from '../../core/pin.ts';
 import { toEditorMarkdown } from '../../core/threads/markdown.ts';
-import { authorLabel } from '../../core/threads/reduce.ts';
+import { authorLabel, latestAsk } from '../../core/threads/reduce.ts';
 import { isPlainPath, type CodeAnchor } from '../../core/threads/schema.ts';
 import { splitLines } from '../../core/text.ts';
 import { resolveCode } from '../../comments/query.ts';
@@ -13,7 +13,7 @@ import { uriKey } from '../explainers.ts';
 import { localPath } from '../local-path.ts';
 import type { SidestoryIndex } from '../nav/index.ts';
 import { deliveryAction, threadAction } from './panel.ts';
-import { codeAnchorLabel, type CommentService, type Entry } from './service.ts';
+import { codeAnchorLabel, threadRoots, type CommentService, type Entry } from './service.ts';
 
 interface OurThread extends vscode.CommentThread {
   sidestoryId?: string;
@@ -142,16 +142,9 @@ export class CommentsController implements vscode.Disposable {
     return this.refreshing;
   }
 
-  private roots(): vscode.Uri[] {
-    const seen = new Map<string, vscode.Uri>();
-    for (const e of this.index.all()) seen.set(e.ref.root.toString(), e.ref.root);
-    for (const f of vscode.workspace.workspaceFolders ?? []) seen.set(f.uri.toString(), f.uri);
-    return [...seen.values()];
-  }
-
   private async sync() {
     const live = new Set<string>();
-    for (const e of await this.service.allEntries(this.roots())) {
+    for (const e of await this.service.allEntries(threadRoots(this.index))) {
       const a = e.thread.anchor;
       if (a.kind !== 'code' || e.location.scope.kind === 'review') continue;
       live.add(e.thread.id);
@@ -188,7 +181,7 @@ export class CommentsController implements vscode.Disposable {
   private async fill(t: OurThread, e: Entry, codeState: string) {
     // A comment being edited keeps its editor: refreshes wait until it is saved or cancelled.
     if (t.comments.some((c) => c.mode === vscode.CommentMode.Editing)) return;
-    const ask = [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
+    const ask = latestAsk(e.thread);
     const d = ask ? await this.service.delivery(e, ask.id) : undefined;
     const lost = codeState === 'lost' ? ' · Code not found' : codeState === 'changed' || codeState === 'stale' ? ' · Code changed' : '';
     const answered = e.thread.comments.some((c) => c.trust === 'claude');
@@ -285,7 +278,7 @@ export class CommentsController implements vscode.Disposable {
   /** Choose a Session… for the thread's latest ask (the editor's "No session" state has no buttons). */
   async chooseSession(t: vscode.CommentThread | undefined): Promise<void> {
     const e = t && (await this.entryOf(t));
-    const ask = e && [...e.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude' && !c.retracted);
+    const ask = e && latestAsk(e.thread);
     if (e && ask) await deliveryAction(this.service, e, ask.id, 'chooseSession');
     else if (e) void vscode.window.showInformationMessage('Nothing in this thread was sent to Claude yet: reply with Ask Claude.');
   }

@@ -23,10 +23,11 @@ export async function allThreads(repos: readonly ThreadFiles[], now = Date.now()
   const out: ThreadEntry[] = [];
   let total = CAPS.threadsTotal;
   for (const files of repos) {
+    const ledger = await files.ledger.snapshot();
     for (const location of await files.locations()) {
       if (total <= 0) break;
       const budget = { bytes: CAPS.bytesPerSidestory, threads: Math.min(CAPS.threadsPerSidestory, total) };
-      for (const { read, thread } of await files.readLocation(location, now, budget)) {
+      for (const { read, thread } of await files.readLocation(location, now, budget, ledger)) {
         total--;
         if (thread) out.push({ files, location, read, thread });
       }

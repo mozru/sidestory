@@ -21,7 +21,7 @@ import { Ledger } from '../comments/ledger.ts';
 import { allThreads, filterStatus, summary, threadDetail, type Status, type ThreadEntry } from '../comments/query.ts';
 import { canonical, ensureStateDir, readProfile, repoKeyFor, repoRootFor, servesPath } from '../comments/state-dir.ts';
 import { ThreadFiles, threadsSegments, type Location } from '../comments/storage.ts';
-import { reduceThread } from '../core/threads/reduce.ts';
+import { latestAsk, reduceThread } from '../core/threads/reduce.ts';
 
 export const SERVER_VERSION = '0.2.1';
 export const SEND_FORMAT = 1;
@@ -435,7 +435,7 @@ export class SidestoryServer {
     const kind = this.clientKind();
     const profile = await readProfile(this.opts.stateDir);
     const via = cleanAuthorName(pushed?.send.via ?? profile.name ?? '');
-    const inReplyTo = a.in_reply_to ?? pushed?.send.event ?? [...t.thread.comments].reverse().find((c) => c.trust === 'local_user' && c.to === 'claude')?.id;
+    const inReplyTo = a.in_reply_to ?? pushed?.send.event ?? latestAsk(t.thread)?.id;
     const event: ThreadEvent = {
       v: 1,
       id: newId('e'),
@@ -490,9 +490,9 @@ export function nestedSidestoryRoots(root: string, maxDepth = 4, maxDirs = 2000)
       return;
     }
     for (const e of entries) {
-      if (!e.isDirectory() || skip.has(e.name) || (e.name.startsWith('.') && e.name !== '.claude')) continue;
+      // Dot folders too: .claude/worktrees and the rest.
+      if (!e.isDirectory() || skip.has(e.name) || e.name.startsWith('.')) continue;
       const p = join(dir, e.name);
-      if (e.name === '.claude') continue; // .claude/worktrees and the rest
       seen++;
       if (existsSync(join(p, '.git'))) continue; // a separate repository or worktree
       if (existsSync(join(p, '.sidestory'))) out.push(p);

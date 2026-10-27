@@ -1,37 +1,12 @@
 // The few things comments need from git, through the vscode.git API only (the extension never runs git), and
 // only in trusted workspaces (docs/COMMENTS-PLAN.md §5.1, §12.7).
 import * as vscode from 'vscode';
+import { gitApi, type GitRepo } from '../changes/git-api.ts';
 import { localPath } from '../local-path.ts';
 
-interface Repo {
-  readonly rootUri: vscode.Uri;
-  readonly state: { readonly HEAD?: { readonly name?: string; readonly commit?: string } };
-  getConfig?(key: string): Promise<string>;
-  checkIgnore?(paths: string[]): Promise<Set<string>>;
-  log?(options: { maxEntries?: number; path?: string }): Promise<{ authorName?: string }[]>;
-}
-interface Api {
-  getRepository(uri: vscode.Uri): Repo | null;
-}
-
-let api: Promise<Api | undefined> | undefined;
-
-function getApi(): Promise<Api | undefined> {
-  if (!vscode.workspace.isTrusted) return Promise.resolve(undefined);
-  api ??= (async () => {
-    try {
-      const ext = vscode.extensions.getExtension<{ getAPI(v: 1): Api }>('vscode.git');
-      if (!ext) return undefined;
-      return (ext.isActive ? ext.exports : await ext.activate()).getAPI(1);
-    } catch {
-      return undefined;
-    }
-  })();
-  return api;
-}
-
-export async function repoAt(uri: vscode.Uri): Promise<Repo | undefined> {
-  return (await getApi())?.getRepository(uri) ?? undefined;
+export async function repoAt(uri: vscode.Uri): Promise<GitRepo | undefined> {
+  const api = await gitApi();
+  return (api.kind === 'ok' && api.api.getRepository(uri)) || undefined;
 }
 
 export async function gitUserName(uri: vscode.Uri): Promise<string | undefined> {
