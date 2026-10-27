@@ -15,6 +15,7 @@ import { pairUnstagedRenames } from '../core/renames.ts';
 import { pathProblem } from '../core/repo-path.ts';
 import { resolveBase } from '../extension/changes/base.ts';
 import type { Finding, Severity } from './check-widgets.ts';
+import { manifestLines, type ManifestLines } from './manifest-lines.ts';
 import { findRepository, Git, GitError, isSafeFsPath, isSafeRepoPath, WorkingTreeRefused, type RawEntry } from './git.ts';
 
 export type FileKind = 'text' | 'rename' | 'binary' | 'lfs' | 'submodule' | 'link' | 'mode' | 'line-endings' | 'sidestory' | 'archive' | 'unsupported' | 'type-change' | 'missing' | 'too-large';
@@ -125,6 +126,8 @@ interface Sidestory {
   /** Repo-relative folder holding `.sidestory/` ('' at the repository root). */
   prefix: string;
   manifestText: string;
+  /** Where its keys are, for findings. */
+  lines: ManifestLines;
   manifest: Manifest;
   diagnostics: Diagnostic[];
   html: string;
@@ -300,14 +303,16 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       if (f && isOwnedFileName(p!.slice(f.length + 1))) ownedFolders.add(f);
     }
   }
-  for (const f of ownedFolders) {
-    const files = SIDESTORY_FILES.map((n) => `${f}/${n}`);
-    const regularAt = async (commit: string) => {
-      const t = await git.lsTree(commit, files);
-      return isCompleteSidestory(SIDESTORY_FILES.filter((_, k) => REGULAR.has(t.get(files[k]!)?.mode ?? '')));
-    };
-    const atHead = mode === 'working' ? (await Promise.all(files.map((p) => git.isWorkingFile(p)))).every(Boolean) : await regularAt(headSha);
-    if (atHead || (await regularAt(mergeBase))) complete.add(f);
+  // One ls-tree per commit for every folder (not one per folder).
+  const filesOf = (f: string) => SIDESTORY_FILES.map((n) => `${f}/${n}`);
+  const completeIn = (t: Map<string, { mode: string }>, f: string) => isCompleteSidestory(SIDESTORY_FILES.filter((_, k) => REGULAR.has(t.get(filesOf(f)[k]!)?.mode ?? '')));
+  if (ownedFolders.size) {
+    const all = [...ownedFolders].flatMap(filesOf);
+    const [headTree, baseTree] = await Promise.all([mode === 'working' ? undefined : git.lsTree(headSha, all), git.lsTree(mergeBase, all)]);
+    for (const f of ownedFolders) {
+      const atHead = headTree ? completeIn(headTree, f) : (await Promise.all(filesOf(f).map((p) => git.isWorkingFile(p)))).every(Boolean);
+      if (atHead || completeIn(baseTree, f)) complete.add(f);
+    }
   }
   const isComplete = (folder: string) => complete.has(folder);
   const zeros = (id: string) => '0'.repeat(id.length);
@@ -317,34 +322,39 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   // the same relative path and the same blob (manifest.json only as the archive job rewrites it: `isArchivedManifest`). Such
   // a move, and the deletion it pairs with, are the explanation moving, not code. Anything else under the archive
   // counts as one change.
-  const completeAtBase = new Map<string, Promise<boolean>>();
   const archiveMoves = new Set<Entry>();
-  for (const { entry: e, from, folder, file } of archiveMoveCandidates(sorted, isSafeRepoPath)) {
-    if (ZERO.test(from.oldId)) continue;
+  const moveCandidates = archiveMoveCandidates(sorted, isSafeRepoPath).filter(({ from }) => !ZERO.test(from.oldId));
+  // The blobs every candidate compares, in one batch.
+  const compared = (c: (typeof moveCandidates)[number]) => c.file === 'manifest.json' || (c.from.oldId !== c.entry.newId && mode === 'working');
+  const moveBlobs = (
+    await git.blobs(moveCandidates.filter(compared).flatMap(({ entry: e, from }) => [from.oldId, ...(mode !== 'working' && !ZERO.test(e.newId) ? [e.newId] : [])]))
+  ).bytes;
+  const sameContent: typeof moveCandidates = [];
+  for (const c of moveCandidates) {
+    const { entry: e, from, file } = c;
     // The new side as committed, or on disk in working tree mode (its id may be missing or stale there).
     const newSide = async () => {
       if (mode === 'working') {
         const disk = await git.readWorkingFile(e.path);
         return 'bytes' in disk ? disk.bytes : undefined;
       }
-      return ZERO.test(e.newId) ? undefined : (await git.blobs([e.newId])).bytes.get(e.newId);
+      return ZERO.test(e.newId) ? undefined : moveBlobs.get(e.newId);
     };
     if (file === 'manifest.json') {
       // Only as the archive job rewrites it: the old manifest but for base, head and landed (isArchivedManifest).
-      const [old, now] = [(await git.blobs([from.oldId])).bytes.get(from.oldId), await newSide()];
+      const [old, now] = [moveBlobs.get(from.oldId), await newSide()];
       if (!old || !now || !isArchivedManifest(old, now)) continue;
     } else if (from.oldId !== e.newId) {
       if (mode !== 'working') continue;
-      const [now, old] = [await newSide(), (await git.blobs([from.oldId])).bytes.get(from.oldId)];
+      const [now, old] = [await newSide(), moveBlobs.get(from.oldId)];
       if (!now || !old || !sameBytes(now, old)) continue;
     }
-    if (!completeAtBase.has(folder)) {
-      const files = SIDESTORY_FILES.map((n) => `${folder}/${n}`);
-      completeAtBase.set(folder, git.lsTree(mergeBase, files).then((t) => isCompleteSidestory(SIDESTORY_FILES.filter((_, k) => REGULAR.has(t.get(files[k]!)?.mode ?? '')))));
-    }
-    if (!(await completeAtBase.get(folder))) continue;
-    archiveMoves.add(e).add(from);
+    sameContent.push(c);
   }
+  // Their folders complete at the merge-base, in one ls-tree.
+  const archiveFolders = [...new Set(sameContent.map((c) => c.folder))];
+  const archiveTree = archiveFolders.length ? await git.lsTree(mergeBase, archiveFolders.flatMap(filesOf)) : new Map<string, { mode: string }>();
+  for (const { entry: e, from, folder } of sameContent) if (completeIn(archiveTree, folder)) archiveMoves.add(e).add(from);
 
   // Stable ids (docs/COMMENTS-PLAN.md §3.1): local comment threads key off a sidestory's manifest `id`.
   const previousIds = await checkIds(git, sorted, { mode, mergeBase, headSha, report: !opts.newId, add: (file, code, message, line) => add('error', abs(file), code, message, line) });
@@ -540,6 +550,8 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   };
   const sidestories: Sidestory[] = [];
   const notBelonging: string[] = [];
+  // Which candidates' manifests the merge-base has, in one ls-tree.
+  const atMergeBase = candidates.size ? await git.lsTree(mergeBase, [...candidates.keys()].map((f) => `${f}/manifest.json`)) : new Map<string, unknown>();
   for (const [folder, c] of [...candidates].sort(([a], [b]) => (a < b ? -1 : 1))) {
     // A review sidestory (--head) lives untracked beside the commit it describes; with --committed, a sidestory
     // counts only once it is committed, as in CI.
@@ -555,7 +567,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     }
     const m = parsed.manifest;
     const own = m.base !== undefined ? await ownMergeBase(m.base) : undefined;
-    const presentAtMergeBase = (await git.lsTree(mergeBase, [`${folder}/manifest.json`])).size > 0;
+    const presentAtMergeBase = atMergeBase.has(`${folder}/manifest.json`);
     const ok = belongs({ presentAtMergeBase, presentAtHead: true, ownMergeBase: own, comparisonMergeBase: mergeBase, manifestHead: m.head, comparisonHead: mode === 'head' ? headSha : undefined });
     if (!ok) {
       if (given?.folder === folder) {
@@ -570,7 +582,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       }
       continue;
     }
-    sidestories.push({ folder, prefix: c.prefix, manifestText: read.manifestText, manifest: m, diagnostics: parsed.diagnostics, html: read.html, ...(read.htmlTooLarge ? { htmlTooLarge: true } : {}), ownMergeBase: own });
+    sidestories.push({ folder, prefix: c.prefix, manifestText: read.manifestText, lines: manifestLines(read.manifestText), manifest: m, diagnostics: parsed.diagnostics, html: read.html, ...(read.htmlTooLarge ? { htmlTooLarge: true } : {}), ownMergeBase: own });
   }
   for (const n of notBelonging) add('warning', given?.manifestFile ?? root, 'not-belonging', `${n} doesn't count toward this branch's coverage.`);
   header += sidestories.length ? `; counting ${sidestories.map((s) => s.folder).join(', ')}` : '; no sidestory of this branch yet';
@@ -589,7 +601,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
         return r !== undefined && one(r);
       }).length;
       if (p === '**' || p === '*' || (lined.length > 1 && n > lined.length / 2)) {
-        add('warning', abs(`${s.folder}/manifest.json`), 'trivial-broad', `trivialFiles pattern "${p}" marks ${p === '**' || p === '*' ? 'every file' : `${n} of the ${lined.length} changed files`} as needing no explanation; name the files (package-lock.json, **/__snapshots__/**) so reviewers can trust the mark.`, manifestLineOf(s.manifestText, 'trivialFiles'));
+        add('warning', abs(`${s.folder}/manifest.json`), 'trivial-broad', `trivialFiles pattern "${p}" marks ${p === '**' || p === '*' ? 'every file' : `${n} of the ${lined.length} changed files`} as needing no explanation; name the files (package-lock.json, **/__snapshots__/**) so reviewers can trust the mark.`, s.lines.key('trivialFiles'));
       }
     }
   }
@@ -630,7 +642,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     stepTitles.set(s.folder, new Map(outline.steps.map((x) => [x.id, x.title])));
     const manifestFile = abs(`${s.folder}/manifest.json`);
     for (const a of s.manifest.anchors.values()) {
-      const line = manifestLineOf(s.manifestText, a.id, true);
+      const line = s.lines.anchor(a.id);
       if (a.trivial && a.why === undefined) continue; // reported as trivial-why with the manifest's diagnostics
       if (a.trivial && steps.has(a.id)) add('warning', manifestFile, 'trivial-section', `Anchor "${a.id}" is a trivial mark, but sidestory.html has a section for it: trivial marks aren't steps. Remove the section, or drop "trivial" and explain the change.`, line);
       if (!a.trivial && !used.ids.has(a.id) && !used.incomplete) add('warning', manifestFile, 'anchor-unused', `Anchor "${a.id}" isn't used by sidestory.html (no section, data-explain-ref or data-explain-on), so it explains no change. Refer to it from the prose, or remove it.`, line);
@@ -714,7 +726,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   for (const u of result.targets) {
     if (!u.broad) continue;
     const s = sidestories.find((x) => x.folder === u.sidestory)!;
-    add('warning', abs(`${s.folder}/manifest.json`), 'anchor-broad', `Anchor "${u.anchor}" spans ${u.lines} lines of ${u.path} but covers only ${u.explains} changed line${u.explains === 1 ? '' : 's'}: narrow it to the code the step is about.`, manifestLineOf(s.manifestText, u.anchor, true));
+    add('warning', abs(`${s.folder}/manifest.json`), 'anchor-broad', `Anchor "${u.anchor}" spans ${u.lines} lines of ${u.path} but covers only ${u.explains} changed line${u.explains === 1 ? '' : 's'}: narrow it to the code the step is about.`, s.lines.anchor(u.anchor));
   }
 
   // The given sidestory's context for --pin and --accept.
@@ -882,31 +894,46 @@ async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working
   const isManifest = (p: string | undefined) => p !== undefined && isSafeRepoPath(p) && p.endsWith('/manifest.json');
   // As much as the extension reads (MAX_MANIFEST_BYTES): a bigger manifest has no id there either.
   const capped = (b: Uint8Array | undefined) => (b && b.byteLength <= MAX_MANIFEST_BYTES ? b : undefined);
-  const blob = async (id: string) => (ZERO.test(id) ? undefined : capped((await git.blobs([id])).bytes.get(id)));
+  const name = (p: string) => sidestoryOf(p)?.folder.split('/').pop();
+  const archivedManifest = (e: Entry) => e.newMode !== '000000' && (e.status === 'A' || e.status === 'R') && isManifest(e.path) && isArchivePath(e.path);
+  const compared = (e: Entry) => e.newMode !== '000000' && isManifest(e.path) && sidestoryOf(e.path)?.rest === 'manifest.json' && !(e.status === 'R' && (!isManifest(e.oldPath) || name(e.oldPath!) !== name(e.path)));
+  const askHead = (e: Entry) => o.mode === 'working' && !e.untracked && o.headSha !== o.mergeBase;
+  // Every manifest version read below, in one ls-tree and one batch of blobs (not a few git calls per manifest).
+  const headPaths = entries.filter((e) => compared(e) && askHead(e)).map((e) => e.path);
+  const atHead = headPaths.length ? await git.lsTree(o.headSha, headPaths) : new Map<string, { mode: string; id: string }>();
+  const headId = (e: Entry) => {
+    const t = atHead.get(e.path);
+    return t && REGULAR.has(t.mode) && t.id !== e.oldId ? t.id : undefined;
+  };
+  const wanted = entries.flatMap((e) => [
+    ...(o.mode !== 'working' && (archivedManifest(e) || compared(e)) ? [e.newId] : []),
+    ...(compared(e) && askHead(e) && headId(e) ? [headId(e)!] : []),
+    ...(compared(e) && (e.status === 'M' || e.status === 'R') ? [e.oldId] : []),
+  ]).filter((id) => !ZERO.test(id));
+  const fetched = wanted.length ? (await git.blobs(wanted)).bytes : new Map<string, Uint8Array>();
+  const blob = async (id: string) => (ZERO.test(id) ? undefined : capped(fetched.get(id)));
   const newSide = async (e: Entry) => {
     if (o.mode !== 'working') return blob(e.newId);
     const disk = isSafeFsPath(e.path) ? await git.readWorkingFile(e.path) : undefined;
     return disk && 'bytes' in disk ? capped(disk.bytes) : undefined;
   };
-  const name = (p: string) => sidestoryOf(p)?.folder.split('/').pop();
   // Ids that moved into the archive in this change (added or renamed there, not edits to older archives).
   const archived = new Set<string>();
   for (const e of entries) {
-    if (e.newMode === '000000' || (e.status !== 'A' && e.status !== 'R') || !isManifest(e.path) || !isArchivePath(e.path)) continue;
+    if (!archivedManifest(e)) continue;
     const id = readManifestId(await newSide(e))?.id;
     if (id) archived.add(id);
   }
   for (const e of entries) {
-    if (e.newMode === '000000' || !isManifest(e.path) || sidestoryOf(e.path)?.rest !== 'manifest.json') continue;
-    if (e.status === 'R' && (!isManifest(e.oldPath) || name(e.oldPath!) !== name(e.path))) continue;
+    if (!compared(e)) continue;
     const now = readManifestId(await newSide(e));
     if (!now) continue;
     // What it was: at HEAD (the working tree's own edits: the newest id), then at the merge-base (edited or renamed there).
     const refs: { label: string; id: () => Promise<string | undefined> }[] = [];
-    if (o.mode === 'working' && !e.untracked && o.headSha !== o.mergeBase) {
+    if (askHead(e)) {
       refs.push({ label: `HEAD (${o.headSha.slice(0, 7)})`, id: async () => {
-        const t = (await git.lsTree(o.headSha, [e.path])).get(e.path);
-        return t && REGULAR.has(t.mode) && t.id !== e.oldId ? readManifestId(await blob(t.id))?.id : undefined;
+        const id = headId(e);
+        return id ? readManifestId(await blob(id))?.id : undefined;
       } });
     }
     if (e.status === 'M' || e.status === 'R') refs.push({ label: `the merge-base (${o.mergeBase.slice(0, 7)})`, id: async () => readManifestId(await blob(e.oldId))?.id });
@@ -924,7 +951,7 @@ async function checkIds(git: Git, entries: readonly Entry[], o: { mode: 'working
         problem === 'id-changed'
           ? `"id" is "${now.id}", but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}". (Only if the user says this is a new sidestory replacing a deleted one under the same folder name, run again with --new-id.)`
           : `"id" is missing or not a valid id, but it was "${before}" at ${ref.label}: ${why}. Put back "id": "${before}"; --pin does so too, from this comparison.`,
-        manifestLineOf(now.text, 'id'),
+        manifestLines(now.text).key('id'),
       );
       break;
     }
@@ -974,16 +1001,6 @@ function relative(root: string, p: string): string | undefined {
 }
 
 /** The line of `"key":` in a manifest's text (an anchor's key when `anchor`), for findings. */
-export function manifestLineOf(text: string, key: string, anchor = false): number | undefined {
-  const k = `"${key}"`;
-  for (let at = text.indexOf(k); at >= 0; at = text.indexOf(k, at + 1)) {
-    if (/^\s*:/.test(text.slice(at + k.length, at + k.length + 20)) && (!anchor || /^\s*:\s*\{/.test(text.slice(at + k.length, at + k.length + 20)))) {
-      return text.slice(0, at).split(/\r\n|\r|\n/).length;
-    }
-  }
-  return undefined;
-}
-
 /**
  * The manifest's diagnostics for the branch fields (§3.4) and the id, as findings: a bad `base` and base-side
  * anchors without one are errors (they would show the sidestory, or its removed code, at the wrong place), as is
@@ -991,6 +1008,7 @@ export function manifestLineOf(text: string, key: string, anchor = false): numbe
  */
 export function manifestDiagnosticFindings(manifestFile: string, manifestText: string, diagnostics: readonly Diagnostic[]): Finding[] {
   const out: Finding[] = [];
+  const lines = manifestLines(manifestText);
   for (const d of diagnostics) {
     const m = d.message;
     let code: string | undefined;
@@ -1006,7 +1024,7 @@ export function manifestDiagnosticFindings(manifestFile: string, manifestText: s
     else if (d.anchor !== undefined && m.startsWith('side:')) [code, severity] = ['side', 'error'];
     if (!code) continue;
     const key = code === 'version' ? 'version' : code === 'trivial-files' ? 'trivialFiles' : code;
-    const line = d.anchor !== undefined ? manifestLineOf(manifestText, d.anchor, true) : manifestLineOf(manifestText, key);
+    const line = d.anchor !== undefined ? lines.anchor(d.anchor) : lines.key(key);
     out.push({ severity, file: manifestFile, code, message: d.anchor !== undefined ? `Anchor "${d.anchor}": ${m}.` : `${m}.`, ...(line ? { line } : {}) });
   }
   return out;

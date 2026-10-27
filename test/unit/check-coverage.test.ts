@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { main } from '../../src/cli/check-widgets.ts';
 import { idProblem, type CoverageJson } from '../../src/cli/coverage.ts';
+import { Git } from '../../src/cli/git.ts';
 
 // Every test runs several git commands; on Windows runners that alone can pass vitest's 5 s default.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
@@ -598,6 +599,38 @@ describe('stable ids: id-changed and id-removed (docs/COMMENTS-PLAN.md §3.1)', 
     const r = await run([join(dir, '.sidestory/landed'), '--new-id']);
     expect(r.code).toBe(2);
     expect(r.err).toContain('--new-id go with --coverage');
+  });
+
+  it('git calls don’t grow with the number of sidestories a change touches (one ls-tree or blob batch per commit)', async () => {
+    const calls = vi.spyOn(Git.prototype, 'run');
+    const spawns = async (k: number, committed: boolean) => {
+      const dir = copy();
+      for (let i = 0; i < k; i++) {
+        mkdirSync(join(dir, `.sidestory/l${i}`), { recursive: true });
+        writeFileSync(join(dir, `.sidestory/l${i}/manifest.json`), landed(`01JC0AANDED0000000000000${String(i).padStart(2, '0')}`));
+        writeFileSync(join(dir, `.sidestory/l${i}/sidestory.html`), page);
+      }
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '--no-verify', '-m', 'Landed');
+      const head = git(dir, 'rev-parse', 'HEAD');
+      // Each one edited (its id kept), and one archived.
+      for (let i = 0; i < k; i++) writeFileSync(join(dir, `.sidestory/l${i}/manifest.json`), landed(`01JC0AANDED0000000000000${String(i).padStart(2, '0')}`).replace('"Landed"', '"Edited"'));
+      mkdirSync(join(dir, '.sidestory/archive/2026-10-24-l0'), { recursive: true });
+      renameSync(join(dir, '.sidestory/l0/sidestory.html'), join(dir, '.sidestory/archive/2026-10-24-l0/sidestory.html'));
+      if (committed) {
+        git(dir, 'add', '-A');
+        git(dir, 'commit', '-q', '--no-verify', '-m', 'Edit');
+      }
+      calls.mockClear();
+      const r = await json(['--coverage', '--base', head, ...(committed ? ['--committed'] : []), '--repo', dir]);
+      expect(ids(r)).toEqual([]);
+      return calls.mock.calls.length;
+    };
+    try {
+      for (const committed of [false, true]) expect(await spawns(12, committed)).toBe(await spawns(2, committed));
+    } finally {
+      calls.mockRestore();
+    }
   });
 
   it('the working tree against HEAD: a sidestory added on the branch keeps the id it was committed with', async () => {

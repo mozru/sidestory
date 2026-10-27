@@ -6,6 +6,7 @@
 - While a comment waits for Claude's answer, the 2-second check for a missed reply now lists only that thread's folder (and re-reads it when a file arrived) instead of re-reading every thread in the repository. Views that ask for threads at the same moment share one read.
 - Branch coverage while you type re-reads only the file you are editing; the other changed files are kept from the last count instead of being read, decoded and hashed again on every pause. Diffs and coverage share one cache of files read from git, and an unsaved file is checked against the merge-base once rather than on every refresh.
 - Panels no longer wake up every second for widgets: the heartbeat and the extension's freeze watchdog run only while a widget is mounted and the panel is on screen (they used to run for any open sidestory with widgets, hidden or scrolled away). A widget that freezes the panel is still caught.
+- `check.cjs --coverage` makes the same few git calls however many sidestories a change touches (it made several per sidestory folder: 69 instead of 12 for a change editing 12 of them), and finds manifest line numbers in one pass (a 3,000-anchor manifest took 0.6 s). A finding about an anchor whose id is also a manifest field (`base`, `title`, `quote`…) now points at the anchor, not the field.
 
 ## 0.2.4 (2026-10-26)
 

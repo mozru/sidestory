@@ -42,6 +42,7 @@ import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { threadsMain } from './threads.ts';
 import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
+import { manifestLines } from './manifest-lines.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 import { newUlid } from '../comments/fsx.ts';
 import { manifestDiagnosticFindings, runCoverage, type BranchContext, type CoverageResult } from './coverage.ts';
@@ -636,22 +637,12 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   if (manifest) {
     // Both ways: the page's ids are in the manifest, and each manifest anchor is used by the page or a widget.
     const widgetIds = scan.mayReadAny || scan.uses.some((u) => u.dynamic) ? 'any' : new Set(scan.uses.flatMap((u) => (u.id ? [u.id] : [])));
-    let lines: ((offset: number) => number) | undefined;
-    const text = manifestText;
-    const manifestLine = (id: string) => {
-      if (text === undefined) return undefined;
-      // the anchor's key: the id in quotes followed by a colon (not a `highlight` entry with the same text)
-      const key = `"${id}"`;
-      for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
-        if (/^\s*:/.test(text.slice(at + key.length, at + key.length + 20))) return (lines ??= lineIndex(text))(at);
-      }
-      return undefined;
-    };
-    const ids = checkIds(page, new Set(manifest.anchors.keys()), widgetIds, manifestLine);
-    for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
+    const lines = manifestText === undefined ? undefined : manifestLines(manifestText);
     // Trivial marks are used by definition: they mark changes, they aren't steps (docs/CHANGES-PLAN.md §3.3).
-    const trivial = new Set([...manifest.anchors.values()].filter((a) => a.trivial).map((a) => `"${a.id}"`));
-    for (const p of ids.manifest) if (!(p.code === 'unused-anchor' && [...trivial].some((q) => p.message.includes(`Anchor ${q} isn't used`)))) add(ctx, { ...p, file: ctx.manifestFile });
+    const trivial = new Set([...manifest.anchors.values()].filter((a) => a.trivial).map((a) => a.id));
+    const ids = checkIds(page, new Set(manifest.anchors.keys()), widgetIds, (id) => lines?.anchor(id), trivial);
+    for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
+    for (const p of ids.manifest) add(ctx, { ...p, file: ctx.manifestFile });
   }
   return finish(report);
 }

@@ -156,9 +156,10 @@ export function scanPageLinks(html: string): PageLinks {
 
 /**
  * Ids against the manifest, both ways. `widgetIds` are the anchors widget code names ('any' when some widget
- * computes an id, so unused anchors can't be told).
+ * computes an id, so unused anchors can't be told); `usedAnyway` are anchors that never need the page (trivial
+ * marks: they mark changes, they aren't steps).
  */
-export function checkIds(page: PageLinks, manifestIds: ReadonlySet<string>, widgetIds: ReadonlySet<string> | 'any', manifestLine: (id: string) => number | undefined): { html: Problem[]; manifest: Problem[] } {
+export function checkIds(page: PageLinks, manifestIds: ReadonlySet<string>, widgetIds: ReadonlySet<string> | 'any', manifestLine: (id: string) => number | undefined, usedAnyway: ReadonlySet<string> = new Set()): { html: Problem[]; manifest: Problem[] } {
   const html: Problem[] = [];
   const manifest: Problem[] = [];
   const valid = (id: string) => anchorIdSchema.safeParse(id).success;
@@ -183,7 +184,7 @@ export function checkIds(page: PageLinks, manifestIds: ReadonlySet<string>, widg
   }
   if (widgetIds !== 'any') {
     for (const id of manifestIds) {
-      if (used.has(id) || widgetIds.has(id)) continue;
+      if (used.has(id) || widgetIds.has(id) || usedAnyway.has(id)) continue;
       manifest.push({ severity: 'warning', line: manifestLine(id) ?? 1, code: 'unused-anchor', message: `Anchor "${id}" isn't used: no data-explain-anchor, data-explain-ref or data-explain-on in sidestory.html names it, and no widget does. Link it from the page, or remove it.` });
     }
   }
