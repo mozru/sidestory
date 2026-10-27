@@ -101,6 +101,9 @@ function readingList(entries: readonly { id: string; file: string; range: LineRa
 const quoteKey = (file: string, quote: Quote, range: LineRange) => `${file}\n${createHash('sha256').update(quote.exact).digest('hex')}\n${range.start}-${range.end}`;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+/** The anchors a compiled widget reads (`anchorsRead`), worked out once per compile. */
+const readByResult = new WeakMap<CompileResult, Set<string> | 'all'>();
+
 function toBuild(r: CompileResult): WidgetBuild {
   return { entry: r.entry, modules: r.modules, libraries: r.libraries, icons: r.icons, errors: r.errors.map((e) => ({ file: e.file, line: e.line, column: e.column, message: e.message })), hash: r.hash };
 }
@@ -858,11 +861,15 @@ export class PanelWidgets {
     this.codeTimer = setTimeout(() => this.sendAllCode(), CODE_DELAY);
   }
 
+  /** The code of every anchor some widget reads, worked out once per anchor however many widgets read it. */
   private sendAllCode(): void {
+    const readers = new Map<string, string[]>();
     for (const key of this.codeAnchors) {
       const i = key.indexOf('\n');
-      void this.sendCode(key.slice(0, i), key.slice(i + 1));
+      const id = key.slice(i + 1);
+      readers.set(id, [...(readers.get(id) ?? []), key.slice(0, i)]);
     }
+    for (const [id, srcs] of readers) void this.sendCode(srcs, id);
   }
 
   /**
@@ -872,7 +879,8 @@ export class PanelWidgets {
   private reads(src: string, id: string): boolean {
     const r = this.results.get(src);
     if (!r) return false;
-    const ids = anchorsRead(r.modules);
+    let ids = readByResult.get(r);
+    if (!ids) readByResult.set(r, (ids = anchorsRead(r.modules)));
     return ids === 'all' || ids.has(id);
   }
 
@@ -881,23 +889,26 @@ export class PanelWidgets {
     return this.gate?.status === 'on' && this.host.enabled() && vscode.workspace.isTrusted;
   }
 
-  private async sendCode(src: string, id: string): Promise<void> {
+  /** Sends an anchor's code to the widgets `srcs` that read it (and `not-requested` to those that don't). */
+  private async sendCode(srcs: readonly string[], id: string): Promise<void> {
     const generation = this.port.generation();
-    if (!this.reads(src, id)) {
+    const readers = srcs.filter((src) => {
+      if (this.reads(src, id)) return true;
       if (!this.loggedReasons.has(`${src}:${id}:not-read`)) {
         this.loggedReasons.add(`${src}:${id}:not-read`);
         log.warn(`${this.port.ref().name}: ${src} asked for the code of anchor '${id}', which it doesn't read with useAnchorCode('${id}'); it gets none.`);
       }
       this.port.post({ type: 'widgetCode', src, code: { anchor: id, status: 'unavailable', reason: 'not-requested' } });
-      return;
-    }
+      return false;
+    });
+    if (!readers.length) return;
     const code = await this.host.codeFor(this.port, id);
     if (this.disposed || generation !== this.port.generation() || !this.allowed()) return;
     if (code.status === 'unavailable' && !this.loggedReasons.has(`${id}:${code.reason}`)) {
       this.loggedReasons.add(`${id}:${code.reason}`);
       log.info(`${this.port.ref().name}: useAnchorCode('${id}') is unavailable to widgets: ${code.reason}. ${REASON_FIX[code.reason!] ?? ''}`);
     }
-    this.port.post({ type: 'widgetCode', src, code });
+    for (const src of readers) this.port.post({ type: 'widgetCode', src, code });
   }
 
   /** Handles the widget messages from the panel; false for anything else. */
@@ -926,7 +937,7 @@ export class PanelWidgets {
       case 'widgetCode':
         if (!this.allowed() || !this.srcs.includes(m.src) || !this.port.manifest()?.anchors.has(m.anchor)) return true;
         this.codeAnchors.add(`${m.src}\n${m.anchor}`);
-        void this.sendCode(m.src, m.anchor);
+        void this.sendCode([m.src], m.anchor);
         return true;
       case 'widgetHighlight': {
         if (!m.anchor) {
