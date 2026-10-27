@@ -51,8 +51,6 @@ export const COVERAGE_WORK = {
   diffCacheBytes: 64 * 1024 * 1024,
   /** Blobs kept between recomputes, by size (git-blobs.ts: shared with the diff editors). */
   blobBytes: 64 * 1024 * 1024,
-  /** Working tree files kept from one recompute to the next, so an edit reads only its own file; the rest are read again. */
-  keptBytes: 64 * 1024 * 1024,
 } as const;
 
 /**
@@ -102,6 +100,11 @@ export interface CoverageSource {
   newDiskBytes?(repoPath: string): Promise<SideBytes>;
   /** A content key for the new side when it is cheaper than reading it (immutable blobs); else undefined. */
   diffKey?(e: ChangeEntry): string | undefined;
+  /**
+   * Working tree mode: the new side's content hash as the last run read it, when nothing says the file changed
+   * since. With its diff cached for that content, the file isn't read again.
+   */
+  keptNewHash?(repoPath: string): string | undefined;
   /**
    * Whether a sidestory folder holds both its files as regular files, at the head (on disk in working tree mode) and
    * at the merge-base; only a complete sidestory's two files are left out (§5.1). Absent: assumed complete.
@@ -193,6 +196,8 @@ export interface DiffCacheEntry {
   diff: FileDiff;
   texts: Texts;
   content?: string;
+  /** Working tree mode: a binary or LFS file, one change (kept so the next run needn't read it to know). */
+  whole?: WholeKind;
 }
 
 /** Where diffs are kept between calls: a Map in tests, a `ByteLru` in the service. */
@@ -278,7 +283,7 @@ function classify(e: ChangeEntry, ob: SideBytes, nb: SideBytes): Classified {
 
 const sideSize = (b: SideBytes) => (b instanceof Uint8Array ? b.length : 0);
 
-/** A side's content hash, once per bytes object: a file whose bytes were kept from the last run isn't hashed again. */
+/** A side's content hash, once per bytes object (the diff cache's key and the next run's `keptNewHash` both use it). */
 const hashes = new WeakMap<Uint8Array, string>();
 const NO_BYTES = new Uint8Array();
 function sha256(b: Uint8Array | undefined): string {
@@ -382,6 +387,8 @@ export async function computeCoverage(
     bytes += sideSize(ob) + sideSize(nb);
     return { ob, nb };
   };
+  /** Working tree mode: what a path's cached diff was computed from (the merge-base side, the status, the new bytes). */
+  const contentKey = (e: ChangeEntry, newHash: string) => `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.status}\0${newHash}`;
   const pool = async (list: readonly ChangeEntry[], each: (e: ChangeEntry) => Promise<void>) => {
     let next = 0;
     await Promise.all(
@@ -436,6 +443,14 @@ export async function computeCoverage(
       texts.set(e.path, { entry: e, diff: hit.diff, texts: hit.texts });
       return;
     }
+    const kept = !key && e.status !== 'D' && !pre.has(e) ? src.keptNewHash?.(e.path) : undefined;
+    if (kept !== undefined) {
+      const cached = cache.get(`wt\0${e.path}`);
+      if (cached && cached.content === contentKey(e, kept)) {
+        texts.set(e.path, { entry: e, diff: cached.diff, texts: cached.texts, ...(cached.whole ? { whole: cached.whole } : {}) });
+        return;
+      }
+    }
     if (!pre.has(e) && bytes > COVERAGE_WORK.bytesPerRecompute) {
       incomplete = true;
       return;
@@ -447,14 +462,17 @@ export async function computeCoverage(
       return;
     }
     if (c.kind === 'whole') {
-      texts.set(e.path, { entry: e, diff: wholeDiff(e.path), texts: { old: undefined, new: undefined }, whole: c.whole });
+      const t: Texts = { old: undefined, new: undefined };
+      const diff = wholeDiff(e.path);
+      if (!key && nb instanceof Uint8Array) cache.set(`wt\0${e.path}`, { diff, texts: t, content: contentKey(e, sha256(nb)), whole: c.whole });
+      texts.set(e.path, { entry: e, diff, texts: t, whole: c.whole });
       return;
     }
     // Committed mode: immutable blobs, keyed by commit. Working tree mode: one slot per path, replaced when the
     // content (or the merge-base, the old path or the status) changes. Decoded only on a miss: the texts depend
     // on the bytes alone.
     const slot = key ?? `wt\0${e.path}`;
-    const content = key ? undefined : `${src.mergeBase}\0${e.oldPath ?? e.path}\0${e.status}\0${sha256(c.nb)}`;
+    const content = key ? undefined : contentKey(e, sha256(c.nb));
     const cached = cache.get(slot);
     if (cached && cached.content === content) {
       texts.set(e.path, { entry: e, diff: cached.diff, texts: cached.texts });
@@ -593,11 +611,12 @@ export class CoverageService implements vscode.Disposable {
   /** Blobs and whether a commit has a path (immutable), shared with the diff editors and the comparison. */
   private readonly blobs: GitBlobs;
   /**
-   * The new sides the last finished run read in working tree mode, for `newFor`: a run for the same snapshot that
-   * only documents' edits asked for (`edited`) reads those files again and keeps the rest (§4.4: only the edited file
-   * is recomputed). Anything else that asks for a run (`schedule`) reads them all.
+   * The new sides' content hashes the last finished run saw in working tree mode, for `newFor`: a run for the same
+   * snapshot that only documents' edits asked for (`edited`) reads those files again, and the rest only when their
+   * diffs left the cache (§4.4: only the edited file is recomputed). Anything else that asks for a run (`schedule`)
+   * reads them all.
    */
-  private newSides = new Map<string, SideBytes>();
+  private newSides = new Map<string, string>();
   private newFor: Snapshot | undefined;
   private edited = new Set<string>();
   private readAll = true;
@@ -717,7 +736,7 @@ export class CoverageService implements vscode.Disposable {
     return p;
   }
 
-  private source(s: Snapshot, kept?: ReadonlyMap<string, SideBytes>, read?: Map<string, SideBytes>): CoverageSource {
+  private source(s: Snapshot, kept?: ReadonlyMap<string, string>, seen?: Map<string, string>): CoverageSource {
     const repo = s.repo;
     const blob = async (sha: string, p: string): Promise<SideBytes> => {
       // The mode first: a link's blob is its target's path and a gitlink has none; each counts as one change.
@@ -759,12 +778,10 @@ export class CoverageService implements vscode.Disposable {
       if (doc?.isDirty && (!bytes || decodeUtf8(bytes) !== undefined)) return new TextEncoder().encode(doc.getText());
       return bytes;
     };
-    // Working tree mode: the last run's bytes for a file no document edit touched since (`kept`); what this run
-    // reads goes into `read` for the next one.
-    let keptBytes = 0;
+    // Working tree mode: the hashes of what this run read, or took over from the last one (`kept`), for the next.
     const newSide = async (p: string): Promise<SideBytes> => {
-      const b = kept?.has(p) ? kept.get(p) : await working(p);
-      if (b !== undefined && read && (keptBytes += sideSize(b)) <= COVERAGE_WORK.keptBytes) read.set(p, b);
+      const b = await working(p);
+      if (b instanceof Uint8Array) seen?.set(p, sha256(b));
       return b;
     };
     return {
@@ -799,6 +816,11 @@ export class CoverageService implements vscode.Disposable {
       },
       oldBytes: (p) => blob(s.mergeBase, p),
       newBytes: (p) => (s.mode === 'workingTree' ? newSide(p) : blob(s.head.sha, p)),
+      keptNewHash: (p) => {
+        const h = kept?.get(p);
+        if (h !== undefined) seen?.set(p, h);
+        return h;
+      },
       newDiskBytes: (p) => (s.mode === 'workingTree' ? (isSafeFsPath(p) ? disk(fileUri(p)) : Promise.resolve('unsupported' as const)) : blob(s.head.sha, p)),
       // Committed mode: both sides are immutable blobs.
       diffKey: (e) => (s.mode === 'committed' ? `${s.mergeBase}\0${s.head.sha}\0${e.oldPath ?? e.path}\0${e.path}\0${e.status}` : undefined),
@@ -853,22 +875,22 @@ export class CoverageService implements vscode.Disposable {
     this.running = true;
     const mine = ++this.seq;
     const live = () => mine === this.seq && this.host.snapshot() === s;
-    // Only documents' edits since the last finished run for this snapshot: keep the other files' bytes.
-    let kept: Map<string, SideBytes> | undefined;
+    // Only documents' edits since the last finished run for this snapshot: the other files are taken as they were.
+    let kept: Map<string, string> | undefined;
     if (!this.readAll && this.newFor === s && s.mode === 'workingTree') {
       kept = new Map(this.newSides);
       for (const p of this.edited) kept.delete(p);
     }
     this.readAll = false;
     this.edited = new Set();
-    const read = new Map<string, SideBytes>();
+    const seen = new Map<string, string>();
     const prepared = new PreparedTexts(this.prepared);
     try {
-      const r = await computeCoverage(this.source(s, kept, read), { order: this.host.order(), cache: this.cache, isCurrent: live, prepared });
+      const r = await computeCoverage(this.source(s, kept, seen), { order: this.host.order(), cache: this.cache, isCurrent: live, prepared });
       if (r && live()) {
         this.result = r;
         this.resultFor = s;
-        this.newSides = read;
+        this.newSides = seen;
         this.newFor = s;
         this.prepared = prepared;
         this.emitter.fire();
