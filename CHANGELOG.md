@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A shorter README with animated pictures of how a sidestory follows the code, what happens when the code changes, and how a branch's changes get explained.
+- The guide has a new "Moving parts" section, and the Claude Code skill now lists what a page can do (diagrams that follow the steps, CSS and SVG animation, widgets…), so agents use motion where it helps.
+- The comments plugin's instructions and tool descriptions are about half as long, so they take less of Claude's context.
+
 ## 0.2.5 (2026-10-27)
 
 - The checker (`check.cjs`) now reports every anchor VS Code flags, not only those widgets read: code lost (`anchor-lost`) or out of date (`anchor-stale`) as warnings, and changed a little (`anchor-changed`) or not checked because its file can't be read (`anchor-unchecked`) as info, with the step, where the code was and is now, and the command that fixes it. `explained-stale` now gives the `--accept` command (`--pin` leaves such anchors alone), and `--yes-widgets-may-read` also goes with `--accept`.

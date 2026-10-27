@@ -13,6 +13,17 @@ A sidestory is a folder `.sidestory/<name>/` at the repository root (the folder 
 
 The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code. The editor follows the steps, and the steps follow the cursor.
 
+## What a page can do
+
+Use these where they make the explanation clearer:
+
+- **Diagrams that follow the steps:** inline SVG whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and glow while the editor cursor is in that code.
+- **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …) play in the panel. Animate only what the current step is about: data flowing along a lit wire, a FIFO filling.
+- **Interactivity without script:** tabs, steppers, before/after switches and quizzes from radio buttons and `:has(:checked)`; `<details>` for asides.
+- **Overviews and details:** one sidestory per part, linked from an overview where readers peek at a part or dive into it.
+- **Code blocks** highlighted in the reader's theme (`class="language-python"`).
+- **Widgets:** React components (Tailwind, Recharts, D3, Motion) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor as they run.
+
 ## Before writing
 
 Read the reference that ships with this skill:
@@ -85,6 +96,7 @@ If none is found, the extension isn't installed here: tell the user to install `
      - Put each wire's path, arrowhead and label in one `<g>`, and tag the group.
      - Light both ends of every lit wire, and the block driving each signal the step's text names. Add a box's own anchor id to its list when it has a card or nested section.
      - Add a rule for lit parts, e.g. `.box.cx-on rect { stroke: var(--cx-on); stroke-width: 2.5 }` and `.wire.cx-on path { stroke-width: 3 }` for tagged `<g class="box">` and `<g class="wire">`: without one, only the fading marks them, and high-contrast themes don't fade.
+   - **Let it move where motion explains:** a beat travelling a lit wire, a counter ticking. Tie it to the steps with `.cx-on` rules, make the first frame read on its own (SVG animation stops there for readers who ask for less motion), and stop CSS animation for them with the guide's rules. See the guide's "Moving parts".
    - **Make every box a link:** `data-explain-ref="<anchor>"` on its `<g>` when a manifest anchor covers it; for small parts, `data-explain-code="#symbol"` (`#u_fifo`, `#driver(state_q)`, `#driver(state_d).case(IDLE)`, `#u_rd_port(.start)` for a connection in a top-level module, where `driver()` doesn't reach into instances) with `data-explain-code-file="<path>"` on the figure, or `data-explain-code="<path>#L10-L20"`. Prefer symbols to line ranges in SystemVerilog: they keep pointing at the code when it's edited. Links get a built-in look; don't restyle their colors.
    - A box lights up while the reader's cursor is in its code, the tightest box winning, so link each box to the code that does its work: `#driver(x)` for the block that drives a signal, `#driver(state_d).case(IDLE)` for one FSM bubble.
    - Give a diagram with links `role="group"` and an `aria-label`; one without links `role="img"` and an `aria-label`. Name each linked `<g>` with a `<title>`.

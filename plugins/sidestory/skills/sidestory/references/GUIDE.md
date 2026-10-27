@@ -211,6 +211,34 @@ A block diagram can light up the boxes and wires each step is about, and fade th
 
 The stream DMA overview ([`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma)) works this way: one diagram at the top that follows the steps, and a copy with `data-explain-diagram="section dim-rest"` in the fallbacks of the simulation widgets, for readers who don't run widgets.
 
+#### Moving parts
+
+A diagram can move without a widget, using CSS animation or SVG animation (`<animate>`, `<animateMotion>`, `<animateTransform>`, `<set>`). Motion is good at showing which way data flows and what loops. This example has the two common patterns, a dash that flows along the lit wire (CSS) and a beat that travels it (SVG):
+
+```html
+<style>
+  .wire path { fill: none; stroke: var(--cx-wire-data); stroke-width: 2; }
+  .beat { fill: var(--cx-on); display: none; }
+  .wire.cx-on .beat { display: inline; }
+  /* Data flows along the wires the current step lights, and nowhere else. */
+  .wire.cx-on path { stroke: var(--cx-on); stroke-width: 3; stroke-dasharray: 8 6; animation: flow 0.8s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -14; } }
+  /* Less motion: the OS setting, and VS Code's own (workbench.reduceMotion). */
+  @media (prefers-reduced-motion: reduce) { .wire.cx-on path { animation: none; } }
+  body.vscode-reduce-motion .wire.cx-on path { animation: none; }
+</style>
+<g class="wire" data-explain-on="datapath">
+  <path d="M180 60 H300" />
+  <!-- A beat travelling the wire, every 1.5 s. -->
+  <circle class="beat" r="4"><animateMotion dur="1.5s" repeatCount="indefinite" path="M180 60 H300" /></circle>
+</g>
+```
+
+- **Tie motion to the steps** with `.cx-on` rules, as above, so only the part the reader is on moves. A whole diagram that never stops moving is noise.
+- **Make the first frame read on its own.** For readers who asked for less motion, SVG animation stops at about its first frame. CSS animation keeps running unless you stop it, as the two rules above do.
+- **Keep it calm:** a beat along a wire, a counter that ticks, a FIFO that fills. Use a widget when the reader should drive it (start, pause, step, change the input).
+- Animation can't change links, event handlers, `style`, `class` or `data-cx-` attributes (see [what's removed](#whats-supported-and-whats-removed)). Animations in steps far off screen pause until the reader gets there.
+
 ### Code links without an anchor
 
 A box in a diagram often deserves a link to its code without a manifest entry or a step of its own. `data-explain-code` opens a file, some lines or a symbol:
@@ -314,7 +342,7 @@ The built-in styles are light: body text in the editor font and colors, code blo
 Interactivity without script works well, and readers keep what they set while you edit:
 - **Steppers, tabs and switches** built from radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` rules. A switch the reader flipped stays flipped when you edit another part of the sidestory; changing that control's own `checked` in the source resets it.
 - **Pop-outs and footnotes** with `:target`: in-page links (`<a href="#id">`) set the target as in a browser.
-- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation**, **SVG animation** (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) and `@container` queries. Animations in sections far off screen pause until the reader gets there. Honour `prefers-reduced-motion` in CSS for readers who ask for less motion; for them SVG animation stops at about its first frame, so make the drawing read well before it moves.
+- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation**, **SVG animation** (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) and `@container` queries. Animations in sections far off screen pause until the reader gets there. Stop CSS animation for readers who ask for less motion, with `prefers-reduced-motion` and `body.vscode-reduce-motion` rules ([example](#moving-parts)); for them SVG animation stops at about its first frame, so make the drawing read well before it moves.
 
 #### Code blocks
 
