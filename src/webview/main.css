@@ -577,6 +577,12 @@ body:is(.vscode-light, .vscode-high-contrast-light) .cx-widget-frame {
   opacity: 1;
 }
 
+/* With hoverPreview "editor": one muted line by the link ("x.sv isn't open · click to open"). */
+.cx-hovercard.cx-hovercard-note {
+  padding: 2px 6px;
+  box-shadow: none;
+}
+
 .cx-hovercard-head,
 .cx-hovercard-more {
   color: var(--vscode-descriptionForeground);

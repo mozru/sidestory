@@ -141,6 +141,8 @@ export interface HighlightOptions {
   clickFrame?: boolean;
   /** `sidestory.hoverPreview`. */
   hoverPreview?: HoverPreviewMode;
+  /** `sidestory.hoverReveal`. */
+  hoverReveal?: boolean;
 }
 
 export const HOVER_PREVIEW_MODES = ['card', 'editor', 'both', 'off'] as const;
@@ -465,7 +467,7 @@ export function parseHighlight(v: unknown): { value?: HighlightOptions; errors: 
   const value: HighlightOptions = {};
   const unknown: string[] = [];
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    if (k === 'dim' || k === 'clickFrame') {
+    if (k === 'dim' || k === 'clickFrame' || k === 'hoverReveal') {
       if (typeof x === 'boolean') value[k] = x;
       else errors.push(`${k} must be true or false; ignored`);
     } else if (k === 'clickSeconds') {
@@ -482,7 +484,7 @@ export function parseHighlight(v: unknown): { value?: HighlightOptions; errors: 
   }
   if (unknown.length) {
     const shown = unknown.slice(0, 5).map((k) => JSON.stringify(k.slice(0, 40))).join(', ');
-    errors.push(`unknown key${unknown.length === 1 ? '' : 's'} ${shown}${unknown.length > 5 ? ` and ${unknown.length - 5} more` : ''} (known: dim, clickSeconds, clickFrame, hoverPreview); ignored`);
+    errors.push(`unknown key${unknown.length === 1 ? '' : 's'} ${shown}${unknown.length > 5 ? ` and ${unknown.length - 5} more` : ''} (known: dim, clickSeconds, clickFrame, hoverPreview, hoverReveal); ignored`);
   }
   return { value, errors };
 }

@@ -244,8 +244,11 @@ export type FromWebview =
   | { type: 'previewCode'; id: number; path: string; target?: string }
   /** The card's moment came for request `id` (SHOW_MS): with `editor` or `both`, its lines are marked now, not before. */
   | { type: 'previewShow'; id: number }
-  /** The pointer or focus left the link: the editor mark goes. */
-  | { type: 'previewEnd' }
+  /**
+   * The pointer or focus left the link: the editor mark goes, and editors `sidestory.hoverReveal` scrolled go back.
+   * `keep`: the reader pressed the link (it opens): those editors stay.
+   */
+  | { type: 'previewEnd'; keep?: boolean }
   /** Comment threads (docs/COMMENTS-PLAN.md §6.6), posted only from the panel's handlers for trusted input. */
   | CommentsFromWebview;
 
@@ -308,7 +311,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('previewRef'), id: previewIdSchema, anchorId: anchorIdSchema }),
   z.object({ type: z.literal('previewCode'), id: previewIdSchema, path: codePathSchema, target: codeTargetSchema.optional() }),
   z.object({ type: z.literal('previewShow'), id: previewIdSchema }),
-  z.object({ type: z.literal('previewEnd') }),
+  z.object({ type: z.literal('previewEnd'), keep: z.boolean().optional() }),
   ...commentsFromWebviewSchemas,
   z.object({
     type: z.literal('highlight'),

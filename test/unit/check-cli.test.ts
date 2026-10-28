@@ -547,18 +547,19 @@ describe('outline, groups and detail links (docs/NAVIGATION-PLAN.md §5.3)', () 
       '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', highlight, anchors: { ...ANCHORS, refill: { ...ANCHORS.refill, dim } } }, null, 2),
       '.sidestory/demo/sidestory.html': page(section('refill', '<p>x</p>') + section('other', '<p>y</p>')),
     });
-    const good = await check(repoWith(files({ dim: false, clickSeconds: 3, clickFrame: true, hoverPreview: 'both' }, true)));
+    const good = await check(repoWith(files({ dim: false, clickSeconds: 3, clickFrame: true, hoverPreview: 'both', hoverReveal: true }, true)));
     expect(good.findings.filter((f) => f.code === 'highlight')).toEqual([]);
-    const r = await check(repoWith(files({ dim: 'no', clickSeconds: 1e6, glow: true }, 'yes')));
+    const r = await check(repoWith(files({ dim: 'no', clickSeconds: 1e6, glow: true, hoverReveal: 'yes' }, 'yes')));
     const found = r.findings.filter((f) => f.code === 'highlight');
     expect(found.map((f) => [f.severity, f.message])).toEqual([
       ['warning', 'highlight: dim must be true or false; ignored.'],
       ['warning', 'highlight: clickSeconds is more than 3600; 3600 is used.'],
-      ['warning', 'highlight: unknown key "glow" (known: dim, clickSeconds, clickFrame, hoverPreview); ignored.'],
+      ['warning', 'highlight: hoverReveal must be true or false; ignored.'],
+      ['warning', 'highlight: unknown key "glow" (known: dim, clickSeconds, clickFrame, hoverPreview, hoverReveal); ignored.'],
       ['warning', 'Anchor "refill": dim: must be true or false; ignored.'],
     ]);
     expect(found[0]!.line).toBe(4);
-    expect(found[3]!.line).toBeGreaterThan(4);
+    expect(found[4]!.line).toBeGreaterThan(4);
     expect(codes(r, 'error')).toEqual([]);
   });
 

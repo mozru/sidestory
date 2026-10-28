@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Resting the pointer on a link or a diagram box now lights up its code in the editor instead of showing a snippet (`sidestory.hoverPreview` is `editor` by default; `card` brings the snippet back). The lines get a mark in the scrollbar, and when they're out of view a faint arrow at the editor's edge points at them; when no editor shows the file, a note by the link says so. Nothing opens, and focus, the cursor and the step stay put. New setting `sidestory.hoverReveal` (off by default; `hoverReveal` in a manifest's `highlight`) scrolls the editor to the lines while you hover, and back when you move on.
+
 ## 0.2.8 (2026-10-28)
 
 - Back and forward in the panel, as in a browser: ← → buttons at the top, VS Code's own Go Back / Go Forward keys while the panel has focus (on macOS also <kbd>Cmd</kbd>+<kbd>[</kbd> / <kbd>]</kbd> and <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>), the mouse's back and forward buttons, and the new commands **Sidestory: Back** / **Forward**. With nowhere to go in the panel, the keys do VS Code's own navigation. The trail's way back now reads **Up to *Title***. They retrace the steps you chose, the details you dived into and the sidestories opened in the panel, to the same step and scroll position; a run of <kbd>J</kbd>/<kbd>K</kbd> steps counts once. The history survives the panel being hidden and VS Code restarting.

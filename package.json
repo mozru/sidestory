@@ -591,12 +591,17 @@
           ],
           "markdownEnumDescriptions": [
             "A small card in the panel shows the first lines of the code.",
-            "The code's lines are marked in editors that already show its file (none is opened or scrolled).",
-            "The card and the mark in visible editors.",
+            "The code's lines are highlighted in the editors that show its file, with a mark in the scrollbar and an arrow at the editor's edge when they are out of view. When no editor shows the file, a note by the link says so. Nothing is opened, and nothing scrolls unless `#sidestory.hoverReveal#` is on.",
+            "The card and the highlight in the editors.",
             "Nothing: only a click shows the code."
           ],
-          "default": "card",
-          "markdownDescription": "What resting the pointer on a link or a diagram box in a sidestory (or tabbing to one) shows of its code. It never moves the editor, the cursor or focus; a click still opens the code."
+          "default": "editor",
+          "markdownDescription": "What resting the pointer on a link or a diagram box in a sidestory (or tabbing to one) shows of its code. It never moves focus, the cursor or the step; a click still opens the code. A sidestory's manifest can set its own default (`highlight.hoverPreview`)."
+        },
+        "sidestory.hoverReveal": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "While you rest the pointer on a link in a sidestory, scroll the editor that shows its file to the lines (focus stays in the panel), and scroll it back when you move on, unless you clicked the link or scrolled that editor yourself. A sidestory's manifest can set its own default (`highlight.hoverReveal`)."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",

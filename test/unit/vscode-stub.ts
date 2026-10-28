@@ -82,7 +82,7 @@ export class TabInputWebview {}
 export const ViewColumn = { Active: -1, Beside: -2, One: 1, Two: 2 };
 export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 };
 export const TextEditorSelectionChangeKind = { Keyboard: 1, Mouse: 2, Command: 3 };
-export const TextEditorRevealType = { Default: 0, InCenterIfOutsideViewport: 2 };
+export const TextEditorRevealType = { Default: 0, InCenter: 1, InCenterIfOutsideViewport: 2, AtTop: 3 };
 
 /** Events the test fires, as VS Code would. */
 export const events = {
@@ -98,6 +98,7 @@ export const events = {
   foldersChanged: new EventEmitter<unknown>(),
   windowState: new EventEmitter<{ focused: boolean }>(),
   activeEditorChanged: new EventEmitter<unknown>(),
+  visibleRangesChanged: new EventEmitter<{ textEditor: unknown }>(),
 };
 
 export class Position {
@@ -415,6 +416,7 @@ export const window = {
   },
   onDidChangeTextEditorSelection: events.selectionChanged.event,
   onDidChangeVisibleTextEditors: events.visibleEditorsChanged.event,
+  onDidChangeTextEditorVisibleRanges: events.visibleRangesChanged.event,
   visibleTextEditors: [] as unknown[],
   tabGroups: { all: [] as unknown[], onDidChangeTabs: () => ({ dispose() {} }) },
   activeColorTheme: { kind: ColorThemeKind.Dark },

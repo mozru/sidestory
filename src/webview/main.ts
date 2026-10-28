@@ -1460,7 +1460,8 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('focusin', onContentFocus);
   d.addEventListener('pointerdown', (e) => {
     if (!e.isTrusted) return;
-    hoverCard?.hide(); // a click opens the code (or does something else): the card is done
+    // A click opens the code (or does something else): the card is done; on a link, editors it scrolled stay.
+    hoverCard?.hide(linkedTarget(e.target) !== undefined);
     lastTabAt = 0; // the pointer, not the Tab, is the reader's last input
     aim(linkedTarget(e.target) ?? null);
   }, true);
@@ -1603,7 +1604,7 @@ function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
  * A `data-explain-ref` wins over a `data-explain-code` on the same element.
  */
 function openLinked(el: HTMLElement): void {
-  hoverCard?.hide();
+  hoverCard?.hide(true);
   if (el.hasAttribute('data-explain-ref')) return openRef(el);
   const link = codeLinkOf(el);
   if (link) vscode.postMessage(link.target === undefined ? { type: 'openCode', path: link.path } : { type: 'openCode', path: link.path, target: link.target });

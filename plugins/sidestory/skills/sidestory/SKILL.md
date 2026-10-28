@@ -19,7 +19,7 @@ Use whichever fit; the page's style is the user's (see "Style").
 
 **The page** (`sidestory.html`: HTML and CSS, no script)
 - **Steps:** top-level sections with `data-explain-anchor`; readers step through them, or the cursor in the code picks the step. Nested anchors (a card, a figure) are linked too.
-- **Code links:** `data-explain-ref="<anchor>"` on any element jumps the editor to that code without changing the step; `data-explain-code` links code with no anchor, by line range or symbol (`#name`, and for SystemVerilog `#driver(x)`, `#driver(state_d).case(IDLE)`, `#u_inst(.port)`). Readers can preview a link's code on hover.
+- **Code links:** `data-explain-ref="<anchor>"` on any element jumps the editor to that code without changing the step; `data-explain-code` links code with no anchor, by line range or symbol (`#name`, and for SystemVerilog `#driver(x)`, `#driver(state_d).case(IDLE)`, `#u_inst(.port)`). Hovering a link lights up its code in the editor (an arrow at the editor's edge when it's out of view; `hoverReveal` scrolls to it), or shows it in a card.
 - **Diagrams that follow the steps:** inline SVG or HTML whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and light up while the editor cursor is in their code. Colors come from theme tokens (`--cx-wire-data`, `--cx-box-fill`, `--cx-on`, …).
 - **Pictures a page can draw:** block diagrams, sequences and timelines, state diagrams, before → after, byte and struct layouts, small SVG charts, frames of an algorithm's data, tables.
 - **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …), tied to the steps with `.cx-on` rules. For readers who ask for less motion, SVG animation stops at its first frame; CSS animation needs the guide's reduced-motion rules.
@@ -29,7 +29,7 @@ Use whichever fit; the page's style is the user's (see "Style").
 
 **The editor**
 - Each step highlights its lines with the step's `color`, marks the identifiers in its `highlight`, and fades the rest of the file. A clicked link flashes its lines, then leaves a frame.
-- The manifest's `highlight` object sets how this sidestory does that: `dim`, `clickSeconds`, `clickFrame`, `hoverPreview` (`card`, `editor`, `both`, `off`); an anchor's `dim` overrides it for one step. The reader's own settings always win.
+- The manifest's `highlight` object sets how this sidestory does that: `dim`, `clickSeconds`, `clickFrame`, `hoverPreview` (`editor`, `card`, `both`, `off`), `hoverReveal`; an anchor's `dim` overrides it for one step. The reader's own settings always win.
 - CodeLenses and the status bar name the sidestory and step for the code under the cursor.
 
 **Structure and navigation**

@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import type { LineRange } from '../core/manifest.ts';
 import { inDiffEditor } from './changes/open.ts';
+import { HoverMark, type HoverTarget } from './hover-mark.ts';
 
 export interface Focus {
   uri: vscode.Uri;
@@ -62,15 +63,8 @@ export class Decorations implements vscode.Disposable {
     borderStyle: 'solid',
     borderWidth: '0 0 1px 0',
   });
-  // The lines a link in the panel points at while the pointer rests on it (`sidestory.hoverPreview`): lighter than
-  // the flash, no overview ruler mark. High contrast themes get a left border instead of the (transparent) tint.
-  private readonly hoverType = vscode.window.createTextEditorDecorationType({
-    isWholeLine: true,
-    backgroundColor: new vscode.ThemeColor('sidestory.hoverPreviewBackground'),
-    borderColor: new vscode.ThemeColor('sidestory.hoverPreviewBorder'),
-    borderStyle: 'solid',
-    borderWidth: '0 0 0 2px',
-  });
+  /** The lines a link in the panel points at while the pointer rests on it (`sidestory.hoverPreview`). */
+  private readonly hoverMark = new HoverMark();
   // High contrast themes leave highlight backgrounds transparent: there, a border marks the lines.
   private readonly widgetType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -120,17 +114,14 @@ export class Decorations implements vscode.Disposable {
   private flashed: vscode.TextEditor | undefined;
   private current: Focus | undefined;
   private widget: WidgetHighlight | undefined;
-  private hover: { owner: object; uri: vscode.Uri; range: LineRange } | undefined;
 
   /**
-   * Marks a link's lines in the visible editors of its file while the pointer rests on the link; undefined clears,
-   * only the mark `owner` (its panel) made: panels share these decorations. Never opens, scrolls or focuses
-   * anything: an editor that shows the file later gets it on `refresh`.
+   * Marks a link's lines in the visible editors of its file while the pointer rests on the link (src/extension/
+   * hover-mark.ts); undefined clears, only the mark `owner` (its panel) made: panels share these decorations. `keep`:
+   * the reader clicked the link, so editors hoverReveal scrolled stay where they are.
    */
-  setHover(owner: object, h: { uri: vscode.Uri; range: LineRange } | undefined): void {
-    if (!h && this.hover?.owner !== owner) return;
-    this.hover = h && { owner, ...h };
-    for (const editor of vscode.window.visibleTextEditors) this.applyHover(editor);
+  setHover(owner: object, h: HoverTarget | undefined, keep = false): void {
+    this.hoverMark.set(owner, h, keep);
   }
 
   /** A widget's highlight; undefined clears it. Never scrolls, opens files or moves focus. */
@@ -198,16 +189,6 @@ export class Decorations implements vscode.Disposable {
     for (const editor of vscode.window.visibleTextEditors) this.apply(editor);
   }
 
-  private applyHover(editor: vscode.TextEditor): void {
-    const h = this.hover;
-    if (!h || editor.document.uri.toString() !== h.uri.toString()) {
-      editor.setDecorations(this.hoverType, []);
-      return;
-    }
-    const last = editor.document.lineCount - 1;
-    editor.setDecorations(this.hoverType, [new vscode.Range(Math.min(h.range.start - 1, last), 0, Math.min(h.range.end - 1, last), 0)]);
-  }
-
   private applyWidget(editor: vscode.TextEditor): void {
     const w = this.widget;
     if (w && editor.document.uri.toString() === w.uri.toString()) {
@@ -223,7 +204,6 @@ export class Decorations implements vscode.Disposable {
 
   private apply(editor: vscode.TextEditor): void {
     this.applyWidget(editor);
-    if (this.hover) this.applyHover(editor);
     const f = this.current;
     const mine = f !== undefined && editor.document.uri.toString() === f.uri.toString();
     const diff = mine && inDiffEditor(editor);
@@ -294,7 +274,7 @@ export class Decorations implements vscode.Disposable {
     this.diffLabel.dispose();
     this.widgetType.dispose();
     this.widgetIds.dispose();
-    this.hoverType.dispose();
+    this.hoverMark.dispose();
   }
 }
 

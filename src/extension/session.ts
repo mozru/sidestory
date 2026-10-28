@@ -15,7 +15,7 @@ import { resolveAnchor } from '../core/resolve.ts';
 import { displayText, plainForMessage } from '../core/display-text.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
-import { formatCodeLink, parseCodeLink, type CodeLink } from '../shared/code-link.ts';
+import { formatCodeLink, parseCodeLink, parseCodeTarget, type CodeLink } from '../shared/code-link.ts';
 import { langName } from '../shared/highlight-languages.ts';
 import type { AnchorView, CodePreview, DetailInfo, FromWebview, HoverPreview, ToWebview } from '../shared/protocol.ts';
 import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
@@ -231,7 +231,7 @@ export class ExplainerSession implements vscode.Disposable {
   private previewSeq = 0;
   private previewTimes: number[] = [];
   /** The latest preview's lines, for the editor mark once the page says the card's moment came (`previewShow`). */
-  private hoverFound: { id: number; uri: vscode.Uri; range: LineRange } | undefined;
+  private hoverFound: { id: number; target: PreviewTarget } | undefined;
   /** The request the page last showed (`previewShow`); -1: none since the last `previewEnd`. */
   private hoverShown = -1;
   /** Lines marked in editors for a hover now. */
@@ -1099,7 +1099,7 @@ export class ExplainerSession implements vscode.Disposable {
         this.markHover();
         break;
       case 'previewEnd':
-        this.endHover();
+        this.endHover(m.keep === true);
         break;
       case 'reanchor':
         // Only starts the flow: the user confirms in a dialog before anything is written.
@@ -1314,7 +1314,7 @@ export class ExplainerSession implements vscode.Disposable {
     const target = m.type === 'previewRef' ? await this.refPreview(m.anchorId, card) : await this.codePreview(m.path, m.target, card);
     if (seq !== this.previewSeq || generation !== this.generation || this.disposed) return;
     if (mode !== 'card') {
-      this.hoverFound = target.found && { id: m.id, uri: target.found.uri, range: target.found.range };
+      this.hoverFound = { id: m.id, target };
       this.markHover();
     }
     if (!card) return;
@@ -1339,10 +1339,11 @@ export class ExplainerSession implements vscode.Disposable {
     if (isSecretFileName(a.file.split('/').pop() ?? '')) return { note: 'Its name looks like it holds secrets: click to open it.' };
     const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
     const languageId = doc?.languageId ?? extensionOf(a.file);
-    if (!text) return { found: { uri, range: r.range, path: a.file, languageId } };
+    const label = this.host.stepOf?.(this.ref.dir, a.id)?.title || undefined;
+    if (!text) return { found: { uri, range: r.range, path: a.file, languageId, label } };
     // As resolveFile reads it: a merge-base blob through the git provider, else the file (its open buffer if open).
     const source = uri.scheme === GIT_SCHEME ? await readGit(uri) : await readInside(uri, this.ref.root, MAX_CODE_BYTES, true);
-    return source === undefined ? {} : { found: { uri, range: r.range, path: a.file, languageId, text: source } };
+    return source === undefined ? {} : { found: { uri, range: r.range, path: a.file, languageId, label, text: source } };
   }
 
   /**
@@ -1368,7 +1369,7 @@ export class ExplainerSession implements vscode.Disposable {
     let source: string | undefined;
     let r;
     if (doc) r = await resolveLink(doc, link, this.symbols, true);
-    else if (!text) return {};
+    else if (!text) return { closed: path };
     else {
       source = await readInside(uri, root, MAX_CODE_BYTES, true);
       if (source === undefined || stale()) return {};
@@ -1377,7 +1378,8 @@ export class ExplainerSession implements vscode.Disposable {
     if (stale()) return {};
     if (!r.ok) return r.unavailable ? { note: `${r.message.charAt(0).toUpperCase()}${r.message.slice(1)}.` } : {};
     const languageId = doc?.languageId ?? extensionOf(path);
-    return { found: { uri, range: r.range, path, languageId, text: text ? (source ?? doc!.getText()) : undefined } };
+    const label = link.target && parseCodeTarget(link.target)?.kind === 'symbol' ? link.target : undefined;
+    return { found: { uri, range: r.range, path, languageId, label, text: text ? (source ?? doc!.getText()) : undefined } };
   }
 
   /** Colors for a card's code, as code blocks get them; none when highlighting is off or slower than the card. */
@@ -1396,22 +1398,37 @@ export class ExplainerSession implements vscode.Disposable {
     return r && runs ? { palette: r.palette, runs } : {};
   }
 
-  /** Marks the latest preview's lines once both it resolved and the page showed it (in either order). */
+  /**
+   * Marks the latest preview's lines once both it resolved and the page showed it (in either order). With `editor`
+   * alone, when no visible editor shows them, the page says so by the link instead (it never opens a file).
+   */
   private markHover(): void {
     const f = this.hoverFound;
     if (!f || f.id !== this.hoverShown) return;
-    this.decorations.setHover(this, { uri: f.uri, range: f.range });
-    this.hoverMarked = true;
+    const h = this.highlightFor();
+    const found = f.target.found;
+    if (found) {
+      this.decorations.setHover(this, { uri: found.uri, range: found.range, label: found.label, reveal: h.hoverReveal });
+      this.hoverMarked = true;
+    }
+    if (h.hoverPreview !== 'editor') return;
+    if (found && vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === found.uri.toString())) return;
+    const file = found?.path ?? f.target.closed;
+    const note = file ? `${file.split('/').pop()} isn't open · click to open` : (f.target.note ?? 'Code not found');
+    this.post({ type: 'codePreview', id: f.id, preview: null, note });
   }
 
-  /** The pointer left the link (or the panel moved on): its marks go, and a preview still resolving is dropped. */
-  private endHover(): void {
+  /**
+   * The pointer left the link (or the panel moved on): its marks go, and a preview still resolving is dropped. `keep`:
+   * the reader pressed the link, so editors hoverReveal scrolled stay at its lines.
+   */
+  private endHover(keep = false): void {
     this.previewSeq++;
     this.hoverFound = undefined;
     this.hoverShown = -1;
     if (!this.hoverMarked) return;
     this.hoverMarked = false;
-    this.decorations.setHover(this, undefined);
+    this.decorations.setHover(this, undefined, keep);
   }
 
   /** Colors code blocks for the panel; per explainer shown, so one explainer's slow blocks don't stop another's. */
@@ -1662,7 +1679,10 @@ export class ExplainerSession implements vscode.Disposable {
 
 /** What a hover preview found: the lines, where they are, and the text when the card needs it; or a note why not. */
 interface PreviewTarget {
-  found?: { uri: vscode.Uri; range: LineRange; path: string; languageId: string; text?: string };
+  /** `label`: what the editor's edge arrow names (the step's title, or the link's symbol). */
+  found?: { uri: vscode.Uri; range: LineRange; path: string; languageId: string; label?: string; text?: string };
+  /** A link's file, there but in no open document (only the card reads such files). */
+  closed?: string;
   note?: string;
 }
 

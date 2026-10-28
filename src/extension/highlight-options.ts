@@ -8,15 +8,17 @@ export interface EffectiveHighlight {
   clickSeconds: number;
   clickFrame: boolean;
   hoverPreview: HoverPreviewMode;
+  hoverReveal: boolean;
 }
 
-export const HIGHLIGHT_DEFAULTS: EffectiveHighlight = { dim: true, clickSeconds: 1.5, clickFrame: true, hoverPreview: 'card' };
+export const HIGHLIGHT_DEFAULTS: EffectiveHighlight = { dim: true, clickSeconds: 1.5, clickFrame: true, hoverPreview: 'editor', hoverReveal: false };
 
 const SETTINGS: Record<keyof EffectiveHighlight, string> = {
   dim: 'dimUnfocused',
   clickSeconds: 'clickHighlightSeconds',
   clickFrame: 'clickFrame',
   hoverPreview: 'hoverPreview',
+  hoverReveal: 'hoverReveal',
 };
 
 /** A value of the option's type, or undefined. */
@@ -25,6 +27,7 @@ const VALID: { [K in keyof EffectiveHighlight]: (v: unknown) => EffectiveHighlig
   clickSeconds: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(v, LIMITS.clickSeconds) : undefined),
   clickFrame: (v) => (typeof v === 'boolean' ? v : undefined),
   hoverPreview: (v) => HOVER_PREVIEW_MODES.find((m) => m === v),
+  hoverReveal: (v) => (typeof v === 'boolean' ? v : undefined),
 };
 
 /** The reader's own value for a setting (user, workspace or folder settings; none is language-overridable), not the default. */
@@ -47,6 +50,7 @@ export function effectiveHighlight(story?: HighlightOptions, step?: { dim?: bool
     clickSeconds: pick('clickSeconds', story?.clickSeconds),
     clickFrame: pick('clickFrame', story?.clickFrame),
     hoverPreview: pick('hoverPreview', story?.hoverPreview),
+    hoverReveal: pick('hoverReveal', story?.hoverReveal),
   };
 }
 

@@ -52,7 +52,7 @@ There are a few ways to find what's been explained:
 
 A sidestory is free-form HTML and CSS, styled in your VS Code theme. It can hold almost anything a static page can, like tables, tabs, steppers and quizzes, plus some extras.
 
-**Diagrams that follow along.** Block diagrams are plain inline SVG. Tag a box with `data-explain-on="datapath"` and it lights up on that step while the rest fades. A box with `data-explain-code` opens its code when clicked, previews it in a small card when you rest the pointer on it, and glows while your cursor is in it. For SystemVerilog it can name a signal instead of lines, such as `#driver(state_q)`.
+**Diagrams that follow along.** Block diagrams are plain inline SVG. Tag a box with `data-explain-on="datapath"` and it lights up on that step while the rest fades. A box with `data-explain-code` opens its code when clicked, lights it up in the editor when you rest the pointer on it (an arrow points at it when it's out of view), and glows while your cursor is in it. For SystemVerilog it can name a signal instead of lines, such as `#driver(state_q)`.
 
 **Motion.** CSS and SVG animation (`<animate>`, `<animateMotion>`) play in the panel, so a beat can travel the wire the current step lights, or a FIFO can fill. SVG animation stops for readers who ask for less motion. See [Moving parts](docs/GUIDE.md#moving-parts).
 
@@ -194,7 +194,7 @@ Here are the settings people change most. The [guide](docs/GUIDE.md#settings) li
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through. |
 | `sidestory.codeLens.enabled` | `true` | Show a CodeLens above explained code. |
 | `sidestory.clickHighlightSeconds` | `1.5` | How long the code stays lit after you click a code link. `0` keeps it lit until the next one. After it fades, a frame stays around the code (`sidestory.clickFrame`). |
-| `sidestory.hoverPreview` | `card` | Rest the pointer on a link to preview its code: in a `card`, marked in an editor already showing the file (`editor`), `both`, or `off`. |
+| `sidestory.hoverPreview` | `editor` | Rest the pointer on a link to light up its code in the editor (an arrow points at it when it's out of view), or show it in a `card`, `both`, or `off`. `sidestory.hoverReveal` scrolls the editor to it while you hover. |
 | `sidestory.gutter.enabled` | `false` | Show a book icon in the gutter on explained code. |
 | `sidestory.changes.openStepsIn` | `"editor"` | Open a branch's steps in the file, or in the diff. |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes in coverage. Turn it off to see what CI sees. |

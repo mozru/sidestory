@@ -1,6 +1,7 @@
-// The hover preview (`sidestory.hoverPreview`): resting the pointer on a linked element, or tabbing to one, shows a
-// small card with the first lines of its code. The card is panel chrome over the content frame, never inside it, and
-// takes no pointer input. Nothing here moves the editor, focus, scroll, the cursor or the step: the host only reads.
+// The hover preview (`sidestory.hoverPreview`): resting the pointer on a linked element, or tabbing to one, highlights
+// its code in the editors (the host does that), or shows a small card with its first lines. With `editor`, the card is
+// only a one-line note when the code isn't on screen. The card is panel chrome over the content frame, never inside
+// it, and takes no pointer input. Nothing here moves focus, the cursor or the step.
 import type { FromWebview, HoverPreview, ToWebview } from '../shared/protocol.ts';
 import { validPalette, validRuns } from './highlight.ts';
 
@@ -104,8 +105,11 @@ export class HoverCard {
     if (!this.el.hidden) this.hide();
   }
 
-  /** Hides the card and forgets the link; true when a card was showing (Escape is then spent). */
-  hide(): boolean {
+  /**
+   * Hides the card and forgets the link; true when a card was showing (Escape is then spent). `keep`: the reader
+   * pressed a link (it opens), so editors `sidestory.hoverReveal` scrolled stay where they are.
+   */
+  hide(keep = false): boolean {
     clearTimeout(this.askTimer);
     clearTimeout(this.showTimer);
     clearTimeout(this.leaveTimer);
@@ -116,7 +120,7 @@ export class HoverCard {
       this.el.replaceChildren();
     }
     this.undescribe();
-    if (this.asked) this.host.post({ type: 'previewEnd' });
+    if (this.asked) this.host.post(keep ? { type: 'previewEnd', keep } : { type: 'previewEnd' });
     this.asked = false;
     this.target = undefined;
     this.byFocus = false;
@@ -142,8 +146,11 @@ export class HoverCard {
   private render(): void {
     const target = this.target;
     const r = this.reply;
-    if (!target || !r || !this.due || (this.mode !== 'card' && this.mode !== 'both') || !target.isConnected) return;
+    if (!target || !r || !this.due || this.mode === 'off' || !target.isConnected) return;
     const p = r.preview;
+    // With `editor`, the card is only ever a note: the code isn't on screen, or can't be found.
+    if (this.mode === 'editor' && p) return;
+    this.el.classList.toggle('cx-hovercard-note', this.mode === 'editor');
     const head = div('cx-hovercard-head');
     const rows: HTMLElement[] = [];
     let summary: string;

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToWebview } from '../../src/shared/protocol.ts';
-import { config, EventEmitter, events, fakeDocument, modal, shown, Uri, window, workspace } from './vscode-stub.ts';
+import { config, EventEmitter, events, fakeDocument, modal, Position, Range, shown, Uri, window, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -13,6 +13,7 @@ const { ExplainerSession } = await import('../../src/extension/session.ts');
 const { refFromDir } = await import('../../src/extension/explainers.ts');
 const { previewLines } = await import('../../src/extension/preview.ts');
 const { Decorations } = await import('../../src/extension/decorations.ts');
+const { edgeArrow } = await import('../../src/extension/hover-mark.ts');
 const { fromWebviewSchema } = await import('../../src/shared/protocol.ts');
 
 let root = '';
@@ -34,6 +35,7 @@ afterEach(() => {
 beforeEach(() => {
   shown.length = 0;
   modal.asked.length = 0;
+  config['sidestory.hoverPreview'] = 'card'; // the card's tests; `editor` (the default) is set where it's tested
 });
 
 async function ready() {
@@ -121,7 +123,7 @@ describe('previewRef and previewCode', () => {
     expect(posted.length).toBe(before);
   });
 
-  it('`off` answers nothing; `editor` marks visible editors only and posts no card; previewEnd clears the mark', async () => {
+  it('`off` answers nothing; `editor` marks the lines at the card’s moment and posts no card; previewEnd clears the mark', async () => {
     const { send, posted, hovers } = await ready();
     config['sidestory.hoverPreview'] = 'off';
     send({ type: 'previewRef', id: 1, anchorId: 'state' });
@@ -130,26 +132,47 @@ describe('previewRef and previewCode', () => {
     expect(hovers).toEqual([]);
 
     config['sidestory.hoverPreview'] = 'editor';
+    const file = Uri.file(join(root, 'rtl/bit_reader.sv'));
+    (window as { visibleTextEditors: unknown[] }).visibleTextEditors = [{ document: { uri: file } }];
     send({ type: 'previewRef', id: 2, anchorId: 'consume' });
     await sleep(100);
     expect(hovers).toEqual([]); // resolved, but marked only at the card's moment, so sweeping marks nothing
     send({ type: 'previewShow', id: 2 });
     await vi.waitFor(() => expect(hovers).toHaveLength(1));
-    expect(hovers[0]).toMatchObject({ range: { start: 31, end: 34 } });
-    expect((hovers[0] as { uri: Uri }).uri.fsPath).toBe(Uri.file(join(root, 'rtl/bit_reader.sv')).fsPath);
+    expect(hovers[0]).toMatchObject({ range: { start: 31, end: 34 }, reveal: false });
+    expect((hovers[0] as { uri: Uri }).uri.fsPath).toBe(file.fsPath);
     send({ type: 'previewEnd' });
     expect(hovers).toEqual([hovers[0], undefined]);
-    // A code link's file is looked at only when a document is already open: none is here, so no mark.
-    send({ type: 'previewCode', id: 3, path: 'rtl/bit_reader.sv', target: 'L3-L5' });
-    await sleep(100);
-    expect(hovers).toHaveLength(2);
-    (workspace as { textDocuments: unknown[] }).textDocuments = [fakeDocument(Uri.file(join(root, 'rtl/bit_reader.sv')), 'a\nb\nc\nd\ne\n')];
+    (workspace as { textDocuments: unknown[] }).textDocuments = [fakeDocument(file, 'a\nb\nc\nd\ne\n')];
     send({ type: 'previewShow', id: 4 }); // before it resolved: marked once it does
     send({ type: 'previewCode', id: 4, path: 'rtl/bit_reader.sv', target: 'L3-L5' });
     await vi.waitFor(() => expect(hovers).toHaveLength(3));
     expect(hovers[2]).toMatchObject({ range: { start: 3, end: 5 } });
-    expect(posted.some((m) => m.type === 'codePreview')).toBe(false);
+    expect(posted.some((m) => m.type === 'codePreview')).toBe(false); // on screen: nothing to say by the link
     expect(shown).toHaveLength(0);
+  });
+
+  it('`editor`: the page says so by the link when no editor shows the file, or the code can’t be found; nothing opens', async () => {
+    const { send, reply } = await ready();
+    config['sidestory.hoverPreview'] = 'editor';
+    const opened = vi.spyOn(workspace, 'openTextDocument');
+    try {
+      send({ type: 'previewRef', id: 1, anchorId: 'consume' });
+      send({ type: 'previewShow', id: 1 });
+      expect(await reply(1)).toEqual({ type: 'codePreview', id: 1, preview: null, note: "bit_reader.sv isn't open · click to open" });
+      send({ type: 'previewEnd' });
+      send({ type: 'previewCode', id: 2, path: 'rtl/bit_reader.sv', target: 'L3-L5' }); // no document: never read
+      send({ type: 'previewShow', id: 2 });
+      expect((await reply(2)).note).toBe("bit_reader.sv isn't open · click to open");
+      send({ type: 'previewEnd' });
+      send({ type: 'previewRef', id: 3, anchorId: 'nope' });
+      send({ type: 'previewShow', id: 3 });
+      expect((await reply(3)).note).toBe('Code not found');
+      expect(opened).not.toHaveBeenCalled();
+      expect(shown).toHaveLength(0);
+    } finally {
+      opened.mockRestore();
+    }
   });
 
   it('a file no editor has open is read, never opened as a document (that would wake its language server)', async () => {
@@ -169,40 +192,118 @@ describe('previewRef and previewCode', () => {
   });
 
   it('the setting reaches the page with init and when it changes', async () => {
+    delete config['sidestory.hoverPreview'];
     const { posted } = await ready();
-    expect(posted).toContainEqual({ type: 'settings', hoverPreview: 'card' });
+    expect(posted).toContainEqual({ type: 'settings', hoverPreview: 'editor' });
     config['sidestory.hoverPreview'] = 'both';
     events.configurationChanged.fire({ affectsConfiguration: (k: string) => k === 'sidestory.hoverPreview' });
     expect(posted.at(-1)).toEqual({ type: 'settings', hoverPreview: 'both' });
     config['sidestory.hoverPreview'] = 'sideways';
     events.configurationChanged.fire({ affectsConfiguration: (k: string) => k === 'sidestory.hoverPreview' });
-    expect(posted.at(-1)).toEqual({ type: 'settings', hoverPreview: 'card' });
+    expect(posted.at(-1)).toEqual({ type: 'settings', hoverPreview: 'editor' });
   });
 });
 
 describe('the hover mark', () => {
-  it('goes on visible editors of that file only, and comes off only for the panel that made it', () => {
-    const uri = Uri.file('/w/a.ts');
-    const editor = (u: Uri) => {
-      const set = new Map<unknown, unknown[]>();
-      return { set, document: { uri: u, lineCount: 50 }, setDecorations: (t: unknown, r: unknown[]) => set.set(t, r) };
+  const uri = Uri.file('/w/a.ts');
+  /** An editor showing lines `top`–`bottom` (0-based) of a 200-line file: what it's painted with, and its reveals. */
+  const editor = (u: Uri, top = 0, bottom = 39) => {
+    const set = new Map<unknown, unknown[]>();
+    const reveals: [number, number][] = [];
+    const e = {
+      set,
+      reveals,
+      document: { uri: u, lineCount: 200, lineAt: (n: number) => ({ range: { end: new Position(n, 4) } }) },
+      visibleRanges: [new Range(top, 0, bottom, 0)],
+      setDecorations: (t: unknown, r: unknown[]) => set.set(t, r),
+      revealRange: (r: Range, type: number) => reveals.push([r.start.line, type]),
+      scrollTo(t: number, b: number) {
+        e.visibleRanges = [new Range(t, 0, b, 0)];
+        events.visibleRangesChanged.fire({ textEditor: e });
+      },
     };
-    const a = editor(uri);
+    return e;
+  };
+  type Ed = ReturnType<typeof editor>;
+  const painted = (e: Ed) => [...e.set.values()].flat() as { start: { line: number }; end: { line: number }; renderOptions?: { after: { contentText: string } } }[];
+  const arrow = (e: Ed) => painted(e).find((r) => r.renderOptions)?.renderOptions!.after.contentText;
+  const lines = (e: Ed) => painted(e).filter((r) => !r.renderOptions).map((r) => [r.start.line, r.end.line]);
+  const show = (...es: Ed[]) => ((window as { visibleTextEditors: unknown[] }).visibleTextEditors = es);
+  afterEach(() => vi.useRealTimers());
+
+  it('edge arrows: above, below, none when partly visible or folded away, label or distance', () => {
+    const v = (...r: [number, number][]) => r.map(([a, b]) => new Range(a, 0, b, 0)) as never;
+    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill')).toEqual({ line: 50, text: '↑ Refill · L14–18' });
+    expect(edgeArrow(v([50, 89]), 13, 17)).toEqual({ line: 50, text: '↑ L14–18 · 33 lines up' });
+    expect(edgeArrow(v([0, 39]), 120, 120)).toEqual({ line: 39, text: '↓ L121 · 81 lines down' });
+    expect(edgeArrow(v([0, 39]), 30, 60)).toBeUndefined();
+    expect(edgeArrow(v([0, 9], [40, 49]), 20, 25)).toBeUndefined(); // in a fold between visible ranges
+    expect(edgeArrow([], 1, 2)).toBeUndefined();
+  });
+
+  it('marks visible editors of that file (lines and arrow), follows scrolling, and comes off only for the panel that made it', () => {
+    const a = editor(uri, 0, 39);
     const b = editor(Uri.file('/w/b.ts'));
-    (window as { visibleTextEditors: unknown[] }).visibleTextEditors = [a, b];
+    show(a, b);
     const d = new Decorations();
     const owner = {};
     try {
-      d.setHover(owner, { uri: uri as never, range: { start: 3, end: 5 } });
-      const lit = (e: typeof a) => [...e.set.values()].flat() as { start: { line: number }; end: { line: number } }[];
-      expect(lit(a).map((r) => [r.start.line, r.end.line])).toEqual([[2, 4]]);
-      expect(lit(b)).toEqual([]);
+      d.setHover(owner, { uri: uri as never, range: { start: 101, end: 104 }, label: 'Refill', reveal: false });
+      expect(lines(a)).toEqual([[100, 103]]);
+      expect(arrow(a)).toBe('↓ Refill · L101–104');
+      expect(painted(b)).toEqual([]);
+      expect(a.reveals).toEqual([]); // never scrolls without hoverReveal
+      a.scrollTo(90, 129); // now in view: no arrow
+      expect(arrow(a)).toBeUndefined();
+      a.scrollTo(150, 189);
+      expect(arrow(a)).toBe('↑ Refill · L101–104');
       d.setHover({}, undefined); // another panel's previewEnd leaves this mark alone
-      expect(lit(a).length).toBe(1);
+      expect(lines(a)).toEqual([[100, 103]]);
       d.setHover(owner, undefined);
-      expect(lit(a)).toEqual([]);
+      expect(painted(a)).toEqual([]);
+      const c = editor(uri, 0, 39); // an editor opened later gets nothing
+      show(a, c);
+      events.visibleEditorsChanged.fire(undefined);
+      expect(painted(c)).toEqual([]);
     } finally {
       d.dispose();
+      show();
+    }
+  });
+
+  it('hoverReveal scrolls an editor whose view misses the lines, and back after; not after a click or the reader scrolling it', () => {
+    vi.useFakeTimers();
+    const d = new Decorations();
+    const owner = {};
+    const target = { uri: uri as never, range: { start: 101, end: 104 }, reveal: true };
+    try {
+      const a = editor(uri, 10, 49);
+      const inView = editor(uri, 90, 129);
+      show(a, inView);
+      d.setHover(owner, target);
+      expect(a.reveals).toEqual([[100, 2]]); // InCenterIfOutsideViewport
+      expect(inView.reveals).toEqual([]);
+      expect(arrow(a)).toBeUndefined(); // on its way there: no arrow
+      a.scrollTo(80, 119); // the reveal's own scroll
+      d.setHover(owner, undefined);
+      expect(a.reveals).toEqual([[100, 2], [10, 3]]); // back to its first line, AtTop
+      a.scrollTo(10, 49);
+
+      d.setHover(owner, target);
+      a.scrollTo(80, 119);
+      d.setHover(owner, undefined, true); // the reader clicked the link
+      expect(a.reveals).toHaveLength(3);
+
+      a.scrollTo(10, 49);
+      d.setHover(owner, target);
+      a.scrollTo(80, 119);
+      vi.advanceTimersByTime(1000);
+      a.scrollTo(60, 99); // the reader scrolled it
+      d.setHover(owner, undefined);
+      expect(a.reveals).toHaveLength(4); // the reveal only: not fought back
+    } finally {
+      d.dispose();
+      show();
     }
   });
 

@@ -163,3 +163,25 @@ test('`off` shows and asks nothing; `editor` asks (for the editor mark) but show
   await el(page, 'plain').hover();
   await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(['previewCode', 'previewShow', 'previewEnd']);
 });
+
+test('`editor`: no card for code on screen; a one-line note by the link when the file isn’t open or the code is gone', async ({ page }) => {
+  await open(page, 'editor');
+  await el(page, 'code').hover();
+  await answer(page, PORTS); // a card's reply never shows in this mode
+  await page.waitForTimeout(700);
+  await expect(card(page)).toBeHidden();
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewShow')).toHaveLength(1);
+
+  await el(page, 'plain').hover();
+  await el(page, 'ref').hover();
+  await answer(page, null, "bit_reader.sv isn't open · click to open");
+  await expect(card(page)).toBeVisible();
+  await expect(card(page)).toHaveText("bit_reader.sv isn't open · click to open");
+  await expect(card(page)).toHaveClass(/cx-hovercard-note/);
+  await expect(card(page).locator('.cx-hovercard-code')).toHaveCount(0);
+  // A press on the link keeps editors the hover scrolled (hoverReveal) where they are, and opens it as before.
+  await el(page, 'ref').click();
+  await expect(card(page)).toBeHidden();
+  expect((await posted(page)).filter((m) => m.type === 'previewEnd').at(-1)).toEqual({ type: 'previewEnd', keep: true });
+  expect(await moving(page)).toEqual([{ type: 'openRef', anchorId: 'state' }]);
+});

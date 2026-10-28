@@ -14,7 +14,7 @@ const { effectiveHighlight, HIGHLIGHT_DEFAULTS } = await import('../../src/exten
 const { ExplainerSession } = await import('../../src/extension/session.ts');
 const { refFromDir } = await import('../../src/extension/explainers.ts');
 
-const KEYS = ['sidestory.dimUnfocused', 'sidestory.clickHighlightSeconds', 'sidestory.clickFrame', 'sidestory.hoverPreview'];
+const KEYS = ['sidestory.dimUnfocused', 'sidestory.clickHighlightSeconds', 'sidestory.clickFrame', 'sidestory.hoverPreview', 'sidestory.hoverReveal'];
 afterEach(() => {
   for (const k of KEYS) delete config[k];
 });
@@ -60,7 +60,7 @@ describe('highlight in the manifest', () => {
   });
 
   it('names unknown keys (at most five, cut short) and ignores them', () => {
-    expect(parseHighlight({ dim: true, color: 'red' })).toEqual({ value: { dim: true }, errors: ['unknown key "color" (known: dim, clickSeconds, clickFrame, hoverPreview); ignored'] });
+    expect(parseHighlight({ dim: true, color: 'red' })).toEqual({ value: { dim: true }, errors: ['unknown key "color" (known: dim, clickSeconds, clickFrame, hoverPreview, hoverReveal); ignored'] });
     const many = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`${'k'.repeat(50)}${i}`, 1]));
     const [e] = parseHighlight(many).errors;
     expect(e).toContain('and 2 more');
@@ -72,7 +72,7 @@ describe('highlight in the manifest', () => {
 describe('effectiveHighlight', () => {
   it('defaults, then the sidestory, then the step (dim), then the reader’s own setting', () => {
     expect(effectiveHighlight()).toEqual(HIGHLIGHT_DEFAULTS);
-    expect(effectiveHighlight({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both' })).toEqual({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both' });
+    expect(effectiveHighlight({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both', hoverReveal: true })).toEqual({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both', hoverReveal: true });
     expect(effectiveHighlight({ dim: false }, { dim: true }).dim).toBe(true);
     expect(effectiveHighlight({ dim: true }, { dim: false }).dim).toBe(false);
     expect(effectiveHighlight({ dim: true }, {}).dim).toBe(true);
@@ -80,10 +80,13 @@ describe('effectiveHighlight', () => {
     config['sidestory.clickHighlightSeconds'] = 0;
     config['sidestory.clickFrame'] = true;
     config['sidestory.hoverPreview'] = 'off';
-    expect(effectiveHighlight({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both' }, { dim: false })).toEqual({ dim: true, clickSeconds: 0, clickFrame: true, hoverPreview: 'off' });
+    config['sidestory.hoverReveal'] = false;
+    expect(effectiveHighlight({ dim: false, clickSeconds: 3, clickFrame: false, hoverPreview: 'both', hoverReveal: true }, { dim: false })).toEqual({ dim: true, clickSeconds: 0, clickFrame: true, hoverPreview: 'off', hoverReveal: false });
   });
 
   it('skips a reader’s value of the wrong type, and clamps theirs too', () => {
+    config['sidestory.hoverReveal'] = 'yes';
+    expect(effectiveHighlight({ hoverReveal: true }).hoverReveal).toBe(true);
     config['sidestory.hoverPreview'] = 'sideways';
     config['sidestory.clickHighlightSeconds'] = 'abc';
     expect(effectiveHighlight({ hoverPreview: 'editor' })).toMatchObject({ hoverPreview: 'editor', clickSeconds: 1.5 });
@@ -140,12 +143,12 @@ describe('a panel', () => {
 
   it('sends the page the sidestory’s hover mode, and the click highlight and step fading use its values', async () => {
     writeManifest((m) => {
-      m.highlight = { dim: false, clickSeconds: 4, clickFrame: false, hoverPreview: 'both' };
+      m.highlight = { dim: false, clickSeconds: 4, clickFrame: false, hoverPreview: 'both', hoverReveal: true };
       m.anchors.state!.dim = true;
     });
     const { session, send, focus, flashes, settings } = await open();
     expect(settings()).toEqual({ type: 'settings', hoverPreview: 'both' });
-    expect(session.highlightFor()).toEqual({ dim: false, clickSeconds: 4, clickFrame: false, hoverPreview: 'both' });
+    expect(session.highlightFor()).toEqual({ dim: false, clickSeconds: 4, clickFrame: false, hoverPreview: 'both', hoverReveal: true });
 
     send({ type: 'focusAnchor', anchorId: 'interface', source: 'click' });
     await vi.waitFor(() => expect(focus.length).toBeGreaterThan(0));
@@ -165,14 +168,14 @@ describe('a panel', () => {
 
   it('a manifest edit updates the values, and the page gets the new hover mode', async () => {
     const { session, posted, settings } = await open();
-    expect(settings()).toEqual({ type: 'settings', hoverPreview: 'card' });
+    expect(settings()).toEqual({ type: 'settings', hoverPreview: 'editor' });
     expect(session.highlightFor()).toEqual(HIGHLIGHT_DEFAULTS);
     writeManifest((m) => {
-      m.highlight = { hoverPreview: 'editor', clickSeconds: 10 };
+      m.highlight = { hoverPreview: 'card', clickSeconds: 10 };
     });
     for (const w of watchers.filter((x) => (x.pattern as { base?: { fsPath?: string } }).base?.fsPath === Uri.file(dir).fsPath)) w.fireChange(Uri.file(join(dir, 'manifest.json')));
-    await vi.waitFor(() => expect(settings()).toEqual({ type: 'settings', hoverPreview: 'editor' }));
-    expect(session.highlightFor()).toMatchObject({ hoverPreview: 'editor', clickSeconds: 10, dim: true });
+    await vi.waitFor(() => expect(settings()).toEqual({ type: 'settings', hoverPreview: 'card' }));
+    expect(session.highlightFor()).toMatchObject({ hoverPreview: 'card', clickSeconds: 10, dim: true });
     const sent = posted.filter((m) => m.type === 'settings').length;
     writeManifest((m) => {
       m.title = 'Renamed';
@@ -187,12 +190,12 @@ describe('a panel', () => {
       m.highlight = { hoverPreview: 'both', clickSeconds: 7 };
     });
     const { session, send, settings } = await open(join(root, '.sidestory/overview'));
-    expect(settings()).toEqual({ type: 'settings', hoverPreview: 'card' });
+    expect(settings()).toEqual({ type: 'settings', hoverPreview: 'editor' });
     send({ type: 'dive', name: 'bit-reader' });
     await vi.waitFor(() => expect(settings()).toEqual({ type: 'settings', hoverPreview: 'both' }));
     expect(session.highlightFor().clickSeconds).toBe(7);
     send({ type: 'goTo', depth: 0 });
-    await vi.waitFor(() => expect(settings()).toEqual({ type: 'settings', hoverPreview: 'card' }));
+    await vi.waitFor(() => expect(settings()).toEqual({ type: 'settings', hoverPreview: 'editor' }));
     expect(session.highlightFor().clickSeconds).toBe(1.5);
   });
 });
