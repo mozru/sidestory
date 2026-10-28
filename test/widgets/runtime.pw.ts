@@ -464,6 +464,15 @@ exports.default = function W() {
   await expect(f.getByText('content A')).toHaveCount(0);
   await f.getByRole('tab', { name: 'Tab B' }).press('ArrowLeft');
   await expect(f.getByText('content A')).toBeVisible();
+  // < > beside the select: > picks the first option when none is chosen; each stops at its end.
+  await expect(f.getByRole('button', { name: 'Previous option' })).toBeDisabled();
+  await f.getByRole('button', { name: 'Next option' }).click();
+  await expect(f.getByLabel('fruit')).toHaveValue('apple');
+  await f.getByRole('button', { name: 'Next option' }).click();
+  await expect(f.getByLabel('fruit')).toHaveValue('pear');
+  await expect(f.getByRole('button', { name: 'Next option' })).toBeDisabled();
+  await f.getByRole('button', { name: 'Previous option' }).click();
+  await expect(f.getByLabel('fruit')).toHaveValue('apple');
   await f.getByLabel('fruit').selectOption('pear');
   await f.getByRole('switch').click();
   await expect(f.getByRole('switch')).toHaveAttribute('aria-checked', 'true');

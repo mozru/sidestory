@@ -224,17 +224,25 @@ function textOf(node: ReactNode): string {
   return '';
 }
 
-function Select({ value, defaultValue, onValueChange, disabled, name, required, children }: P) {
+/** A chevron (`m6 9 6 6 6-6` points down), for the select and its < > buttons. */
+const chevron = (d: string, className: string) =>
+  h('svg', { 'aria-hidden': true, viewBox: '0 0 24 24', className, fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, h('path', { d }));
+
+/** `arrows` (default true): < > buttons beside the select step to the previous or next option. */
+function Select({ value, defaultValue, onValueChange, disabled, name, required, arrows = true, children }: P) {
   const [v, set] = useControlled<string>(value, defaultValue ?? '', onValueChange);
   let trigger: P = {};
   let placeholder: string | undefined;
   const options: ReactNode[] = [];
+  /** The options the < > buttons step through, in order. */
+  const values: string[] = [];
   const items = (nodes: ReactNode, out: ReactNode[]): void => {
     Children.forEach(nodes, (child) => {
       if (!isValidElement(child)) return;
       const props = child.props as P;
       if (child.type === SelectItem) {
         out.push(h('option', { key: String(props.value), value: props.value, disabled: props.disabled }, textOf(props.children)));
+        if (!props.disabled) values.push(String(props.value));
       } else if (child.type === SelectGroup) {
         const label = Children.toArray(props.children).find((c) => isValidElement(c) && c.type === SelectLabel) as ReactElement<P> | undefined;
         const inner: ReactNode[] = [];
@@ -261,7 +269,7 @@ function Select({ value, defaultValue, onValueChange, disabled, name, required, 
   };
   walk(children);
   const { className, children: _c, ...triggerRest } = trigger;
-  return h('div', { 'data-slot': 'select', className: cn('relative inline-flex w-fit', /\bw-/.test(className ?? '') && 'w-auto') },
+  const select = h('div', { 'data-slot': 'select', className: cn('relative inline-flex w-fit', /\bw-/.test(className ?? '') && 'w-auto') },
     h('select', {
       ...triggerRest, 'data-slot': 'select-trigger', value: v, disabled, name, required,
       className: cn('h-9 w-full cursor-pointer appearance-none rounded-md border border-input bg-[var(--input-background)] py-1 pl-3 pr-8 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50', FOCUS, 'focus-visible:outline-offset-0', className),
@@ -269,8 +277,20 @@ function Select({ value, defaultValue, onValueChange, disabled, name, required, 
     },
     placeholder !== undefined || !v ? h('option', { value: '', disabled: true, hidden: !!v }, placeholder ?? '') : null,
     options),
-    h('svg', { 'aria-hidden': true, viewBox: '0 0 24 24', className: 'pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 opacity-60', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
-      h('path', { d: 'm6 9 6 6 6-6' })));
+    chevron('m6 9 6 6 6-6', 'pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 opacity-60'));
+  if (!arrows) return select;
+  // Nothing chosen yet: > picks the first option, < stays off.
+  const at = values.indexOf(v);
+  const step = (by: -1 | 1, label: string, d: string) => {
+    const to = at < 0 ? (by > 0 ? values[0] : undefined) : values[at + by];
+    return h('button', {
+      type: 'button', 'data-slot': 'select-step', 'aria-label': label, title: label, disabled: disabled || to === undefined,
+      className: buttonVariants({ variant: 'outline', size: 'icon', className: 'size-9' }),
+      onClick: () => to !== undefined && set(to),
+    }, chevron(d, ''));
+  };
+  return h('div', { 'data-slot': 'select-stepper', className: 'inline-flex items-center gap-1' },
+    select, step(-1, 'Previous option', 'm15 18-6-6 6-6'), step(1, 'Next option', 'm9 18 6-6-6-6'));
 }
 
 // ---- progress, separator ----

@@ -46,8 +46,8 @@ declare module '@/components/ui/tabs' {
   export const TabsContent: __CxUi<{ value: string; forceMount?: boolean }>;
 }
 declare module '@/components/ui/select' {
-  /** Rendered as one native <select>; SelectContent's items become its options. */
-  export const Select: __CxUi<{ value?: string; defaultValue?: string; onValueChange?: (value: string) => void; disabled?: boolean; name?: string; required?: boolean }>;
+  /** Rendered as one native <select>; SelectContent's items become its options. `arrows` (default true): < > buttons beside it. */
+  export const Select: __CxUi<{ value?: string; defaultValue?: string; onValueChange?: (value: string) => void; disabled?: boolean; name?: string; required?: boolean; arrows?: boolean }>;
   export const SelectTrigger: __CxUi, SelectContent: __CxUi, SelectGroup: __CxUi, SelectLabel: __CxUi, SelectSeparator: __CxUi;
   export const SelectValue: __CxUi<{ placeholder?: string }>;
   export const SelectItem: __CxUi<{ value: string; disabled?: boolean }>;
