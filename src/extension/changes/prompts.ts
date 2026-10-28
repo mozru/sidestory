@@ -56,7 +56,7 @@ const branch = (value: string | undefined): Value => ({ kind: 'branch', value })
 
 export function explainBranchPrompt(base: string): string {
   return prompt(
-    "Explain this branch's changes against the base below with Sidestory: a sidestory with that base, one step per logical change in reviewer order, every change anchored or marked trivial, and check.cjs --coverage clean.",
+    "Explain this branch's changes against the base below with Sidestory: a sidestory with that base, one step per logical change in reviewer order, each led by a figure with a short caption, every change anchored or marked trivial, and check.cjs --coverage clean.",
     [['base', branch(base)]],
   );
 }
@@ -104,7 +104,7 @@ export function changePrompt(c: { sidestory?: string; base: string; file: string
 
 export function explainFilePrompt(file: string): string {
   return prompt(
-    'Explain the file below with Sidestory: a plain sidestory (no base) in a new folder under .sidestory/, a step per part of the file in reading order, then run the checker until it reports no errors and pin the anchors.',
+    'Explain the file below with Sidestory: a plain sidestory (no base) in a new folder under .sidestory/, a step per part of the file in reading order, each led by a figure with a short caption, then run the checker until it reports no errors and pin the anchors.',
     [['file', path(file)]],
   );
 }

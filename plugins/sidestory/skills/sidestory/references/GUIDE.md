@@ -61,6 +61,8 @@ A sidestory is a folder in your repository:
 
 Open it with **Sidestory: Open Sidestory…**.
 
+The best sidestories are mostly pictures: each step leads with a figure (a block diagram, a timeline, a before/after, a byte layout) and a few sentences say what to notice in it. The code is right beside the page, so the page doesn't need to retell it.
+
 ### Link sections to code
 
 Mark any element that is about some code with `data-explain-anchor`, and name it in the manifest:
