@@ -31,7 +31,7 @@ test('dma_ctrl.sv shows lenses naming the path and step; opening one hides that 
   // Every lens for the open sidestory is gone, and stepping doesn't bring any back.
   await expect(lenses(page, 'dma_ctrl.sv').filter({ hasText: `› ${CTRL} ·`, visible: true })).toHaveCount(0);
   await expect(lenses(page, 'dma_ctrl.sv').filter({ visible: true }).first()).toContainText('block by block · step 1');
-  await panel.getByRole('button', { name: 'Next step' }).click();
+  await panel.locator('.cx-footer').getByRole('button', { name: 'Next step' }).click();
   await page.waitForTimeout(800);
   await expect(lenses(page, 'dma_ctrl.sv').filter({ hasText: `› ${CTRL} ·`, visible: true })).toHaveCount(0);
 });

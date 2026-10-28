@@ -177,7 +177,7 @@ test('a file reopening with its old cursor (view state restored) does not pull t
   await content(panel).locator('[data-explain-ref="m-ctrl"]').first().click();
   await expect(activeTab(page, 'dma_ctrl.sv')).toBeVisible();
   await expect(page.locator('.statusbar')).toContainText('Ln 10');
-  const next = panel.getByRole('button', { name: 'Next step' });
+  const next = panel.locator('.cx-footer').getByRole('button', { name: 'Next step' });
   await page.waitForTimeout(700); // a reader's pace
   await next.click();
   await expect(activeTab(page, 'dma_top.sv')).toBeVisible();
