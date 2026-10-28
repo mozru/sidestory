@@ -22,7 +22,7 @@ beforeAll(() => {
 /** Panels opened by the test, closed after it. */
 const panels: { dispose(): void }[] = [];
 
-function open(name: string, decorations: Record<string, unknown> = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} }) {
+function open(name: string, decorations: Record<string, unknown> = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {} }) {
   const ref = refFromDir(Uri.file(`${root}/.sidestory/${name}`) as never)!;
   const posted: ToWebview[] = [];
   const messages = new EventEmitter<unknown>();
@@ -144,7 +144,7 @@ describe('resolving again', () => {
 describe('the cursor and the code', () => {
   it('Go to Line (a selection change of kind Command) is the reader moving in the code, like a click: the fading stops', async () => {
     const sets: { dim: boolean }[] = [];
-    const decorations = { set: (f?: { dim: boolean }) => f && sets.push(f), setWidget() {}, isDimmed: () => true, refresh() {}, flash() {} };
+    const decorations = { set: (f?: { dim: boolean }) => f && sets.push(f), setWidget() {}, isDimmed: () => true, refresh() {}, flash() {}, clearFlash() {} };
     const { session, lastInit, send } = open('bit-reader', decorations);
     await session.load();
     send({ type: 'ready' });

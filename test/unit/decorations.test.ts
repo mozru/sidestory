@@ -80,4 +80,36 @@ describe('the click highlight', () => {
       vi.useRealTimers();
     }
   });
+
+  it('restarts its timer on the next click, clears the other editor then, and falls back to 1.5 s for a value that is no number', () => {
+    vi.useFakeTimers();
+    const d = new Decorations();
+    try {
+      const a = editor();
+      const b = editor();
+      d.flash(a as never, range);
+      vi.advanceTimersByTime(1000);
+      d.flash(a as never, range);
+      vi.advanceTimersByTime(1000); // past the first deadline
+      expect(a.calls.at(-1)).toHaveLength(1);
+      d.flash(b as never, range);
+      expect(a.calls.at(-1)).toEqual([]);
+      vi.advanceTimersByTime(1500);
+      expect(b.calls.at(-1)).toEqual([]);
+
+      config['sidestory.clickHighlightSeconds'] = 'abc';
+      d.flash(a as never, range);
+      vi.advanceTimersByTime(1500);
+      expect(a.calls.at(-1)).toEqual([]);
+
+      config['sidestory.clickHighlightSeconds'] = 0;
+      d.flash(a as never, range);
+      d.clearFlash(); // the panel shows another sidestory
+      expect(a.calls.at(-1)).toEqual([]);
+    } finally {
+      delete config['sidestory.clickHighlightSeconds'];
+      d.dispose();
+      vi.useRealTimers();
+    }
+  });
 });

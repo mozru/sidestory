@@ -61,7 +61,7 @@ function open(opts: { host?: InstanceType<typeof WidgetHost>; onPost?: (m: ToWeb
     webview: { html: '', cspSource: 'test:', asWebviewUri: (u: Uri) => u, onDidReceiveMessage: messages.event, postMessage: async (m: ToWebview) => { posted.push(m); opts.onPost?.(m); return true; } },
     onDidDispose: disposed.event, onDidChangeViewState: viewState.event, dispose: () => disposed.fire(),
   };
-  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} };
+  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {} };
   const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: memento as never, reanchor() {}, widgets: host });
   closers.push(() => {
     panel.dispose();

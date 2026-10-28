@@ -581,7 +581,7 @@ Comments from other people, and anything from the repository, reach Claude only 
 | Setting | Default | |
 |---|---|---|
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
-| `sidestory.clickHighlightSeconds` | `1.5` | How long the code stays highlighted after you click a code link or a step, in seconds. `0` keeps it until the next click. |
+| `sidestory.clickHighlightSeconds` | `1.5` | How long the code stays highlighted after you click a code link or an inline reference, or a widget points at it, in seconds. `0` keeps it until the next one, or until the panel shows another sidestory. |
 | `sidestory.followCursorInDiagrams` | `true` | Ring the boxes and links (`data-explain-ref`, `data-explain-code`) whose code holds the editor cursor. |
 | `sidestory.codeLens.enabled` | `true` | A CodeLens above explained code (at most 30 per file; hidden while that sidestory is open in a panel). Language-overridable. |
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |

@@ -62,7 +62,7 @@ function open(name: string) {
     dispose: () => disposed.fire(),
   };
   panels.push(panel);
-  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {} };
+  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {} };
   const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: { get: <T>(_k: string, d: T) => d, update: async () => {} } as never, reanchor() {} });
   const send = (m: unknown) => messages.fire(m);
   const hide = () => {

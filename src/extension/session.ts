@@ -468,6 +468,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.revealWhenResolved = undefined;
     this.active = active ?? this.positions.get(this.ref.dir.toString());
     this.decorations.set(undefined);
+    this.decorations.clearFlash();
     this.watchExplainer();
     this.host.opened?.(this.ref);
     await this.reload();
@@ -1430,6 +1431,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.host.diffs?.release(this.diffWho);
     if (this.highlightRequester) this.highlightRequester.who.disposed = true;
     this.decorations.set(undefined);
+    this.decorations.clearFlash();
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();
   }

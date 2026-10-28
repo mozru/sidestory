@@ -102,20 +102,28 @@ export class Decorations implements vscode.Disposable {
   }
 
   /**
-   * Marks lines (an inline reference's target) without changing the active step, for `sidestory.clickHighlightSeconds`
-   * (0: until the next one). Clears the previous one, in whichever editor it was.
+   * Marks lines (a link's or widget's target) without changing the active step, for `sidestory.clickHighlightSeconds`
+   * (0: until the next one, or the panel leaves this sidestory). Clears the previous one, in whichever editor it was.
    */
   flash(editor: vscode.TextEditor, range: vscode.Range): void {
     clearTimeout(this.flashTimer);
     if (this.flashed && this.flashed !== editor) this.flashed.setDecorations(this.flashType, []);
     this.flashed = editor;
     editor.setDecorations(this.flashType, [range]);
-    const seconds = vscode.workspace.getConfiguration('sidestory').get<number>('clickHighlightSeconds', 1.5);
-    if (!(seconds > 0)) return;
+    const set = vscode.workspace.getConfiguration('sidestory').get<unknown>('clickHighlightSeconds', 1.5);
+    const seconds = typeof set === 'number' && Number.isFinite(set) ? set : 1.5;
+    if (seconds <= 0) return;
     this.flashTimer = setTimeout(() => {
       editor.setDecorations(this.flashType, []);
       this.flashed = undefined;
     }, Math.min(seconds, 3600) * 1000);
+  }
+
+  /** Clears the click highlight (the panel left its sidestory). */
+  clearFlash(): void {
+    clearTimeout(this.flashTimer);
+    this.flashed?.setDecorations(this.flashType, []);
+    this.flashed = undefined;
   }
 
   set(focus: Focus | undefined): void {

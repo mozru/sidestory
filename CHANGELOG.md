@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- New setting `sidestory.clickHighlightSeconds`: how long the code stays highlighted after you click a code link or a step (1.5 seconds by default; `0` keeps it until the next click). Fixed: clicking a link to another file could leave the previous file's highlight on for good.
+- New setting `sidestory.clickHighlightSeconds`: how long the code stays highlighted after you click a code link or an inline reference (1.5 seconds by default; `0` keeps it until the next one). Fixed: clicking a link to another file could leave the previous file's highlight on for good.
 
 ## 0.2.6 (2026-10-27)
 
