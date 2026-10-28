@@ -171,8 +171,12 @@ app.innerHTML = staticHtml`
   </div>
   <nav class="cx-steps" aria-label="Steps"></nav>
   <div class="cx-steps-compact">
-    <label class="cx-sr" for="cx-step-select">Step</label>
-    <select id="cx-step-select" class="cx-step-select"></select>
+    <div class="cx-step-picker">
+      <label class="cx-sr" for="cx-step-select">Step</label>
+      <select id="cx-step-select" class="cx-step-select"></select>
+      <button class="cx-nav" type="button" data-delta="-1" aria-label="Previous step"><span class="codicon codicon-chevron-left" aria-hidden="true"></span></button>
+      <button class="cx-nav" type="button" data-delta="1" aria-label="Next step"><span class="codicon codicon-chevron-right" aria-hidden="true"></span></button>
+    </div>
     <div class="cx-progress" aria-hidden="true"></div>
   </div>
 </header>

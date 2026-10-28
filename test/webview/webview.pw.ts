@@ -412,6 +412,14 @@ test('narrow panes get a step picker instead of tabs', async ({ page }) => {
   await expect(page.locator('.cx-step-select')).toBeVisible();
   await page.locator('.cx-step-select').selectOption('refill');
   await expect(section(page, 'refill')).toHaveClass(/cx-active/);
+  // < > right beside the picker step through it, without the footer's buttons.
+  const picker = page.locator('.cx-step-picker');
+  await expect(picker.getByRole('button', { name: 'Next step' })).toBeDisabled(); // Refill is the last step
+  await picker.getByRole('button', { name: 'Previous step' }).click();
+  await expect(page.locator('.cx-step-select')).toHaveValue('consume');
+  await picker.getByRole('button', { name: 'Next step' }).click();
+  await expect(page.locator('.cx-step-select')).toHaveValue('refill');
+  await expect(section(page, 'refill')).toHaveClass(/cx-active/);
 });
 
 test('the reader comes back to the same place after the panel is rebuilt', async ({ page }) => {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- < > buttons sit right beside the step picker that narrow panels show, and beside every dropdown in a widget (`Select`; `arrows={false}` leaves them out), to step through without opening the list.
+- The Claude Code skill mirrors the code's hierarchy: an overview sidestory with one box per part, and a detail sidestory for each part big enough to need one.
 - Rest the pointer on a link or a diagram box in a sidestory (or Tab to it) and a small card shows the first lines of its code, colored like the editor, without moving the editor, the cursor or focus. New setting `sidestory.hoverPreview`: `card` (the default), `editor` (mark the lines in an editor already showing the file instead), `both`, or `off`.
 - Sidestories written by Claude are more visual: the skill now has each step lead with a figure and keep its prose to a short caption, with a table of which picture fits which kind of step. The copied prompts ask for the same.
 - New setting `sidestory.clickHighlightSeconds`: how long the code stays highlighted after you click a code link or an inline reference (1.5 seconds by default; `0` keeps it until the next one). When it fades, a frame now stays around those lines until the next click (`sidestory.clickFrame`, on by default; the `sidestory.clickFrameBorder` color). Fixed: clicking a link to another file could leave the previous file's highlight on for good.

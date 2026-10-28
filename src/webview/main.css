@@ -249,7 +249,16 @@ button.cx-crumb:focus-visible,
   margin-top: 10px;
 }
 
+/* The picker with < > beside it. */
+.cx-step-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .cx-step-select {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   height: 28px;
   padding: 0 6px;
