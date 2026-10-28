@@ -89,6 +89,7 @@ export class Decorations implements vscode.Disposable {
     after: { color: new vscode.ThemeColor('sidestory.diffFocusBorder'), fontStyle: 'italic', fontWeight: '600', margin: '0 0 0 3em' },
   });
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
+  private flashed: vscode.TextEditor | undefined;
   private current: Focus | undefined;
   private widget: WidgetHighlight | undefined;
 
@@ -100,11 +101,21 @@ export class Decorations implements vscode.Disposable {
     for (const editor of vscode.window.visibleTextEditors) this.applyWidget(editor);
   }
 
-  /** Briefly marks lines (an inline reference's target) without changing the active step. */
+  /**
+   * Marks lines (an inline reference's target) without changing the active step, for `sidestory.clickHighlightSeconds`
+   * (0: until the next one). Clears the previous one, in whichever editor it was.
+   */
   flash(editor: vscode.TextEditor, range: vscode.Range): void {
     clearTimeout(this.flashTimer);
+    if (this.flashed && this.flashed !== editor) this.flashed.setDecorations(this.flashType, []);
+    this.flashed = editor;
     editor.setDecorations(this.flashType, [range]);
-    this.flashTimer = setTimeout(() => editor.setDecorations(this.flashType, []), 1500);
+    const seconds = vscode.workspace.getConfiguration('sidestory').get<number>('clickHighlightSeconds', 1.5);
+    if (!(seconds > 0)) return;
+    this.flashTimer = setTimeout(() => {
+      editor.setDecorations(this.flashType, []);
+      this.flashed = undefined;
+    }, Math.min(seconds, 3600) * 1000);
   }
 
   set(focus: Focus | undefined): void {

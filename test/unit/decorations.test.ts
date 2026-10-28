@@ -2,7 +2,7 @@
 // visible in high contrast themes, which leave highlight backgrounds transparent.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { decorationTypes, ThemeColor, Uri, window } from './vscode-stub.ts';
+import { config, decorationTypes, Range, ThemeColor, Uri, window } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 const { Decorations } = await import('../../src/extension/decorations.ts');
@@ -44,6 +44,40 @@ describe('widget highlights', () => {
     } finally {
       d.dispose();
       (window as { visibleTextEditors: unknown[] }).visibleTextEditors = [];
+    }
+  });
+});
+
+describe('the click highlight', () => {
+  const editor = () => {
+    const calls: unknown[][] = [];
+    return { calls, setDecorations: (_t: unknown, ranges: unknown[]) => calls.push(ranges) };
+  };
+  const range = new Range(3, 0, 5, 0) as never;
+
+  it('fades after sidestory.clickHighlightSeconds, and stays with 0 until the next click, which clears it in the other editor', () => {
+    vi.useFakeTimers();
+    const d = new Decorations();
+    try {
+      const a = editor();
+      d.flash(a as never, range);
+      vi.advanceTimersByTime(1499);
+      expect(a.calls.at(-1)).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(a.calls.at(-1)).toEqual([]);
+
+      config['sidestory.clickHighlightSeconds'] = 0;
+      d.flash(a as never, range);
+      vi.advanceTimersByTime(24 * 3600_000);
+      expect(a.calls.at(-1)).toHaveLength(1);
+      const b = editor();
+      d.flash(b as never, range);
+      expect(a.calls.at(-1)).toEqual([]);
+      expect(b.calls.at(-1)).toHaveLength(1);
+    } finally {
+      delete config['sidestory.clickHighlightSeconds'];
+      d.dispose();
+      vi.useRealTimers();
     }
   });
 });

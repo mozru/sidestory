@@ -570,6 +570,13 @@
           "default": true,
           "description": "Compare the working tree (with staged, unstaged and untracked changes) rather than the last commit, for coverage, its decorations and the diffs steps open."
         },
+        "sidestory.clickHighlightSeconds": {
+          "type": "number",
+          "default": 1.5,
+          "minimum": 0,
+          "maximum": 3600,
+          "markdownDescription": "How long the code stays highlighted after you click a code link or a step in a sidestory, in seconds. `0` keeps it until the next click."
+        },
         "sidestory.changes.openStepsIn": {
           "type": "string",
           "enum": [
