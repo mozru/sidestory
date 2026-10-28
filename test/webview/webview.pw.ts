@@ -547,7 +547,7 @@ test('a detail can be peeked at in place or dived into', async ({ page }) => {
   await expect(frame(page).locator('[data-explain-detail="no-such-thing"] .cx-dive')).toBeDisabled();
   await clearPosted(page);
   await detail.locator('.cx-dive').click();
-  expect(await posted(page)).toContainEqual({ type: 'dive', name: 'retry-backoff' });
+  expect(await posted(page)).toContainEqual({ type: 'dive', name: 'retry-backoff', id: expect.any(Number) });
 });
 
 test('the trail shows where the reader is and leads back up', async ({ page }) => {
@@ -571,10 +571,10 @@ test('the trail shows where the reader is and leads back up', async ({ page }) =
   await page.locator('.cx-back').click();
   await page.locator('.cx-scroll').focus();
   await page.keyboard.press('Escape');
-  expect((await posted(page)).filter((m) => m.type === 'goTo')).toEqual([
-    { type: 'goTo', depth: 0 },
-    { type: 'goTo', depth: 0 },
-    { type: 'goTo', depth: 0 },
+  expect((await posted(page)).filter((m) => m.type === 'goTo').map((m) => ({ ...m, id: undefined }))).toEqual([
+    { type: 'goTo', depth: 0, id: undefined },
+    { type: 'goTo', depth: 0, id: undefined },
+    { type: 'goTo', depth: 0, id: undefined },
   ]);
 });
 
@@ -599,7 +599,7 @@ test('the cursor in code a detail covers offers to dive into it', async ({ page 
   await expect(page.locator('.cx-pill-show')).toHaveText('Cursor is in Retry with backoff · Dive');
   await clearPosted(page);
   await page.locator('.cx-pill-show').click();
-  expect(await posted(page)).toEqual([{ type: 'dive', name: 'retry-backoff' }]);
+  expect(await posted(page)).toEqual([{ type: 'dive', name: 'retry-backoff', id: expect.any(Number) }]);
   await expect(page.locator('.cx-pill')).toBeHidden();
 });
 
@@ -687,7 +687,7 @@ test('a detail naming an explainer already on the trail goes back up to it', asy
   await expect(frame(page).locator('[data-explain-detail="retry-backoff"] .cx-dive')).toBeDisabled();
   await clearPosted(page);
   await up.click();
-  expect(await posted(page)).toEqual([{ type: 'goTo', depth: 0 }]);
+  expect(await posted(page)).toEqual([{ type: 'goTo', depth: 0, id: expect.any(Number) }]);
 });
 
 test('author look-alike detail controls neither break rendering nor dive', async ({ page }) => {

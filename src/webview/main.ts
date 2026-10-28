@@ -106,7 +106,9 @@ let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
 /** Back / Forward: where the reader has been in this panel. */
 const navHistory = new NavHistory(state.history);
 /** A Back or Forward to another sidestory (or a trail move that is one), until its `init` arrives. */
-let pendingHistory: { index: number; dir: string; trail: string[] } | undefined;
+let pendingHistory: { index: number; dir: string; trail: string[]; id: number } | undefined;
+/** Numbers the requests that move the panel (Back / Forward, a dive, the way up), so a refusal is matched to its own. */
+let navRequestId = 0;
 let anchors = new Map<string, AnchorView>();
 let steps: Step[] = [];
 let active: string | undefined = state.active;
@@ -625,11 +627,12 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       goHistory(m.delta === -1 ? -1 : 1);
       break;
     case 'historyFailed': {
-      // The extension couldn't show it (gone, or out of reach): stop waiting, and forget it.
+      // The extension couldn't show what the panel is waiting for (gone, or out of reach): stop waiting, and forget it.
+      if (!pendingHistory || m.id !== pendingHistory.id) break; // another request's, or one already given up on
       setPending(undefined);
-      const gone = navHistory.drop({ dir: m.dir, trail: m.trail });
+      const title = navHistory.drop({ dir: m.dir, trail: m.trail });
       persistHistory();
-      if (gone !== undefined) announce(`${gone} is no longer available`);
+      if (title !== undefined) announce(m.reason === 'gone' ? `${title} is no longer available` : `${title} can't be opened from here`);
       break;
     }
     case 'asset': {
@@ -990,7 +993,7 @@ function goTo(depth: number): void {
   savePlace();
   // Up to where the reader just came from: that's Back, so Forward returns here.
   expectEntry(-1, trail.slice(0, depth + 1).map((t) => t.name));
-  vscode.postMessage({ type: 'goTo', depth });
+  vscode.postMessage({ type: 'goTo', depth, id: navRequestId });
 }
 
 function dive(name: string): void {
@@ -1000,7 +1003,7 @@ function dive(name: string): void {
   savePlace();
   // Into the detail the reader just came back from: that's Forward, so what lay beyond it stays.
   expectEntry(1, [...trail.map((t) => t.name), name]);
-  vscode.postMessage({ type: 'dive', name });
+  vscode.postMessage({ type: 'dive', name, id: navRequestId });
 }
 
 /** A sibling sidestory's folder (details live next to each other under `.sidestory/`). */
@@ -1010,7 +1013,8 @@ const siblingDir = (name: string) => state.dir.replace(/[^/]*$/, name);
 function expectEntry(delta: 1 | -1, names: string[]): void {
   const index = navHistory.position + delta;
   const e = navHistory.at(index);
-  setPending(e && samePage(e, { dir: siblingDir(names.at(-1)!), trail: names }) ? { index, dir: e.dir, trail: e.trail } : undefined);
+  const id = ++navRequestId;
+  setPending(e && samePage(e, { dir: siblingDir(names.at(-1)!), trail: names }) ? { index, dir: e.dir, trail: e.trail, id } : undefined);
   renderHistory();
 }
 
@@ -1307,8 +1311,9 @@ function goHistory(delta: 1 | -1): void {
     return;
   }
   if (initialized) savePlace();
-  setPending({ index, dir: e.dir, trail: e.trail });
-  vscode.postMessage(e.active ? { type: 'openHistory', dir: e.dir, trail: e.trail, active: e.active } : { type: 'openHistory', dir: e.dir, trail: e.trail });
+  const id = ++navRequestId;
+  setPending({ index, dir: e.dir, trail: e.trail, id });
+  vscode.postMessage(e.active ? { type: 'openHistory', dir: e.dir, trail: e.trail, active: e.active, id } : { type: 'openHistory', dir: e.dir, trail: e.trail, id });
   renderHistory();
 }
 

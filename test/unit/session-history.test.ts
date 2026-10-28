@@ -93,13 +93,16 @@ describe('Back / Forward', () => {
     send({ type: 'ready' });
     await vi.waitFor(() => expect(lastInit()?.dir).toBe(dirOf('bit-reader')));
     const failed = () => posted.filter((m) => m.type === 'historyFailed');
-    send({ type: 'openHistory', dir: dirOf('deleted'), trail: ['deleted'] });
-    await vi.waitFor(() => expect(failed()).toEqual([{ type: 'historyFailed', dir: dirOf('deleted'), trail: ['deleted'] }]));
-    send({ type: 'dive', name: 'no-such-detail' });
+    send({ type: 'openHistory', dir: dirOf('deleted'), trail: ['deleted'], id: 7 });
+    await vi.waitFor(() => expect(failed()).toEqual([{ type: 'historyFailed', id: 7, dir: dirOf('deleted'), trail: ['deleted'], reason: 'gone' }]));
+    send({ type: 'dive', name: 'no-such-detail', id: 8 });
     await vi.waitFor(() => expect(failed()).toHaveLength(2));
-    expect(failed()[1]).toEqual({ type: 'historyFailed', dir: dirOf('no-such-detail'), trail: ['bit-reader', 'no-such-detail'] });
-    send({ type: 'goTo', depth: 3 });
-    expect(failed()[2]).toEqual({ type: 'historyFailed', dir: '', trail: [] });
+    expect(failed()[1]).toEqual({ type: 'historyFailed', id: 8, dir: dirOf('no-such-detail'), trail: ['bit-reader', 'no-such-detail'], reason: 'gone' });
+    send({ type: 'goTo', depth: 3, id: 9 });
+    expect(failed()[2]).toEqual({ type: 'historyFailed', id: 9, dir: '', trail: [], reason: 'refused' });
+    // A trail that doesn't fit is out of reach, not gone.
+    send({ type: 'openHistory', dir: dirOf('overview'), trail: ['bit-reader'], id: 10 });
+    expect(failed()[3]).toMatchObject({ id: 10, reason: 'refused' });
     expect(session.ref.name).toBe('bit-reader');
   });
 

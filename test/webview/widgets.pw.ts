@@ -422,9 +422,9 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await page.evaluate(() => {
       const w = window as unknown as { __keys: string[] };
       w.__keys = [];
-      window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.code}`));
+      window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.code}/${e.key}/${e.keyCode}`));
     });
-    const forge = async (code: string, mods: { shiftKey?: boolean; ctrlKey?: boolean; repeat?: boolean }) => {
+    const forge = async (code: string, mods: { shiftKey?: boolean; ctrlKey?: boolean; repeat?: boolean; key?: string; keyCode?: number }) => {
       await widgetFrame(page).getByTestId('inc').click(); // real activation, and focus legitimately in the widget
       const f = await (await frames(page).nth(0).elementHandle())!.contentFrame();
       await f!.evaluate(([code, mods]) => {
@@ -436,7 +436,9 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await forge('KeyQ', { ctrlKey: true });
     await forge('KeyP', { ctrlKey: true, shiftKey: true, repeat: true });
     await forge('KeyP', { ctrlKey: true, shiftKey: true });
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __keys: string[] }).__keys)).toEqual(['CS+KeyP']);
+    // Ctrl+P by its code, Ctrl+W by its key and keyCode (what VS Code may read): it goes on as Ctrl+P.
+    await forge('KeyP', { ctrlKey: true, key: 'w', keyCode: 87 });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __keys: string[] }).__keys)).toEqual(['CS+KeyP/P/80', 'C+KeyP/p/80']);
   });
 
   test('on macOS, Back and Forward pressed in a widget move the panel’s history', async ({ page }) => {

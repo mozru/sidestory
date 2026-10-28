@@ -441,14 +441,14 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   /** The page asked for something it can't have (gone, or out of reach): it stops waiting and forgets it. */
-  private refuse(dir: string, trail: string[]): void {
-    this.post({ type: 'historyFailed', dir, trail });
+  private refuse(id: number | undefined, dir: string, trail: string[], reason: 'gone' | 'refused'): void {
+    this.post(id === undefined ? { type: 'historyFailed', dir, trail, reason } : { type: 'historyFailed', id, dir, trail, reason });
   }
 
-  private async dive(name: string, section?: string): Promise<void> {
+  private async dive(name: string, section?: string, id?: number): Promise<void> {
     const child = this.detailRef(name);
     const names = [...this.trail.map((t) => t.name), name];
-    if (!child) return this.refuse('', names);
+    if (!child) return this.refuse(id, '', names, 'refused');
     const request = ++this.navRequest;
     const onTrail = (t: ExplainerRef) => t.dir.toString() === child.dir.toString();
     // Already on the trail (a detail that links back to its overview): go back up to it, no loops.
@@ -459,20 +459,20 @@ export class ExplainerSession implements vscode.Disposable {
     }
     if (this.trail.length >= MAX_TRAIL) {
       void vscode.window.showInformationMessage(`Can't open "${plainForMessage(name, 64)}": details nest at most ${MAX_TRAIL} levels deep.`);
-      return this.refuse(child.dir.toString(), names);
+      return this.refuse(id, child.dir.toString(), names, 'refused');
     }
     const found = (await readInside(manifestUri(child), child.root, MAX_MANIFEST_BYTES)) !== undefined;
     // Another dive or Back came in meanwhile (a double click, say): the newer one wins.
     if (request !== this.navRequest || this.disposed || this.trail.some(onTrail)) return;
     if (!found) {
       void vscode.window.showWarningMessage(`There's no sidestory called "${plainForMessage(name, 64)}" next to this one.`);
-      return this.refuse(child.dir.toString(), names);
+      return this.refuse(id, child.dir.toString(), names, 'gone');
     }
     await this.switchTo([...this.trail, child], section);
   }
 
   /** Back or Forward to a sidestory the panel showed before: checked like a restored trail, and still there. */
-  private async openHistory(uri: string, names: string[], active?: string): Promise<void> {
+  private async openHistory(uri: string, names: string[], active?: string, id?: number): Promise<void> {
     const request = ++this.navRequest; // a dive still waiting is overtaken
     let dir: vscode.Uri | undefined;
     try {
@@ -484,7 +484,7 @@ export class ExplainerSession implements vscode.Disposable {
     const trail = shown ? trailTo(shown, names) : undefined;
     const found = !!shown && !!trail && (await readInside(manifestUri(shown), shown.root, MAX_MANIFEST_BYTES)) !== undefined;
     if (request !== this.navRequest || this.disposed) return;
-    if (!trail || !found) return this.refuse(uri, names);
+    if (!trail || !found) return this.refuse(id, uri, names, trail ? 'gone' : 'refused');
     await this.switchTo(trail, active);
   }
 
@@ -1031,16 +1031,16 @@ export class ExplainerSession implements vscode.Disposable {
         if (this.initGeneration === this.generation) this.sendInit();
         break;
       case 'dive':
-        void this.dive(m.name, m.section);
+        void this.dive(m.name, m.section, m.id);
         break;
       case 'goTo':
         if (m.depth < this.trail.length - 1) {
           this.navRequest++; // a dive still waiting is overtaken
           void this.switchTo(this.trail.slice(0, m.depth + 1));
-        } else this.refuse('', []);
+        } else this.refuse(m.id, '', [], 'refused');
         break;
       case 'openHistory':
-        void this.openHistory(m.dir, m.trail, m.active);
+        void this.openHistory(m.dir, m.trail, m.active, m.id);
         break;
       case 'historyState':
         this.canNavigate = { back: m.canBack, forward: m.canForward };

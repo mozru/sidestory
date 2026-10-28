@@ -133,14 +133,14 @@ test('Back to another sidestory asks the extension for it, then lands on its ste
   await expect(back(page)).toHaveAccessibleName('Back to Tour · step 3');
   await clearPosted(page);
   await send(page, { type: 'history', delta: -1 }); // Sidestory: Back
-  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'three' });
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'three', id: expect.any(Number) });
   await initRoot(page, 'three');
   await expect(position(page)).toHaveText('Step 3 of 5');
   await expect.poll(() => near(page, at3)).toBe(true);
   await expect(forward(page)).toHaveAccessibleName('Forward to Detail · step 1');
   await clearPosted(page);
   await forward(page).click();
-  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: CHILD, trail: ['tour', 'detail'], active: 'a' });
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: CHILD, trail: ['tour', 'detail'], active: 'a', id: expect.any(Number) });
   await initChild(page, 'a');
   await expect(forward(page)).toBeDisabled();
   await expect(back(page)).toBeEnabled();
@@ -151,7 +151,7 @@ test('the trail’s way up is Back when that is where the reader came from, so F
   await initChild(page);
   await clearPosted(page);
   await page.locator('.cx-back').click();
-  expect(await posted(page)).toContainEqual({ type: 'goTo', depth: 0 });
+  expect(await posted(page)).toContainEqual(expect.objectContaining({ type: 'goTo', depth: 0 }));
   await initRoot(page);
   await expect(back(page)).toBeDisabled();
   await expect(forward(page)).toBeEnabled();
@@ -166,7 +166,7 @@ test('the trail’s way up is Back when that is where the reader came from, so F
   await clearPosted(page);
   await page.locator('.cx-scroll').focus();
   await page.keyboard.press('Escape');
-  expect(await posted(page)).toContainEqual({ type: 'goTo', depth: 0 });
+  expect(await posted(page)).toContainEqual(expect.objectContaining({ type: 'goTo', depth: 0 }));
 });
 
 test('a sidestory opened into the panel is a new entry; the history survives the panel being rebuilt', async ({ page }) => {
@@ -188,7 +188,7 @@ test('a sidestory opened into the panel is a new entry; the history survives the
   await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
   await expect(forward(page)).toBeDisabled();
   await back(page).click();
-  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'two' });
+  await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'two', id: expect.any(Number) });
 });
 
 test('shortcuts: the page’s own on macOS, VS Code’s through it, the mouse’s back and forward buttons, Sidestory: Back / Forward', async ({ page }) => {
@@ -261,7 +261,11 @@ test('a sidestory the extension can no longer show is dropped from the history, 
   await clearPosted(page);
   await back(page).click();
   await expect.poll(() => posted(page)).toContainEqual(expect.objectContaining({ type: 'openHistory', dir: ROOT }));
-  await send(page, { type: 'historyFailed', dir: ROOT, trail: ['tour'] });
+  const id = (await posted(page)).find((m) => m.type === 'openHistory')!.id!;
+  // Another request's refusal (an older one, say) is not this one's.
+  await send(page, { type: 'historyFailed', id: id - 1, dir: ROOT, trail: ['tour'], reason: 'gone' });
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 1'); // still waiting: counted from where it's going
+  await send(page, { type: 'historyFailed', id, dir: ROOT, trail: ['tour'], reason: 'gone' });
   await expect(back(page)).toBeDisabled();
   await expect(page.locator('.cx-title')).toHaveText('Detail');
   await expect(page.locator('[aria-live]')).toHaveText('Tour is no longer available');

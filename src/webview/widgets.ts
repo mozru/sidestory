@@ -1473,16 +1473,17 @@ export class WidgetFrames {
    */
   private passKey(w: Widget, k: KeyInfo): void {
     const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
-    if (!ua?.isActive || !widgetShortcut(k)) return;
+    const key = widgetShortcut(k);
+    if (!ua?.isActive || !key) return;
     let l = w.limits.get('keys');
     if (!l) w.limits.set('keys', (l = { times: [] }));
     const t = now();
     l.times = l.times.filter((x) => t - x < 1000);
     if (l.times.length >= RATE.keys) return;
     l.times.push(t);
-    const nav = historyKey(k);
+    const nav = historyKey(key);
     if (nav) this.panel.history(nav);
-    else passToVsCode(k);
+    else passToVsCode(key);
   }
 
   // ---- watchdogs and timers ----

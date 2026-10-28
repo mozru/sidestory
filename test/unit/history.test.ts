@@ -83,6 +83,26 @@ describe('NavHistory', () => {
     expect(h.drop({ dir: '', trail: [] })).toBeUndefined();
   });
 
+  it('after a drop, neighbours that became the same place are one entry', () => {
+    const h = new NavHistory();
+    h.push(at(A, 'one'));
+    h.push(at(X, 'loop'));
+    h.push(at(A, 'one'));
+    h.push(at(A, 'two'));
+    expect(h.drop(X)).toBe('X');
+    expect(actives(h)).toEqual(['a:one', 'a:two']);
+    expect(h.current?.active).toBe('two');
+    // The current entry is the one kept.
+    const g = new NavHistory();
+    g.push(at(A, 'one'));
+    g.push(at(X, 'loop'));
+    g.push(at(A, 'one'));
+    g.go(0);
+    g.drop(X);
+    expect(actives(g)).toEqual(['a:one']);
+    expect(g.position).toBe(0);
+  });
+
   it('keeps the newest entries past the cap', () => {
     const h = new NavHistory(undefined, 5);
     for (let i = 0; i < 12; i++) h.push(at(A, `s${i}`));
