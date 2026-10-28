@@ -538,7 +538,12 @@
           "default": 1.5,
           "minimum": 0,
           "maximum": 3600,
-          "markdownDescription": "How long the code stays highlighted after you click a code link or an inline reference in a sidestory, or a widget points at it, in seconds. `0` keeps it until the next click."
+          "markdownDescription": "How long the code stays highlighted after you click a code link or an inline reference in a sidestory, or a widget points at it, in seconds. `0` keeps it until the next one."
+        },
+        "sidestory.clickFrame": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "After the click highlight (`#sidestory.clickHighlightSeconds#`) fades, keep a frame around those lines until the next one."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",
@@ -682,6 +687,16 @@
         "defaults": {
           "dark": "#b48eff",
           "light": "#8250df",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "sidestory.clickFrameBorder",
+        "description": "Frame left around the lines a code link or inline reference opened, after their brief highlight fades.",
+        "defaults": {
+          "dark": "focusBorder",
+          "light": "focusBorder",
           "highContrast": "contrastActiveBorder",
           "highContrastLight": "contrastActiveBorder"
         }

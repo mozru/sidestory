@@ -43,6 +43,25 @@ export class Decorations implements vscode.Disposable {
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Center,
   });
+  // After the flash fades, a frame stays around the lines: its sides on every line, its top and bottom on the ends.
+  private readonly frameSides = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.clickFrameBorder'),
+    borderStyle: 'solid',
+    borderWidth: '0 1px',
+  });
+  private readonly frameTop = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.clickFrameBorder'),
+    borderStyle: 'solid',
+    borderWidth: '1px 0 0 0',
+  });
+  private readonly frameBottom = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderColor: new vscode.ThemeColor('sidestory.clickFrameBorder'),
+    borderStyle: 'solid',
+    borderWidth: '0 0 1px 0',
+  });
   // High contrast themes leave highlight backgrounds transparent: there, a border marks the lines.
   private readonly widgetType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -103,26 +122,33 @@ export class Decorations implements vscode.Disposable {
 
   /**
    * Marks lines (a link's or widget's target) without changing the active step, for `sidestory.clickHighlightSeconds`
-   * (0: until the next one, or the panel leaves this sidestory). Clears the previous one, in whichever editor it was.
+   * (0: until the next one, or the panel leaves this sidestory); then, with `sidestory.clickFrame`, a frame stays
+   * around them until then. Clears the previous one, in whichever editor it was.
    */
   flash(editor: vscode.TextEditor, range: vscode.Range): void {
-    clearTimeout(this.flashTimer);
-    if (this.flashed && this.flashed !== editor) this.flashed.setDecorations(this.flashType, []);
+    this.clearFlash();
     this.flashed = editor;
     editor.setDecorations(this.flashType, [range]);
-    const set = vscode.workspace.getConfiguration('sidestory').get<unknown>('clickHighlightSeconds', 1.5);
+    const config = vscode.workspace.getConfiguration('sidestory');
+    const set = config.get<unknown>('clickHighlightSeconds', 1.5);
     const seconds = typeof set === 'number' && Number.isFinite(set) ? set : 1.5;
     if (seconds <= 0) return;
     this.flashTimer = setTimeout(() => {
       editor.setDecorations(this.flashType, []);
-      this.flashed = undefined;
+      if (config.get<unknown>('clickFrame', true) === false) {
+        this.flashed = undefined;
+        return;
+      }
+      editor.setDecorations(this.frameSides, [range]);
+      editor.setDecorations(this.frameTop, [new vscode.Range(range.start.line, 0, range.start.line, 0)]);
+      editor.setDecorations(this.frameBottom, [new vscode.Range(range.end.line, 0, range.end.line, 0)]);
     }, Math.min(seconds, 3600) * 1000);
   }
 
-  /** Clears the click highlight (the panel left its sidestory). */
+  /** Clears the click highlight and its frame (the next click, or the panel left its sidestory). */
   clearFlash(): void {
     clearTimeout(this.flashTimer);
-    this.flashed?.setDecorations(this.flashType, []);
+    for (const t of [this.flashType, this.frameSides, this.frameTop, this.frameBottom]) this.flashed?.setDecorations(t, []);
     this.flashed = undefined;
   }
 
@@ -228,6 +254,9 @@ export class Decorations implements vscode.Disposable {
     this.dim.dispose();
     this.noteType.dispose();
     this.flashType.dispose();
+    this.frameSides.dispose();
+    this.frameTop.dispose();
+    this.frameBottom.dispose();
     this.diffBody.dispose();
     this.diffTop.dispose();
     this.diffBottom.dispose();
