@@ -62,7 +62,7 @@ A sidestory is a folder in your repository:
 
 Open it with **Sidestory: Open Sidestory…**.
 
-A page can be mostly pictures: block diagrams that light up per step, timelines, before/after, byte layouts, animation, and widgets the reader drives. The code is right beside the page, so the page doesn't need to retell it. How it reads is up to you; the rest of this section is what it can do.
+A page can be mostly pictures (block diagrams that light up per step, timelines, before/after, byte layouts, animation), with widgets the reader drives where they help. The code is right beside the page, so the page doesn't need to retell it. How it reads is up to you; the rest of this section is what it can do.
 
 ### Link sections to code
 

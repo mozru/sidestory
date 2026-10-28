@@ -15,17 +15,17 @@ The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code
 
 ## What Sidestory supports
 
-Know these so you can use any of them; the style of the page is the user's (see "Style" below).
+Use whichever fit; the page's style is the user's (see "Style").
 
 **The page** (`sidestory.html`: HTML and CSS, no script)
-- **Steps:** top-level sections with `data-explain-anchor` are the steps; readers move with tabs, a picker with < > in narrow panels, J/K, or the cursor in the code. Nested anchors (a card, a figure) are linked too.
+- **Steps:** top-level sections with `data-explain-anchor`; readers step through them, or the cursor in the code picks the step. Nested anchors (a card, a figure) are linked too.
 - **Code links:** `data-explain-ref="<anchor>"` on any element jumps the editor to that code without changing the step; `data-explain-code` links code with no anchor, by line range or symbol (`#name`, and for SystemVerilog `#driver(x)`, `#driver(state_d).case(IDLE)`, `#u_inst(.port)`). Readers can preview a link's code on hover.
 - **Diagrams that follow the steps:** inline SVG or HTML whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and light up while the editor cursor is in their code. Colors come from theme tokens (`--cx-wire-data`, `--cx-box-fill`, `--cx-on`, …).
 - **Pictures a page can draw:** block diagrams, sequences and timelines, state diagrams, before → after, byte and struct layouts, small SVG charts, frames of an algorithm's data, tables.
-- **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …), tied to the steps with `.cx-on` rules; paused for readers who ask for less motion.
+- **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …), tied to the steps with `.cx-on` rules. For readers who ask for less motion, SVG animation stops at its first frame; CSS animation needs the guide's reduced-motion rules.
 - **Interactivity without script:** tabs, steppers, before/after switches and quizzes from radio buttons and `:has(:checked)`; `<details>` for asides.
 - **Code blocks** colored in the reader's theme (`class="language-python"`).
-- **Widgets:** React components (Tailwind, Recharts, D3, Motion, shadcn-style UI) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor. Each workspace asks the reader once before they run.
+- **Widgets:** React components (Tailwind, Recharts, D3, Motion, shadcn-style UI) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor. Readers agree once per sidestory (again when widget code arrives through git) before widgets run; until then they see each widget's fallback.
 
 **The editor**
 - Each step highlights its lines with the step's `color`, marks the identifiers in its `highlight`, and fades the rest of the file. A clicked link flashes its lines, then leaves a frame.
@@ -34,20 +34,19 @@ Know these so you can use any of them; the style of the page is the user's (see 
 
 **Structure and navigation**
 - **Overviews and details:** a tree of sidestories that follows the code's hierarchy (up to 16 levels). A step marks a part with `data-explain-detail="<name>"`; readers peek at its `summary` or dive in, with a trail back. The Sidestories view shows the same tree, pins the overview as **Start here**, and files top-level ones by `group`.
-- **Branches:** a sidestory with a `base` explains a branch's changes. VS Code marks each changed file explained, partly, not yet or trivial, and the checker's `--coverage` counts what's left.
+- **Branches:** a sidestory with a `base` explains a branch's changes. VS Code marks each changed file explained, partly, not yet, trivial or needing a look, and the checker's `--coverage` counts what's left.
 - **Comments:** readers comment on steps and code lines; the comments plugin lets you read and answer them.
 
 ## Style
 
-Sidestory doesn't impose a writing style. Follow the one the user asks for, the repository's (its CLAUDE.md, or the sidestories already in `.sidestory/`), in that order. Without one: explain *why* and *how it fits together* rather than paraphrasing the code beside the page, keep steps short, and let a picture carry a step where one shows it better than words.
+Sidestory doesn't impose a writing style. Follow the one the user asks for, the repository's (its CLAUDE.md or AGENTS.md, or the sidestories already in `.sidestory/`), in that order. Without one: explain *why* and *how it fits together* rather than paraphrasing the code beside the page, keep steps short, and let a picture carry a step where one shows it better than words.
 
 ## Before writing
 
 Read the reference that ships with this skill:
 
 - [references/GUIDE.md](references/GUIDE.md), section "Writing a sidestory": the anchors, the manifest, overview → detail sidestories, styling, and what's supported. Read it every time. In branch mode, read "Explaining a branch" too: `base`, `side`, trivial marks, `trivialFiles` and the coverage rule.
-- [references/WIDGETS.md](references/WIDGETS.md): read all of it before writing an interactive widget. Most explanations don't need one, and CSS-only interactivity comes first.
-
+- [references/WIDGETS.md](references/WIDGETS.md): read all of it before writing an interactive widget. Widgets need the reader's consent, so prefer CSS-only interactivity when it does the job.
 
 ## Pick the mode
 
@@ -103,11 +102,11 @@ If none is found, the extension isn't installed here: tell the user to install `
 ## Workflow
 
 1. **Understand the code** the user named. Read it properly, follow the data and control flow, and find the non-obvious parts (invariants, edge cases, the reason it's built this way).
-2. **Plan the steps**, usually 4–10: the big picture first (what it is, its interface, a block diagram), then the parts in the order data or control flows through them. **Mirror the code's hierarchy** when the code has one (a system of modules, a package of files, a top module with submodules): an overview sidestory whose block diagram has one box per part, and one detail sidestory per part, linked with `data-explain-detail` from that part's step, with details of their own one level down. Give a part its own detail when it would need three or more steps of its own; smaller parts stay steps in their parent. Readers then go top-down: the overview alone, or dive into the part they care about. Name the overview `overview` or `<area>-overview` so the sidebar pins it as **Start here**; in a repository with many sidestories, give top-level ones a `group` in their manifests.
+2. **Plan the steps** (the user's or repository's style decides how many and in what order; without one, the big picture first, then the parts in the order data or control flows). **Mirror the code's hierarchy** when the code has one (a system of modules, a package of files, a top module with submodules): an overview sidestory whose block diagram has one box per part, and one detail sidestory per part, linked with `data-explain-detail` from that part's step, with details of their own one level down. Give a part its own detail when it would need three or more steps of its own; smaller parts stay steps in their parent. Readers then go top-down: the overview alone, or dive into the part they care about. Name the overview `overview` or `<area>-overview` so the sidebar pins it as **Start here**; in a repository with many sidestories, give top-level ones a `group` in their manifests.
 3. **Write `manifest.json`.** Give it a `title`, a one-line `summary`, and one anchor per step: `file` (path from the repository root, `/` separators), `range` (1-based first and last line), `highlight` (identifiers worth marking), and `color` (a theme color id such as `charts.blue`, never a hex value). Start from the `version: 1` form in the guide and let the checker pin it. Set `highlight` only when the story benefits (`"dim": false` for an overview whose steps span whole files, `"hoverPreview": "both"` for a diagram-heavy page, a longer `clickSeconds` for dense code); otherwise leave the defaults. When you rewrite an existing `manifest.json`, keep its `"id"` exactly as it was: comment threads find their sidestory by it.
 4. **Write `sidestory.html`.** One `<section data-explain-anchor="…" data-explain-title="…">` per step. Draw diagrams in inline SVG or HTML/CSS. Use `<a data-explain-ref="anchor">…</a>` to point at other code from inside a step. For diagrams (the guide's "Diagrams that follow the steps", "Code links without an anchor" and "Diagram tokens"):
    - **Color them with the diagram tokens** (`--cx-wire-data`, `--cx-wire-ctrl`, `--cx-box-fill`, `--cx-box-stroke`, `--cx-label`, …) and the dash tokens (`--cx-dash-ctrl`, …), never hex values or ad-hoc `--vscode-charts-*` colors. They follow light, dark and high-contrast themes.
-   - **Make it follow the steps.** Draw one block diagram, put `data-explain-diagram="step dim-rest"` on its `<svg>`, tag boxes and wires with `data-explain-on="<anchor ids>"` for the steps they matter in, and mark the legend `data-explain-keep`. A section that needs the diagram again gets its own copy with `data-explain-diagram="section dim-rest"`.
+   - **Make it follow the steps.** For a block diagram that follows the steps, put `data-explain-diagram="step dim-rest"` on its `<svg>`, tag boxes and wires with `data-explain-on="<anchor ids>"` for the steps they matter in, and mark the legend `data-explain-keep`. A section that needs the diagram again gets its own copy with `data-explain-diagram="section dim-rest"`.
      - Ids must match manifest anchor ids exactly; a wrong one never lights. The checker reports ids that aren't in the manifest, and manifest anchors nothing uses.
      - Put each wire's path, arrowhead and label in one `<g>`, and tag the group.
      - Light both ends of every lit wire, and the block driving each signal the step's text names. Add a box's own anchor id to its list when it has a card or nested section.
@@ -128,7 +127,7 @@ If none is found, the extension isn't installed here: tell the user to install `
    - `anchor-changed` (info): the code changed a little. Check the prose still fits; `--pin` re-pins it.
    - If no checker is found, the extension isn't installed here. Tell the user to install `paperkite.sidestory`, and in VS Code run **Sidestory: Pin Anchors to the Current Code**.
    - **Never pass `--yes-widgets-may-read` on your own.** If the checker says some anchors weren't pinned because widgets read their code, show the user the files and line ranges, explain that the widgets will be able to read that code, and add the flag only if they agree.
-6. **Tell the user** the sidestory's name, and that they open it with **Sidestory: Open Sidestory**. If it has widgets, also say that VS Code will ask them once before running the widgets.
+6. **Tell the user** the sidestory's name, and that they open it with **Sidestory: Open Sidestory**. If it has widgets, also say that VS Code will ask them before running the widgets.
 
 ## Comments
 
