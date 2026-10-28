@@ -83,7 +83,23 @@ export class NavHistory {
   update(e: Pick<HistoryEntry, 'dir' | 'trail'> & Partial<HistoryEntry>): void {
     const cur = this.current;
     if (!cur || !samePage(cur, e)) return;
-    this.entries[this.index] = { ...cur, ...e, trail: [...e.trail] };
+    // What isn't known now (no steps rendered yet, say) keeps what was.
+    const known = Object.fromEntries(Object.entries(e).filter(([, v]) => v !== undefined));
+    this.entries[this.index] = { ...cur, ...known, trail: [...e.trail] };
+  }
+
+  /** Forgets the entries for a page that can't be shown any more (not the current one); the title of one, if any. */
+  drop(page: Pick<HistoryEntry, 'dir' | 'trail'>): string | undefined {
+    let title: string | undefined;
+    const cur = this.current;
+    this.entries = this.entries.filter((e, i) => {
+      if (i === this.index || !samePage(e, page)) return true;
+      title ??= e.title || e.trail.at(-1)!;
+      return false;
+    });
+    this.index = cur ? this.entries.indexOf(cur) : -1;
+    this.stepping = false;
+    return title;
   }
 
   /** A new place: another sidestory, or a jump within this one. Forward history goes, as in a browser. */

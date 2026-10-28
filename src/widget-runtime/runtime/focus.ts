@@ -106,7 +106,7 @@ export function installFocus(post: (m: FromWidget) => void, root?: HTMLElement):
       exit('escape');
       return;
     }
-    if ((e.ctrlKey || e.metaKey || e.altKey) && !['Control', 'Meta', 'Alt', 'Shift', 'AltGraph'].includes(e.key)) {
+    if (((e.ctrlKey || e.metaKey || e.altKey) && !['Control', 'Meta', 'Alt', 'Shift', 'AltGraph'].includes(e.key)) || e.key === 'F1') {
       // Editing and clipboard keys stay with the widget; so does anything typed into a text field.
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && !e.altKey && ['a', 'c', 'v', 'x', 'z', 'y'].includes(k)) return;

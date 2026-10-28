@@ -17,7 +17,7 @@ import { randomToken, staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
 import { CommentsPane } from './comments.ts';
 import { type HistoryEntry, NavHistory, samePage, type SavedHistory } from './history.ts';
-import { forVsCode, keyInfo, passToVsCode, typingIn } from './keys.ts';
+import { forVsCode, historyKey, keyInfo, MAC, passToVsCode, typingIn, WINDOWS } from './keys.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -119,7 +119,6 @@ let initialized = false;
 let lastKeyAt = 0;
 /** Keys from the content frame passed on to VS Code and not yet released (forwardKey). */
 const passedDown = new Set<string>();
-const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 /** When the reader last pressed Tab (trusted), in the panel or the content. */
 let lastTabAt = 0;
 /**
@@ -458,6 +457,7 @@ widgets = new WidgetFrames({
     goTo(trail.length - 2);
     return true;
   },
+  history: (delta) => goHistory(delta),
   readerInput,
   compensate: (dy) => {
     programmaticUntil = Date.now() + 200;
@@ -527,8 +527,11 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       const entering = m.dir !== state.dir;
       const names = m.trail.map((t) => t.name);
       // Back or Forward (or a trail move that is one) arriving: the entry it was for becomes current.
-      const back = pendingHistory && samePage(pendingHistory, { dir: m.dir, trail: names }) ? pendingHistory : undefined;
-      pendingHistory = undefined;
+      // Still that entry (a jump meanwhile may have dropped what was ahead): otherwise it's a new page like any other.
+      const page = { dir: m.dir, trail: names };
+      const waited = pendingHistory && navHistory.at(pendingHistory.index);
+      const back = pendingHistory && samePage(pendingHistory, page) && waited && samePage(waited, page) ? pendingHistory : undefined;
+      setPending(undefined);
       if (initialized) navHistory.update(hereEntry()); // the place being left, as it is now
       const target = back ? navHistory.go(back.index) : undefined;
       // A different explainer (dive / back): remember the reader's place here, forget the rest.
@@ -621,6 +624,14 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'history':
       goHistory(m.delta === -1 ? -1 : 1);
       break;
+    case 'historyFailed': {
+      // The extension couldn't show it (gone, or out of reach): stop waiting, and forget it.
+      setPending(undefined);
+      const gone = navHistory.drop({ dir: m.dir, trail: m.trail });
+      persistHistory();
+      if (gone !== undefined) announce(`${gone} is no longer available`);
+      break;
+    }
     case 'asset': {
       const resolve = pendingAssets.get(m.id);
       pendingAssets.delete(m.id);
@@ -918,7 +929,7 @@ function decorateDetails(root: HTMLElement): void {
     setText(peek, `${open ? '▾' : '▸'} ${title} in brief`);
     peek.setAttribute('aria-expanded', String(open));
     peek.disabled = missing;
-    setText(dive, missing ? `No sidestory named “${name}”` : depth === trail.length - 1 ? 'You are reading it' : depth >= 0 ? `‹ Back to ${title}` : `Dive into ${title} ›`);
+    setText(dive, missing ? `No sidestory named “${name}”` : depth === trail.length - 1 ? 'You are reading it' : depth >= 0 ? `‹ Up to ${title}` : `Dive into ${title} ›`);
     dive.disabled = missing || depth === trail.length - 1;
     setText(box.querySelector('.cx-detail-steps')!, info?.found ? `${info.steps} step${info.steps === 1 ? '' : 's'}` : '');
     setText(body, info?.summary || (info ? 'No summary.' : 'Loading…'));
@@ -955,7 +966,7 @@ function renderTrail(): void {
   );
   const parent = trail.at(-2);
   backEl.hidden = !parent;
-  if (parent) backEl.textContent = `‹ Back to ${parent.title || parent.name}`;
+  if (parent) backEl.textContent = `‹ Up to ${parent.title || parent.name}`;
 }
 
 /** After a dive or going back: say where the reader is, and put focus somewhere sensible. */
@@ -999,7 +1010,7 @@ const siblingDir = (name: string) => state.dir.replace(/[^/]*$/, name);
 function expectEntry(delta: 1 | -1, names: string[]): void {
   const index = navHistory.position + delta;
   const e = navHistory.at(index);
-  pendingHistory = e && samePage(e, { dir: siblingDir(names.at(-1)!), trail: names }) ? { index, dir: e.dir, trail: e.trail } : undefined;
+  setPending(e && samePage(e, { dir: siblingDir(names.at(-1)!), trail: names }) ? { index, dir: e.dir, trail: e.trail } : undefined);
   renderHistory();
 }
 
@@ -1238,15 +1249,45 @@ function persistHistory(): void {
 
 const describeEntry = (e: HistoryEntry) => `${e.title || e.trail.at(-1)}${e.step ? ` · step ${e.step}` : ''}`;
 
+/** The buttons' shortcuts: the page's own on macOS; elsewhere VS Code's, which run Sidestory: Back / Forward. */
+const HIST_KEYS = MAC
+  ? { Back: ['⌘[', 'Meta+BracketLeft'], Forward: ['⌘]', 'Meta+BracketRight'] }
+  : { Back: ['Alt+←', 'Alt+ArrowLeft'], Forward: ['Alt+→', 'Alt+ArrowRight'] };
+histBack.setAttribute('aria-keyshortcuts', HIST_KEYS.Back[1]!);
+histForward.setAttribute('aria-keyshortcuts', HIST_KEYS.Forward[1]!);
+/** What the extension was last told (it lets VS Code's own Go Back / Forward act when the panel has nowhere to go). */
+let sentNav = '';
+
 function renderHistory(): void {
   const at = pendingHistory?.index ?? navHistory.position;
+  const can: boolean[] = [];
   for (const [b, delta, word] of [[histBack, -1, 'Back'], [histForward, 1, 'Forward']] as const) {
     const e = navHistory.at(at + delta);
+    can.push(!!e);
     const label = e ? `${word} to ${describeEntry(e)}` : word;
+    const title = `${word} (${HIST_KEYS[word][0]})${e ? ` to ${describeEntry(e)}` : ''}`;
     // aria-disabled, not disabled: a focused button that runs out keeps focus.
     b.setAttribute('aria-disabled', String(!e));
-    if (b.title !== label) b.title = label;
+    if (b.title !== title) b.title = title;
     if (b.getAttribute('aria-label') !== label) b.setAttribute('aria-label', label);
+  }
+  const [canBack = false, canForward = false] = can;
+  if (sentNav !== `${canBack}${canForward}`) {
+    sentNav = `${canBack}${canForward}`;
+    vscode.postMessage({ type: 'historyState', canBack, canForward });
+  }
+}
+
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+/** Waits for a Back or Forward to another sidestory; one that never arrives is given up after a while. */
+function setPending(p: typeof pendingHistory): void {
+  pendingHistory = p;
+  clearTimeout(pendingTimer);
+  if (p) {
+    pendingTimer = setTimeout(() => {
+      pendingHistory = undefined;
+      renderHistory();
+    }, 10_000);
   }
 }
 
@@ -1266,7 +1307,7 @@ function goHistory(delta: 1 | -1): void {
     return;
   }
   if (initialized) savePlace();
-  pendingHistory = { index, dir: e.dir, trail: e.trail };
+  setPending({ index, dir: e.dir, trail: e.trail });
   vscode.postMessage(e.active ? { type: 'openHistory', dir: e.dir, trail: e.trail, active: e.active } : { type: 'openHistory', dir: e.dir, trail: e.trail });
   renderHistory();
 }
@@ -1432,6 +1473,7 @@ function bindFrameEvents(d: Document): void {
   // Last, on the frame's window: keys nothing in the page took are VS Code's (Cmd+Shift+P and the like).
   d.defaultView!.addEventListener('keydown', forwardKey);
   d.defaultView!.addEventListener('keyup', forwardKey);
+  d.defaultView!.addEventListener('blur', () => passedDown.clear()); // their key-ups happen elsewhere
   for (const ev of ['mousedown', 'mouseup']) d.addEventListener(ev, onMouseNav as EventListener);
 }
 
@@ -1453,9 +1495,13 @@ function forwardKey(e: KeyboardEvent): void {
   passToVsCode(k);
 }
 
-/** The mouse's back and forward buttons, as in a browser. */
+/**
+ * The mouse's back and forward buttons, as in a browser. Not in VS Code desktop on Windows: there the buttons are app
+ * commands VS Code itself turns into its own Go Back / Go Forward, which would move the editor too.
+ */
+const OWN_MOUSE_NAV = !(WINDOWS && /Electron/.test(navigator.userAgent));
 function onMouseNav(e: MouseEvent): void {
-  if (e.button !== 3 && e.button !== 4) return;
+  if (!OWN_MOUSE_NAV || (e.button !== 3 && e.button !== 4)) return;
   e.preventDefault();
   if (e.type === 'mouseup') goHistory(e.button === 3 ? -1 : 1);
 }
@@ -1763,19 +1809,6 @@ bannerOpen.addEventListener('click', () => vscode.postMessage({ type: 'openFile'
 
 document.addEventListener('keydown', onKey);
 for (const ev of ['mousedown', 'mouseup']) document.addEventListener(ev, onMouseNav as EventListener);
-
-/**
- * Back (-1) or Forward (1) keys the page takes itself: on macOS, Alt+Left / Right and Cmd+[ / ], which VS Code binds to
- * nothing here. The ones VS Code navigates with (Ctrl+- on macOS, Alt+Left elsewhere) reach it as usual and run
- * Sidestory: Back / Forward (package.json keybindings), so VS Code sees every key of the chord: a lone Alt would
- * open its menu bar.
- */
-function historyKey(e: KeyboardEvent): 0 | 1 | -1 {
-  if (!MAC || e.shiftKey || e.ctrlKey) return 0;
-  if (e.altKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return e.key === 'ArrowLeft' ? -1 : 1;
-  if (e.metaKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return e.code === 'BracketLeft' ? -1 : 1;
-  return 0;
-}
 
 function onKey(e: KeyboardEvent): void {
   const t = e.target as HTMLElement | undefined;

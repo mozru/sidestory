@@ -417,6 +417,40 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
   });
 
+  test('a widget claiming a shortcut after a click passes on only the allowed ones, never a repeat', async ({ page }) => {
+    await openProbe(page);
+    await page.evaluate(() => {
+      const w = window as unknown as { __keys: string[] };
+      w.__keys = [];
+      window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.code}`));
+    });
+    const forge = async (code: string, mods: { shiftKey?: boolean; ctrlKey?: boolean; repeat?: boolean }) => {
+      await widgetFrame(page).getByTestId('inc').click(); // real activation, and focus legitimately in the widget
+      const f = await (await frames(page).nth(0).elementHandle())!.contentFrame();
+      await f!.evaluate(([code, mods]) => {
+        parent.postMessage({ type: 'focusExit', dir: 'shortcut', key: { key: code.slice(3), code, keyCode: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, repeat: false, ...mods } }, '*');
+      }, [code, mods] as const);
+      await expect.poll(() => contentFocus(page)).toBe('explain-widget');
+    };
+    await forge('KeyB', { ctrlKey: true, shiftKey: true }); // not on the list (Ctrl+Shift+B: run build task)
+    await forge('KeyQ', { ctrlKey: true });
+    await forge('KeyP', { ctrlKey: true, shiftKey: true, repeat: true });
+    await forge('KeyP', { ctrlKey: true, shiftKey: true });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __keys: string[] }).__keys)).toEqual(['CS+KeyP']);
+  });
+
+  test('on macOS, Back and Forward pressed in a widget move the panel’s history', async ({ page }) => {
+    await openProbe(page);
+    test.skip(!(await page.evaluate(() => /Mac/.test(navigator.platform))), 'Alt+Left is VS Code’s elsewhere');
+    await page.locator('.cx-step', { hasText: 'Tail' }).click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    await page.locator('.cx-hist[data-delta="-1"]').click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
+    await widgetFrame(page).getByTestId('inc').click();
+    await page.keyboard.press('Alt+ArrowRight');
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+  });
+
   test('the theme reaches widgets, and changes follow (dark: variants)', async ({ page }) => {
     await openProbe(page);
     const cls = (f: FrameLocator) => f.locator('html').getAttribute('class');
