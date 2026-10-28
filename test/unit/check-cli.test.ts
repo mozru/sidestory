@@ -541,6 +541,27 @@ describe('outline, groups and detail links (docs/NAVIGATION-PLAN.md §5.3)', () 
     expect(json.sidestory).toBe(dir);
   });
 
+  it('warns about a bad highlight value or anchor dim, on its line; a good one is quiet', async () => {
+    const files = (highlight: unknown, dim: unknown) => ({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', highlight, anchors: { ...ANCHORS, refill: { ...ANCHORS.refill, dim } } }, null, 2),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<p>x</p>') + section('other', '<p>y</p>')),
+    });
+    const good = await check(repoWith(files({ dim: false, clickSeconds: 3, clickFrame: true, hoverPreview: 'both' }, true)));
+    expect(good.findings.filter((f) => f.code === 'highlight')).toEqual([]);
+    const r = await check(repoWith(files({ dim: 'no', clickSeconds: 1e6, glow: true }, 'yes')));
+    const found = r.findings.filter((f) => f.code === 'highlight');
+    expect(found.map((f) => [f.severity, f.message])).toEqual([
+      ['warning', 'highlight: dim must be true or false; ignored.'],
+      ['warning', 'highlight: clickSeconds is more than 3600; 3600 is used.'],
+      ['warning', 'highlight: unknown key "glow" (known: dim, clickSeconds, clickFrame, hoverPreview); ignored.'],
+      ['warning', 'Anchor "refill": dim: must be true or false; ignored.'],
+    ]);
+    expect(found[0]!.line).toBe(4);
+    expect(found[3]!.line).toBeGreaterThan(4);
+    expect(codes(r, 'error')).toEqual([]);
+  });
+
   it('reports an invalid group as an error, and the manifest still loads', async () => {
     const dir = repoWith({
       'src/a.ts': CODE,

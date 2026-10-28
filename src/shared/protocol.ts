@@ -1,7 +1,7 @@
 // Messages between the extension host and the explainer webview.
 // The webview never reloads: content and anchor states arrive as updates it applies in place.
 import { z } from 'zod';
-import { anchorIdSchema, explainerNameSchema, isSafeRelativePath } from '../core/manifest.ts';
+import { anchorIdSchema, explainerNameSchema, isSafeRelativePath, type HoverPreviewMode } from '../core/manifest.ts';
 import type { AnchorState } from '../core/resolve.ts';
 import { isCodeLink, MAX_CODE_LINKS, parseCodeTarget } from './code-link.ts';
 import { type HighlightStyle, LANG_NAME, MAX_BLOCK_CHARS, MAX_REQUEST_BLOCKS, MAX_REQUEST_CHARS } from './highlight-languages.ts';
@@ -64,8 +64,7 @@ export interface WidgetBuild {
 }
 
 /** `sidestory.hoverPreview`: what resting on a link in the panel shows (a card, a mark in visible editors, both). */
-export type HoverPreview = 'card' | 'editor' | 'both' | 'off';
-export const HOVER_PREVIEWS: readonly HoverPreview[] = ['card', 'editor', 'both', 'off'];
+export type HoverPreview = HoverPreviewMode;
 /** Lines and characters per line a hover card gets at most. */
 export const PREVIEW_LINES = 12;
 export const PREVIEW_LINE_CHARS = 200;

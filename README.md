@@ -186,7 +186,7 @@ These are the commands you'll use most. They're all in the Command Palette.
 
 ## Settings
 
-Here are the settings people change most. The [guide](docs/GUIDE.md#settings) lists all of them.
+Here are the settings people change most. The [guide](docs/GUIDE.md#settings) lists all of them. A sidestory can change the highlighting defaults for itself; your own settings always win.
 
 | Setting | Default | |
 |---|---|---|

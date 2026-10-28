@@ -18,7 +18,7 @@ import { trackRange } from '../core/tracking.ts';
 import { formatCodeLink, parseCodeLink, type CodeLink } from '../shared/code-link.ts';
 import { langName } from '../shared/highlight-languages.ts';
 import type { AnchorView, CodePreview, DetailInfo, FromWebview, HoverPreview, ToWebview } from '../shared/protocol.ts';
-import { assetMime, fromWebviewSchema, HOVER_PREVIEWS, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
+import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { GroupView } from './columns.ts';
 import type { Requester } from './highlight/host.ts';
 import type { HighlightService } from './highlight/service.ts';
@@ -26,6 +26,7 @@ import { codeColumnFor } from './columns.ts';
 import { checkCodePath, OpenCodeGate, resolveLink, resolveLinkInText, SymbolTables } from './code-links.ts';
 import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
+import { effectiveHighlight, type EffectiveHighlight } from './highlight-options.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
 import { localPath } from './local-path.ts';
@@ -233,6 +234,8 @@ export class ExplainerSession implements vscode.Disposable {
   private hoverShown = -1;
   /** Lines marked in editors for a hover now. */
   private hoverMarked = false;
+  /** The hover mode the page last got (`settings`). */
+  private hoverModeSent: HoverPreview | undefined;
   /** The hover card's own highlighting requester, so a card never cancels the code blocks' request (or the reverse). */
   private previewRequester: Requester | undefined;
 
@@ -278,10 +281,7 @@ export class ExplainerSession implements vscode.Disposable {
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.followCursorInDiagrams') && !this.lightingOn()) this.postHere({});
-        if (e.affectsConfiguration('sidestory.hoverPreview')) {
-          this.endHover();
-          this.post({ type: 'settings', hoverPreview: hoverPreviewSetting() });
-        }
+        if (e.affectsConfiguration('sidestory.hoverPreview')) this.postSettings();
       }),
     );
     if (host.diffs) {
@@ -520,7 +520,7 @@ export class ExplainerSession implements vscode.Disposable {
     });
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
     if (this.previewing) this.post({ type: 'preview', on: true });
-    this.post({ type: 'settings', hoverPreview: hoverPreviewSetting() });
+    this.postSettings(true);
     this.widgets?.onInit();
     this.host.comments?.onInit(this);
   }
@@ -651,6 +651,8 @@ export class ExplainerSession implements vscode.Disposable {
     this.manifestError = null;
     const previous = this.manifest;
     this.manifest = parsed.manifest;
+    // Its `highlight` may have changed the page's hover mode; the rest applies from the next step or click.
+    this.postSettings();
     for (const id of [...this.hints.keys()]) {
       const a = parsed.manifest.anchors.get(id);
       const before = previous?.anchors.get(id);
@@ -1241,7 +1243,7 @@ export class ExplainerSession implements vscode.Disposable {
       if (this.disposed) return;
       editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
       editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
-      this.decorations.flash(editor, range);
+      this.decorations.flash(editor, range, this.flashOptions());
       // The cursor is now in the link's code: ring what links there (the box just clicked, or a tighter one).
       this.lightAt(editor.document, r.range.start).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));
     } catch (e) {
@@ -1260,7 +1262,7 @@ export class ExplainerSession implements vscode.Disposable {
    * focus; symbols that need a language's provider are found only in documents already open.
    */
   private async hoverPreview(m: Extract<FromWebview, { type: 'previewRef' | 'previewCode' }>): Promise<void> {
-    const mode = hoverPreviewSetting();
+    const mode = this.highlightFor().hoverPreview;
     if (mode === 'off') return;
     const now = Date.now();
     this.previewTimes = [...this.previewTimes.filter((t) => now - t < 1000), now];
@@ -1452,6 +1454,24 @@ export class ExplainerSession implements vscode.Disposable {
     await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: this.codeColumn(uri), preview: true });
   }
 
+  /** The highlighting settings in effect for the sidestory shown, and with `step` for that step (its `dim`). */
+  highlightFor(step?: { dim?: boolean }): EffectiveHighlight {
+    return effectiveHighlight(this.manifest?.highlight, step);
+  }
+
+  private flashOptions(): { seconds: number; frame: boolean } {
+    const h = this.highlightFor();
+    return { seconds: h.clickSeconds, frame: h.clickFrame };
+  }
+
+  /** Tells the page the hover mode in effect when it changed (`force`: a new page). A change ends the hover shown. */
+  private postSettings(force = false): void {
+    const hoverPreview = this.highlightFor().hoverPreview;
+    if (!force && hoverPreview === this.hoverModeSent) return;
+    if (!force) this.endHover();
+    if (this.post({ type: 'settings', hoverPreview })) this.hoverModeSent = hoverPreview;
+  }
+
   /** Highlights the active anchor's code; `dim` fades the rest. */
   private decorateActive(dim: boolean): void {
     const a = this.active ? this.manifest?.anchors.get(this.active) : undefined;
@@ -1511,7 +1531,7 @@ export class ExplainerSession implements vscode.Disposable {
     const kind = vscode.window.activeColorTheme.kind;
     const highContrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
     // No fading in high contrast themes, where it would cut contrast below what the theme promises.
-    const dim = !moveCursor && !highContrast && vscode.workspace.getConfiguration('sidestory').get<boolean>('dimUnfocused', true);
+    const dim = !moveCursor && !highContrast && this.highlightFor(a).dim;
     const uri = this.targetUri(a);
     if (!uri) {
       // A base-side anchor without git (§15): nothing to open.
@@ -1535,7 +1555,7 @@ export class ExplainerSession implements vscode.Disposable {
         mode,
       });
       if (this.disposed || !opened) return;
-      if (moveCursor && opened.editor) this.decorations.flash(opened.editor, new vscode.Range(opened.range.start - 1, 0, opened.range.end - 1, 0));
+      if (moveCursor && opened.editor) this.decorations.flash(opened.editor, new vscode.Range(opened.range.start - 1, 0, opened.range.end - 1, 0), this.flashOptions());
       else if (this.active === id) this.decorateActive(dim); // unless the reader moved on while the file opened
 
     } catch (e) {
@@ -1603,12 +1623,6 @@ export class ExplainerSession implements vscode.Disposable {
 interface PreviewTarget {
   found?: { uri: vscode.Uri; range: LineRange; path: string; languageId: string; text?: string };
   note?: string;
-}
-
-/** `sidestory.hoverPreview`, `card` for anything it can't be. */
-function hoverPreviewSetting(): HoverPreview {
-  const v = vscode.workspace.getConfiguration('sidestory').get<unknown>('hoverPreview', 'card');
-  return HOVER_PREVIEWS.find((p) => p === v) ?? 'card';
 }
 
 /** A file name's extension, which highlighting takes as a language name (`sv`, `ts`), or `plaintext`. */

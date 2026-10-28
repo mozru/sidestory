@@ -69,6 +69,8 @@ export interface AnchorPart {
 
 export interface Anchor extends AnchorSpec {
   id: string;
+  /** Fades the rest of the file for this step, over the sidestory's `highlight.dim` (the reader's setting wins). */
+  dim?: boolean;
   /**
    * The anchor's parts, part 1 first. `parseManifest` always sets it (one part, today); anchors built elsewhere may
    * leave it out, so read it through `anchorParts`.
@@ -122,10 +124,27 @@ export interface Manifest {
   group?: string;
   /** Keeps a cross-linked sidestory at the top level without inventing a group (docs/NAVIGATION-PLAN.md §13, Q3). */
   top?: boolean;
+  /** The sidestory's defaults for the highlighting settings; the reader's own settings win. */
+  highlight?: HighlightOptions;
   anchors: Map<string, Anchor>;
   /** The parsed JSON as written, so tools can rewrite it without losing fields we don't model. */
   raw: Record<string, unknown>;
 }
+
+/** The highlighting settings a sidestory may set for itself (`highlight` in the manifest). */
+export interface HighlightOptions {
+  /** `sidestory.dimUnfocused`. */
+  dim?: boolean;
+  /** `sidestory.clickHighlightSeconds`: 0–3600, 0 keeps it until the next one. */
+  clickSeconds?: number;
+  /** `sidestory.clickFrame`. */
+  clickFrame?: boolean;
+  /** `sidestory.hoverPreview`. */
+  hoverPreview?: HoverPreviewMode;
+}
+
+export const HOVER_PREVIEW_MODES = ['card', 'editor', 'both', 'off'] as const;
+export type HoverPreviewMode = (typeof HOVER_PREVIEW_MODES)[number];
 
 export interface Diagnostic {
   /** The anchor the problem is in, if any. */
@@ -150,6 +169,7 @@ export const LIMITS = {
   whyChars: 200,
   trivialFiles: 100,
   trivialFileChars: 200,
+  clickSeconds: 3600,
 } as const;
 
 const SUPPORTED_VERSIONS = [1, 2, 3] as const;
@@ -339,6 +359,8 @@ export function parseManifest(json: string): ParseResult {
     if (typeof rawTop.top === 'boolean') isTop = rawTop.top;
     else diagnostics.push({ message: 'top: must be true or false; ignored' });
   }
+  const highlight = parseHighlight(rawTop.highlight);
+  for (const e of highlight.errors) diagnostics.push({ message: `highlight: ${e}` });
   // The branch fields (docs/CHANGES-PLAN.md §3.1, §3.4) and the stable id (docs/COMMENTS-PLAN.md §3.1).
   const branch = parseBranchFields(rawTop);
   for (const message of branch.diagnostics) diagnostics.push({ message });
@@ -365,8 +387,10 @@ export function parseManifest(json: string): ParseResult {
     }
     if (spec.spec.side === 'base' && version < 3) baseSideOld = true;
     if (spec.warning) diagnostics.push({ anchor: id, message: spec.warning });
+    const dim = (value as { dim?: unknown }).dim;
+    if (dim !== undefined && typeof dim !== 'boolean') diagnostics.push({ anchor: id, message: 'dim: must be true or false; ignored' });
     const { file, range, quote, snippet, highlight, side } = spec.spec;
-    anchors.set(id, { id, ...spec.spec, parts: [{ file, range, quote, snippet, highlight, ...(side ? { side } : {}) }] });
+    anchors.set(id, { id, ...spec.spec, ...(typeof dim === 'boolean' ? { dim } : {}), parts: [{ file, range, quote, snippet, highlight, ...(side ? { side } : {}) }] });
   }
   // Older releases would read base-side code from the working tree: such manifests must say version 3 (§3.5).
   if (baseSideOld) diagnostics.push({ message: `anchors with side "base" need "version": 3 (this manifest says ${version}); older releases would show them at the wrong place` });
@@ -384,6 +408,7 @@ export function parseManifest(json: string): ParseResult {
       ...(branch.trivialFiles !== undefined ? { trivialFiles: branch.trivialFiles } : {}),
       ...(group.value !== undefined ? { group: group.value } : {}),
       ...(isTop !== undefined ? { top: isTop } : {}),
+      ...(highlight.value !== undefined ? { highlight: highlight.value } : {}),
       anchors,
       raw: raw as Record<string, unknown>,
     },
@@ -427,6 +452,39 @@ export function parseBranchFields(raw: Record<string, unknown>): { id?: string; 
     }
   }
   return out;
+}
+
+/**
+ * A manifest's `highlight`: only the known keys, each of its type; a bad value or unknown key is dropped with an
+ * error and the rest still apply. `clickSeconds` above 3600 is clamped.
+ */
+export function parseHighlight(v: unknown): { value?: HighlightOptions; errors: string[] } {
+  const errors: string[] = [];
+  if (v === undefined) return { errors };
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return { errors: ['must be an object like {"dim": false}; ignored'] };
+  const value: HighlightOptions = {};
+  const unknown: string[] = [];
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (k === 'dim' || k === 'clickFrame') {
+      if (typeof x === 'boolean') value[k] = x;
+      else errors.push(`${k} must be true or false; ignored`);
+    } else if (k === 'clickSeconds') {
+      if (typeof x !== 'number' || !Number.isFinite(x) || x < 0) errors.push(`clickSeconds must be a number of seconds from 0 to ${LIMITS.clickSeconds} (0 keeps it until the next one); ignored`);
+      else if (x > LIMITS.clickSeconds) {
+        value.clickSeconds = LIMITS.clickSeconds;
+        errors.push(`clickSeconds is more than ${LIMITS.clickSeconds}; ${LIMITS.clickSeconds} is used`);
+      } else value.clickSeconds = x;
+    } else if (k === 'hoverPreview') {
+      const mode = HOVER_PREVIEW_MODES.find((m) => m === x);
+      if (mode) value.hoverPreview = mode;
+      else errors.push(`hoverPreview must be ${HOVER_PREVIEW_MODES.map((m) => `"${m}"`).join(', ')}; ignored`);
+    } else unknown.push(k);
+  }
+  if (unknown.length) {
+    const shown = unknown.slice(0, 5).map((k) => JSON.stringify(k.slice(0, 40))).join(', ');
+    errors.push(`unknown key${unknown.length === 1 ? '' : 's'} ${shown}${unknown.length > 5 ? ` and ${unknown.length - 5} more` : ''} (known: dim, clickSeconds, clickFrame, hoverPreview); ignored`);
+  }
+  return { value, errors };
 }
 
 /** A manifest's `group`: a string, trimmed, 1–60 characters, no control characters. */

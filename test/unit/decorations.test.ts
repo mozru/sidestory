@@ -2,7 +2,7 @@
 // visible in high contrast themes, which leave highlight backgrounds transparent.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { config, decorationTypes, Range, ThemeColor, Uri, window } from './vscode-stub.ts';
+import { decorationTypes, Range, ThemeColor, Uri, window } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 const { Decorations } = await import('../../src/extension/decorations.ts');
@@ -56,90 +56,82 @@ describe('the click highlight', () => {
   const lit = (e: { shown: Map<unknown, unknown[]> }) => [...e.shown.values()].filter((r) => r.length).length;
   const range = new Range(3, 0, 5, 0) as never;
 
-  it('fades after sidestory.clickHighlightSeconds, and stays with 0 until the next click, which clears it in the other editor', () => {
-    config['sidestory.clickFrame'] = false; // the flash alone
+  const flashOnly = { seconds: 1.5, frame: false };
+
+  it('fades after the seconds given, and stays with 0 until the next click, which clears it in the other editor', () => {
     vi.useFakeTimers();
     const d = new Decorations();
     try {
       const a = editor();
-      d.flash(a as never, range);
+      d.flash(a as never, range, flashOnly);
       vi.advanceTimersByTime(1499);
       expect(lit(a)).toBe(1);
       vi.advanceTimersByTime(1);
       expect(lit(a)).toBe(0);
 
-      config['sidestory.clickHighlightSeconds'] = 0;
-      d.flash(a as never, range);
+      d.flash(a as never, range, { seconds: 0, frame: false });
       vi.advanceTimersByTime(24 * 3600_000);
       expect(lit(a)).toBe(1);
       const b = editor();
-      d.flash(b as never, range);
+      d.flash(b as never, range, flashOnly);
       expect(lit(a)).toBe(0);
       expect(lit(b)).toBe(1);
     } finally {
-      delete config['sidestory.clickHighlightSeconds'];
-      delete config['sidestory.clickFrame'];
       d.dispose();
       vi.useRealTimers();
     }
   });
 
   it('restarts its timer on the next click, clears the other editor then, and falls back to 1.5 s for a value that is no number', () => {
-    config['sidestory.clickFrame'] = false; // the flash alone
     vi.useFakeTimers();
     const d = new Decorations();
     try {
       const a = editor();
       const b = editor();
-      d.flash(a as never, range);
+      d.flash(a as never, range, flashOnly);
       vi.advanceTimersByTime(1000);
-      d.flash(a as never, range);
+      d.flash(a as never, range, flashOnly);
       vi.advanceTimersByTime(1000); // past the first deadline
       expect(lit(a)).toBe(1);
-      d.flash(b as never, range);
+      d.flash(b as never, range, flashOnly);
       expect(lit(a)).toBe(0);
       vi.advanceTimersByTime(1500);
       expect(lit(b)).toBe(0);
 
-      config['sidestory.clickHighlightSeconds'] = 'abc';
-      d.flash(a as never, range);
+      d.flash(a as never, range, { seconds: NaN, frame: false });
       vi.advanceTimersByTime(1500);
       expect(lit(a)).toBe(0);
 
-      config['sidestory.clickHighlightSeconds'] = 0;
-      d.flash(a as never, range);
+      d.flash(a as never, range, { seconds: 0, frame: false });
       d.clearFlash(); // the panel shows another sidestory
       expect(lit(a)).toBe(0);
     } finally {
-      delete config['sidestory.clickHighlightSeconds'];
-      delete config['sidestory.clickFrame'];
       d.dispose();
       vi.useRealTimers();
     }
   });
 
-  it('leaves a frame (sides, top, bottom) when the flash fades, until the next click or clearFlash; none with clickFrame off', () => {
+  it('leaves a frame (sides, top, bottom) when the flash fades, until the next click or clearFlash; none with frame off', () => {
     vi.useFakeTimers();
     const d = new Decorations();
+    const framed = { seconds: 1.5, frame: true };
     try {
       const a = editor();
-      d.flash(a as never, range);
+      d.flash(a as never, range, framed);
       expect(lit(a)).toBe(1); // the flash
       vi.advanceTimersByTime(1500);
       expect(lit(a)).toBe(3); // the frame's sides, top and bottom; the flash is gone
       const b = editor();
-      d.flash(b as never, range);
+      d.flash(b as never, range, framed);
       expect(lit(a)).toBe(0);
       vi.advanceTimersByTime(1500);
       d.clearFlash();
       expect(lit(b)).toBe(0);
 
-      config['sidestory.clickFrame'] = false;
-      d.flash(a as never, range);
+      d.flash(a as never, range, flashOnly);
       vi.advanceTimersByTime(1500);
       expect(lit(a)).toBe(0);
     } finally {
-      delete config['sidestory.clickFrame'];
       d.dispose();
       vi.useRealTimers();
     }

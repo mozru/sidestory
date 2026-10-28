@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A sidestory can set how it highlights code: `"highlight"` in its manifest (`dim`, `clickSeconds`, `clickFrame`, `hoverPreview`) changes the defaults of `sidestory.dimUnfocused`, `sidestory.clickHighlightSeconds`, `sidestory.clickFrame` and `sidestory.hoverPreview` for it, and `"dim"` on an anchor for one step. Your own settings always win; the checker warns about bad values.
+
 ## 0.2.7 (2026-10-28)
 
 - < > buttons sit right beside the step picker that narrow panels show, and beside every dropdown in a widget (`Select`; `arrows={false}` leaves them out), to step through without opening the list.

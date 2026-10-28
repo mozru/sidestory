@@ -1038,7 +1038,8 @@ function relative(root: string, p: string): string | undefined {
 /**
  * The manifest's diagnostics for the branch fields (§3.4) and the id, as findings: a bad `base` and base-side
  * anchors without one are errors (they would show the sidestory, or its removed code, at the wrong place), as is
- * a base-side anchor in a manifest older than version 3 (§3.5) and a trivial mark without a `why`.
+ * a base-side anchor in a manifest older than version 3 (§3.5) and a trivial mark without a `why`. A bad `highlight`
+ * value or anchor `dim` is a warning: it is ignored, and the reader's settings or the defaults apply.
  */
 export function manifestDiagnosticFindings(manifestFile: string, manifestText: string, diagnostics: readonly Diagnostic[]): Finding[] {
   const out: Finding[] = [];
@@ -1051,6 +1052,8 @@ export function manifestDiagnosticFindings(manifestFile: string, manifestText: s
     else if (d.anchor === undefined && m.startsWith('head:')) code = 'head';
     else if (d.anchor === undefined && m.startsWith('trivialFiles:')) code = 'trivial-files';
     else if (d.anchor === undefined && m.startsWith('id:')) code = 'id';
+    else if (d.anchor === undefined && m.startsWith('highlight:')) code = 'highlight';
+    else if (d.anchor !== undefined && m.startsWith('dim:')) code = 'highlight';
     else if (d.anchor === undefined && m.includes('side "base" need "version": 3')) [code, severity] = ['version', 'error'];
     else if (d.anchor !== undefined && m.startsWith('side "base" needs')) [code, severity] = ['side-without-base', 'error'];
     else if (d.anchor !== undefined && m.startsWith('trivial needs a "why"')) [code, severity] = ['trivial-why', 'error'];

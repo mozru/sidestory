@@ -271,6 +271,11 @@ export const workspace = {
       const k = section ? `${section}.${key}` : key;
       return (Object.hasOwn(config, k) ? config[k] : fallback) as T;
     },
+    // Every value in `config` is the user's own (their user settings).
+    inspect: (key: string) => {
+      const k = section ? `${section}.${key}` : key;
+      return { key: k, ...(Object.hasOwn(config, k) ? { globalValue: config[k] } : {}) };
+    },
     update: async (key: string, value: unknown) => {
       config[section ? `${section}.${key}` : key] = value;
     },

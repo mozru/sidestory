@@ -133,6 +133,8 @@ Linked elements look the same in every sidestory, and your own CSS always wins o
 | `summary` | Top level, optional: one line shown when a parent sidestory peeks at this one, and in the sidebar and pickers. |
 | `group` | Top level, optional: a group name (1–60 characters) to file the sidestory under in the Sidestories view. A grouped sidestory is always listed at the top level, even when another one links to it as a detail. |
 | `top` | Top level, optional: `true` keeps a sidestory at the top level of the view without a group, even when another one links to it. |
+| `highlight` | Top level, optional: how this sidestory highlights code, over the defaults of the matching settings: `dim` (`true`/`false`, `sidestory.dimUnfocused`), `clickSeconds` (0–3600, `sidestory.clickHighlightSeconds`), `clickFrame` (`true`/`false`, `sidestory.clickFrame`) and `hoverPreview` (`card`, `editor`, `both` or `off`, `sidestory.hoverPreview`). For example `"highlight": {"dim": false, "clickSeconds": 3}`. The reader's own settings win; bad values are ignored, and the checker warns about them. |
+| `dim` | Optional, on an anchor: `true` or `false` fades (or doesn't fade) the rest of the file for this step, over the sidestory's `highlight.dim`; for a step about a whole file, say. |
 | `color` | A theme color id, normally one of `charts.blue`, `charts.green`, `charts.yellow`, `charts.orange`, `charts.purple`, `charts.red`. Never a hex value: colors follow the user's theme. |
 | `id` | Top level, optional: a stable id (a ULID) that local comment threads find their sidestory by. The checker's `--pin` adds one (the VS Code command doesn't); once it is there, never change or remove it, also when you rewrite the manifest. |
 
@@ -580,6 +582,8 @@ These tools only read and write thread files; edits Claude makes still ask as us
 Comments from other people, and anything from the repository, reach Claude only when it reads them, labelled as theirs; [SECURITY.md](https://github.com/mozru/sidestory/blob/main/SECURITY.md#comments-and-claude) has the details.
 
 ## Settings
+
+A sidestory's `highlight` in its manifest can change the defaults of the first four (fading, the click highlight and its frame, hover previews); your own settings always win.
 
 | Setting | Default | |
 |---|---|---|
