@@ -107,10 +107,12 @@ export type ToWebview =
   | { type: 'content'; title: string; html: string }
   /** Anchor locations or states changed. */
   | { type: 'anchors'; anchors: AnchorView[] }
-  /** The cursor moved into another section's code. */
-  | { type: 'syncTo'; anchorId: string }
+  /** The cursor moved into another section's code. `jump`: the reader asked for it (Go to Step, a CodeLens): a history entry. */
+  | { type: 'syncTo'; anchorId: string; jump?: boolean }
   /** Step forward or back (keyboard command from the editor). */
   | { type: 'navigate'; delta: 1 | -1 }
+  /** Back or Forward in the panel's history (Sidestory: Back / Forward). */
+  | { type: 'history'; delta: 1 | -1 }
   /** The explainer could not be loaded; keep showing the last good content. */
   | { type: 'error'; message: string | null }
   /** Files in the explainer folder changed (paths relative to it): reload them. */
@@ -172,6 +174,8 @@ export type FromWebview =
   | { type: 'dive'; name: string; section?: string }
   /** Go back up the trail to this level (0 = the root explainer). */
   | { type: 'goTo'; depth: number }
+  /** Back or Forward to a sidestory in the panel's history: its folder, its trail's names (root first), its step. */
+  | { type: 'openHistory'; dir: string; trail: string[]; active?: string }
   /** Describe these detail explainers (title, summary, size). */
   | { type: 'describe'; names: string[] }
   /** Point this section at the code selected in the editor (asks the user to confirm first). */
@@ -272,6 +276,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional() }),
   z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL) }),
+  z.object({ type: z.literal('openHistory'), dir: z.string().max(4096), trail: z.array(explainerNameSchema).min(1).max(MAX_TRAIL), active: anchorIdSchema.optional() }),
   z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),
   z.object({ type: z.literal('reanchor'), anchorId: anchorIdSchema }),
   z.object({ type: z.literal('widgetConsent') }),

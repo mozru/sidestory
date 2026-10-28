@@ -28,7 +28,7 @@ import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
 import { effectiveHighlight, type EffectiveHighlight } from './highlight-options.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
+import { refFromDir, trailTo, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
 import { localPath } from './local-path.ts';
 import { log } from './log.ts';
 import { shellHtml, VIEW_TYPE } from './panel.ts';
@@ -366,7 +366,7 @@ export class ExplainerSession implements vscode.Disposable {
     }
     if (!this.manifest.anchors.has(anchorId)) return;
     this.setActive(anchorId);
-    this.post({ type: 'syncTo', anchorId });
+    this.post({ type: 'syncTo', anchorId, jump: true });
     this.requestReveal(anchorId, false);
   }
 
@@ -582,6 +582,11 @@ export class ExplainerSession implements vscode.Disposable {
 
   navigate(delta: 1 | -1): void {
     this.post({ type: 'navigate', delta });
+  }
+
+  /** Back or Forward in the panel's history (the page keeps it). */
+  history(delta: 1 | -1): void {
+    this.post({ type: 'history', delta });
   }
 
   // ---- loading ----
@@ -1009,6 +1014,20 @@ export class ExplainerSession implements vscode.Disposable {
           void this.switchTo(this.trail.slice(0, m.depth + 1));
         }
         break;
+      case 'openHistory': {
+        let dir: vscode.Uri;
+        try {
+          dir = vscode.Uri.parse(m.dir, true);
+        } catch {
+          return;
+        }
+        const shown = refFromDir(dir);
+        const trail = shown && trailTo(shown, m.trail);
+        if (!trail) return;
+        this.navRequest++; // a dive still waiting is overtaken
+        void this.switchTo(trail, m.active);
+        break;
+      }
       case 'describe':
         void this.describe(m.names);
         break;
@@ -1654,6 +1673,7 @@ function endsPreview(m: FromWebview): boolean {
       return m.source !== 'initial'; // the page opening at a section isn't the reader acting
     case 'dive':
     case 'goTo':
+    case 'openHistory':
     case 'openRef':
     case 'openCode':
     case 'widgetStates':

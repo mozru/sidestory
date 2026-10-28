@@ -82,7 +82,10 @@ export function installFocus(post: (m: FromWidget) => void, root?: HTMLElement):
   const windowFocus = window.focus;
   Object.defineProperty(window, 'focus', { configurable: true, writable: true, value: () => { if (interacting()) windowFocus.call(window); } });
 
-  const exit = (dir: Dir) => post({ type: 'focusExit', dir });
+  const exit = (dir: Dir, e?: KeyboardEvent) =>
+    post(e?.isTrusted
+      ? { type: 'focusExit', dir, key: { key: e.key, code: e.code, keyCode: e.keyCode, shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, repeat: e.repeat } }
+      : { type: 'focusExit', dir });
 
   // Bubble phase on window: widget handlers (React's, on its root) run first and can claim the key.
   window.addEventListener('keydown', (e) => {
@@ -108,7 +111,8 @@ export function installFocus(post: (m: FromWidget) => void, root?: HTMLElement):
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && !e.altKey && ['a', 'c', 'v', 'x', 'z', 'y'].includes(k)) return;
       if (keepsFocus(document.activeElement)) return;
-      exit('shortcut');
+      // With the key, which the panel may pass on to VS Code (its keybindings don't see keys pressed in here).
+      exit('shortcut', e);
     }
   });
 

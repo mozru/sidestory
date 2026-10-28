@@ -16,6 +16,8 @@ import { sanitize } from './sanitize.ts';
 import { randomToken, staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
 import { CommentsPane } from './comments.ts';
+import { type HistoryEntry, NavHistory, samePage, type SavedHistory } from './history.ts';
+import { forVsCode, keyInfo, passToVsCode, typingIn } from './keys.ts';
 
 interface VsCodeApi {
   postMessage(m: FromWebview): void;
@@ -41,6 +43,8 @@ interface SavedState extends Place {
   widgets?: SavedWidgets;
   /** Comment drafts, the Comments pane's height and scope (docs/COMMENTS-PLAN.md §6.2). */
   comments?: { drafts?: Record<string, string>; height?: number; all?: boolean };
+  /** Back / Forward (history.ts). */
+  history?: SavedHistory;
 }
 
 interface Step {
@@ -99,6 +103,10 @@ const BOX_TOKEN = randomToken();
 const ownBox = (el: Element | null | undefined): el is HTMLElement => el?.getAttribute('data-cx-box') === BOX_TOKEN;
 
 let state: SavedState = vscode.getState() ?? { dir: app.dataset.dir! };
+/** Back / Forward: where the reader has been in this panel. */
+const navHistory = new NavHistory(state.history);
+/** A Back or Forward to another sidestory (or a trail move that is one), until its `init` arrives. */
+let pendingHistory: { index: number; dir: string; trail: string[] } | undefined;
 let anchors = new Map<string, AnchorView>();
 let steps: Step[] = [];
 let active: string | undefined = state.active;
@@ -109,6 +117,9 @@ let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
 // Declared up here: the frame's listeners (attached in buildFrame, before the code below runs) use them.
 let lastKeyAt = 0;
+/** Keys from the content frame passed on to VS Code and not yet released (forwardKey). */
+const passedDown = new Set<string>();
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 /** When the reader last pressed Tab (trusted), in the panel or the content. */
 let lastTabAt = 0;
 /**
@@ -166,6 +177,10 @@ app.innerHTML = staticHtml`
   <nav class="cx-trail" aria-label="Sidestory path" hidden></nav>
   <div class="cx-preview" role="status" hidden><span class="codicon codicon-eye" aria-hidden="true"></span><span class="cx-preview-text">Preview: the next sidestory you open from code or a list replaces this one.</span><button class="cx-preview-keep" type="button">Keep Open</button></div>
   <div class="cx-titlerow">
+    <span class="cx-history">
+      <button class="cx-hist" type="button" data-delta="-1" aria-label="Back" aria-disabled="true"><span class="codicon codicon-arrow-left" aria-hidden="true"></span></button>
+      <button class="cx-hist" type="button" data-delta="1" aria-label="Forward" aria-disabled="true"><span class="codicon codicon-arrow-right" aria-hidden="true"></span></button>
+    </span>
     <h1 class="cx-title"></h1>
     <span class="cx-status"><span class="codicon" aria-hidden="true"></span><span class="cx-status-text"></span></span>
   </div>
@@ -216,6 +231,8 @@ const trailEl = $('.cx-trail');
 const bannerOpen = $<HTMLButtonElement>('.cx-banner-open');
 const headerEl = $('.cx-header');
 const backEl = $<HTMLButtonElement>('.cx-back');
+const histBack = $<HTMLButtonElement>('.cx-hist[data-delta="-1"]');
+const histForward = $<HTMLButtonElement>('.cx-hist[data-delta="1"]');
 /** Shown while this is a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
 const previewEl = $('.cx-preview');
 /** Widget frames live here, over the content, scrolling with it (docs/WIDGETS-PLAN.md §3). */
@@ -226,11 +243,7 @@ const comments = new CommentsPane($('.cx-comments'), commentLayerEl, {
   post: (m) => vscode.postMessage(m as FromWebview),
   steps: () => steps,
   activeStep: () => activeStepId(),
-  goToStep: (id) => {
-    hidePill();
-    setActive(id, 'click');
-    scrollToSection(id);
-  },
+  goToStep: (id) => jumpTo(id, 'click'),
   stepButton: (id) => stepsEl.querySelector<HTMLElement>(`.cx-step[data-anchor="${CSS.escape(id)}"]`),
   contentFrame: () => frame?.el ?? $('.cx-frame'),
   announce: (t) => announce(t),
@@ -512,6 +525,12 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
   switch (m.type) {
     case 'init': {
       const entering = m.dir !== state.dir;
+      const names = m.trail.map((t) => t.name);
+      // Back or Forward (or a trail move that is one) arriving: the entry it was for becomes current.
+      const back = pendingHistory && samePage(pendingHistory, { dir: m.dir, trail: names }) ? pendingHistory : undefined;
+      pendingHistory = undefined;
+      if (initialized) navHistory.update(hereEntry()); // the place being left, as it is now
+      const target = back ? navHistory.go(back.index) : undefined;
       // A different explainer (dive / back): remember the reader's place here, forget the rest.
       if (entering) {
         if (initialized) savePlace();
@@ -533,9 +552,17 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
         } catch {
           // a nicety
         }
-        const place = state.places?.[m.dir];
+        const place = target ? { active: target.active, scroll: target.scroll } : state.places?.[m.dir];
         active = place?.active;
         state = { ...state, dir: m.dir, active: place?.active, scroll: place?.scroll };
+      } else if (target) {
+        active = target.active;
+        state = { ...state, active: target.active, scroll: target.scroll };
+      }
+      // Anywhere else new (a dive, a sidestory opened here): a new entry, as a link in a browser.
+      const cur = navHistory.current;
+      if (!target && !(cur && samePage(cur, { dir: m.dir, trail: names }))) {
+        navHistory.push({ dir: m.dir, trail: names, title: m.title, active: m.active ?? state.active });
       }
       // The panel's shell may have been built for another folder (it is rebuilt when hidden and shown).
       if (new URL(m.base).href !== baseUrl) {
@@ -546,9 +573,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       const left = trail.length > m.trail.length ? trail[m.trail.length]?.name : undefined;
       const wasInitialized = initialized;
       trail = m.trail;
-      state = { ...state, trail: trail.map((t) => t.name) };
+      state = { ...state, trail: names, history: navHistory.toJSON() };
       vscode.setState(state);
       renderTrail();
+      renderHistory();
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
       pendingInit = { active: m.active, after: entering && wasInitialized ? () => arrived(m.title, left) : undefined };
       void render(m.title, m.html, false);
@@ -577,7 +605,10 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       decorate();
       break;
     case 'syncTo':
+      if (m.jump && initialized) navHistory.update(hereEntry());
       followEditor(m.anchorId);
+      // Go to Step, a CodeLens: the reader asked for this step, as for a tab.
+      if (m.jump && initialized && active === m.anchorId) remember('push');
       break;
     case 'here':
       here = { ref: typeof m.ref === 'string' ? m.ref : undefined, link: typeof m.link === 'string' ? m.link : undefined };
@@ -586,6 +617,9 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'navigate':
       if (initialized) step(m.delta);
       else if (pendingSteps.length < 20) pendingSteps.push(m.delta);
+      break;
+    case 'history':
+      goHistory(m.delta === -1 ? -1 : 1);
       break;
     case 'asset': {
       const resolve = pendingAssets.get(m.id);
@@ -706,6 +740,7 @@ async function render(title: string, html: string, isUpdate: boolean): Promise<b
     // editor is open, and otherwise only highlights it, so opening a sidestory never takes over the reader's editor.
     if (active && active !== init.active) vscode.postMessage({ type: 'focusAnchor', anchorId: active, source: 'initial' });
     initialized = true;
+    noteHistory();
     init.after?.();
     for (const d of pendingSteps.splice(0)) step(d);
   } else if (initialized && !active && steps.length) {
@@ -927,6 +962,7 @@ function renderTrail(): void {
 function arrived(title: string, leftDetail: string | undefined): void {
   announce(leftDetail ? `Back to ${title}` : `Opened ${title}`);
   if (!app.contains(document.activeElement) && document.activeElement !== document.body && !frame.root.contains(frame.root.ownerDocument.activeElement)) return;
+  if (document.activeElement?.classList.contains('cx-hist')) return; // pressing Back again goes on back
   const dive = leftDetail ? [...content.querySelectorAll<HTMLElement>('[data-explain-detail]')].find((h) => h.dataset.explainDetail === leftDetail)?.querySelector<HTMLElement>('.cx-dive') : undefined;
   if (dive) {
     focusingSelf = true; // not the reader tabbing into its section
@@ -941,6 +977,8 @@ function arrived(title: string, leftDetail: string | undefined): void {
 function goTo(depth: number): void {
   if (depth >= trail.length - 1) return;
   savePlace();
+  // Up to where the reader just came from: that's Back, so Forward returns here.
+  expectEntry(-1, trail.slice(0, depth + 1).map((t) => t.name));
   vscode.postMessage({ type: 'goTo', depth });
 }
 
@@ -949,7 +987,20 @@ function dive(name: string): void {
   const i = trail.findIndex((t) => t.name === name);
   if (i >= 0) return goTo(i);
   savePlace();
+  // Into the detail the reader just came back from: that's Forward, so what lay beyond it stays.
+  expectEntry(1, [...trail.map((t) => t.name), name]);
   vscode.postMessage({ type: 'dive', name });
+}
+
+/** A sibling sidestory's folder (details live next to each other under `.sidestory/`). */
+const siblingDir = (name: string) => state.dir.replace(/[^/]*$/, name);
+
+/** If the entry `delta` away is the page a trail move leads to, its `init` makes that entry current. */
+function expectEntry(delta: 1 | -1, names: string[]): void {
+  const index = navHistory.position + delta;
+  const e = navHistory.at(index);
+  pendingHistory = e && samePage(e, { dir: siblingDir(names.at(-1)!), trail: names }) ? { index, dir: e.dir, trail: e.trail } : undefined;
+  renderHistory();
 }
 
 /** Applies anchor states, accents and the active section, then rebuilds the navigator. */
@@ -1140,8 +1191,100 @@ function step(delta: 1 | -1): void {
   const target = steps[Math.min(steps.length - 1, Math.max(0, i < 0 ? 0 : i + delta))]!;
   if (target.id === activeStepId()) return; // already at the first or last step
   hidePill();
+  if (initialized) navHistory.update(hereEntry());
   setActive(target.id, 'step');
   scrollToSection(target.id);
+  if (initialized) remember('step');
+}
+
+/** The reader chose a step (a tab, the picker, a comment): a new history entry, as a link in a browser. */
+function jumpTo(id: string, source?: Source): void {
+  hidePill();
+  if (initialized) navHistory.update(hereEntry());
+  setActive(id, source);
+  scrollToSection(id);
+  if (initialized) remember('push');
+}
+
+// ---- history (Back / Forward) ----
+
+/** The page shown, as history entries name it. */
+const shownPage = () => ({ dir: state.dir, trail: trail.map((t) => t.name) });
+
+/** Where the reader is now, as a history entry. */
+function hereEntry(): HistoryEntry {
+  const n = steps.findIndex((s) => s.id === activeStepId());
+  return { ...shownPage(), title: titleEl.textContent || trail.at(-1)?.title || '', active, step: n >= 0 ? n + 1 : undefined, scroll: readingPosition() };
+}
+
+/** A new entry for the step just made current; its scroll is recorded once the page settles there (savePlace). */
+function remember(kind: 'push' | 'step'): void {
+  const e = { ...hereEntry(), scroll: undefined };
+  if (kind === 'push') navHistory.push(e);
+  else navHistory.step(e);
+  persistHistory();
+}
+
+function noteHistory(): void {
+  if (initialized) navHistory.update(hereEntry());
+  persistHistory();
+}
+
+function persistHistory(): void {
+  state = { ...state, history: navHistory.toJSON() };
+  vscode.setState(state);
+  renderHistory();
+}
+
+const describeEntry = (e: HistoryEntry) => `${e.title || e.trail.at(-1)}${e.step ? ` · step ${e.step}` : ''}`;
+
+function renderHistory(): void {
+  const at = pendingHistory?.index ?? navHistory.position;
+  for (const [b, delta, word] of [[histBack, -1, 'Back'], [histForward, 1, 'Forward']] as const) {
+    const e = navHistory.at(at + delta);
+    const label = e ? `${word} to ${describeEntry(e)}` : word;
+    // aria-disabled, not disabled: a focused button that runs out keeps focus.
+    b.setAttribute('aria-disabled', String(!e));
+    if (b.title !== label) b.title = label;
+    if (b.getAttribute('aria-label') !== label) b.setAttribute('aria-label', label);
+  }
+}
+
+/** Back (-1) or Forward (1): the step and scroll position as the reader left them, in whichever sidestory. */
+function goHistory(delta: 1 | -1): void {
+  const index = (pendingHistory?.index ?? navHistory.position) + delta;
+  const e = navHistory.at(index);
+  if (!e) return;
+  hidePill();
+  hoverCard?.hide();
+  if (!pendingHistory && initialized && samePage(e, shownPage())) {
+    navHistory.update(hereEntry());
+    navHistory.go(index);
+    restoreEntry(e);
+    persistHistory();
+    announce(`${delta < 0 ? 'Back' : 'Forward'} to ${describeEntry(e)}`);
+    return;
+  }
+  if (initialized) savePlace();
+  pendingHistory = { index, dir: e.dir, trail: e.trail };
+  vscode.postMessage(e.active ? { type: 'openHistory', dir: e.dir, trail: e.trail, active: e.active } : { type: 'openHistory', dir: e.dir, trail: e.trail });
+  renderHistory();
+}
+
+/** Puts the reader back on an entry of the page shown: its step (the editor follows), then its scroll position. */
+function restoreEntry(e: HistoryEntry): void {
+  const id = e.active && (anchors.has(e.active) || sectionEl(e.active)) ? e.active : undefined;
+  if (id) setActive(id, 'step');
+  const el = e.scroll && sectionEl(e.scroll.anchor);
+  if (!el || !e.scroll) {
+    if (id) scrollToSection(id);
+    return;
+  }
+  scrollTarget = undefined;
+  programmaticUntil = Date.now() + 1000;
+  const top = scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - e.scroll.offset;
+  scroller.scrollTo({ top, behavior: reducedMotion() ? 'auto' : 'smooth' });
+  notePlaceWhenSettled();
 }
 
 const readerLeads = () => Date.now() - lastUserScroll < USER_LEAD_MS;
@@ -1286,6 +1429,35 @@ function bindFrameEvents(d: Document): void {
     if (e.relatedTarget === null) hoverCard?.pointerAway(); // out of the content
   });
   d.addEventListener('focusout', (e) => hoverCard?.blur(e.target as Element));
+  // Last, on the frame's window: keys nothing in the page took are VS Code's (Cmd+Shift+P and the like).
+  d.defaultView!.addEventListener('keydown', forwardKey);
+  d.defaultView!.addEventListener('keyup', forwardKey);
+  for (const ev of ['mousedown', 'mouseup']) d.addEventListener(ev, onMouseNav as EventListener);
+}
+
+/**
+ * VS Code only sees keys pressed in the panel's own document (keys.ts): one pressed in the content frame that the page
+ * didn't handle and that VS Code may have a binding for is passed on, so its shortcuts work while reading.
+ */
+function forwardKey(e: KeyboardEvent): void {
+  if (!e.isTrusted || e.defaultPrevented || e.isComposing || typingIn(e.target as Element)) return;
+  const k = keyInfo(e);
+  if (k.type === 'keyup') {
+    // The release of a key passed on (or of a modifier): not of one the page kept.
+    if (!passedDown.delete(k.code) && !forVsCode(k)) return;
+  } else {
+    if (!forVsCode(k)) return;
+    passedDown.add(k.code);
+    e.preventDefault(); // VS Code's, not the frame's (Alt+Left would navigate the frame)
+  }
+  passToVsCode(k);
+}
+
+/** The mouse's back and forward buttons, as in a browser. */
+function onMouseNav(e: MouseEvent): void {
+  if (e.button !== 3 && e.button !== 4) return;
+  e.preventDefault();
+  if (e.type === 'mouseup') goHistory(e.button === 3 ? -1 : 1);
 }
 
 function noteKey(e: KeyboardEvent): void {
@@ -1495,8 +1667,10 @@ function onContentClick(e: MouseEvent): void {
           // :target is a nicety
         }
         scroller.scrollTop = from; // the fragment jumps there; scroll smoothly instead
+        if (initialized) navHistory.update(hereEntry());
         scrollToTop(topOf(dest));
         if (section) setActive(section.dataset.explainAnchor!, 'click');
+        if (initialized) remember('push');
       }
     } else if (href.startsWith(baseUrl)) {
       // Another file in the explainer folder (the sanitizer made it absolute): open it in VS Code.
@@ -1539,6 +1713,7 @@ function onContentKey(e: KeyboardEvent): void {
 }
 
 stepsEl.addEventListener('keydown', (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return; // Alt+Left is Back
   const buttons = [...stepsEl.querySelectorAll<HTMLButtonElement>('.cx-step')];
   const i = buttons.indexOf(e.target as HTMLButtonElement);
   if (i < 0) return;
@@ -1553,18 +1728,10 @@ stepsEl.addEventListener('keydown', (e) => {
 
 stepsEl.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.cx-step');
-  if (!b) return;
-  const id = b.dataset.anchor!;
-  hidePill();
-  setActive(id, 'step');
-  scrollToSection(id);
+  if (b) jumpTo(b.dataset.anchor!, 'step');
 });
 
-selectEl.addEventListener('change', () => {
-  hidePill();
-  setActive(selectEl.value, 'step');
-  scrollToSection(selectEl.value);
-});
+selectEl.addEventListener('change', () => jumpTo(selectEl.value, 'step'));
 
 for (const b of app.querySelectorAll<HTMLButtonElement>('.cx-nav')) b.addEventListener('click', () => step(Number(b.dataset.delta) as 1 | -1));
 
@@ -1573,12 +1740,15 @@ pillShow.addEventListener('click', () => {
   const detail = pillEl.dataset.dive;
   hidePill();
   if (detail) return dive(detail);
-  if (!id) return;
-  setActive(id);
-  scrollToSection(id);
+  if (id) jumpTo(id);
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
 backEl.addEventListener('click', () => goTo(trail.length - 2));
+for (const b of [histBack, histForward]) {
+  b.addEventListener('click', () => {
+    if (b.getAttribute('aria-disabled') !== 'true') goHistory(b === histBack ? -1 : 1);
+  });
+}
 $('.cx-preview-keep').addEventListener('click', () => {
   // The button goes away with the bar: keep keyboard focus somewhere sensible instead of dropping it on the body.
   const hadFocus = app.contains(document.activeElement);
@@ -1592,11 +1762,31 @@ $('.cx-preview-keep').addEventListener('click', () => {
 bannerOpen.addEventListener('click', () => vscode.postMessage({ type: 'openFile', path: 'manifest.json' }));
 
 document.addEventListener('keydown', onKey);
+for (const ev of ['mousedown', 'mouseup']) document.addEventListener(ev, onMouseNav as EventListener);
+
+/**
+ * Back (-1) or Forward (1) keys the page takes itself: on macOS, Alt+Left / Right and Cmd+[ / ], which VS Code binds to
+ * nothing here. The ones VS Code navigates with (Ctrl+- on macOS, Alt+Left elsewhere) reach it as usual and run
+ * Sidestory: Back / Forward (package.json keybindings), so VS Code sees every key of the chord: a lone Alt would
+ * open its menu bar.
+ */
+function historyKey(e: KeyboardEvent): 0 | 1 | -1 {
+  if (!MAC || e.shiftKey || e.ctrlKey) return 0;
+  if (e.altKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return e.key === 'ArrowLeft' ? -1 : 1;
+  if (e.metaKey && !e.altKey && (e.code === 'BracketLeft' || e.code === 'BracketRight')) return e.code === 'BracketLeft' ? -1 : 1;
+  return 0;
+}
 
 function onKey(e: KeyboardEvent): void {
   const t = e.target as HTMLElement | undefined;
   // Keys belong to controls that take typing; a switch or radio button doesn't, so J/K still step.
-  const typing = t && (t.isContentEditable || /^(TEXTAREA|SELECT)$/.test(t.tagName) || (t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color)$/.test((t as HTMLInputElement).type)));
+  const typing = typingIn(t);
+  const nav = typing ? 0 : historyKey(e);
+  if (nav) {
+    e.preventDefault();
+    goHistory(nav);
+    return;
+  }
   if (e.altKey || e.ctrlKey || e.metaKey || typing) {
     if (e.key === 'Escape') hidePill();
     return;
@@ -1669,8 +1859,10 @@ function savePlace(): void {
   places[state.dir] = place;
   const keys = Object.keys(places);
   for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PLACES))) delete places[k];
-  state = { ...state, ...place, places };
+  navHistory.update(hereEntry());
+  state = { ...state, ...place, places, history: navHistory.toJSON() };
   vscode.setState(state);
+  renderHistory();
 }
 
 const pendingAnnouncements: string[] = [];

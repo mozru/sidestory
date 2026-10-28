@@ -95,6 +95,16 @@
         "category": "Sidestory"
       },
       {
+        "command": "sidestory.navigateBack",
+        "title": "Back",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.navigateForward",
+        "title": "Forward",
+        "category": "Sidestory"
+      },
+      {
         "command": "sidestory.pin",
         "title": "Pin Anchors to the Current Code",
         "category": "Sidestory"
@@ -484,6 +494,18 @@
     ],
     "keybindings": [
       {
+        "command": "sidestory.navigateBack",
+        "key": "alt+left",
+        "mac": "ctrl+-",
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus"
+      },
+      {
+        "command": "sidestory.navigateForward",
+        "key": "alt+right",
+        "mac": "ctrl+shift+-",
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus"
+      },
+      {
         "command": "sidestory.nextStep",
         "key": "alt+]",
         "mac": "ctrl+alt+]",
@@ -863,6 +885,14 @@
       "commandPalette": [
         {
           "command": "sidestory.nextStep",
+          "when": "sidestory.active"
+        },
+        {
+          "command": "sidestory.navigateBack",
+          "when": "sidestory.active"
+        },
+        {
+          "command": "sidestory.navigateForward",
           "when": "sidestory.active"
         },
         {

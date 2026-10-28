@@ -12,6 +12,7 @@ import { fromWidgetSchema } from '../shared/widget-protocol.ts';
 import { ActivationEvidence, ENTRY_PX, rayEntry, type Box } from './activation.ts';
 import { MAX_WIDGET_PROPS, WIDGET_PROPS_ATTR } from './sanitize.ts';
 import { widgetSrcdoc } from './trusted.ts';
+import { forVsCode, type KeyInfo, passToVsCode } from './keys.ts';
 import { WidgetStates, type SavedWidgetStates } from '../shared/widget-state.ts';
 
 /** What the frame host needs from the panel (main.ts). */
@@ -145,7 +146,9 @@ const HINT_MS = 4000;
 const PING_DRIFT_MS = 2000;
 const BAR_PX = 22;
 /** Calls per second: highlight is coalesced (the latest is delivered); navigation over the limit fails. */
-const RATE = { highlight: 10, nav: 2, requestCode: 20 };
+const RATE = { highlight: 10, nav: 2, requestCode: 20, keys: 4 };
+/** Shortcuts a widget never passes to VS Code: quit, close the window. */
+const NEVER_PASSED = (k: KeyInfo) => ((k.ctrlKey || k.metaKey) && (/^q$/i.test(k.key) || (k.shiftKey && /^w$/i.test(k.key)))) || (k.altKey && k.key === 'F4');
 /** CSS properties whose animation or transition moves an element: the frame would lag behind. */
 const GEOMETRY = /^(all|transform|translate|rotate|scale|top|left|right|bottom|inset|width|height|min-|max-|margin|padding|flex|grid|font-size|line-height|zoom|offset-)/;
 /** Keys every keyframe has, which aren't animated properties. */
@@ -1089,7 +1092,7 @@ export class WidgetFrames {
         this.panel.readerInput();
         break;
       case 'focusExit':
-        this.focusExit(w, m.dir);
+        this.focusExit(w, m.dir, m.key);
         break;
       case 'requestCode':
         this.limited(w, 'requestCode', m, false);
@@ -1441,9 +1444,15 @@ export class WidgetFrames {
   }
 
   /** The runtime gives focus back: Tab past the end goes on in reading order; anything else to the placeholder. */
-  private focusExit(w: Widget, dir: string): void {
+  private focusExit(w: Widget, dir: string, key?: Omit<KeyInfo, 'type'>): void {
     if (document.activeElement !== w.frame) return;
+    const legit = this.owner?.frame === w.frame && this.owner.legit;
     this.owner = undefined;
+    if (dir === 'shortcut' && key && legit) {
+      this.panel.focusSelf(w.el);
+      this.passKey(w, { type: 'keydown', ...key });
+      return;
+    }
     if (dir === 'forward') {
       const doc = this.panel.contentDoc();
       const all = [...doc.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, summary, [tabindex]')].filter(
@@ -1455,6 +1464,23 @@ export class WidgetFrames {
       }
     }
     this.panel.focusSelf(w.el);
+  }
+
+  /**
+   * A shortcut the reader pressed in a widget, for VS Code's keybindings (keys.ts). Best effort, on the frame's word:
+   * only with the reader's activation, with Ctrl, Cmd or Alt, a few a second, and never quit or close the window. It
+   * goes to VS Code alone: the panel's own keys (stepping, Back) never act on it.
+   */
+  private passKey(w: Widget, k: KeyInfo): void {
+    const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+    if (!ua?.isActive || !(k.ctrlKey || k.metaKey || k.altKey) || !forVsCode(k) || NEVER_PASSED(k)) return;
+    let l = w.limits.get('keys');
+    if (!l) w.limits.set('keys', (l = { times: [] }));
+    const t = now();
+    l.times = l.times.filter((x) => t - x < 1000);
+    if (l.times.length >= RATE.keys) return;
+    l.times.push(t);
+    passToVsCode(k);
   }
 
   // ---- watchdogs and timers ----

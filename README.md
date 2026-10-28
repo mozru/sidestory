@@ -36,7 +36,7 @@ Step through with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or 
 
 ![Clicking lines in dma_ctrl.sv: the IDLE, READ_BURST and WAIT_DATA states light up in the overview's diagram, then a line in the error override takes the sidestory to its Errors step](media/marketplace/cursor-follow.gif)
 
-Big systems get an overview plus one sidestory per piece. From the overview you can **peek** at a piece's one-line summary, or **dive** into its own sidestory. A trail at the top takes you back to where you were.
+Big systems get an overview plus one sidestory per piece. From the overview you can **peek** at a piece's one-line summary, or **dive** into its own sidestory. A trail at the top takes you back to where you were, and the panel's back and forward buttons (<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>, or VS Code's own navigate keys) retrace every step and page you jumped to, as in a browser. VS Code's shortcuts, like <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>, work inside the page.
 
 ![From the DMA overview, peek at dma_ctrl, dive into its sidestory and its state graph widget, then return through the trail](media/marketplace/dive.gif)
 
@@ -175,6 +175,7 @@ These are the commands you'll use most. They're all in the Command Palette.
 | **Sidestory: Open Sidestory…** | Pick a sidestory and open it beside the code. |
 | **Sidestory: Go to Step…** | Find any step by its title. |
 | **Sidestory: Next Step** / **Previous Step** | Move through the page (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>[</kbd>). |
+| **Sidestory: Back** / **Forward** | Go back or forward in the panel's history (while it has focus: <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>; <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> on macOS). |
 | **Sidestory: Show Sidestories for This Code** | List the pages that explain the code under the cursor. |
 | **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your agent to write a sidestory. |
 | **Sidestory: Pin Anchors to the Current Code** | Record each section's code, so it can follow edits. |

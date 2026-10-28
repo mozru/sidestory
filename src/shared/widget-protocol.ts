@@ -14,6 +14,16 @@ const identifier = z.string().check(z.regex(/^[A-Za-z_$][\w$]{0,99}$/));
 const identifiers = z.optional(z.array(identifier).check(z.maxLength(20)));
 const anchorId = z.string().check(z.regex(ANCHOR_ID_RE));
 const text = (max: number) => z.string().check(z.maxLength(max));
+const shortcutKey = z.object({
+  key: text(32),
+  code: text(32),
+  keyCode: z.int().check(z.minimum(0), z.maximum(255)),
+  shiftKey: z.boolean(),
+  altKey: z.boolean(),
+  ctrlKey: z.boolean(),
+  metaKey: z.boolean(),
+  repeat: z.boolean(),
+});
 
 export const fromWidgetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boot') }),
@@ -28,7 +38,8 @@ export const fromWidgetSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('activity') }),
   /** The reader pressed a pointer or key in the frame (the frame's own claim: spares it from being stopped, never grants anything). */
   z.object({ type: z.literal('input') }),
-  z.object({ type: z.literal('focusExit'), dir: z.enum(['forward', 'backward', 'escape', 'pointer', 'shortcut']) }),
+  /** `key`: the shortcut that made a `shortcut` exit, for VS Code (the frame's claim: the panel decides). */
+  z.object({ type: z.literal('focusExit'), dir: z.enum(['forward', 'backward', 'escape', 'pointer', 'shortcut']), key: z.optional(shortcutKey) }),
   z.object({ type: z.literal('requestCode'), anchor: anchorId }),
   z.object({ type: z.literal('pong'), n: z.int() }),
 ]);
