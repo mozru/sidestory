@@ -101,6 +101,13 @@ describe('NavHistory', () => {
     g.drop(X);
     expect(actives(g)).toEqual(['a:one']);
     expect(g.position).toBe(0);
+    // Repeats after the current entry merge too: (A, X, A, X, A) on the first A, X gone.
+    const r = new NavHistory();
+    for (const e of [at(A, 'one'), at(X, 'loop'), at(A, 'one'), at(X, 'loop'), at(A, 'one')]) r.push(e);
+    r.go(0);
+    r.drop(X);
+    expect(actives(r)).toEqual(['a:one']);
+    expect(r.position).toBe(0);
   });
 
   it('keeps the newest entries past the cap', () => {

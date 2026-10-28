@@ -99,7 +99,13 @@ export class NavHistory {
     });
     // Neighbours that became the same place (A, gone, A): one is enough; the current one stays.
     const same = (a: HistoryEntry | undefined, b: HistoryEntry) => !!a && samePage(a, b) && a.active === b.active;
-    this.entries = this.entries.filter((e, i, all) => !((e !== cur && same(all[i + 1], e)) || (all[i - 1] === cur && same(cur, e))));
+    const kept: HistoryEntry[] = [];
+    for (const e of this.entries) {
+      const last = kept.at(-1);
+      if (!last || !same(last, e)) kept.push(e);
+      else if (e === cur) kept[kept.length - 1] = e;
+    }
+    this.entries = kept;
     this.index = cur ? this.entries.indexOf(cur) : -1;
     this.stepping = false;
     return title;
