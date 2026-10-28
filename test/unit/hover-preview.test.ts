@@ -13,7 +13,7 @@ const { ExplainerSession } = await import('../../src/extension/session.ts');
 const { refFromDir } = await import('../../src/extension/explainers.ts');
 const { previewLines } = await import('../../src/extension/preview.ts');
 const { Decorations } = await import('../../src/extension/decorations.ts');
-const { edgeArrow } = await import('../../src/extension/hover-mark.ts');
+const { edgeArrow, RESTORE_MS } = await import('../../src/extension/hover-mark.ts');
 const { fromWebviewSchema } = await import('../../src/shared/protocol.ts');
 
 let root = '';
@@ -54,7 +54,18 @@ async function ready() {
   };
   panels.push(panel);
   const hovers: unknown[] = [];
-  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {}, setHover: (_owner: unknown, h: unknown) => hovers.push(h) };
+  const ends: unknown[] = [];
+  const kept: unknown[] = [];
+  const decorations = {
+    set() {},
+    setWidget() {},
+    isDimmed: () => false,
+    refresh() {},
+    flash() {},
+    clearFlash() {},
+    setHover: (_owner: unknown, h: unknown, end: unknown) => (hovers.push(h), h || ends.push(end)),
+    keepHover: (owner: unknown) => kept.push(owner),
+  };
   const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: { get: <T>(_k: string, d: T) => d, update: async () => {} } as never, reanchor() {} });
   const send = (m: unknown) => messages.fire(m);
   await session.load();
@@ -65,7 +76,7 @@ async function ready() {
     await vi.waitFor(() => expect(posted.some((m) => m.type === 'codePreview' && m.id === id)).toBe(true));
     return posted.find((m) => m.type === 'codePreview' && m.id === id) as Extract<ToWebview, { type: 'codePreview' }>;
   };
-  return { posted, send, reply, hovers };
+  return { posted, send, reply, hovers, ends, kept, panel };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -152,6 +163,35 @@ describe('previewRef and previewCode', () => {
     expect(shown).toHaveLength(0);
   });
 
+  it('hoverReveal: a hover ending with the pointer out of the panel waits; the next end, a hide or a close restores; a click keeps', async () => {
+    const { send, hovers, ends, kept, panel } = await ready();
+    config['sidestory.hoverPreview'] = 'editor';
+    config['sidestory.hoverReveal'] = true;
+    try {
+      const mark = async (id: number) => {
+        const n = hovers.length;
+        send({ type: 'previewRef', id, anchorId: 'consume' });
+        send({ type: 'previewShow', id });
+        await vi.waitFor(() => expect(hovers.length).toBe(n + 1));
+        expect(hovers.at(-1)).toMatchObject({ reveal: true });
+      };
+      await mark(1);
+      send({ type: 'previewEnd', left: true });
+      send({ type: 'previewEnd' }); // the panel is used again
+      expect(ends).toEqual(['left', undefined]);
+      send({ type: 'previewEnd' }); // nothing left to end
+      expect(ends).toHaveLength(2);
+      await mark(2);
+      send({ type: 'openRef', anchorId: 'consume' });
+      expect(kept).toHaveLength(1);
+      await mark(3);
+      panel.dispose(); // closed mid-hover: the scroll goes back
+      expect(ends).toEqual(['left', undefined, undefined]);
+    } finally {
+      delete config['sidestory.hoverReveal'];
+    }
+  });
+
   it('`editor`: the page says so by the link when no editor shows the file, or the code can’t be found; nothing opens', async () => {
     const { send, reply } = await ready();
     config['sidestory.hoverPreview'] = 'editor';
@@ -159,11 +199,11 @@ describe('previewRef and previewCode', () => {
     try {
       send({ type: 'previewRef', id: 1, anchorId: 'consume' });
       send({ type: 'previewShow', id: 1 });
-      expect(await reply(1)).toEqual({ type: 'codePreview', id: 1, preview: null, note: "bit_reader.sv isn't open · click to open" });
+      expect(await reply(1)).toEqual({ type: 'codePreview', id: 1, preview: null, note: "bit_reader.sv isn't on screen · click to open" });
       send({ type: 'previewEnd' });
       send({ type: 'previewCode', id: 2, path: 'rtl/bit_reader.sv', target: 'L3-L5' }); // no document: never read
       send({ type: 'previewShow', id: 2 });
-      expect((await reply(2)).note).toBe("bit_reader.sv isn't open · click to open");
+      expect((await reply(2)).note).toBe("bit_reader.sv isn't on screen · click to open");
       send({ type: 'previewEnd' });
       send({ type: 'previewRef', id: 3, anchorId: 'nope' });
       send({ type: 'previewShow', id: 3 });
@@ -209,13 +249,15 @@ describe('the hover mark', () => {
   /** An editor showing lines `top`–`bottom` (0-based) of a 200-line file: what it's painted with, and its reveals. */
   const editor = (u: Uri, top = 0, bottom = 39) => {
     const set = new Map<unknown, unknown[]>();
+    const calls: unknown[] = [];
     const reveals: [number, number][] = [];
     const e = {
       set,
+      calls,
       reveals,
-      document: { uri: u, lineCount: 200, lineAt: (n: number) => ({ range: { end: new Position(n, 4) } }) },
+      document: { uri: u, lineCount: 200, lineAt: (n: number) => ({ text: 'code', range: { end: new Position(n, 4) } }) },
       visibleRanges: [new Range(top, 0, bottom, 0)],
-      setDecorations: (t: unknown, r: unknown[]) => set.set(t, r),
+      setDecorations: (t: unknown, r: unknown[]) => (set.set(t, r), calls.push(t)),
       revealRange: (r: Range, type: number) => reveals.push([r.start.line, type]),
       scrollTo(t: number, b: number) {
         e.visibleRanges = [new Range(t, 0, b, 0)];
@@ -225,38 +267,55 @@ describe('the hover mark', () => {
     return e;
   };
   type Ed = ReturnType<typeof editor>;
-  const painted = (e: Ed) => [...e.set.values()].flat() as { start: { line: number }; end: { line: number }; renderOptions?: { after: { contentText: string } } }[];
-  const arrow = (e: Ed) => painted(e).find((r) => r.renderOptions)?.renderOptions!.after.contentText;
-  const lines = (e: Ed) => painted(e).filter((r) => !r.renderOptions).map((r) => [r.start.line, r.end.line]);
+  type Painted = { start: { line: number }; end: { line: number } } | { range: { start: { line: number } }; renderOptions: { after: { contentText: string } } };
+  const painted = (e: Ed) => [...e.set.values()].flat() as Painted[];
+  const arrow = (e: Ed) => {
+    const a = painted(e).find((r) => 'renderOptions' in r);
+    return a && 'range' in a ? { line: a.range.start.line, text: a.renderOptions.after.contentText } : undefined;
+  };
+  const lines = (e: Ed) => painted(e).flatMap((r) => ('start' in r ? [[r.start.line, r.end.line]] : []));
   const show = (...es: Ed[]) => ((window as { visibleTextEditors: unknown[] }).visibleTextEditors = es);
-  afterEach(() => vi.useRealTimers());
+  const target = (start: number, end: number, reveal = true) => ({ uri: uri as never, range: { start, end }, reveal });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete config['editor.stickyScroll.enabled'];
+  });
 
-  it('edge arrows: above, below, none when partly visible or folded away, label or distance', () => {
+  it('edge arrows: inside the view (below sticky scroll, above a cut-off last line), none when partly visible or folded away', () => {
     const v = (...r: [number, number][]) => r.map(([a, b]) => new Range(a, 0, b, 0)) as never;
-    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill')).toEqual({ line: 50, text: '↑ Refill · L14–18' });
-    expect(edgeArrow(v([50, 89]), 13, 17)).toEqual({ line: 50, text: '↑ L14–18 · 33 lines up' });
-    expect(edgeArrow(v([0, 39]), 120, 120)).toEqual({ line: 39, text: '↓ L121 · 81 lines down' });
+    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill')).toEqual({ line: 53, text: '↑ Refill · L14–18' });
+    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill', 0)).toEqual({ line: 50, text: '↑ Refill · L14–18' });
+    expect(edgeArrow(v([0, 39]), 120, 120)).toEqual({ line: 38, text: '↓ L121' });
+    expect(edgeArrow(v([0, 39]), 120, 120, '  Refill\n   the  window ')!.text).toBe('↓ Refill the window · L121');
+    expect(edgeArrow(v([0, 39]), 120, 120, 'x'.repeat(80))!.text).toBe(`↓ ${'x'.repeat(49)}… · L121`);
     expect(edgeArrow(v([0, 39]), 30, 60)).toBeUndefined();
     expect(edgeArrow(v([0, 9], [40, 49]), 20, 25)).toBeUndefined(); // in a fold between visible ranges
     expect(edgeArrow([], 1, 2)).toBeUndefined();
   });
 
-  it('marks visible editors of that file (lines and arrow), follows scrolling, and comes off only for the panel that made it', () => {
+  it('marks visible editors of that file, repaints only the arrow (and only when it changes) on scroll, and comes off only for its panel', () => {
     const a = editor(uri, 0, 39);
     const b = editor(Uri.file('/w/b.ts'));
     show(a, b);
     const d = new Decorations();
     const owner = {};
     try {
-      d.setHover(owner, { uri: uri as never, range: { start: 101, end: 104 }, label: 'Refill', reveal: false });
+      d.setHover(owner, { ...target(101, 104, false), label: 'Refill' });
       expect(lines(a)).toEqual([[100, 103]]);
-      expect(arrow(a)).toBe('↓ Refill · L101–104');
+      expect(arrow(a)!.text).toBe('↓ Refill · L101–104');
+      expect(arrow(a)!.line).toBe(38);
       expect(painted(b)).toEqual([]);
       expect(a.reveals).toEqual([]); // never scrolls without hoverReveal
-      a.scrollTo(90, 129); // now in view: no arrow
+      a.calls.length = 0;
+      a.scrollTo(1, 40); // the arrow moves: only it is painted again
+      expect(a.calls).toHaveLength(1);
+      a.calls.length = 0;
+      a.scrollTo(1, 40); // nothing changed: nothing painted
+      expect(a.calls).toHaveLength(0);
+      a.scrollTo(90, 129); // in view: no arrow
       expect(arrow(a)).toBeUndefined();
       a.scrollTo(150, 189);
-      expect(arrow(a)).toBe('↑ Refill · L101–104');
+      expect(arrow(a)!.text).toBe('↑ Refill · L101–104');
       d.setHover({}, undefined); // another panel's previewEnd leaves this mark alone
       expect(lines(a)).toEqual([[100, 103]]);
       d.setHover(owner, undefined);
@@ -271,36 +330,94 @@ describe('the hover mark', () => {
     }
   });
 
-  it('hoverReveal scrolls an editor whose view misses the lines, and back after; not after a click or the reader scrolling it', () => {
+  it('hoverReveal scrolls an editor whose view misses the lines, and back a moment after; link to link doesn’t bounce', () => {
     vi.useFakeTimers();
     const d = new Decorations();
     const owner = {};
-    const target = { uri: uri as never, range: { start: 101, end: 104 }, reveal: true };
     try {
       const a = editor(uri, 10, 49);
-      const inView = editor(uri, 90, 129);
+      const inView = editor(uri, 100, 139);
       show(a, inView);
-      d.setHover(owner, target);
-      expect(a.reveals).toEqual([[100, 2]]); // InCenterIfOutsideViewport
+      d.setHover(owner, target(121, 124));
+      expect(a.reveals).toEqual([[120, 2]]); // InCenterIfOutsideViewport
       expect(inView.reveals).toEqual([]);
       expect(arrow(a)).toBeUndefined(); // on its way there: no arrow
-      a.scrollTo(80, 119); // the reveal's own scroll
+      a.scrollTo(100, 139); // the reveal's own scroll (the lines are in view)
       d.setHover(owner, undefined);
-      expect(a.reveals).toEqual([[100, 2], [10, 3]]); // back to its first line, AtTop
-      a.scrollTo(10, 49);
-
-      d.setHover(owner, target);
-      a.scrollTo(80, 119);
-      d.setHover(owner, undefined, true); // the reader clicked the link
-      expect(a.reveals).toHaveLength(3);
-
-      a.scrollTo(10, 49);
-      d.setHover(owner, target);
-      a.scrollTo(80, 119);
-      vi.advanceTimersByTime(1000);
-      a.scrollTo(60, 99); // the reader scrolled it
+      // On to the next link before the restore: no scroll back, and the first view is still where it goes back to.
+      vi.advanceTimersByTime(RESTORE_MS - 100);
+      d.setHover(owner, target(171, 172));
+      expect(a.reveals).toEqual([[120, 2], [170, 2]]);
+      a.scrollTo(150, 189);
       d.setHover(owner, undefined);
-      expect(a.reveals).toHaveLength(4); // the reveal only: not fought back
+      vi.advanceTimersByTime(RESTORE_MS - 1);
+      expect(a.reveals).toHaveLength(2);
+      vi.advanceTimersByTime(1);
+      expect(a.reveals).toEqual([[120, 2], [170, 2], [10, 3]]); // back to its first line, AtTop
+    } finally {
+      d.dispose();
+      show();
+    }
+  });
+
+  it('hoverReveal leaves the editor where it is after a click, the reader scrolling, selecting or focusing it, or a step there', () => {
+    vi.useFakeTimers();
+    const d = new Decorations();
+    const owner = {};
+    const restored = (a: Ed) => a.reveals.some(([, type]) => type === 3);
+    try {
+      const run = (between: (a: Ed) => void) => {
+        const a = editor(uri, 10, 49);
+        show(a);
+        d.setHover(owner, target(121, 124));
+        a.scrollTo(100, 139);
+        between(a);
+        d.setHover(owner, undefined);
+        vi.advanceTimersByTime(RESTORE_MS);
+        return a;
+      };
+      expect(restored(run(() => {}))).toBe(true);
+      expect(restored(run(() => d.keepHover(owner)))).toBe(false); // the link was clicked
+      expect(restored(run((a) => a.scrollTo(60, 99)))).toBe(false); // the reader scrolled it away from the lines
+      expect(restored(run((a) => events.selectionChanged.fire({ textEditor: a, selections: [], kind: 2 })))).toBe(false);
+      expect(restored(run((a) => events.activeEditorChanged.fire(a)))).toBe(false);
+      expect(restored(run(() => d.set({ uri: uri as never, range: { start: 3, end: 5 }, highlight: [], dim: false })))).toBe(false); // a step there
+      // A click right after the pointer left the link (pointerdown ends the hover first): still kept.
+      const a = editor(uri, 10, 49);
+      show(a);
+      d.setHover(owner, target(121, 124));
+      a.scrollTo(100, 139);
+      d.setHover(owner, undefined);
+      d.keepHover(owner);
+      vi.advanceTimersByTime(RESTORE_MS);
+      expect(restored(a)).toBe(false);
+    } finally {
+      d.dispose();
+      show();
+    }
+  });
+
+  it('hoverReveal: the pointer leaving the panel keeps the editor scrolled until the panel is used again; another panel’s hover restores it first', () => {
+    vi.useFakeTimers();
+    const d = new Decorations();
+    const owner = {};
+    try {
+      const a = editor(uri, 10, 49);
+      show(a);
+      d.setHover(owner, target(121, 124));
+      a.scrollTo(100, 139);
+      d.setHover(owner, undefined, 'left');
+      vi.advanceTimersByTime(10_000);
+      expect(a.reveals).toHaveLength(1); // still there, waiting for the reader
+      d.setHover(owner, undefined); // back in the panel
+      vi.advanceTimersByTime(RESTORE_MS);
+      expect(a.reveals.at(-1)).toEqual([10, 3]);
+
+      a.scrollTo(10, 49);
+      d.setHover(owner, target(121, 124));
+      a.scrollTo(100, 139);
+      d.setHover({}, target(5, 6)); // another panel hovers: this panel's scroll goes back first
+      expect(a.reveals.slice(-2)).toEqual([[10, 3], [4, 2]]);
     } finally {
       d.dispose();
       show();

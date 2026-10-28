@@ -601,7 +601,7 @@
         "sidestory.hoverReveal": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "While you rest the pointer on a link in a sidestory, scroll the editor that shows its file to the lines (focus stays in the panel), and scroll it back when you move on, unless you clicked the link or scrolled that editor yourself. A sidestory's manifest can set its own default (`highlight.hoverReveal`)."
+          "markdownDescription": "While you rest the pointer on a link in a sidestory, scroll the editor that shows its file to the lines (focus stays in the panel), and scroll it back once you're done in the panel, unless you clicked the link or went to that editor (moved the pointer there, scrolled it, clicked in it). A sidestory's manifest can set its own default (`highlight.hoverReveal`)."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",

@@ -174,14 +174,28 @@ test('`editor`: no card for code on screen; a one-line note by the link when the
 
   await el(page, 'plain').hover();
   await el(page, 'ref').hover();
-  await answer(page, null, "bit_reader.sv isn't open · click to open");
+  await answer(page, null, "bit_reader.sv isn't on screen · click to open");
   await expect(card(page)).toBeVisible();
-  await expect(card(page)).toHaveText("bit_reader.sv isn't open · click to open");
+  await expect(card(page)).toHaveText("bit_reader.sv isn't on screen · click to open");
   await expect(card(page)).toHaveClass(/cx-hovercard-note/);
   await expect(card(page).locator('.cx-hovercard-code')).toHaveCount(0);
-  // A press on the link keeps editors the hover scrolled (hoverReveal) where they are, and opens it as before.
+  // A click opens it as before (the host then keeps editors the hover scrolled where they are).
   await el(page, 'ref').click();
   await expect(card(page)).toBeHidden();
-  expect((await posted(page)).filter((m) => m.type === 'previewEnd').at(-1)).toEqual({ type: 'previewEnd', keep: true });
+  expect((await posted(page)).filter((m) => m.type === 'previewEnd').at(-1)).toEqual({ type: 'previewEnd' });
   expect(await moving(page)).toEqual([{ type: 'openRef', anchorId: 'state' }]);
+});
+
+test('the pointer leaving the panel (toward the editor) ends the hover with `left`; coming back ends it for good', async ({ page }) => {
+  await open(page, 'editor');
+  await el(page, 'code').hover();
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewShow')).toHaveLength(1);
+  // Out of the panel: the content frame sees the pointer go with no element to go to, and nothing in the panel follows.
+  await page.frameLocator('iframe.cx-content-frame').locator('body').evaluate((b) => b.ownerDocument.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: null })));
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewEnd')).toEqual([{ type: 'previewEnd', left: true }]);
+  await page.waitForTimeout(300);
+  expect((await posted(page)).filter((m) => m.type === 'previewEnd')).toHaveLength(1);
+  // Back over the panel's own chrome: the scrolled editors may go back now.
+  await page.locator('.cx-title').hover();
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewEnd')).toEqual([{ type: 'previewEnd', left: true }, { type: 'previewEnd' }]);
 });

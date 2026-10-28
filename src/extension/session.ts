@@ -26,6 +26,7 @@ import { codeColumnFor } from './columns.ts';
 import { checkCodePath, OpenCodeGate, resolveLink, resolveLinkInText, SymbolTables } from './code-links.ts';
 import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
+import type { HoverEnd } from './hover-mark.ts';
 import { effectiveHighlight, type EffectiveHighlight } from './highlight-options.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, trailTo, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
@@ -234,8 +235,10 @@ export class ExplainerSession implements vscode.Disposable {
   private hoverFound: { id: number; target: PreviewTarget } | undefined;
   /** The request the page last showed (`previewShow`); -1: none since the last `previewEnd`. */
   private hoverShown = -1;
-  /** Lines marked in editors for a hover now. */
+  /** This panel has a hover in the shared marks now: lines marked, or editors hoverReveal scrolled waiting (`left`). */
   private hoverMarked = false;
+  /** This panel has marked a hover: a link it opens tells the marks to keep editors where the hover scrolled them. */
+  private hoverUsed = false;
   /** The hover mode the page last got (`settings`). */
   private hoverModeSent: HoverPreview | undefined;
   /** The hover card's own highlighting requester, so a card never cancels the code blocks' request (or the reverse). */
@@ -1081,6 +1084,7 @@ export class ExplainerSession implements vscode.Disposable {
       case 'openRef':
         // A reference inside a section jumps to other code; the section being read stays active.
         if (!this.manifest?.anchors.has(m.anchorId)) return;
+        if (this.hoverUsed) this.decorations.keepHover(this);
         if (this.resolutions.get(m.anchorId)?.state === 'lost') {
           vscode.window.setStatusBarMessage(`“${m.anchorId}” — code not found`, 4000);
           return;
@@ -1099,7 +1103,7 @@ export class ExplainerSession implements vscode.Disposable {
         this.markHover();
         break;
       case 'previewEnd':
-        this.endHover(m.keep === true);
+        this.endHover(m.left ? 'left' : undefined);
         break;
       case 'reanchor':
         // Only starts the flow: the user confirms in a dialog before anything is written.
@@ -1234,6 +1238,7 @@ export class ExplainerSession implements vscode.Disposable {
   private async openCode(path: string, target: string | undefined): Promise<void> {
     if (!this.openGate.allow(`${path}#${target ?? ''}`)) return;
     this.cursorSeq++; // the reader clicked a box: a cursor follow still waiting is moot
+    if (this.hoverUsed) this.decorations.keepHover(this); // editors its hover scrolled stay there
     const link = parseCodeLink(target === undefined ? path : `${path}#${target}`);
     if (!link || link.path !== path) return;
     const root = this.ref.root;
@@ -1360,7 +1365,8 @@ export class ExplainerSession implements vscode.Disposable {
     const generation = this.generation;
     const checked = await checkCodePath(localPath(root), path);
     if (this.disposed || generation !== this.generation) return {};
-    if (!checked.ok) return { note: `Can't show this: ${checked.why}.` };
+    // A file that isn't there is code not found; other refusals say why.
+    if (!checked.ok) return checked.why.includes('.git') || checked.why.includes('read') ? { note: `Can't show this: ${checked.why}.` } : {};
     if (checked.size > MAX_CODE_BYTES) return { note: `Can't show this: the file is larger than ${MAX_CODE_BYTES / 1e6} MB.` };
     if (checked.secret) return { note: 'Its name looks like it holds secrets: click to open it.' };
     const uri = checked.direct ? vscode.Uri.joinPath(root, path) : vscode.Uri.file(checked.real);
@@ -1410,25 +1416,27 @@ export class ExplainerSession implements vscode.Disposable {
     if (found) {
       this.decorations.setHover(this, { uri: found.uri, range: found.range, label: found.label, reveal: h.hoverReveal });
       this.hoverMarked = true;
+      this.hoverUsed = true;
     }
     if (h.hoverPreview !== 'editor') return;
     if (found && vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === found.uri.toString())) return;
     const file = found?.path ?? f.target.closed;
-    const note = file ? `${file.split('/').pop()} isn't open · click to open` : (f.target.note ?? 'Code not found');
+    const note = file ? `${file.split('/').pop()} isn't on screen · click to open` : (f.target.note ?? 'Code not found');
     this.post({ type: 'codePreview', id: f.id, preview: null, note });
   }
 
   /**
-   * The pointer left the link (or the panel moved on): its marks go, and a preview still resolving is dropped. `keep`:
-   * the reader pressed the link, so editors hoverReveal scrolled stay at its lines.
+   * The pointer left the link (or the panel moved on): its marks go, and a preview still resolving is dropped. Editors
+   * hoverReveal scrolled go back a moment later, or with `left` (the pointer left the panel) once the page ends the
+   * hover again (HoverEnd).
    */
-  private endHover(keep = false): void {
+  private endHover(end?: HoverEnd): void {
     this.previewSeq++;
     this.hoverFound = undefined;
     this.hoverShown = -1;
     if (!this.hoverMarked) return;
-    this.hoverMarked = false;
-    this.decorations.setHover(this, undefined, keep);
+    this.hoverMarked = end === 'left';
+    this.decorations.setHover(this, undefined, end);
   }
 
   /** Colors code blocks for the panel; per explainer shown, so one explainer's slow blocks don't stop another's. */

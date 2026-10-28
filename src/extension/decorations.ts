@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import type { LineRange } from '../core/manifest.ts';
 import { inDiffEditor } from './changes/open.ts';
-import { HoverMark, type HoverTarget } from './hover-mark.ts';
+import { type HoverEnd, HoverMark, type HoverTarget } from './hover-mark.ts';
 
 export interface Focus {
   uri: vscode.Uri;
@@ -117,11 +117,16 @@ export class Decorations implements vscode.Disposable {
 
   /**
    * Marks a link's lines in the visible editors of its file while the pointer rests on the link (src/extension/
-   * hover-mark.ts); undefined clears, only the mark `owner` (its panel) made: panels share these decorations. `keep`:
-   * the reader clicked the link, so editors hoverReveal scrolled stay where they are.
+   * hover-mark.ts); undefined ends that hover, only the one `owner` (its panel) made: panels share these decorations.
+   * `end` says what happens to editors hoverReveal scrolled (HoverEnd).
    */
-  setHover(owner: object, h: HoverTarget | undefined, keep = false): void {
-    this.hoverMark.set(owner, h, keep);
+  setHover(owner: object, h: HoverTarget | undefined, end?: HoverEnd): void {
+    this.hoverMark.set(owner, h, end);
+  }
+
+  /** The link the pointer rests on was opened: editors its hover scrolled stay there. */
+  keepHover(owner: object): void {
+    this.hoverMark.keep(owner);
   }
 
   /** A widget's highlight; undefined clears it. Never scrolls, opens files or moves focus. */
@@ -164,6 +169,9 @@ export class Decorations implements vscode.Disposable {
   }
 
   set(focus: Focus | undefined): void {
+    // A step shown in a file the hover scrolled: that editor is the step's now, never scrolled back.
+    const c = this.current;
+    if (focus && (focus.uri.toString() !== c?.uri.toString() || focus.range.start !== c.range.start)) this.hoverMark.release(focus.uri);
     this.current = focus;
     this.refresh();
   }

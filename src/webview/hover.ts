@@ -47,6 +47,14 @@ export class HoverCard {
   private due = false;
   /** The link's own aria-describedby while the card describes it (null: it had none). */
   private described: { el: HTMLElement; had: string | null } | undefined;
+  /**
+   * The last hover ended with the pointer leaving the panel (`previewEnd` with `left`): editors hoverReveal scrolled
+   * stay, since the reader may be going to them, until the panel is used again (another `previewEnd`).
+   */
+  private parked = false;
+  private parkTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When the pointer was last over the panel's own chrome (not the content frame). */
+  private chromeAt = 0;
   private readonly host: HoverHost;
 
   constructor(parent: HTMLElement, host: HoverHost) {
@@ -57,6 +65,13 @@ export class HoverCard {
     this.el.setAttribute('role', 'tooltip');
     this.el.hidden = true;
     parent.append(this.el);
+    // Events over the content happen in its frame; these are the panel's own (its header, footer, scrollbar).
+    document.addEventListener('pointerover', (e) => {
+      if ((e.target as Element | null)?.localName === 'iframe') return;
+      this.chromeAt = Date.now();
+      this.used();
+    });
+    document.addEventListener('keydown', () => this.used(), true);
   }
 
   setMode(mode: HoverPreview): void {
@@ -74,6 +89,9 @@ export class HoverCard {
       return;
     }
     this.hide();
+    // The next link's hover takes over the scrolled editors (the host keeps where they were): nothing to end.
+    clearTimeout(this.parkTimer);
+    this.parked = false;
     this.target = link;
     this.byFocus = byFocus;
     this.askTimer = setTimeout(() => this.send(), ASK_MS);
@@ -85,11 +103,26 @@ export class HoverCard {
     }, SHOW_MS);
   }
 
-  /** The pointer moved off every linked element (or out of the content). Focus keeps a card the keyboard brought. */
-  pointerAway(): void {
+  /**
+   * The pointer moved off every linked element, or (`out`) out of the content frame: to the panel's chrome, or out of
+   * the panel, likely to the editor. Focus keeps a card the keyboard brought.
+   */
+  pointerAway(out = false): void {
+    if (!out) this.used();
     if (!this.target || this.byFocus) return;
     clearTimeout(this.leaveTimer);
-    this.leaveTimer = setTimeout(() => this.hide(), GRACE_MS);
+    const at = Date.now();
+    this.leaveTimer = setTimeout(() => this.hide(out && this.chromeAt < at), GRACE_MS);
+  }
+
+  /** The reader is back in the panel (pointer off links for a moment, a key): a parked hover ends for good. */
+  private used(): void {
+    if (!this.parked) return;
+    clearTimeout(this.parkTimer);
+    this.parkTimer = setTimeout(() => {
+      this.parked = false;
+      this.host.post({ type: 'previewEnd' });
+    }, GRACE_MS);
   }
 
   /** Focus left an element: the card it brought goes. */
@@ -106,10 +139,10 @@ export class HoverCard {
   }
 
   /**
-   * Hides the card and forgets the link; true when a card was showing (Escape is then spent). `keep`: the reader
-   * pressed a link (it opens), so editors `sidestory.hoverReveal` scrolled stay where they are.
+   * Hides the card and forgets the link; true when a card was showing (Escape is then spent). `left`: the pointer
+   * left the panel, so editors `sidestory.hoverReveal` scrolled stay until the panel is used again.
    */
-  hide(keep = false): boolean {
+  hide(left = false): boolean {
     clearTimeout(this.askTimer);
     clearTimeout(this.showTimer);
     clearTimeout(this.leaveTimer);
@@ -120,7 +153,8 @@ export class HoverCard {
       this.el.replaceChildren();
     }
     this.undescribe();
-    if (this.asked) this.host.post(keep ? { type: 'previewEnd', keep } : { type: 'previewEnd' });
+    if (this.asked) this.host.post(left ? { type: 'previewEnd', left } : { type: 'previewEnd' });
+    if (this.asked && left) this.parked = true;
     this.asked = false;
     this.target = undefined;
     this.byFocus = false;
