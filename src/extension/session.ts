@@ -26,7 +26,7 @@ import { codeColumnFor } from './columns.ts';
 import { checkCodePath, OpenCodeGate, resolveLink, resolveLinkInText, SymbolTables } from './code-links.ts';
 import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
-import type { HoverEnd } from './hover-mark.ts';
+import { type HoverEnd, RESTORE_MS } from './hover-mark.ts';
 import { effectiveHighlight, type EffectiveHighlight } from './highlight-options.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, trailTo, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
@@ -239,6 +239,8 @@ export class ExplainerSession implements vscode.Disposable {
   private hoverMarked = false;
   /** This panel has marked a hover: a link it opens tells the marks to keep editors where the hover scrolled them. */
   private hoverUsed = false;
+  /** When this panel's last marked hover ended plainly (its scroll-back pending for RESTORE_MS); -Infinity: none. */
+  private hoverEndedAt = -Infinity;
   /** The hover mode the page last got (`settings`). */
   private hoverModeSent: HoverPreview | undefined;
   /** The hover card's own highlighting requester, so a card never cancels the code blocks' request (or the reverse). */
@@ -1366,7 +1368,7 @@ export class ExplainerSession implements vscode.Disposable {
     const checked = await checkCodePath(localPath(root), path);
     if (this.disposed || generation !== this.generation) return {};
     // A file that isn't there is code not found; other refusals say why.
-    if (!checked.ok) return checked.why.includes('.git') || checked.why.includes('read') ? { note: `Can't show this: ${checked.why}.` } : {};
+    if (!checked.ok) return checked.reason === 'missing' ? {} : { note: `Can't show this: ${checked.why}.` };
     if (checked.size > MAX_CODE_BYTES) return { note: `Can't show this: the file is larger than ${MAX_CODE_BYTES / 1e6} MB.` };
     if (checked.secret) return { note: 'Its name looks like it holds secrets: click to open it.' };
     const uri = checked.direct ? vscode.Uri.joinPath(root, path) : vscode.Uri.file(checked.real);
@@ -1434,7 +1436,10 @@ export class ExplainerSession implements vscode.Disposable {
     this.previewSeq++;
     this.hoverFound = undefined;
     this.hoverShown = -1;
-    if (!this.hoverMarked) return;
+    // `left` soon after a plain end: the pointer crossed the page and then left it; the scroll-back waiting stops.
+    const late = end === 'left' && Date.now() - this.hoverEndedAt < RESTORE_MS;
+    if (!this.hoverMarked && !late) return;
+    if (end !== 'left') this.hoverEndedAt = Date.now();
     this.hoverMarked = end === 'left';
     this.decorations.setHover(this, undefined, end);
   }

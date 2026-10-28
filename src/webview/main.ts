@@ -1475,6 +1475,7 @@ function bindFrameEvents(d: Document): void {
     if (e.relatedTarget === null) hoverCard?.pointerAway(true); // out of the content
   });
   d.addEventListener('focusout', (e) => hoverCard?.blur(e.target as Element));
+  d.addEventListener('keydown', () => hoverCard?.keyInContent(), true);
   // Last, on the frame's window: keys nothing in the page took are VS Code's (Cmd+Shift+P and the like).
   d.defaultView!.addEventListener('keydown', forwardKey);
   d.defaultView!.addEventListener('keyup', forwardKey);

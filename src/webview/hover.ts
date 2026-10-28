@@ -12,6 +12,8 @@ const SHOW_MS = 500;
 const ASK_MS = 250;
 /** Leaving the link for this long hides the card: moving between its nested elements (an SVG box's parts) doesn't. */
 const GRACE_MS = 120;
+/** As the host's (src/extension/hover-mark.ts): how long after a plain end leaving the panel still keeps the scroll. */
+const RESTORE_MS = 500;
 /** Space kept between the card and the link, and the panel's edges. */
 const GAP = 4;
 
@@ -53,6 +55,8 @@ export class HoverCard {
    */
   private parked = false;
   private parkTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When a hover last ended plainly (`previewEnd` without `left`): leaving the panel soon after still counts. */
+  private endedAt = -Infinity;
   /** When the pointer was last over the panel's own chrome (not the content frame). */
   private chromeAt = 0;
   private readonly host: HoverHost;
@@ -71,7 +75,16 @@ export class HoverCard {
       this.chromeAt = Date.now();
       this.used();
     });
+    // Out of the panel's window from its chrome (its header, footer, scrollbar).
+    document.addEventListener('pointerout', (e) => {
+      if (e.relatedTarget === null && (e.target as Element | null)?.localName !== 'iframe') this.leftPanel();
+    });
     document.addEventListener('keydown', () => this.used(), true);
+  }
+
+  /** A key in the content frame (J/K and the like): the panel is in use. */
+  keyInContent(): void {
+    this.used();
   }
 
   setMode(mode: HoverPreview): void {
@@ -89,9 +102,8 @@ export class HoverCard {
       return;
     }
     this.hide();
-    // The next link's hover takes over the scrolled editors (the host keeps where they were): nothing to end.
+    // Passing over a link isn't using the panel; asking for its preview (send) takes the scrolled editors over.
     clearTimeout(this.parkTimer);
-    this.parked = false;
     this.target = link;
     this.byFocus = byFocus;
     this.askTimer = setTimeout(() => this.send(), ASK_MS);
@@ -109,10 +121,35 @@ export class HoverCard {
    */
   pointerAway(out = false): void {
     if (!out) this.used();
+    if (out) {
+      // Out of the frame: to the panel's chrome (a pointerover there comes first), or out of the panel.
+      const at = Date.now();
+      clearTimeout(this.leaveTimer);
+      this.leaveTimer = setTimeout(() => {
+        if (this.chromeAt < at) this.leftPanel();
+        else if (this.target && !this.byFocus) this.hide();
+      }, GRACE_MS);
+      return;
+    }
     if (!this.target || this.byFocus) return;
     clearTimeout(this.leaveTimer);
-    const at = Date.now();
-    this.leaveTimer = setTimeout(() => this.hide(out && this.chromeAt < at), GRACE_MS);
+    this.leaveTimer = setTimeout(() => this.hide(), GRACE_MS);
+  }
+
+  /**
+   * The pointer left the panel, likely for the editor: the hover ends with `left`, so editors hoverReveal scrolled
+   * stay. Also when it ended plainly just before (the pointer crossed the page on its way out): the host then stops
+   * the scroll-back it has waiting.
+   */
+  private leftPanel(): void {
+    clearTimeout(this.parkTimer);
+    if (this.target && !this.byFocus) {
+      this.hide(true);
+      return;
+    }
+    if (this.parked || Date.now() - this.endedAt >= RESTORE_MS) return;
+    this.parked = true;
+    this.host.post({ type: 'previewEnd', left: true });
   }
 
   /** The reader is back in the panel (pointer off links for a moment, a key): a parked hover ends for good. */
@@ -153,8 +190,11 @@ export class HoverCard {
       this.el.replaceChildren();
     }
     this.undescribe();
-    if (this.asked) this.host.post(left ? { type: 'previewEnd', left } : { type: 'previewEnd' });
-    if (this.asked && left) this.parked = true;
+    if (this.asked) {
+      this.host.post(left ? { type: 'previewEnd', left } : { type: 'previewEnd' });
+      if (left) this.parked = true;
+      else this.endedAt = Date.now();
+    }
     this.asked = false;
     this.target = undefined;
     this.byFocus = false;
@@ -172,6 +212,10 @@ export class HoverCard {
   private send(): void {
     const ask = this.target && this.host.ask(this.target);
     if (!ask) return;
+    // The host's new hover takes the scrolled editors over (keeping where they were): nothing parked to end.
+    clearTimeout(this.parkTimer);
+    this.parked = false;
+    this.endedAt = -Infinity;
     this.id++;
     this.asked = true;
     this.host.post({ ...ask, id: this.id });

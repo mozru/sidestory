@@ -199,3 +199,37 @@ test('the pointer leaving the panel (toward the editor) ends the hover with `lef
   await page.locator('.cx-title').hover();
   await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewEnd')).toEqual([{ type: 'previewEnd', left: true }, { type: 'previewEnd' }]);
 });
+
+const outOfFrame = (page: Page) =>
+  page.frameLocator('iframe.cx-content-frame').locator('body').evaluate((b) => b.ownerDocument.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: null })));
+const ends = async (page: Page) => (await posted(page)).filter((m) => m.type === 'previewEnd');
+
+test('crossing plain content on the way out of the panel still ends the hover with `left`', async ({ page }) => {
+  await open(page, 'editor');
+  await el(page, 'code').hover();
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewShow')).toHaveLength(1);
+  await el(page, 'plain').hover();
+  await expect.poll(() => ends(page)).toEqual([{ type: 'previewEnd' }]);
+  await outOfFrame(page);
+  await expect.poll(() => ends(page)).toEqual([{ type: 'previewEnd' }, { type: 'previewEnd', left: true }]);
+  await page.locator('.cx-title').hover();
+  await expect.poll(() => ends(page)).toHaveLength(3); // back in the panel: the parked hover ends
+  // Leaving long after a hover ended (its editor went back by then): nothing to say.
+  await el(page, 'plain').hover();
+  await page.waitForTimeout(700);
+  await outOfFrame(page);
+  await page.waitForTimeout(300);
+  expect(await ends(page)).toHaveLength(3);
+});
+
+test('a parked hover ends when the pointer comes back, even across a link too quickly to ask about it', async ({ page }) => {
+  await open(page, 'editor');
+  await el(page, 'code').hover();
+  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'previewShow')).toHaveLength(1);
+  await outOfFrame(page);
+  await expect.poll(() => ends(page)).toEqual([{ type: 'previewEnd', left: true }]);
+  await el(page, 'ref').hover(); // back over a link, and straight on: never asked about
+  await el(page, 'plain').hover();
+  await expect.poll(() => ends(page)).toEqual([{ type: 'previewEnd', left: true }, { type: 'previewEnd' }]);
+  expect((await posted(page)).filter((m) => m.type === 'previewRef')).toEqual([]);
+});

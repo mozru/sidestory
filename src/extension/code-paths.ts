@@ -37,7 +37,9 @@ export class OpenCodeGate {
  * `direct`: no symlink between the repository root and the file, so the workspace path names the same file (open
  * that, so it's the document the reader and the anchors already use). `size` in bytes.
  */
-export type PathCheck = { ok: true; real: string; secret: boolean; direct: boolean; size: number } | { ok: false; why: string };
+export type PathCheck = { ok: true; real: string; secret: boolean; direct: boolean; size: number } | { ok: false; why: string; reason: PathRefusal };
+/** Why a path was refused: `missing` (nothing there) is the only one that isn't the link's fault in some other way. */
+export type PathRefusal = 'git' | 'repository' | 'missing' | 'outside' | 'not-file' | 'unreadable';
 
 /**
  * Where a link's path really is: inside `root` once links are followed, with no `.git` segment in the real path
@@ -45,24 +47,28 @@ export type PathCheck = { ok: true; real: string; secret: boolean; direct: boole
  */
 export async function checkCodePath(root: string, path: string): Promise<PathCheck> {
   const segments = path.split('/');
-  if (segments.some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git' };
+  if (segments.some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git', reason: 'git' };
   let realRoot: string;
   try {
     realRoot = await realpath(root);
   } catch {
-    return { ok: false, why: "the repository can't be read" };
+    return { ok: false, why: "the repository can't be read", reason: 'repository' };
   }
-  const real = await realPathInside(`${root}${sep}${segments.join(sep)}`, root);
-  if (!real) return { ok: false, why: "it isn't a file inside the repository" };
+  const full = `${root}${sep}${segments.join(sep)}`;
+  const real = await realPathInside(full, root);
+  if (!real) {
+    const there = await realpath(full).then(() => true, () => false);
+    return { ok: false, why: "it isn't a file inside the repository", reason: there ? 'outside' : 'missing' };
+  }
   const rel = relative(realRoot, real);
-  if (rel.split(sep).some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git' };
+  if (rel.split(sep).some((s) => s.toLowerCase() === '.git')) return { ok: false, why: 'it is inside .git', reason: 'git' };
   let size: number;
   try {
     const st = await stat(real);
-    if (!st.isFile()) return { ok: false, why: "it isn't a file" };
+    if (!st.isFile()) return { ok: false, why: "it isn't a file", reason: 'not-file' };
     size = st.size;
   } catch {
-    return { ok: false, why: "it can't be read" };
+    return { ok: false, why: "it can't be read", reason: 'unreadable' };
   }
   return { ok: true, real, secret: isSecretFileName(basename(path)) || isSecretFileName(basename(real)), direct: rel === segments.join(sep), size };
 }

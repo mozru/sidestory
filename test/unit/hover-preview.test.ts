@@ -71,7 +71,7 @@ async function ready() {
   await session.load();
   send({ type: 'ready' });
   await vi.waitFor(() => expect((posted.filter((m) => m.type === 'init').at(-1) as { anchors: { state: string }[] } | undefined)?.anchors.every((a) => a.state !== 'pending')).toBe(true));
-  send({ type: 'codeTargets', sections: [], refs: [], links: ['rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L900', 'rtl/bit_reader.sv', 'rtl/bit_reader.sv#driver(cnt_q)', 'config/secrets.json'] });
+  send({ type: 'codeTargets', sections: [], refs: [], links: ['rtl/bit_reader.sv#L3-L5', 'rtl/bit_reader.sv#L900', 'rtl/bit_reader.sv', 'rtl/bit_reader.sv#driver(cnt_q)', 'config/secrets.json', 'rtl/nope.sv', 'rtl'] });
   const reply = async (id: number) => {
     await vi.waitFor(() => expect(posted.some((m) => m.type === 'codePreview' && m.id === id)).toBe(true));
     return posted.find((m) => m.type === 'codePreview' && m.id === id) as Extract<ToWebview, { type: 'codePreview' }>;
@@ -126,6 +126,10 @@ describe('previewRef and previewCode', () => {
     send({ type: 'previewCode', id: 4, path: 'config/secrets.json' });
     expect(await reply(4)).toMatchObject({ preview: null, note: expect.stringContaining('secrets') });
     expect(modal.asked).toHaveLength(0);
+    send({ type: 'previewCode', id: 6, path: 'rtl/nope.sv' }); // no such file: code not found
+    expect(await reply(6)).toEqual({ type: 'codePreview', id: 6, preview: null });
+    send({ type: 'previewCode', id: 7, path: 'rtl' }); // there, but no file: says so
+    expect((await reply(7)).note).toBe("Can't show this: it isn't a file.");
     // Schema-invalid requests never arrive.
     const before = posted.length;
     send({ type: 'previewCode', id: 5, path: '../outside.sv' });
@@ -185,8 +189,18 @@ describe('previewRef and previewCode', () => {
       send({ type: 'openRef', anchorId: 'consume' });
       expect(kept).toHaveLength(1);
       await mark(3);
+      send({ type: 'previewEnd' });
+      send({ type: 'previewEnd', left: true }); // the pointer crossed the page, then left it: the scroll-back stops
+      send({ type: 'previewEnd' });
+      expect(ends).toEqual(['left', undefined, undefined, 'left', undefined]);
+      await mark(4);
+      send({ type: 'previewEnd' });
+      await sleep(600);
+      send({ type: 'previewEnd', left: true }); // too late: the editor went back already
+      expect(ends).toHaveLength(6);
+      await mark(5);
       panel.dispose(); // closed mid-hover: the scroll goes back
-      expect(ends).toEqual(['left', undefined, undefined]);
+      expect(ends).toEqual(['left', undefined, undefined, 'left', undefined, undefined, undefined]);
     } finally {
       delete config['sidestory.hoverReveal'];
     }
@@ -283,7 +297,7 @@ describe('the hover mark', () => {
 
   it('edge arrows: inside the view (below sticky scroll, above a cut-off last line), none when partly visible or folded away', () => {
     const v = (...r: [number, number][]) => r.map(([a, b]) => new Range(a, 0, b, 0)) as never;
-    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill')).toEqual({ line: 53, text: '↑ Refill · L14–18' });
+    expect(edgeArrow(v([50, 89]), 13, 17, 'Refill')).toEqual({ line: 55, text: '↑ Refill · L14–18' });
     expect(edgeArrow(v([50, 89]), 13, 17, 'Refill', 0)).toEqual({ line: 50, text: '↑ Refill · L14–18' });
     expect(edgeArrow(v([0, 39]), 120, 120)).toEqual({ line: 38, text: '↓ L121' });
     expect(edgeArrow(v([0, 39]), 120, 120, '  Refill\n   the  window ')!.text).toBe('↓ Refill the window · L121');
@@ -312,6 +326,8 @@ describe('the hover mark', () => {
       a.calls.length = 0;
       a.scrollTo(1, 40); // nothing changed: nothing painted
       expect(a.calls).toHaveLength(0);
+      events.documentChanged.fire({ document: a.document, contentChanges: [] }); // an edit moves line ends
+      expect(a.calls).toHaveLength(1);
       a.scrollTo(90, 129); // in view: no arrow
       expect(arrow(a)).toBeUndefined();
       a.scrollTo(150, 189);

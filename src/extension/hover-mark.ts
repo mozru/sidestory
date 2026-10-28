@@ -17,10 +17,10 @@ export interface HoverTarget {
 
 /**
  * How a hover ended. `left`: the pointer left the panel (likely for the editor): scrolled editors stay until the
- * panel is used again (`set(owner, undefined)` once more). `click`: the link was opened: they stay. Otherwise they go
- * back after RESTORE_MS, unless another link's hover comes first.
+ * panel is used again (`set(owner, undefined)` once more); also right after a plain end, whose scroll-back it then
+ * cancels. Otherwise they go back after RESTORE_MS, unless another link's hover or a click (`keep`) comes first.
  */
-export type HoverEnd = 'left' | 'click' | undefined;
+export type HoverEnd = 'left' | undefined;
 
 /** An editor hoverReveal scrolled: where its view started, and when. */
 interface Revealed {
@@ -67,6 +67,15 @@ export class HoverMark implements vscode.Disposable {
       // The reader went to that editor: it stays where it is.
       vscode.window.onDidChangeActiveTextEditor((e) => e && this.revealed.delete(e)),
       vscode.window.onDidChangeTextEditorSelection((e) => this.revealed.delete(e.textEditor)),
+      // An edit moves line ends (where the arrow sits): paint it again.
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        const t = this.target;
+        for (const ed of vscode.window.visibleTextEditors) {
+          if (ed.document !== e.document) continue;
+          this.arrows.delete(ed);
+          if (t && ed.document.uri.toString() === t.uri.toString()) this.paintArrow(ed, t);
+        }
+      }),
     ];
   }
 
@@ -91,8 +100,7 @@ export class HoverMark implements vscode.Disposable {
     if (this.revealOwner !== owner) return;
     clearTimeout(this.restoreTimer);
     // `left`: they wait (no timer) for the panel to be used again, which ends the hover once more.
-    if (end === 'click') this.forget();
-    else if (end !== 'left') this.restoreTimer = setTimeout(() => this.restore(), RESTORE_MS);
+    if (end !== 'left') this.restoreTimer = setTimeout(() => this.restore(), RESTORE_MS);
   }
 
   /** The link was opened (a click, Enter): editors the hover scrolled stay there. */
@@ -195,12 +203,15 @@ export class HoverMark implements vscode.Disposable {
   }
 }
 
-/** Lines sticky scroll may cover at an editor's top (at most 3 are skipped for the arrow). */
+/**
+ * Lines sticky scroll may cover at an editor's top: its `maxLineCount` (VS Code's default is 5), at most 5, so a
+ * larger setting doesn't push the arrow far from the edge when few scopes are stuck.
+ */
 function stickyLines(): number {
   const c = vscode.workspace.getConfiguration('editor.stickyScroll');
   if (c.get<boolean>('enabled', true) === false) return 0;
   const n = c.get<unknown>('maxLineCount', 5);
-  return Math.min(3, typeof n === 'number' && n >= 0 ? Math.floor(n) : 3);
+  return Math.min(5, typeof n === 'number' && n >= 0 ? Math.floor(n) : 5);
 }
 
 function overlaps(visible: readonly vscode.Range[], start: number, end: number): boolean {
@@ -213,7 +224,7 @@ function overlaps(visible: readonly vscode.Range[], start: number, end: number):
  * any of them is in view, or they're folded away between visible ranges. The text never counts lines, so scrolling
  * doesn't change it.
  */
-export function edgeArrow(visible: readonly vscode.Range[], start: number, end: number, label?: string, skip = 3): { line: number; text: string } | undefined {
+export function edgeArrow(visible: readonly vscode.Range[], start: number, end: number, label?: string, skip = 5): { line: number; text: string } | undefined {
   if (visible.length === 0 || overlaps(visible, start, end)) return undefined;
   const top = visible[0]!.start.line;
   const bottom = visible[visible.length - 1]!.end.line;
