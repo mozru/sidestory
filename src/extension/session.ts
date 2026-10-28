@@ -478,6 +478,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.manifest = undefined;
     this.manifestText = '';
     this.manifestError = null;
+    this.postSettings(); // back to the defaults until the new manifest loads (it may not parse)
     this.html = '';
     this.title = this.titles.get(this.ref.dir.toString()) ?? '';
     this.panel.title = displayText(this.title || this.ref.name, 120) || 'Sidestory';
