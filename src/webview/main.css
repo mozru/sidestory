@@ -128,6 +128,49 @@ button.cx-crumb:focus-visible,
   gap: 12px;
 }
 
+/* Back / Forward (main.ts goHistory): toolbar buttons, as in VS Code's own title bars. */
+.cx-history {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  gap: 2px;
+  margin-left: -4px;
+}
+
+.cx-hist {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer;
+}
+
+.cx-hist:hover:not([aria-disabled='true']) {
+  background: var(--vscode-toolbar-hoverBackground);
+  outline: 1px dashed var(--vscode-contrastActiveBorder);
+  outline-offset: -1px;
+}
+
+.cx-hist:active:not([aria-disabled='true']) {
+  background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.cx-hist[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cx-hist:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 .cx-title {
   flex: 1;
   min-width: 0;
@@ -296,7 +339,10 @@ button.cx-crumb:focus-visible,
   /* A container query can't style its own container, so set the gutter on the children. */
   .cx-header, .cx-banner, .cx-footer { --cx-gutter: 16px; }
   .cx-titlerow { flex-wrap: wrap; row-gap: 4px; }
+  /* Back / Forward and the status share the first line; the title gets the next. */
+  .cx-status { margin-left: auto; }
   .cx-title {
+    order: 1;
     flex-basis: 100%;
     font-size: 1.15em;
     display: -webkit-box;

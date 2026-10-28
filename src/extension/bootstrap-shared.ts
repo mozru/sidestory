@@ -25,6 +25,8 @@ export const COMMANDS = [
   'sidestory.tree.copyPath',
   'sidestory.nextStep',
   'sidestory.prevStep',
+  'sidestory.navigateBack',
+  'sidestory.navigateForward',
   'sidestory.pin',
   'sidestory.reanchor',
   'sidestory.revokeWidgetConsent',

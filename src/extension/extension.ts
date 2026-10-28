@@ -4,10 +4,9 @@
 import * as vscode from 'vscode';
 import { escapeIcons, plainForMessage } from '../core/display-text.ts';
 import { explainerNameSchema } from '../core/manifest.ts';
-import { MAX_TRAIL } from '../shared/protocol.ts';
 import { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
-import { refFromDir, uriKey } from './explainers.ts';
+import { refFromDir, trailTo, uriKey } from './explainers.ts';
 import { log } from './log.ts';
 import { shellQuote, shellSafePath } from './shell.ts';
 import { DriftQueue } from './nav/drift.ts';
@@ -582,6 +581,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     'sidestory.nextStep': () => target()?.navigate(1),
 
     'sidestory.prevStep': () => target()?.navigate(-1),
+    'sidestory.navigateBack': () => target()?.history(-1),
+    'sidestory.navigateForward': () => target()?.history(1),
     ...changes.commands,
   };
 
@@ -731,21 +732,7 @@ interface GitLike {
 export function restoredTrail(state: PanelState | undefined): [ExplainerRef, ...ExplainerRef[]] | undefined {
   const shown = typeof state?.dir === 'string' ? refFromDir(vscode.Uri.parse(state.dir)) : undefined;
   if (!shown) return undefined;
-  const names = state?.trail;
-  if (
-    !Array.isArray(names) ||
-    names.length === 0 ||
-    names.length > MAX_TRAIL ||
-    names.at(-1) !== shown.name ||
-    !names.every((n) => explainerNameSchema.safeParse(n).success) ||
-    new Set(names).size !== names.length
-  ) {
-    return [shown];
-  }
-  const refs = (names as string[]).map((n, i) => (i === names.length - 1 ? shown : refFromDir(vscode.Uri.joinPath(shown.dir, '..', n))));
-  const [first, ...rest] = refs;
-  if (!first || rest.some((r) => !r)) return [shown];
-  return [first, ...(rest as ExplainerRef[])];
+  return trailTo(shown, state?.trail) ?? [shown];
 }
 
 /** The explainer step commands act on: the last active one if it's visible, else any visible one. */

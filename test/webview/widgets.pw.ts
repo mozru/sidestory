@@ -393,6 +393,30 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await expect.poll(() => contentFocus(page)).toBe('a');
   });
 
+  test('a shortcut pressed in a widget leaves it for its placeholder and goes on to VS Code; quit never does', async ({ page }) => {
+    await openProbe(page);
+    // What VS Code's webview host would get: key events on the panel's window.
+    await page.evaluate(() => {
+      const w = window as unknown as { __keys: string[] };
+      w.__keys = [];
+      window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.key}/${e.code}`));
+    });
+    const keys = () => page.evaluate(() => (window as unknown as { __keys: string[] }).__keys);
+    await widgetFrame(page).getByTestId('inc').click();
+    await page.keyboard.press('Control+Shift+KeyP');
+    await expect.poll(() => contentFocus(page)).toBe('explain-widget');
+    await expect.poll(keys).toEqual(['CS+P/KeyP']);
+    await widgetFrame(page).getByTestId('inc').click();
+    await page.keyboard.press('Control+KeyQ');
+    await expect.poll(() => contentFocus(page)).toBe('explain-widget');
+    // Plain keys are the widget's: J types nothing into the panel and steps nothing.
+    await widgetFrame(page).getByTestId('inc').click();
+    await page.keyboard.press('j');
+    await page.waitForTimeout(150);
+    expect(await keys()).toEqual(['CS+P/KeyP']);
+    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
+  });
+
   test('the theme reaches widgets, and changes follow (dark: variants)', async ({ page }) => {
     await openProbe(page);
     const cls = (f: FrameLocator) => f.locator('html').getAttribute('class');

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Back and forward in the panel, as in a browser: ← → buttons at the top, <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> (on macOS also <kbd>Cmd</kbd>+<kbd>[</kbd> / <kbd>]</kbd> and <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd>), the mouse's back and forward buttons, and the new commands **Sidestory: Back** / **Forward**. They retrace the steps you chose, the details you dived into and the sidestories opened in the panel, to the same step and scroll position; a run of <kbd>J</kbd>/<kbd>K</kbd> steps counts once. The history survives the panel being hidden and VS Code restarting.
+- VS Code's shortcuts (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>P</kbd>, <kbd>F1</kbd>…) now work while you're in the page or a widget; before, keys pressed there never reached VS Code.
+
 ## 0.2.7 (2026-10-28)
 
 - < > buttons sit right beside the step picker that narrow panels show, and beside every dropdown in a widget (`Select`; `arrows={false}` leaves them out), to step through without opening the list.

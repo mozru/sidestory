@@ -12,6 +12,9 @@ export interface ExplainerRef {
   root: vscode.Uri;
 }
 
+import { explainerNameSchema } from '../core/manifest.ts';
+import { MAX_TRAIL } from '../shared/protocol.ts';
+
 export { MAX_MANIFEST_BYTES } from '../core/manifest.ts';
 export const MAX_HTML_BYTES = 5_000_000;
 export const MAX_CODE_BYTES = 10_000_000;
@@ -34,6 +37,27 @@ export function refFromDir(dir: vscode.Uri): ExplainerRef | undefined {
   const inside = parts.slice(folder.uri.path.split('/').filter(Boolean).length, -2);
   if (inside.includes('.sidestory')) return undefined;
   return { name, dir, root };
+}
+
+/**
+ * The trail ending at `shown`, from its names (root first): the sidestories it was dived into from, siblings under the
+ * same `.sidestory/`. Undefined if the names don't fit.
+ */
+export function trailTo(shown: ExplainerRef, names: unknown): [ExplainerRef, ...ExplainerRef[]] | undefined {
+  if (
+    !Array.isArray(names) ||
+    names.length === 0 ||
+    names.length > MAX_TRAIL ||
+    names.at(-1) !== shown.name ||
+    !names.every((n) => explainerNameSchema.safeParse(n).success) ||
+    new Set(names).size !== names.length
+  ) {
+    return undefined;
+  }
+  const refs = (names as string[]).map((n, i) => (i === names.length - 1 ? shown : refFromDir(vscode.Uri.joinPath(shown.dir, '..', n))));
+  const [first, ...rest] = refs;
+  if (!first || rest.some((r) => !r)) return undefined;
+  return [first, ...(rest as ExplainerRef[])];
 }
 
 /**
