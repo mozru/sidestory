@@ -11,6 +11,7 @@ import { Assets } from './assets.ts';
 import { stepTitle } from '../core/step-title.ts';
 import { DIAGRAM_CLASSES, Diagrams, litIds, MAX_TAGGED } from './diagram.ts';
 import { CodeHighlighter } from './highlight.ts';
+import { HoverCard } from './hover.ts';
 import { sanitize } from './sanitize.ts';
 import { randomToken, staticHtml } from './trusted.ts';
 import { reducedMotion, type SavedWidgets, WidgetFrames } from './widgets.ts';
@@ -130,6 +131,11 @@ let pendingInit: { active?: string; after?: () => void } | undefined;
 const pendingSteps: (1 | -1)[] = [];
 /** Widget frames over their placeholders (created once the content frame exists). */
 let widgets: WidgetFrames | undefined;
+/** The hover preview's card (`sidestory.hoverPreview`); created before the content frame's listeners can fire. */
+let hoverCard: HoverCard | undefined;
+/** The hidden copy of the card's text in the content frame (an IDREF can't cross documents); its id is unguessable. */
+let hoverDesc: HTMLElement | undefined;
+const HOVER_DESC_ID = `cx-hover-${randomToken()}`;
 /** Code block colors (docs/HIGHLIGHT-PLAN.md): tokens come from the extension host. */
 const highlighter = new CodeHighlighter({ post: (m) => vscode.postMessage(m), root: () => content });
 /** Sanitizer warnings already sent to Output for the explainer shown. */
@@ -237,6 +243,26 @@ const comments = new CommentsPane($('.cx-comments'), commentLayerEl, {
   },
 });
 
+hoverCard = new HoverCard(app, {
+  post: (m) => vscode.postMessage(m),
+  // As openLinked: a ref wins over code, and only anchors the page knows.
+  ask: (el) => {
+    if (el.hasAttribute('data-explain-ref')) {
+      const id = el.dataset.explainRef!;
+      return anchors.has(id) ? { type: 'previewRef', anchorId: id } : undefined;
+    }
+    const link = codeLinkOf(el);
+    if (!link) return undefined;
+    return link.target === undefined ? { type: 'previewCode', path: link.path } : { type: 'previewCode', path: link.path, target: link.target };
+  },
+  rect: (el) => {
+    const f = frame.el.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return new DOMRect(r.left + f.left, r.top + f.top, r.width, r.height);
+  },
+  describer: () => hoverDesc,
+});
+
 /*
  * Explainer content lives in a sandboxed iframe: no scripts run in it (only this script, from
  * outside, touches its DOM), and anything it draws, even in the browser's top layer, stays inside
@@ -283,7 +309,10 @@ async function buildFrame(): Promise<void> {
   content = frame.createElement('div');
   needsIndex = true;
   content.className = 'cx-content';
-  frame.body.append(content);
+  hoverDesc = frame.createElement('div');
+  hoverDesc.id = HOVER_DESC_ID;
+  hoverDesc.hidden = true;
+  frame.body.append(content, hoverDesc);
   bindFrameEvents(d);
   highlighter.bind(d);
   widgets?.bindContent(d);
@@ -585,6 +614,12 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'preview':
       previewEl.hidden = !m.on;
       break;
+    case 'settings':
+      hoverCard?.setMode(['card', 'editor', 'both', 'off'].includes(m.hoverPreview) ? m.hoverPreview : 'off');
+      break;
+    case 'codePreview':
+      hoverCard?.onReply(m);
+      break;
     case 'focusQuery':
       widgets?.focusAnswer(m.id);
       break;
@@ -604,6 +639,7 @@ let renderSeq = 0;
 async function render(title: string, html: string, isUpdate: boolean): Promise<boolean> {
   const seq = ++renderSeq;
   lastRender = { title, html };
+  hoverCard?.hide(); // the link it is for may change or go
   const parsed = sanitize(html, baseUrl, frame.importNode);
   for (const w of parsed.warnings) {
     if (warned.has(w) || warned.size > 50) continue;
@@ -1197,6 +1233,7 @@ scroller.addEventListener('scroll', () => {
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = 0;
+    hoverCard?.scrolled();
     widgets?.onScroll();
     saveState();
     // Where the reader is, however they got there, so a resize can put it back (not mid-resize, nor on the way
@@ -1230,9 +1267,21 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('focusin', onContentFocus);
   d.addEventListener('pointerdown', (e) => {
     if (!e.isTrusted) return;
+    hoverCard?.hide(); // a click opens the code (or does something else): the card is done
     lastTabAt = 0; // the pointer, not the Tab, is the reader's last input
     aim(linkedTarget(e.target) ?? null);
   }, true);
+  // The hover preview: resting on a linked element, by mouse or pen (a touch is a tap, which opens it).
+  d.addEventListener('pointerover', (e) => {
+    if (!e.isTrusted || e.pointerType === 'touch') return;
+    const link = linkedTarget(e.target);
+    if (link) hoverCard?.enter(link, false);
+    else hoverCard?.pointerAway();
+  });
+  d.addEventListener('pointerout', (e) => {
+    if (e.relatedTarget === null) hoverCard?.pointerAway(); // out of the content
+  });
+  d.addEventListener('focusout', (e) => hoverCard?.blur(e.target as Element));
 }
 
 function noteKey(e: KeyboardEvent): void {
@@ -1249,6 +1298,8 @@ function onContentFocus(e: FocusEvent): void {
   // not an Enter on an in-page link whose target took focus).
   const link = linkedTarget(e.target) ?? null;
   if (link !== aimedLink) aim(link && link === e.target && !focusingSelf && lastKeyAt === lastTabAt && Date.now() - lastTabAt < 500 ? link : null);
+  // The keyboard brought focus to a link (not a click, nor the panel itself): its card, as for the pointer.
+  if (link && link === e.target && !focusingSelf && lastKeyAt === lastTabAt && Date.now() - lastTabAt < 500) hoverCard?.enter(link, true);
   if (focusingSelf || Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
   const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
@@ -1325,6 +1376,7 @@ function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
  * A `data-explain-ref` wins over a `data-explain-code` on the same element.
  */
 function openLinked(el: HTMLElement): void {
+  hoverCard?.hide();
   if (el.hasAttribute('data-explain-ref')) return openRef(el);
   const link = codeLinkOf(el);
   if (link) vscode.postMessage(link.target === undefined ? { type: 'openCode', path: link.path } : { type: 'openCode', path: link.path, target: link.target });
@@ -1545,10 +1597,11 @@ function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') hidePill();
     return;
   }
-  // Escape closes the comment composer, then the Comments pane, then dismisses the pill; with nothing to dismiss,
-  // it goes back up the trail.
+  // Escape hides the hover card, then closes the comment composer, then the Comments pane, then dismisses the pill;
+  // with nothing to dismiss, it goes back up the trail.
   if (e.key === 'Escape') {
     const selection = frame.getSelection();
+    if (hoverCard?.hide()) return;
     if (comments?.escape()) return;
     if (!pillEl.hidden) hidePill();
     else if (selection && !selection.isCollapsed) selection.removeAllRanges();

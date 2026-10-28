@@ -63,6 +63,29 @@ export interface WidgetBuild {
   hash: string;
 }
 
+/** `sidestory.hoverPreview`: what resting on a link in the panel shows (a card, a mark in visible editors, both). */
+export type HoverPreview = 'card' | 'editor' | 'both' | 'off';
+export const HOVER_PREVIEWS: readonly HoverPreview[] = ['card', 'editor', 'both', 'off'];
+/** Lines and characters per line a hover card gets at most. */
+export const PREVIEW_LINES = 12;
+export const PREVIEW_LINE_CHARS = 200;
+
+/** A link's code for the hover card: lines `start`–`end` (1-based) of `path`, the first few of them. */
+export interface CodePreview {
+  path: string;
+  start: number;
+  end: number;
+  /** At most PREVIEW_LINES lines of at most PREVIEW_LINE_CHARS, their common indentation removed. */
+  lines: string[];
+  /** Lines of the range not in `lines`. */
+  more: number;
+  /** The document's language, or the file's extension when it isn't open (highlighting takes either). */
+  languageId: string;
+  /** Colors as for code blocks (`highlighted`): run lengths and palette indexes over `lines` joined with `\n`. */
+  palette?: HighlightStyle[];
+  runs?: number[];
+}
+
 export type ToWebview =
   /** Everything the page needs; sent in reply to `ready`, and when the panel moves to another explainer. */
   | {
@@ -124,6 +147,10 @@ export type ToWebview =
   | { type: 'here'; ref?: string; link?: string }
   /** A preview panel (docs/NAVIGATION-PLAN.md §7.5): the next sidestory opened from code or a list replaces it. */
   | { type: 'preview'; on: boolean }
+  /** Settings the page acts on itself; sent with `init` and whenever they change. */
+  | { type: 'settings'; hoverPreview: HoverPreview }
+  /** Reply to `previewRef` / `previewCode`: the code, or null when it can't be found (`note` says why, if not that). */
+  | { type: 'codePreview'; id: number; preview: CodePreview | null; note?: string }
   /** Comment threads (docs/COMMENTS-PLAN.md §6.6). */
   | CommentsToWebview;
 
@@ -198,6 +225,15 @@ export type FromWebview =
   | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] }
   /** Keep Open on a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
   | { type: 'keepOpen' }
+  /**
+   * The pointer rests on (or keyboard focus is on) a linked element: its code for the hover card, a mark in visible
+   * editors, or both (`sidestory.hoverPreview`). Never opens, scrolls or focuses anything. Same targets as `openRef`.
+   */
+  | { type: 'previewRef'; id: number; anchorId: string }
+  /** As `previewRef`, for a `data-explain-code` link (as `openCode` carries it). */
+  | { type: 'previewCode'; id: number; path: string; target?: string }
+  /** The pointer or focus left the link: the editor mark goes. */
+  | { type: 'previewEnd' }
   /** Comment threads (docs/COMMENTS-PLAN.md §6.6), posted only from the panel's handlers for trusted input. */
   | CommentsFromWebview;
 
@@ -216,6 +252,9 @@ const identifierSchema = z.string().regex(/^[A-Za-z_$][\w$]{0,99}$/);
 const widgetKeySchema = z.string().max(300);
 const distinct = (a: string[]) => new Set(a).size === a.length;
 const codeTargetIds = z.array(anchorIdSchema).max(MAX_CODE_LINKS).refine(distinct);
+const codePathSchema = z.string().max(1024).refine(isSafeRelativePath);
+const codeTargetSchema = z.string().max(256).refine((t) => parseCodeTarget(t) !== null);
+const previewIdSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const breadcrumbs = {
   mounted: z.array(widgetSrcSchema).max(MAX_WIDGETS),
   mounting: widgetSrcSchema.nullable(),
@@ -251,6 +290,9 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
   z.object({ type: z.literal('focusTheft') }),
   z.object({ type: z.literal('keepOpen') }),
+  z.object({ type: z.literal('previewRef'), id: previewIdSchema, anchorId: anchorIdSchema }),
+  z.object({ type: z.literal('previewCode'), id: previewIdSchema, path: codePathSchema, target: codeTargetSchema.optional() }),
+  z.object({ type: z.literal('previewEnd') }),
   ...commentsFromWebviewSchemas,
   z.object({
     type: z.literal('highlight'),
@@ -260,7 +302,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
       .max(MAX_REQUEST_BLOCKS)
       .refine((b) => b.reduce((n, x) => n + x.code.length, 0) <= MAX_REQUEST_CHARS),
   }),
-  z.object({ type: z.literal('openCode'), path: z.string().max(1024).refine(isSafeRelativePath), target: z.string().max(256).refine((t) => parseCodeTarget(t) !== null).optional() }),
+  z.object({ type: z.literal('openCode'), path: codePathSchema, target: codeTargetSchema.optional() }),
   z.object({
     type: z.literal('codeTargets'),
     sections: codeTargetIds,

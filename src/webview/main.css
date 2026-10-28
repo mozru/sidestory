@@ -495,6 +495,66 @@ body:is(.vscode-light, .vscode-high-contrast-light) .cx-widget-frame {
   text-overflow: ellipsis;
 }
 
+/* The hover preview (sidestory.hoverPreview): the first lines of a link's code, beside it. Takes no pointer input. */
+.cx-hovercard {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  max-width: min(560px, calc(100vw - 8px));
+  padding: 4px 8px 6px;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border, transparent));
+  border-radius: 4px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease-out;
+}
+
+.cx-hovercard[hidden] {
+  display: none;
+}
+
+.cx-hovercard.cx-shown {
+  opacity: 1;
+}
+
+.cx-hovercard-head,
+.cx-hovercard-more {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cx-hovercard-code {
+  margin-top: 3px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  font-weight: var(--vscode-editor-font-weight);
+  line-height: 1.4;
+  tab-size: 4;
+}
+
+.cx-hovercard-line {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cx-hovercard-line:empty::after {
+  content: ' ';
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cx-hovercard { transition: none; }
+}
+body.vscode-reduce-motion .cx-hovercard { transition: none; }
+
 .cx-pill {
   position: fixed;
   left: 50%;

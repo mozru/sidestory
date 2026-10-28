@@ -15,9 +15,10 @@ import { resolveAnchor } from '../core/resolve.ts';
 import { displayText, plainForMessage } from '../core/display-text.ts';
 import { PreparedText } from '../core/text.ts';
 import { trackRange } from '../core/tracking.ts';
-import { parseCodeLink, type CodeLink } from '../shared/code-link.ts';
-import type { AnchorView, DetailInfo, FromWebview, ToWebview } from '../shared/protocol.ts';
-import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
+import { formatCodeLink, parseCodeLink, type CodeLink } from '../shared/code-link.ts';
+import { langName } from '../shared/highlight-languages.ts';
+import type { AnchorView, CodePreview, DetailInfo, FromWebview, HoverPreview, ToWebview } from '../shared/protocol.ts';
+import { assetMime, fromWebviewSchema, HOVER_PREVIEWS, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
 import type { GroupView } from './columns.ts';
 import type { Requester } from './highlight/host.ts';
 import type { HighlightService } from './highlight/service.ts';
@@ -27,11 +28,13 @@ import { anchorForCursor } from './cursor.ts';
 import type { Decorations } from './decorations.ts';
 import type { ExplainerRef } from './explainers.ts';
 import { refFromDir, htmlUri, manifestUri, MAX_ASSET_BYTES, MAX_CODE_BYTES, MAX_HTML_BYTES, MAX_MANIFEST_BYTES, readBytesInside, readInside, uriKey } from './explainers.ts';
+import { localPath } from './local-path.ts';
 import { log } from './log.ts';
 import { shellHtml, VIEW_TYPE } from './panel.ts';
 import { realPathInside } from './paths.ts';
 import type { AnchorStates } from './pin.ts';
 import type { PreparedTextCache } from './prepared-cache.ts';
+import { previewLines } from './preview.ts';
 import type { PanelWidgets, WidgetHost, WidgetSessionPort } from './widgets/host.ts';
 import { ourModal } from './widgets/watchdog.ts';
 import { isCommentsMessage, type CommentsFromWebview, type CommentsToWebview } from '../shared/comments-protocol.ts';
@@ -41,6 +44,10 @@ const RESOLVE_DELAY = 150;
 const CURSOR_DELAY = 100;
 /** How long cursor-follow waits for the ring to be worked out first (§8.2). */
 const LIGHT_WAIT_MS = 100;
+/** How long a hover card waits for its colors before it shows plain code. */
+const PREVIEW_COLOR_WAIT_MS = 300;
+/** Hover previews a panel may ask for per second (the page debounces; this is the backstop). */
+const MAX_PREVIEWS_PER_SECOND = 20;
 /** Give the extension host back control after this much resolving. */
 const SLICE_MS = 15;
 const MAX_ASSETS_IN_FLIGHT = 4;
@@ -215,6 +222,15 @@ export class ExplainerSession implements vscode.Disposable {
   /** Bumped per cursor follow, and by the panel's own reveals, so an older follow still lighting gives way. */
   private cursorSeq = 0;
 
+  // ---- hover previews (`sidestory.hoverPreview`) ----
+  /** Bumped per preview request and by `previewEnd`, so a slower, older one gives way. */
+  private previewSeq = 0;
+  private previewTimes: number[] = [];
+  /** Lines marked in editors for a hover now. */
+  private hoverMarked = false;
+  /** The hover card's own highlighting requester, so a card never cancels the code blocks' request (or the reverse). */
+  private previewRequester: Requester | undefined;
+
   /** `trail`: the root explainer, then the details dived into (restored after a restart); the last is shown. */
   constructor(trail: readonly [ExplainerRef, ...ExplainerRef[]], panel: vscode.WebviewPanel, extensionUri: vscode.Uri, decorations: Decorations, host: SessionHost, opts: SessionOptions = {}) {
     this.trail = [...trail];
@@ -250,10 +266,17 @@ export class ExplainerSession implements vscode.Disposable {
       vscode.window.tabGroups.onDidChangeTabs(() => this.decorations.refresh()),
       // A hidden panel's page is gone (it asks again with `ready`): what it linked to and lit is gone with it.
       panel.onDidChangeViewState(() => {
-        if (!panel.visible) this.forgetTargets();
+        if (!panel.visible) {
+          this.forgetTargets();
+          this.endHover();
+        }
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('sidestory.followCursorInDiagrams') && !this.lightingOn()) this.postHere({});
+        if (e.affectsConfiguration('sidestory.hoverPreview')) {
+          this.endHover();
+          this.post({ type: 'settings', hoverPreview: hoverPreviewSetting() });
+        }
       }),
     );
     if (host.diffs) {
@@ -465,6 +488,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.assetBytes = 0;
     this.assetRequests = 0;
     this.forgetTargets();
+    this.endHover();
     this.revealWhenResolved = undefined;
     this.active = active ?? this.positions.get(this.ref.dir.toString());
     this.decorations.set(undefined);
@@ -491,6 +515,7 @@ export class ExplainerSession implements vscode.Disposable {
     });
     if (this.lastError) this.post({ type: 'error', message: this.lastError });
     if (this.previewing) this.post({ type: 'preview', on: true });
+    this.post({ type: 'settings', hoverPreview: hoverPreviewSetting() });
     this.widgets?.onInit();
     this.host.comments?.onInit(this);
   }
@@ -1017,6 +1042,13 @@ export class ExplainerSession implements vscode.Disposable {
       case 'highlight':
         void this.highlight(m.blocks);
         break;
+      case 'previewRef':
+      case 'previewCode':
+        void this.hoverPreview(m).catch((e: unknown) => log.warn(`hover preview: ${(e as Error).message}`));
+        break;
+      case 'previewEnd':
+        this.endHover();
+        break;
       case 'reanchor':
         // Only starts the flow: the user confirms in a dialog before anything is written.
         if (!this.manifest?.anchors.has(m.anchorId)) return;
@@ -1209,6 +1241,101 @@ export class ExplainerSession implements vscode.Disposable {
     } finally {
       this.opening--;
     }
+  }
+
+  // ---- hover previews (`sidestory.hoverPreview`) ----
+
+  /**
+   * The pointer rests on a link in the panel: its code for the card, and/or its lines marked in the editors that
+   * already show its file. Resolves as `openRef` and `openCode` do, but never opens an editor, asks, scrolls or moves
+   * focus; symbols that need a language's provider are found only in documents already open.
+   */
+  private async hoverPreview(m: Extract<FromWebview, { type: 'previewRef' | 'previewCode' }>): Promise<void> {
+    const mode = hoverPreviewSetting();
+    if (mode === 'off') return;
+    const now = Date.now();
+    this.previewTimes = [...this.previewTimes.filter((t) => now - t < 1000), now];
+    if (this.previewTimes.length > MAX_PREVIEWS_PER_SECOND) return;
+    const seq = ++this.previewSeq;
+    const generation = this.generation;
+    const card = mode !== 'editor';
+    const target = m.type === 'previewRef' ? await this.refPreview(m.anchorId, card) : await this.codePreview(m.path, m.target, card);
+    if (seq !== this.previewSeq || generation !== this.generation || this.disposed) return;
+    if (mode !== 'card' && (target.found || this.hoverMarked)) {
+      this.decorations.setHover(target.found && { uri: target.found.uri, range: target.found.range });
+      this.hoverMarked = !!target.found;
+    }
+    if (!card) return;
+    const shown = target.found?.text === undefined ? undefined : previewLines(target.found.text, target.found.range);
+    if (!target.found || !shown) {
+      this.post({ type: 'codePreview', id: m.id, preview: null, ...(target.note ? { note: target.note } : {}) });
+      return;
+    }
+    const { path, languageId } = target.found;
+    const preview: CodePreview = { path, ...shown, languageId };
+    const colors = await this.previewColors(languageId, shown.lines.join('\n'));
+    if (seq !== this.previewSeq || generation !== this.generation || this.disposed) return;
+    this.post({ type: 'codePreview', id: m.id, preview: { ...preview, ...colors } });
+  }
+
+  /** An anchor's resolved lines (as `openRef` opens them), and with `text` its document's text. */
+  private async refPreview(id: string, text: boolean): Promise<PreviewTarget> {
+    const a = this.manifest?.anchors.get(id);
+    const r = this.resolutions.get(id);
+    const uri = a ? this.targetUri(a) : undefined;
+    if (!a || !r?.range || r.state === 'lost' || !uri) return {};
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+    const languageId = doc?.languageId ?? extensionOf(a.file);
+    if (!text) return { found: { uri, range: r.range, path: a.file, languageId } };
+    // As resolveFile reads it: a merge-base blob through the git provider, else the file (its open buffer if open).
+    const source = uri.scheme === GIT_SCHEME ? await readGit(uri) : await readInside(uri, this.ref.root, MAX_CODE_BYTES);
+    return source === undefined ? {} : { found: { uri, range: r.range, path: a.file, languageId, text: source } };
+  }
+
+  /**
+   * A `data-explain-code` link's lines, through openCode's checks (only links the page reported, real-path
+   * containment, no `.git`, the size limit). A secret-looking file is never read for a card; without `text`, only
+   * a document already open is looked at (the mark goes in editors that show it).
+   */
+  private async codePreview(path: string, target: string | undefined, text: boolean): Promise<PreviewTarget> {
+    const link = parseCodeLink(target === undefined ? path : `${path}#${target}`);
+    if (!link || link.path !== path || !this.targets?.links.some((l) => l.text === formatCodeLink(link))) return {};
+    const root = this.ref.root;
+    if (root.scheme !== 'file') return {};
+    const generation = this.generation;
+    const checked = await checkCodePath(localPath(root), path);
+    if (this.disposed || generation !== this.generation) return {};
+    if (!checked.ok) return { note: `Can't show this: ${checked.why}.` };
+    if (checked.size > MAX_CODE_BYTES) return { note: `Can't show this: the file is larger than ${MAX_CODE_BYTES / 1e6} MB.` };
+    if (checked.secret) return { note: 'Its name looks like it holds secrets: click to open it.' };
+    const uri = checked.direct ? vscode.Uri.joinPath(root, path) : vscode.Uri.file(checked.real);
+    const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString() && !d.isClosed);
+    if (!open && !text) return {};
+    const doc = open ?? (await vscode.workspace.openTextDocument(uri));
+    if (this.disposed || generation !== this.generation) return {};
+    const r = await resolveLink(doc, link, this.symbols, !!open);
+    if (!r.ok) return r.unavailable ? { note: `${r.message.charAt(0).toUpperCase()}${r.message.slice(1)}.` } : {};
+    return { found: { uri: doc.uri, range: r.range, path, languageId: doc.languageId, text: text ? doc.getText() : undefined } };
+  }
+
+  /** Colors for a card's code, as code blocks get them; none when highlighting is off or slower than the card. */
+  private async previewColors(languageId: string, code: string): Promise<Pick<CodePreview, 'palette' | 'runs'>> {
+    const service = this.host.highlight;
+    const lang = langName(languageId);
+    if (!service || !lang || code.length === 0) return {};
+    const who = (this.previewRequester ??= service.highlighter.newRequester());
+    const colored = service.whenReady().then(() => service.highlighter.request(who, [{ id: 0, lang, code }]));
+    const r = await Promise.race([colored, new Promise<undefined>((done) => setTimeout(done, PREVIEW_COLOR_WAIT_MS))]);
+    const runs = r?.blocks[0]?.runs;
+    return r && runs ? { palette: r.palette, runs } : {};
+  }
+
+  /** The pointer left the link (or the panel moved on): its marks go, and a preview still resolving is dropped. */
+  private endHover(): void {
+    this.previewSeq++;
+    if (!this.hoverMarked) return;
+    this.hoverMarked = false;
+    this.decorations.setHover(undefined);
   }
 
   /** Colors code blocks for the panel; per explainer shown, so one explainer's slow blocks don't stop another's. */
@@ -1430,11 +1557,32 @@ export class ExplainerSession implements vscode.Disposable {
     this.ownSymbols?.dispose();
     this.host.diffs?.release(this.diffWho);
     if (this.highlightRequester) this.highlightRequester.who.disposed = true;
+    if (this.previewRequester) this.previewRequester.disposed = true;
+    this.endHover();
     this.decorations.set(undefined);
     this.decorations.clearFlash();
     this.onDisposeEmitter.fire();
     this.onDisposeEmitter.dispose();
   }
+}
+
+/** What a hover preview found: the lines, where they are, and the text when the card needs it; or a note why not. */
+interface PreviewTarget {
+  found?: { uri: vscode.Uri; range: LineRange; path: string; languageId: string; text?: string };
+  note?: string;
+}
+
+/** `sidestory.hoverPreview`, `card` for anything it can't be. */
+function hoverPreviewSetting(): HoverPreview {
+  const v = vscode.workspace.getConfiguration('sidestory').get<unknown>('hoverPreview', 'card');
+  return HOVER_PREVIEWS.find((p) => p === v) ?? 'card';
+}
+
+/** A file name's extension, which highlighting takes as a language name (`sv`, `ts`), or `plaintext`. */
+function extensionOf(file: string): string {
+  const name = file.split('/').pop() ?? '';
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : 'plaintext';
 }
 
 /** A merge-base blob's text through the `sidestory-git:` provider, decoded as the diff decodes it (§5.2). */

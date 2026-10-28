@@ -64,7 +64,7 @@ class TextLru<V> {
 }
 
 /** Validated palette: unknown or malformed entries become "no style" (index 0's meaning). */
-function validPalette(p: unknown): HighlightStyle[] | undefined {
+export function validPalette(p: unknown): HighlightStyle[] | undefined {
   if (!Array.isArray(p) || p.length === 0 || p.length > 4096) return undefined;
   return p.map((s: unknown) => {
     if (!s || typeof s !== 'object') return {};

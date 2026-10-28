@@ -43,6 +43,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 Open one with **Sidestory: Open Sidestory…** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
 
 - **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote).
+- **Rest the pointer on a link or a diagram box** (or Tab to it) and a small card shows the first lines of its code, without moving the editor or your focus; click to open the code. `sidestory.hoverPreview` marks the lines in an editor already showing the file instead (`editor`), does both (`both`), or turns it off (`off`).
 - **Move your cursor in the code** and the sidestory jumps to the section about it. Boxes and links that point at the code under the cursor get a ring, wherever they are in the page; only code a section covers changes the step.
 - **Everything updates live.** Edit the code (saved or not) or the sidestory and the panel follows at once, keeping your place, your focus and anything you're typing. Sections follow code that moves, and tell you when the code changed, needs a look, or can't be found.
 
@@ -102,7 +103,7 @@ Linked elements look the same in every sidestory, and your own CSS always wins o
 
 - Set `--cx-link-hover` or `--cx-link-ring` to `transparent` to turn that effect off, or to another color.
 - `data-explain-plain` on a linked element removes the built-in look (only the pointer cursor stays), for a link you style yourself.
-- A reader opens a link by clicking it, or by tabbing to it and pressing <kbd>Enter</kbd> (not <kbd>Space</kbd>, which scrolls).
+- A reader opens a link by clicking it, or by tabbing to it and pressing <kbd>Enter</kbd> (not <kbd>Space</kbd>, which scrolls). Resting the pointer on it, or tabbing to it, previews its code in a card (`sidestory.hoverPreview`).
 - **Give a diagram with links `role="group"` and an `aria-label`**, not `role="img"`: screen readers don't see the children of an image, so its links would be out of their reach. Give each linked `<g>` a name with a `<title>` (which is also a tooltip) or an `aria-label`.
 - Links on form controls (`button`, `input`, `select`, `textarea`, `meter`, `output`, `progress`) or on a widget are ignored, and so are clicks on a control or widget inside a link: those clicks are for the control. Output says so.
 
@@ -584,6 +585,7 @@ Comments from other people, and anything from the repository, reach Claude only 
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through a sidestory (never in high contrast themes). |
 | `sidestory.clickHighlightSeconds` | `1.5` | How long the code stays highlighted after you click a code link or an inline reference, or a widget points at it, in seconds. `0` keeps it until the next one, or until the panel shows another sidestory. |
 | `sidestory.clickFrame` | `true` | When that highlight fades, keep a frame around the lines (the `sidestory.clickFrameBorder` color) until the next one, or until the panel shows another sidestory. |
+| `sidestory.hoverPreview` | `card` | What resting the pointer on a link or a diagram box (or tabbing to it) shows: `card` (the first lines of its code, in a small card in the panel), `editor` (its lines marked in editors that already show the file; nothing is opened or scrolled), `both`, or `off`. A click still opens the code. |
 | `sidestory.followCursorInDiagrams` | `true` | Ring the boxes and links (`data-explain-ref`, `data-explain-code`) whose code holds the editor cursor. |
 | `sidestory.codeLens.enabled` | `true` | A CodeLens above explained code (at most 30 per file; hidden while that sidestory is open in a panel). Language-overridable. |
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |

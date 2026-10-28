@@ -545,6 +545,23 @@
           "default": true,
           "markdownDescription": "After the click highlight (`#sidestory.clickHighlightSeconds#`) fades, keep a frame around those lines until the next one, or until the panel shows another sidestory."
         },
+        "sidestory.hoverPreview": {
+          "type": "string",
+          "enum": [
+            "card",
+            "editor",
+            "both",
+            "off"
+          ],
+          "markdownEnumDescriptions": [
+            "A small card in the panel shows the first lines of the code.",
+            "The code's lines are marked in editors that already show its file (none is opened or scrolled).",
+            "The card and the mark in visible editors.",
+            "Nothing: only a click shows the code."
+          ],
+          "default": "card",
+          "markdownDescription": "What resting the pointer on a code link or an inline reference in a sidestory (or tabbing to one) shows of its code. It never moves the editor, the cursor or focus; a click still opens the code."
+        },
         "sidestory.widgets.enabled": {
           "type": "boolean",
           "default": true,
@@ -724,6 +741,26 @@
       {
         "id": "sidestory.highlightBorder",
         "description": "Border of identifiers the active step highlights.",
+        "defaults": {
+          "dark": "#00000000",
+          "light": "#00000000",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
+        }
+      },
+      {
+        "id": "sidestory.hoverPreviewBackground",
+        "description": "Background of the lines a link in a sidestory points at while the pointer rests on it (sidestory.hoverPreview).",
+        "defaults": {
+          "dark": "editor.hoverHighlightBackground",
+          "light": "editor.hoverHighlightBackground",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      },
+      {
+        "id": "sidestory.hoverPreviewBorder",
+        "description": "Left border of the lines a link in a sidestory points at while the pointer rests on it (high contrast themes, where backgrounds are transparent).",
         "defaults": {
           "dark": "#00000000",
           "light": "#00000000",
