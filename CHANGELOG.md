@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.7 (2026-10-28)
 
 - < > buttons sit right beside the step picker that narrow panels show, and beside every dropdown in a widget (`Select`; `arrows={false}` leaves them out), to step through without opening the list.
 - The Claude Code skill mirrors the code's hierarchy: an overview sidestory with one box per part, and a detail sidestory for each part big enough to need one.
