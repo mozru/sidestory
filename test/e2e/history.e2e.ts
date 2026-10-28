@@ -7,8 +7,8 @@ test.beforeEach(async ({ page }) => resetWorkbench(page));
 
 // VS Code's keybindings follow the browser's platform.
 const mac = process.platform === 'darwin';
-const BACK = mac ? 'Control+Minus' : 'Alt+ArrowLeft';
-const FORWARD = mac ? 'Control+Shift+Minus' : 'Alt+ArrowRight';
+const BACK = mac ? 'Control+Minus' : process.platform === 'linux' ? 'Control+Alt+Minus' : 'Alt+ArrowLeft';
+const FORWARD = process.platform === 'win32' ? 'Alt+ArrowRight' : 'Control+Shift+Minus';
 
 test('F1 pressed in the content opens the Command Palette', async ({ page }) => {
   const panel = await openExplainer(page, 'bit-reader');

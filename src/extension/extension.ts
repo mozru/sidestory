@@ -68,6 +68,17 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   context.subscriptions.push(log, { dispose: () => [...sessions].forEach((s) => s.dispose()) });
 
   const updateContext = () => void vscode.commands.executeCommand('setContext', 'sidestory.active', [...sessions].some((s) => s.panel.visible));
+  // VS Code's own navigate keys run Sidestory: Back / Forward only while the active panel has somewhere to go.
+  const canNavigate = { back: false, forward: false };
+  const updateNavContext = () => {
+    const s = [...sessions].find((x) => x.panel.active);
+    for (const way of ['back', 'forward'] as const) {
+      const on = !!s?.canNavigate[way];
+      if (on === canNavigate[way]) continue;
+      canNavigate[way] = on;
+      void vscode.commands.executeCommand('setContext', way === 'back' ? 'sidestory.canNavigateBack' : 'sidestory.canNavigateForward', on);
+    }
+  };
 
   /** The text editor whose selection "re-anchor" uses: the active one, else the last one still visible. */
   const selectionEditor = () =>
@@ -114,6 +125,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     stepOf: (dir, anchorId) => index.stepOf(dir, anchorId),
     titleOf: (dir) => index.entry(dir)?.title || undefined,
     opened: (ref) => navigator?.noteOpened(ref),
+    historyChanged: () => updateNavContext(),
     symbols,
   };
 
@@ -148,6 +160,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       sessions.delete(s);
       if (current === s) current = [...sessions].at(-1);
       updateContext();
+      updateNavContext();
     });
     s.onDidSwitch(() => setTimeout(() => tree.follow(s), 0));
     panel.onDidChangeViewState((e) => {
@@ -158,6 +171,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
         tree.follow(s);
       }
       updateContext();
+      updateNavContext();
     });
     // A preview panel has its own tab icon (tab titles can't be italic); it goes when the reader navigates.
     s.onDidNavigate(() => setPreviewIcon(s));

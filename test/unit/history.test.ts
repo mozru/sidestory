@@ -60,6 +60,29 @@ describe('NavHistory', () => {
     expect(h.current).toMatchObject({ active: 'two', step: 2, scroll: { anchor: 'two', offset: -3 } });
   });
 
+  it('an update leaves what it doesn’t know as it was', () => {
+    const h = new NavHistory();
+    h.push({ ...at(A, 'one', 1), scroll: { anchor: 'one', offset: 5 } });
+    h.update({ ...A, active: 'two', step: undefined, scroll: undefined });
+    expect(h.current).toMatchObject({ active: 'two', step: 1, scroll: { anchor: 'one', offset: 5 } });
+  });
+
+  it('drops a page that is gone, never the current entry, keeping the place', () => {
+    const h = new NavHistory();
+    h.push(at(A, 'one'));
+    h.push(at(X, 'loop'));
+    h.push(at(A, 'two'));
+    h.push(at(X, 'b'));
+    h.push(at(A, 'three'));
+    h.go(3);
+    expect(h.drop(A)).toBe('A');
+    expect(actives(h)).toEqual(['x:loop', 'x:b']);
+    expect(h.current?.active).toBe('b');
+    expect(h.drop(X)).toBe('X'); // the current entry stays
+    expect(actives(h)).toEqual(['x:b']);
+    expect(h.drop({ dir: '', trail: [] })).toBeUndefined();
+  });
+
   it('keeps the newest entries past the cap', () => {
     const h = new NavHistory(undefined, 5);
     for (let i = 0; i < 12; i++) h.push(at(A, `s${i}`));

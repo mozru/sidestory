@@ -571,7 +571,7 @@ test('the trail shows where the reader is and leads back up', async ({ page }) =
   await page.locator('.cx-back').click();
   await page.locator('.cx-scroll').focus();
   await page.keyboard.press('Escape');
-  expect(await posted(page)).toEqual([
+  expect((await posted(page)).filter((m) => m.type === 'goTo')).toEqual([
     { type: 'goTo', depth: 0 },
     { type: 'goTo', depth: 0 },
     { type: 'goTo', depth: 0 },
@@ -683,7 +683,7 @@ test('a detail naming an explainer already on the trail goes back up to it', asy
   });
   await send(page, { type: 'details', items: [{ name: 'bit-reader', found: true, title: 'Root', summary: '', steps: 5 }, { name: 'retry-backoff', found: true, title: 'Child', summary: '', steps: 1 }] });
   const up = frame(page).locator('[data-explain-detail="bit-reader"] .cx-dive');
-  await expect(up).toHaveText('‹ Back to Root');
+  await expect(up).toHaveText('‹ Up to Root');
   await expect(frame(page).locator('[data-explain-detail="retry-backoff"] .cx-dive')).toBeDisabled();
   await clearPosted(page);
   await up.click();

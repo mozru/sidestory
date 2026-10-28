@@ -497,13 +497,27 @@
         "command": "sidestory.navigateBack",
         "key": "alt+left",
         "mac": "ctrl+-",
-        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus"
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus && sidestory.canNavigateBack"
+      },
+      {
+        "command": "sidestory.navigateBack",
+        "key": "ctrl+alt+-",
+        "mac": "ctrl+-",
+        "win": "alt+left",
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus && sidestory.canNavigateBack"
       },
       {
         "command": "sidestory.navigateForward",
         "key": "alt+right",
         "mac": "ctrl+shift+-",
-        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus"
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus && sidestory.canNavigateForward"
+      },
+      {
+        "command": "sidestory.navigateForward",
+        "key": "ctrl+shift+-",
+        "mac": "ctrl+shift+-",
+        "win": "alt+right",
+        "when": "activeWebviewPanelId == 'sidestory.explainer' && !editorTextFocus && !inputFocus && !terminalFocus && !sideBarFocus && !panelFocus && !auxiliaryBarFocus && sidestory.canNavigateForward"
       },
       {
         "command": "sidestory.nextStep",

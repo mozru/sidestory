@@ -70,7 +70,7 @@ test('a step chosen from the tabs is an entry: Back and Forward return to its st
   await open(page);
   await expect(back(page)).toBeDisabled();
   await expect(forward(page)).toBeDisabled();
-  await expect(back(page)).toHaveAttribute('title', 'Back');
+  await expect(back(page)).toHaveAccessibleName('Back');
   // The reader scrolls a little into step 1, then picks step 4.
   await page.locator('.cx-scroll').evaluate((e) => (e.scrollTop = 120));
   await settle(page);
@@ -79,7 +79,7 @@ test('a step chosen from the tabs is an entry: Back and Forward return to its st
   await expect(position(page)).toHaveText('Step 4 of 5');
   await settle(page);
   await expect(back(page)).toBeEnabled();
-  await expect(back(page)).toHaveAttribute('title', 'Back to Tour · step 1');
+  await expect(back(page)).toHaveAttribute('title', /^Back \((⌘\[|Alt\+←)\) to Tour · step 1$/);
   await expect(back(page)).toHaveAccessibleName('Back to Tour · step 1');
   const at4 = await scrollTop(page);
   await clearPosted(page);
@@ -89,7 +89,7 @@ test('a step chosen from the tabs is an entry: Back and Forward return to its st
   // The editor follows, as for any step the reader chooses.
   expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'one', source: 'step' });
   await expect(back(page)).toBeDisabled();
-  await expect(forward(page)).toHaveAttribute('title', 'Forward to Tour · step 4');
+  await expect(forward(page)).toHaveAccessibleName('Forward to Tour · step 4');
   await forward(page).click();
   await expect(position(page)).toHaveText('Step 4 of 5');
   await expect.poll(() => near(page, at4)).toBe(true);
@@ -130,14 +130,14 @@ test('Back to another sidestory asks the extension for it, then lands on its ste
   const at3 = await scrollTop(page);
   // A dive: the extension answers with the detail.
   await initChild(page);
-  await expect(back(page)).toHaveAttribute('title', 'Back to Tour · step 3');
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 3');
   await clearPosted(page);
   await send(page, { type: 'history', delta: -1 }); // Sidestory: Back
   await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'three' });
   await initRoot(page, 'three');
   await expect(position(page)).toHaveText('Step 3 of 5');
   await expect.poll(() => near(page, at3)).toBe(true);
-  await expect(forward(page)).toHaveAttribute('title', 'Forward to Detail · step 1');
+  await expect(forward(page)).toHaveAccessibleName('Forward to Detail · step 1');
   await clearPosted(page);
   await forward(page).click();
   await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: CHILD, trail: ['tour', 'detail'], active: 'a' });
@@ -173,7 +173,7 @@ test('a sidestory opened into the panel is a new entry; the history survives the
   await open(page);
   await page.locator('.cx-step', { hasText: 'Two' }).click();
   await initChild(page, 'b', [{ name: 'detail', title: 'Detail' }]);
-  await expect(back(page)).toHaveAttribute('title', 'Back to Tour · step 2');
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
   await page.waitForTimeout(400);
   const saved = await page.evaluate(() => (window as unknown as { __state: unknown }).__state);
   // Rebuilt, as VS Code does for a hidden panel shown again: a new page with the saved state, then `init` again.
@@ -185,7 +185,7 @@ test('a sidestory opened into the panel is a new entry; the history survives the
   await page.goto('/test/webview/harness.html');
   await expect.poll(() => posted(page)).toContainEqual({ type: 'ready' });
   await initChild(page, 'b', [{ name: 'detail', title: 'Detail' }]);
-  await expect(back(page)).toHaveAttribute('title', 'Back to Tour · step 2');
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
   await expect(forward(page)).toBeDisabled();
   await back(page).click();
   await expect.poll(() => posted(page)).toContainEqual({ type: 'openHistory', dir: ROOT, trail: ['tour'], active: 'two' });
@@ -239,7 +239,7 @@ test('Go to Step from the extension is an entry; the editor’s cursor moving is
   await expect(back(page)).toBeDisabled();
   await send(page, { type: 'syncTo', anchorId: 'four', jump: true });
   await expect(position(page)).toHaveText('Step 4 of 5');
-  await expect(back(page)).toHaveAttribute('title', 'Back to Tour · step 2');
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
 });
 
 test('narrow panels fit the buttons beside the status, the title below', async ({ page }) => {
@@ -252,6 +252,45 @@ test('narrow panels fit the buttons beside the status, the title below', async (
   expect(f!.x).toBeGreaterThan(b!.x);
   expect(t!.y).toBeGreaterThan(b!.y + b!.height - 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('a sidestory the extension can no longer show is dropped from the history, and the reader hears so', async ({ page }) => {
+  await open(page);
+  await page.locator('.cx-step', { hasText: 'Two' }).click();
+  await initChild(page);
+  await clearPosted(page);
+  await back(page).click();
+  await expect.poll(() => posted(page)).toContainEqual(expect.objectContaining({ type: 'openHistory', dir: ROOT }));
+  await send(page, { type: 'historyFailed', dir: ROOT, trail: ['tour'] });
+  await expect(back(page)).toBeDisabled();
+  await expect(page.locator('.cx-title')).toHaveText('Detail');
+  await expect(page.locator('[aria-live]')).toHaveText('Tour is no longer available');
+  expect(await page.evaluate(() => (window as unknown as { __state: { history: { entries: unknown[]; index: number } } }).__state.history)).toMatchObject({ entries: [{ dir: CHILD }], index: 0 });
+});
+
+test('a Back the extension never answers is given up after a while', async ({ page }) => {
+  await page.clock.install();
+  await open(page);
+  await page.locator('.cx-step', { hasText: 'Two' }).click();
+  await initChild(page);
+  await back(page).click();
+  // While it waits, the buttons count from where it's going.
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 1');
+  await page.clock.runFor(11_000);
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
+});
+
+test('the extension hears whether Back and Forward have somewhere to go (VS Code’s own keys act otherwise)', async ({ page }) => {
+  await open(page);
+  const states = async () => (await posted(page)).filter((m) => m.type === 'historyState');
+  await expect.poll(states).toEqual([{ type: 'historyState', canBack: false, canForward: false }]);
+  await page.locator('.cx-step', { hasText: 'Two' }).click();
+  await back(page).click();
+  await expect.poll(states).toEqual([
+    { type: 'historyState', canBack: false, canForward: false },
+    { type: 'historyState', canBack: true, canForward: false },
+    { type: 'historyState', canBack: false, canForward: true },
+  ]);
 });
 
 test.describe('VS Code’s shortcuts from inside the content', () => {

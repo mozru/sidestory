@@ -175,7 +175,7 @@ These are the commands you'll use most. They're all in the Command Palette.
 | **Sidestory: Open Sidestory…** | Pick a sidestory and open it beside the code. |
 | **Sidestory: Go to Step…** | Find any step by its title. |
 | **Sidestory: Next Step** / **Previous Step** | Move through the page (<kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>[</kbd>). |
-| **Sidestory: Back** / **Forward** | Go back or forward in the panel's history (while it has focus: <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>; <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> on macOS). |
+| **Sidestory: Back** / **Forward** | Go back or forward in the panel's history (while it has focus, VS Code's Go Back / Go Forward keys: <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>; <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> on Linux; <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> on macOS). |
 | **Sidestory: Show Sidestories for This Code** | List the pages that explain the code under the cursor. |
 | **Sidestory: Copy a Prompt for Your Agent** | Copy a prompt that asks your agent to write a sidestory. |
 | **Sidestory: Pin Anchors to the Current Code** | Record each section's code, so it can follow edits. |
