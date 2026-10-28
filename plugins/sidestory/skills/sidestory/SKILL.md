@@ -13,35 +13,33 @@ A sidestory is a folder `.sidestory/<name>/` at the repository root (the folder 
 
 The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code. The editor follows the steps, and the steps follow the cursor.
 
-## Show, don't tell
+## What Sidestory supports
 
-A good sidestory is mostly pictures. The code is already beside the page, so the page's job is what the code can't show at a glance: the shape, the flow, the states, the data as it moves. **Every step leads with a figure, and the prose is its caption**: two to four sentences, about 60 words at most, saying what to notice and why it's built that way. If a step needs more words than that, draw more, or split the step. The step-following block diagram counts as the figure for the steps it lights; give a step its own figure only when it adds something that diagram can't (a timeline, a layout, the data at each stage), never another copy of it. A step about tests, config or a move may be text alone if it's two sentences or less.
+Know these so you can use any of them; the style of the page is the user's (see "Style" below).
 
-Pick the picture that fits what the step is about:
-
-| The step is about | Draw |
-|---|---|
-| Parts and how they connect | A block diagram whose boxes light up per step |
-| An order of events, a protocol, retries | A sequence or timeline: lanes and arrows, time going down or right |
-| Modes, a lifecycle, an FSM | A state diagram, the step's transition lit |
-| A change (branch mode) | Before → after side by side, or the existing picture with the new parts marked |
-| A layout: bytes, a struct, a record on disk | Boxes in a row with field names and sizes |
-| A formula, a growth, a trade-off | A small SVG chart, or a few worked values in a table; a widget only if the reader should change the inputs |
-| An algorithm's steps | The data at each stage (a list being merged, a tree being split), as a strip of small frames or a stepper |
-| Choices or cases | A table, never a paragraph of "if… otherwise…" |
-
-Show real values from the code (a real field name, real sizes, the real retry delays) rather than placeholders. Keep text inside figures to labels. A code block isn't a figure: the code is already beside the page.
-
-## What a page can do
-
-Use these where they make the explanation clearer:
-
-- **Diagrams that follow the steps:** inline SVG whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and glow while the editor cursor is in that code.
-- **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …) play in the panel. Animate only what the current step is about: data flowing along a lit wire, a FIFO filling.
+**The page** (`sidestory.html`: HTML and CSS, no script)
+- **Steps:** top-level sections with `data-explain-anchor` are the steps; readers move with tabs, a picker with < > in narrow panels, J/K, or the cursor in the code. Nested anchors (a card, a figure) are linked too.
+- **Code links:** `data-explain-ref="<anchor>"` on any element jumps the editor to that code without changing the step; `data-explain-code` links code with no anchor, by line range or symbol (`#name`, and for SystemVerilog `#driver(x)`, `#driver(state_d).case(IDLE)`, `#u_inst(.port)`). Readers can preview a link's code on hover.
+- **Diagrams that follow the steps:** inline SVG or HTML whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and light up while the editor cursor is in their code. Colors come from theme tokens (`--cx-wire-data`, `--cx-box-fill`, `--cx-on`, …).
+- **Pictures a page can draw:** block diagrams, sequences and timelines, state diagrams, before → after, byte and struct layouts, small SVG charts, frames of an algorithm's data, tables.
+- **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …), tied to the steps with `.cx-on` rules; paused for readers who ask for less motion.
 - **Interactivity without script:** tabs, steppers, before/after switches and quizzes from radio buttons and `:has(:checked)`; `<details>` for asides.
-- **Overviews and details:** a tree of sidestories that follows the code's hierarchy (up to 16 levels): an overview links each part's sidestory, where readers peek at it or dive into it, and the Sidestories view shows the same tree.
-- **Code blocks** highlighted in the reader's theme (`class="language-python"`).
-- **Widgets:** React components (Tailwind, Recharts, D3, Motion) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor as they run.
+- **Code blocks** colored in the reader's theme (`class="language-python"`).
+- **Widgets:** React components (Tailwind, Recharts, D3, Motion, shadcn-style UI) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor. Each workspace asks the reader once before they run.
+
+**The editor**
+- Each step highlights its lines with the step's `color`, marks the identifiers in its `highlight`, and fades the rest of the file. A clicked link flashes its lines, then leaves a frame.
+- The manifest's `highlight` object sets how this sidestory does that: `dim`, `clickSeconds`, `clickFrame`, `hoverPreview` (`card`, `editor`, `both`, `off`); an anchor's `dim` overrides it for one step. The reader's own settings always win.
+- CodeLenses and the status bar name the sidestory and step for the code under the cursor.
+
+**Structure and navigation**
+- **Overviews and details:** a tree of sidestories that follows the code's hierarchy (up to 16 levels). A step marks a part with `data-explain-detail="<name>"`; readers peek at its `summary` or dive in, with a trail back. The Sidestories view shows the same tree, pins the overview as **Start here**, and files top-level ones by `group`.
+- **Branches:** a sidestory with a `base` explains a branch's changes. VS Code marks each changed file explained, partly, not yet or trivial, and the checker's `--coverage` counts what's left.
+- **Comments:** readers comment on steps and code lines; the comments plugin lets you read and answer them.
+
+## Style
+
+Sidestory doesn't impose a writing style. Follow the one the user asks for, the repository's (its CLAUDE.md, or the sidestories already in `.sidestory/`), in that order. Without one: explain *why* and *how it fits together* rather than paraphrasing the code beside the page, keep steps short, and let a picture carry a step where one shows it better than words.
 
 ## Before writing
 
@@ -50,7 +48,6 @@ Read the reference that ships with this skill:
 - [references/GUIDE.md](references/GUIDE.md), section "Writing a sidestory": the anchors, the manifest, overview → detail sidestories, styling, and what's supported. Read it every time. In branch mode, read "Explaining a branch" too: `base`, `side`, trivial marks, `trivialFiles` and the coverage rule.
 - [references/WIDGETS.md](references/WIDGETS.md): read all of it before writing an interactive widget. Most explanations don't need one, and CSS-only interactivity comes first.
 
-Look at existing sidestories in `.sidestory/` and match their style.
 
 ## Pick the mode
 
@@ -78,7 +75,7 @@ If none is found, the extension isn't installed here: tell the user to install `
    `coverage.files[].changes[]` is every change the checker counts, with its lines and status: that list is your checklist. Exit code 3 means some change isn't explained yet; 1 means an error to fix first (a base it can't find, a manifest problem).
    - **A sidestory already belongs to this branch** (listed in `coverage.sidestories`): this is an **update**, not a new sidestory. Keep its steps and their order, and add steps or widen anchors only for the changes listed as `unexplained` or `partly`. For `needsLook` changes (`changed-since-pinned`), read the step, update its prose to cover the new lines, and only then accept them (step 5). After review fixes or a rebase this is the normal case.
 2. **Read the merge diff:** `git diff <base>...HEAD` for committed changes, plus `git diff $(git merge-base <base> HEAD)` when there are uncommitted edits. Read the changed files whole where a change can't be understood from the diff alone.
-3. **Plan the steps in reviewer order, each with its picture:** what the change is for and its shape first (a before/after diagram, or the new parts drawn into the existing ones), then the core change, then how callers and data flow change, then tests, config and migrations last. **One step per logical change, not per file:** a step may anchor code in several files (nested `data-explain-ref` anchors).
+3. **Plan the steps in reviewer order:** what the change is for and its shape first, then the core change, then how callers and data flow change, then tests, config and migrations last. **One step per logical change, not per file:** a step may anchor code in several files (nested `data-explain-ref` anchors).
 4. **Write `.sidestory/<branch-slug>/`**, the slug made from the branch name exactly as the extension makes it: each run of `/` becomes one `-`, and each run of other characters that aren't letters, digits, `.`, `_` or `-` becomes one `-`; then leading characters that aren't letters or digits are dropped, it is cut to 60 characters, and trailing `-` and `.` are dropped; if nothing is left, it is `this-branch` (`alice/retry` → `alice-retry`, `fix/login page!` → `fix-login-page`), with `"version": 3` and `"base": "<base>"` in `manifest.json`, and the page as in file mode (steps 3–4 of the workflow below).
    - Anchor added code on the current side (no `side`). Anchor removed code a step talks about with `"side": "base"`: its `file` and `range` are in the merge-base's version of the file (`git show $(git merge-base <base> HEAD):<old path>`). A larger deletion (over 20 lines) needs one; a replacement is explained by one anchor over all its new lines.
    - Mark mechanical changes trivial, with a `why` a reviewer can check: `trivialFiles` for whole files (lockfiles, generated files, snapshots: specific paths or narrow globs, never `**`), `"trivial": true` with `"why"` for ranges (import order, formatting, a rename), named `trivial-1`, `trivial-2`, …, with no section in the page.
@@ -106,9 +103,9 @@ If none is found, the extension isn't installed here: tell the user to install `
 ## Workflow
 
 1. **Understand the code** the user named. Read it properly, follow the data and control flow, and find the non-obvious parts (invariants, edge cases, the reason it's built this way).
-2. **Plan the steps**, usually 4–10, and **sketch each step's figure before its words** (see "Show, don't tell"): the big picture first (what it is, its interface, a block diagram), then the parts in the order data or control flows through them. **Mirror the code's hierarchy** when the code has one (a system of modules, a package of files, a top module with submodules): an overview sidestory whose block diagram has one box per part, and one detail sidestory per part, linked with `data-explain-detail` from that part's step, with details of their own one level down. Give a part its own detail when it would need three or more steps of its own; smaller parts stay steps in their parent. Readers then go top-down: the overview alone, or dive into the part they care about. Name the overview `overview` or `<area>-overview` so the sidebar pins it as **Start here**; in a repository with many sidestories, give top-level ones a `group` in their manifests.
+2. **Plan the steps**, usually 4–10: the big picture first (what it is, its interface, a block diagram), then the parts in the order data or control flows through them. **Mirror the code's hierarchy** when the code has one (a system of modules, a package of files, a top module with submodules): an overview sidestory whose block diagram has one box per part, and one detail sidestory per part, linked with `data-explain-detail` from that part's step, with details of their own one level down. Give a part its own detail when it would need three or more steps of its own; smaller parts stay steps in their parent. Readers then go top-down: the overview alone, or dive into the part they care about. Name the overview `overview` or `<area>-overview` so the sidebar pins it as **Start here**; in a repository with many sidestories, give top-level ones a `group` in their manifests.
 3. **Write `manifest.json`.** Give it a `title`, a one-line `summary`, and one anchor per step: `file` (path from the repository root, `/` separators), `range` (1-based first and last line), `highlight` (identifiers worth marking), and `color` (a theme color id such as `charts.blue`, never a hex value). Start from the `version: 1` form in the guide and let the checker pin it. Set `highlight` only when the story benefits (`"dim": false` for an overview whose steps span whole files, `"hoverPreview": "both"` for a diagram-heavy page, a longer `clickSeconds` for dense code); otherwise leave the defaults. When you rewrite an existing `manifest.json`, keep its `"id"` exactly as it was: comment threads find their sidestory by it.
-4. **Write `sidestory.html`.** One `<section data-explain-anchor="…" data-explain-title="…">` per step: a heading, its figure (or the shared diagram lit for it), then a short caption. Draw diagrams in inline SVG or HTML/CSS. Use `<a data-explain-ref="anchor">…</a>` to point at other code from inside a step. For diagrams (the guide's "Diagrams that follow the steps", "Code links without an anchor" and "Diagram tokens"):
+4. **Write `sidestory.html`.** One `<section data-explain-anchor="…" data-explain-title="…">` per step. Draw diagrams in inline SVG or HTML/CSS. Use `<a data-explain-ref="anchor">…</a>` to point at other code from inside a step. For diagrams (the guide's "Diagrams that follow the steps", "Code links without an anchor" and "Diagram tokens"):
    - **Color them with the diagram tokens** (`--cx-wire-data`, `--cx-wire-ctrl`, `--cx-box-fill`, `--cx-box-stroke`, `--cx-label`, …) and the dash tokens (`--cx-dash-ctrl`, …), never hex values or ad-hoc `--vscode-charts-*` colors. They follow light, dark and high-contrast themes.
    - **Make it follow the steps.** Draw one block diagram, put `data-explain-diagram="step dim-rest"` on its `<svg>`, tag boxes and wires with `data-explain-on="<anchor ids>"` for the steps they matter in, and mark the legend `data-explain-keep`. A section that needs the diagram again gets its own copy with `data-explain-diagram="section dim-rest"`.
      - Ids must match manifest anchor ids exactly; a wrong one never lights. The checker reports ids that aren't in the manifest, and manifest anchors nothing uses.
@@ -145,10 +142,6 @@ Readers comment on steps and code lines in VS Code. The `sidestory-comments` plu
 - Never resolve threads; set `resolve_suggested` when the question is answered.
 - Never change or remove a manifest's `id`: it ties local comment threads to their sidestory.
 
-## Style
+## Keeping it current
 
-- Explain *why* and *how it fits together*, not a line-by-line paraphrase. The code is right beside the text.
-- Keep each step readable at a glance while looking at the code: a heading, one figure (a strip of frames counts as one), two to four sentences that don't describe what the figure already shows. Put anything longer in a `<details>`, or make it its own step.
-- Before you finish, reread the page as a reviewer would: any step that is mostly text gets a figure or gets shorter.
-- Name real signals, functions and variables in `<span class="mono">` or `<code>`, and make the anchors point at exactly the code the step talks about.
 - When updating an existing sidestory after code changes, run the checker first. It reports anchors whose code was lost (`anchor-lost`), changed a lot (`anchor-stale`) or changed a little (`anchor-changed`). Fix the text and the ranges, then pin again (`--accept` for out-of-date steps whose prose you updated).

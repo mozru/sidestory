@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The Claude Code skill now lists what Sidestory supports (steps, code links and hover previews, diagrams that follow the steps, motion, script-free interactivity, widgets, editor highlighting and its `highlight` options, overviews and details, branch coverage, comments) instead of prescribing a writing style: Claude follows the style you ask for, or your repository's.
 - A sidestory can set how it highlights code: `"highlight"` in its manifest (`dim`, `clickSeconds`, `clickFrame`, `hoverPreview`) changes the defaults of `sidestory.dimUnfocused`, `sidestory.clickHighlightSeconds`, `sidestory.clickFrame` and `sidestory.hoverPreview` for it, and `"dim"` on an anchor for one step. Your own settings always win; the checker warns about bad values.
 
 ## 0.2.7 (2026-10-28)
