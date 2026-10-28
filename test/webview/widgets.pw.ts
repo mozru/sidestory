@@ -393,6 +393,17 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await expect.poll(() => contentFocus(page)).toBe('a');
   });
 
+  /**
+   * Puts focus in the widget the way a keyboard user does (Enter on its placeholder: the reader's activation, and focus
+   * legitimately there). Not a click on a button: the runtime then hands focus back to the placeholder a moment later,
+   * so where the next key lands would be a race.
+   */
+  async function intoWidget(page: Page): Promise<void> {
+    await placeholder(page).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => contentFocus(page)).toBe('widget');
+  }
+
   test('a shortcut pressed in a widget leaves it for its placeholder and goes on to VS Code; quit never does', async ({ page }) => {
     await openProbe(page);
     // What VS Code's webview host would get: key events on the panel's window.
@@ -402,15 +413,16 @@ test.describe('highlight, steps, keys and focus exits', () => {
       window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.key}/${e.code}`));
     });
     const keys = () => page.evaluate(() => (window as unknown as { __keys: string[] }).__keys);
-    await widgetFrame(page).getByTestId('inc').click();
+    // Ctrl and Shift alone stay in the widget; the shortcut goes on, and focus with it (the key-ups land in the content).
+    await intoWidget(page);
     await page.keyboard.press('Control+Shift+KeyP');
     await expect.poll(() => contentFocus(page)).toBe('explain-widget');
     await expect.poll(keys).toEqual(['CS+P/KeyP']);
-    await widgetFrame(page).getByTestId('inc').click();
+    await intoWidget(page);
     await page.keyboard.press('Control+KeyQ');
     await expect.poll(() => contentFocus(page)).toBe('explain-widget');
     // Plain keys are the widget's: J types nothing into the panel and steps nothing.
-    await widgetFrame(page).getByTestId('inc').click();
+    await intoWidget(page);
     await page.keyboard.press('j');
     await page.waitForTimeout(150);
     expect(await keys()).toEqual(['CS+P/KeyP']);
@@ -425,7 +437,7 @@ test.describe('highlight, steps, keys and focus exits', () => {
       window.addEventListener('keydown', (e) => w.__keys.push(`${e.ctrlKey ? 'C' : ''}${e.shiftKey ? 'S' : ''}+${e.code}/${e.key}/${e.keyCode}`));
     });
     const forge = async (code: string, mods: { shiftKey?: boolean; ctrlKey?: boolean; repeat?: boolean; key?: string; keyCode?: number }) => {
-      await widgetFrame(page).getByTestId('inc').click(); // real activation, and focus legitimately in the widget
+      await intoWidget(page);
       const f = await (await frames(page).nth(0).elementHandle())!.contentFrame();
       await f!.evaluate(([code, mods]) => {
         parent.postMessage({ type: 'focusExit', dir: 'shortcut', key: { key: code.slice(3), code, keyCode: 0, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, repeat: false, ...mods } }, '*');
@@ -448,7 +460,7 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
     await page.locator('.cx-hist[data-delta="-1"]').click();
     await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
-    await widgetFrame(page).getByTestId('inc').click();
+    await intoWidget(page);
     await page.keyboard.press('Alt+ArrowRight');
     await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
   });
