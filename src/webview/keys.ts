@@ -48,7 +48,9 @@ export function forVsCode(k: KeyInfo): boolean {
   const mod = k.ctrlKey || k.metaKey;
   if (!mod && !k.altKey) return false;
   if (mod && !k.altKey && /^[zy]$/i.test(k.key)) return false;
-  if (mod && !k.altKey && MOVES.test(k.key)) return false;
+  // Ctrl+PageUp / PageDown switch editors in VS Code; the frame has no use for them.
+  const switchesEditor = k.ctrlKey && !k.metaKey && !k.shiftKey && (k.key === 'PageUp' || k.key === 'PageDown');
+  if (mod && !k.altKey && MOVES.test(k.key) && !switchesEditor) return false;
   if (mod && !k.altKey && !k.shiftKey && /^[acvx]$/i.test(k.key)) return false;
   return true;
 }
@@ -79,25 +81,43 @@ export function historyKey(k: Mods, mac = MAC): 0 | 1 | -1 {
   return 0;
 }
 
+/** The keys a widget may name, as VS Code reads them: `key` (unshifted, shifted) and `keyCode`, whatever the widget said. */
+const WIDGET_KEYS: Record<string, [string, string, number]> = {
+  F1: ['F1', 'F1', 112],
+  KeyP: ['p', 'P', 80],
+  KeyB: ['b', 'B', 66],
+  KeyJ: ['j', 'J', 74],
+  Tab: ['Tab', 'Tab', 9],
+  Minus: ['-', '_', 189],
+  BracketLeft: ['[', '{', 219],
+  BracketRight: [']', '}', 221],
+  ArrowLeft: ['ArrowLeft', 'ArrowLeft', 37],
+  ArrowRight: ['ArrowRight', 'ArrowRight', 39],
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`Digit${n}`, [String(n), '!@#$%^&*('[n - 1]!, 48 + n]])),
+};
+
 /**
- * The shortcuts a widget may pass on to VS Code. The frame's word that the reader pressed them is all the panel has (a
- * widget can claim a key after any real click), so only these: the Command Palette, Quick Open, switching editors,
- * the side bar and panel, the terminal, editor groups, zoom, Back and Forward, F1. Never a repeat.
+ * A shortcut a widget may pass on to VS Code, rebuilt from its key code and modifiers alone (VS Code may read the
+ * keyCode, which the widget could set to anything), or undefined. The frame's word that the reader pressed it is all
+ * the panel has (a widget can claim a key after any real click), so only these: the Command Palette, Quick Open,
+ * switching editors and groups, the side bar and panel, Back and Forward, F1. Never a repeat.
  */
-export function widgetShortcut(k: KeyInfo): boolean {
-  if (k.type !== 'keydown' || k.repeat) return false;
+export function widgetShortcut(k: KeyInfo, platform: 'mac' | 'win' | 'linux' = MAC ? 'mac' : WINDOWS ? 'win' : 'linux'): KeyInfo | undefined {
+  if (k.type !== 'keydown' || k.repeat) return undefined;
   const { code, shiftKey: shift, altKey: alt, ctrlKey: ctrl, metaKey: meta } = k;
   const mod = ctrl !== meta; // Ctrl or Cmd, not both
-  if (code === 'F1') return !ctrl && !meta && !alt;
-  if (mod && !alt && code === 'KeyP') return true; // Quick Open; Command Palette with Shift
-  if (mod && !alt && !shift && (code === 'KeyB' || code === 'KeyJ')) return true;
-  if (ctrl && !meta && !alt && code === 'Tab') return true;
-  if (ctrl && !meta && !alt && !shift && code === 'Backquote') return true;
-  if (mod && !alt && !shift && /^Digit[1-9]$/.test(code)) return true;
-  // Zoom; on macOS Ctrl+- and Ctrl+Shift+- are Back and Forward.
-  if (mod && !alt && (code === 'Equal' || code === 'Minus' || (code === 'Digit0' && !shift))) return true;
-  if (ctrl && !meta && alt && !shift && code === 'Minus') return true; // Back on Linux
-  if (meta && !ctrl && !alt && !shift && (code === 'BracketLeft' || code === 'BracketRight')) return true;
-  if (alt && !ctrl && !meta && !shift && (code === 'ArrowLeft' || code === 'ArrowRight')) return true;
-  return false;
+  const only = (c: boolean, m: boolean, a: boolean) => ctrl === c && meta === m && alt === a;
+  const ok =
+    (code === 'F1' && only(false, false, false)) ||
+    (code === 'KeyP' && mod && !alt) || // Quick Open; Command Palette with Shift
+    ((code === 'KeyB' || code === 'KeyJ') && mod && !alt && !shift) ||
+    (code === 'Tab' && only(true, false, false)) ||
+    (/^Digit[1-9]$/.test(code) && mod && !alt && !shift) ||
+    (code === 'Minus' && platform === 'mac' && only(true, false, false)) || // Back, and Forward with Shift
+    (code === 'Minus' && platform === 'linux' && only(true, false, true) && !shift) || // Back
+    ((code === 'BracketLeft' || code === 'BracketRight') && platform === 'mac' && only(false, true, false) && !shift) ||
+    ((code === 'ArrowLeft' || code === 'ArrowRight') && only(false, false, true) && !shift);
+  const known = WIDGET_KEYS[code];
+  if (!ok || !known) return undefined;
+  return { type: 'keydown', code, key: known[shift ? 1 : 0], keyCode: known[2], shiftKey: shift, altKey: alt, ctrlKey: ctrl, metaKey: meta, repeat: false };
 }

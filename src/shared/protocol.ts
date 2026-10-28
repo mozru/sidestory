@@ -113,8 +113,11 @@ export type ToWebview =
   | { type: 'navigate'; delta: 1 | -1 }
   /** Back or Forward in the panel's history (Sidestory: Back / Forward). */
   | { type: 'history'; delta: 1 | -1 }
-  /** A Back / Forward, dive or way up was refused (the sidestory is gone, or out of reach): the page asked for this. */
-  | { type: 'historyFailed'; dir: string; trail: string[] }
+  /**
+   * A Back / Forward, dive or way up (request `id`) was refused: the sidestory is `gone`, or can't be reached that way
+   * (`refused`: too deep, not a trail that fits).
+   */
+  | { type: 'historyFailed'; id?: number; dir: string; trail: string[]; reason: 'gone' | 'refused' }
   /** The explainer could not be loaded; keep showing the last good content. */
   | { type: 'error'; message: string | null }
   /** Files in the explainer folder changed (paths relative to it): reload them. */
@@ -173,11 +176,11 @@ export type FromWebview =
   /** The content frame needs a file from the explainer folder (an image, font or stylesheet). */
   | { type: 'requestAsset'; id: number; path: string }
   /** Open a detail explainer in this panel, optionally at one of its sections. */
-  | { type: 'dive'; name: string; section?: string }
+  | { type: 'dive'; name: string; section?: string; id?: number }
   /** Go back up the trail to this level (0 = the root explainer). */
-  | { type: 'goTo'; depth: number }
+  | { type: 'goTo'; depth: number; id?: number }
   /** Back or Forward to a sidestory in the panel's history: its folder, its trail's names (root first), its step. */
-  | { type: 'openHistory'; dir: string; trail: string[]; active?: string }
+  | { type: 'openHistory'; dir: string; trail: string[]; active?: string; id?: number }
   /** Whether Back / Forward have anywhere to go (otherwise VS Code's own navigate keys stay VS Code's). */
   | { type: 'historyState'; canBack: boolean; canForward: boolean }
   /** Describe these detail explainers (title, summary, size). */
@@ -263,6 +266,7 @@ const distinct = (a: string[]) => new Set(a).size === a.length;
 const codeTargetIds = z.array(anchorIdSchema).max(MAX_CODE_LINKS).refine(distinct);
 const codePathSchema = z.string().max(1024).refine(isSafeRelativePath);
 const codeTargetSchema = z.string().max(256).refine((t) => parseCodeTarget(t) !== null);
+const requestIdSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const previewIdSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const breadcrumbs = {
   mounted: z.array(widgetSrcSchema).max(MAX_WIDGETS),
@@ -278,9 +282,9 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('openExternal'), url: z.string().max(2048).refine((u) => safeExternalUrl(u) !== null) }),
   z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
-  z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional() }),
-  z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL) }),
-  z.object({ type: z.literal('openHistory'), dir: z.string().max(4096), trail: z.array(explainerNameSchema).min(1).max(MAX_TRAIL), active: anchorIdSchema.optional() }),
+  z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional(), id: requestIdSchema.optional() }),
+  z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL), id: requestIdSchema.optional() }),
+  z.object({ type: z.literal('openHistory'), dir: z.string().max(4096), trail: z.array(explainerNameSchema).min(1).max(MAX_TRAIL), active: anchorIdSchema.optional(), id: requestIdSchema.optional() }),
   z.object({ type: z.literal('historyState'), canBack: z.boolean(), canForward: z.boolean() }),
   z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),
   z.object({ type: z.literal('reanchor'), anchorId: anchorIdSchema }),
