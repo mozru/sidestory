@@ -193,7 +193,7 @@ Here are the settings people change most. The [guide](docs/GUIDE.md#settings) li
 | `sidestory.dimUnfocused` | `true` | Fade the rest of the file while you step through. |
 | `sidestory.codeLens.enabled` | `true` | Show a CodeLens above explained code. |
 | `sidestory.clickHighlightSeconds` | `1.5` | How long the code stays lit after you click a code link. `0` keeps it lit until the next one. After it fades, a frame stays around the code (`sidestory.clickFrame`). |
-| `sidestory.hoverPreview` | `card` | Rest the pointer on a link to preview its code: in a `card`, marked in an open `editor`, `both`, or `off`. |
+| `sidestory.hoverPreview` | `card` | Rest the pointer on a link to preview its code: in a `card`, marked in an editor already showing the file (`editor`), `both`, or `off`. |
 | `sidestory.gutter.enabled` | `false` | Show a book icon in the gutter on explained code. |
 | `sidestory.changes.openStepsIn` | `"editor"` | Open a branch's steps in the file, or in the diff. |
 | `sidestory.changes.includeUncommitted` | `true` | Count uncommitted changes in coverage. Turn it off to see what CI sees. |

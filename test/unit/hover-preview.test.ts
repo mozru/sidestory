@@ -52,7 +52,7 @@ async function ready() {
   };
   panels.push(panel);
   const hovers: unknown[] = [];
-  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {}, setHover: (h: unknown) => hovers.push(h) };
+  const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {}, setHover: (_owner: unknown, h: unknown) => hovers.push(h) };
   const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: { get: <T>(_k: string, d: T) => d, update: async () => {} } as never, reanchor() {} });
   const send = (m: unknown) => messages.fire(m);
   await session.load();
@@ -94,7 +94,7 @@ describe('previewRef and previewCode', () => {
     send({ type: 'previewCode', id: 2, path: 'rtl/bit_reader.sv', target: 'L3-L5' });
     expect((await reply(2)).preview).toMatchObject({ start: 3, end: 5, lines: [') (', '  input  logic         clk,', '  input  logic         rst_n,'] });
     send({ type: 'previewCode', id: 3, path: 'rtl/bit_reader.sv' });
-    expect((await reply(3)).preview).toMatchObject({ start: 1, end: 44, more: 32, languageId: 'systemverilog' }) // the empty line after the last newline counts, as in the editor;
+    expect((await reply(3)).preview).toMatchObject({ start: 1, end: 44, more: 32, languageId: 'sv' }) // the empty line after the last newline counts, as in the editor;
     expect((await reply(3)).preview!.lines).toHaveLength(12);
     send({ type: 'previewCode', id: 4, path: 'rtl/bit_reader.sv', target: 'driver(cnt_q)' });
     expect((await reply(4)).preview).toMatchObject({ start: 23 });
@@ -131,6 +131,9 @@ describe('previewRef and previewCode', () => {
 
     config['sidestory.hoverPreview'] = 'editor';
     send({ type: 'previewRef', id: 2, anchorId: 'consume' });
+    await sleep(100);
+    expect(hovers).toEqual([]); // resolved, but marked only at the card's moment, so sweeping marks nothing
+    send({ type: 'previewShow', id: 2 });
     await vi.waitFor(() => expect(hovers).toHaveLength(1));
     expect(hovers[0]).toMatchObject({ range: { start: 31, end: 34 } });
     expect((hovers[0] as { uri: Uri }).uri.fsPath).toBe(Uri.file(join(root, 'rtl/bit_reader.sv')).fsPath);
@@ -141,11 +144,28 @@ describe('previewRef and previewCode', () => {
     await sleep(100);
     expect(hovers).toHaveLength(2);
     (workspace as { textDocuments: unknown[] }).textDocuments = [fakeDocument(Uri.file(join(root, 'rtl/bit_reader.sv')), 'a\nb\nc\nd\ne\n')];
+    send({ type: 'previewShow', id: 4 }); // before it resolved: marked once it does
     send({ type: 'previewCode', id: 4, path: 'rtl/bit_reader.sv', target: 'L3-L5' });
     await vi.waitFor(() => expect(hovers).toHaveLength(3));
     expect(hovers[2]).toMatchObject({ range: { start: 3, end: 5 } });
     expect(posted.some((m) => m.type === 'codePreview')).toBe(false);
     expect(shown).toHaveLength(0);
+  });
+
+  it('a file no editor has open is read, never opened as a document (that would wake its language server)', async () => {
+    const { send, reply } = await ready();
+    const opened = vi.spyOn(workspace, 'openTextDocument');
+    try {
+      send({ type: 'previewCode', id: 1, path: 'rtl/bit_reader.sv', target: 'L3-L5' });
+      expect((await reply(1)).preview).toMatchObject({ start: 3, end: 5, languageId: 'sv' });
+      send({ type: 'previewCode', id: 2, path: 'rtl/bit_reader.sv', target: 'driver(cnt_q)' });
+      expect((await reply(2)).preview).toMatchObject({ start: 23 });
+      send({ type: 'previewCode', id: 3, path: 'rtl/bit_reader.sv' });
+      expect((await reply(3)).preview).toMatchObject({ start: 1, end: 44 });
+      expect(opened).not.toHaveBeenCalled();
+    } finally {
+      opened.mockRestore();
+    }
   });
 
   it('the setting reaches the page with init and when it changes', async () => {
@@ -161,7 +181,7 @@ describe('previewRef and previewCode', () => {
 });
 
 describe('the hover mark', () => {
-  it('goes on visible editors of that file only, and comes off', () => {
+  it('goes on visible editors of that file only, and comes off only for the panel that made it', () => {
     const uri = Uri.file('/w/a.ts');
     const editor = (u: Uri) => {
       const set = new Map<unknown, unknown[]>();
@@ -171,12 +191,15 @@ describe('the hover mark', () => {
     const b = editor(Uri.file('/w/b.ts'));
     (window as { visibleTextEditors: unknown[] }).visibleTextEditors = [a, b];
     const d = new Decorations();
+    const owner = {};
     try {
-      d.setHover({ uri: uri as never, range: { start: 3, end: 5 } });
+      d.setHover(owner, { uri: uri as never, range: { start: 3, end: 5 } });
       const lit = (e: typeof a) => [...e.set.values()].flat() as { start: { line: number }; end: { line: number } }[];
       expect(lit(a).map((r) => [r.start.line, r.end.line])).toEqual([[2, 4]]);
       expect(lit(b)).toEqual([]);
-      d.setHover(undefined);
+      d.setHover({}, undefined); // another panel's previewEnd leaves this mark alone
+      expect(lit(a).length).toBe(1);
+      d.setHover(owner, undefined);
       expect(lit(a)).toEqual([]);
     } finally {
       d.dispose();

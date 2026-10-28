@@ -161,5 +161,5 @@ test('`off` shows and asks nothing; `editor` asks (for the editor mark) but show
   await page.waitForTimeout(600);
   await expect(card(page)).toBeHidden();
   await el(page, 'plain').hover();
-  await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(['previewCode', 'previewEnd']);
+  await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(['previewCode', 'previewShow', 'previewEnd']);
 });

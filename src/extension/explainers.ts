@@ -100,9 +100,9 @@ export async function readBytesInside(uri: vscode.Uri, root: vscode.Uri, maxByte
 /**
  * Text of a file under `root`, preferring an open editor's unsaved buffer so edits show without saving.
  * Refuses files outside `root` (after following symlinks) and files over `maxBytes`.
- * Returns undefined if the file is missing or refused.
+ * Returns undefined if the file is missing or refused (logged, unless `quiet`: a hover preview reads on every rest).
  */
-export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: number): Promise<string | undefined> {
+export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: number, quiet = false): Promise<string | undefined> {
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
   if (uri.scheme !== 'file' || root.scheme !== 'file') {
     // Virtual file systems: no symlinks to follow. On remote hosts the extension runs there, so paths are `file:`.
@@ -112,7 +112,7 @@ export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: nu
   }
   const real = await realPathInside(uri.fsPath, root.fsPath);
   if (!real) {
-    log.warn(`Not reading ${uri.fsPath}: missing, or outside ${root.fsPath} after following links.`);
+    if (!quiet) log.warn(`Not reading ${uri.fsPath}: missing, or outside ${root.fsPath} after following links.`);
     return undefined;
   }
   if (open) {
@@ -124,7 +124,7 @@ export async function readInside(uri: vscode.Uri, root: vscode.Uri, maxBytes: nu
     // Files that aren't open are read as UTF-8 (documented limit).
     return new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(real)));
   } catch (e) {
-    log.warn(`Can't read ${uri.fsPath}: ${(e as Error).message}`);
+    if (!quiet) log.warn(`Can't read ${uri.fsPath}: ${(e as Error).message}`);
     return undefined;
   }
 }

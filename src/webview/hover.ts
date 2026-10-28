@@ -6,7 +6,8 @@ import { validPalette, validRuns } from './highlight.ts';
 
 /** How long the pointer rests (or focus stays) before the card shows. */
 const SHOW_MS = 500;
-/** The host is asked a little earlier, so the card is ready on time; sweeping across a diagram asks nothing. */
+/** The host is asked a little earlier, so the card is ready on time; sweeping across a diagram asks nothing. The editor
+ * mark waits for SHOW_MS (`previewShow`). */
 const ASK_MS = 250;
 /** Leaving the link for this long hides the card: moving between its nested elements (an SVG box's parts) doesn't. */
 const GRACE_MS = 120;
@@ -77,6 +78,8 @@ export class HoverCard {
     this.askTimer = setTimeout(() => this.send(), ASK_MS);
     this.showTimer = setTimeout(() => {
       this.due = true;
+      // The editor mark comes now too, not at the request: sweeping across a diagram marks nothing.
+      if (this.asked && this.mode !== 'card') this.host.post({ type: 'previewShow', id: this.id });
       this.render();
     }, SHOW_MS);
   }

@@ -560,7 +560,7 @@
             "Nothing: only a click shows the code."
           ],
           "default": "card",
-          "markdownDescription": "What resting the pointer on a code link or an inline reference in a sidestory (or tabbing to one) shows of its code. It never moves the editor, the cursor or focus; a click still opens the code."
+          "markdownDescription": "What resting the pointer on a link or a diagram box in a sidestory (or tabbing to one) shows of its code. It never moves the editor, the cursor or focus; a click still opens the code."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",

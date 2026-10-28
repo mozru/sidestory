@@ -120,15 +120,16 @@ export class Decorations implements vscode.Disposable {
   private flashed: vscode.TextEditor | undefined;
   private current: Focus | undefined;
   private widget: WidgetHighlight | undefined;
-  private hover: { uri: vscode.Uri; range: LineRange } | undefined;
+  private hover: { owner: object; uri: vscode.Uri; range: LineRange } | undefined;
 
   /**
-   * Marks a link's lines in the visible editors of its file while the pointer rests on the link; undefined clears.
-   * Never opens, scrolls or focuses anything: an editor that shows the file later gets it on `refresh`.
+   * Marks a link's lines in the visible editors of its file while the pointer rests on the link; undefined clears,
+   * only the mark `owner` (its panel) made: panels share these decorations. Never opens, scrolls or focuses
+   * anything: an editor that shows the file later gets it on `refresh`.
    */
-  setHover(h: { uri: vscode.Uri; range: LineRange } | undefined): void {
-    if (!h && !this.hover) return;
-    this.hover = h;
+  setHover(owner: object, h: { uri: vscode.Uri; range: LineRange } | undefined): void {
+    if (!h && this.hover?.owner !== owner) return;
+    this.hover = h && { owner, ...h };
     for (const editor of vscode.window.visibleTextEditors) this.applyHover(editor);
   }
 

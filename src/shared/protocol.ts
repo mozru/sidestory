@@ -232,6 +232,8 @@ export type FromWebview =
   | { type: 'previewRef'; id: number; anchorId: string }
   /** As `previewRef`, for a `data-explain-code` link (as `openCode` carries it). */
   | { type: 'previewCode'; id: number; path: string; target?: string }
+  /** The card's moment came for request `id` (SHOW_MS): with `editor` or `both`, its lines are marked now, not before. */
+  | { type: 'previewShow'; id: number }
   /** The pointer or focus left the link: the editor mark goes. */
   | { type: 'previewEnd' }
   /** Comment threads (docs/COMMENTS-PLAN.md §6.6), posted only from the panel's handlers for trusted input. */
@@ -292,6 +294,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('keepOpen') }),
   z.object({ type: z.literal('previewRef'), id: previewIdSchema, anchorId: anchorIdSchema }),
   z.object({ type: z.literal('previewCode'), id: previewIdSchema, path: codePathSchema, target: codeTargetSchema.optional() }),
+  z.object({ type: z.literal('previewShow'), id: previewIdSchema }),
   z.object({ type: z.literal('previewEnd') }),
   ...commentsFromWebviewSchemas,
   z.object({

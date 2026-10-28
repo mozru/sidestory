@@ -158,13 +158,9 @@ async function providerSymbols(uri: vscode.Uri): Promise<ProviderSymbol[] | unde
  * reader already has open (§8.1, §10.4).
  */
 export async function resolveLink(doc: vscode.TextDocument, link: CodeLink, tables: SymbolTables, provider: boolean): Promise<LinkResolution> {
-  if (link.target === undefined) return { ok: true, range: { start: 1, end: Math.max(1, doc.lineCount) } };
-  const t = parseCodeTarget(link.target);
-  if (!t) return { ok: false, message: `\`${link.target}\` isn't a line range or a symbol` };
-  if (t.kind === 'lines') {
-    if (t.start > doc.lineCount) return { ok: false, message: `line ${t.start} is past the end (${doc.lineCount} lines)` };
-    return { ok: true, range: { start: t.start, end: Math.min(t.end, doc.lineCount) } };
-  }
+  const lines = linesOrFile(link, doc.lineCount);
+  if (lines) return lines;
+  const t = { path: link.target! }; // linesOrFile left only symbols
   if (isSvPath(doc.uri.path, doc.languageId)) {
     const table = await tables.get(doc);
     if (!table) return { ok: false, message: 'the file is too large to search, or changed meanwhile', unavailable: true };
@@ -175,4 +171,32 @@ export async function resolveLink(doc: vscode.TextDocument, link: CodeLink, tabl
   const symbols = await tables.symbols(doc);
   if (!symbols) return { ok: false, message: `no symbols for ${basename(doc.uri.path)} (no language support for it, or it took too long)`, unavailable: true };
   return matchProviderSymbol(symbols, t.path);
+}
+
+/** The whole file, a line range, or what's wrong with the target; undefined when it names a symbol. */
+function linesOrFile(link: CodeLink, lineCount: number): LinkResolution | undefined {
+  if (link.target === undefined) return { ok: true, range: { start: 1, end: Math.max(1, lineCount) } };
+  const t = parseCodeTarget(link.target);
+  if (!t) return { ok: false, message: `\`${link.target}\` isn't a line range or a symbol` };
+  if (t.kind === 'symbol') return undefined;
+  if (t.start > lineCount) return { ok: false, message: `line ${t.start} is past the end (${lineCount} lines)` };
+  return { ok: true, range: { start: t.start, end: Math.min(t.end, lineCount) } };
+}
+
+/**
+ * As `resolveLink`, over the text of a file no editor has open (a hover preview): never a document, so nothing wakes
+ * a language's extension or server. SV symbols are scanned here (not cached; large files wait for a click); other
+ * languages' symbols are found when the link is clicked.
+ */
+export async function resolveLinkInText(text: string, path: string, link: CodeLink, stop: () => boolean): Promise<LinkResolution> {
+  let lineCount = 1;
+  const eol = /\r\n|\r|\n/g;
+  while (eol.exec(text)) lineCount++;
+  const lines = linesOrFile(link, lineCount);
+  if (lines) return lines;
+  if (!isSvPath(path) || text.length > LARGE_FILE_CHARS) return { ok: false, message: 'symbols in this file are found when the link is clicked', unavailable: true };
+  const table = await scanSvSliced(text, { sliceMs: SLICE_MS, stop, pause });
+  if (!table) return { ok: false, message: 'the file changed meanwhile', unavailable: true };
+  const r = findSvSymbol(table, link.target!);
+  return r.ok ? { ok: true, range: r.extent } : { ok: false, message: r.message.replace(/\.$/, '') };
 }
