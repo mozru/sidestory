@@ -129,13 +129,12 @@ export class Decorations implements vscode.Disposable {
     this.clearFlash();
     this.flashed = editor;
     editor.setDecorations(this.flashType, [range]);
-    const config = vscode.workspace.getConfiguration('sidestory');
-    const set = config.get<unknown>('clickHighlightSeconds', 1.5);
+    const set = vscode.workspace.getConfiguration('sidestory').get<unknown>('clickHighlightSeconds', 1.5);
     const seconds = typeof set === 'number' && Number.isFinite(set) ? set : 1.5;
     if (seconds <= 0) return;
     this.flashTimer = setTimeout(() => {
       editor.setDecorations(this.flashType, []);
-      if (config.get<unknown>('clickFrame', true) === false) {
+      if (vscode.workspace.getConfiguration('sidestory').get<unknown>('clickFrame', true) === false) {
         this.flashed = undefined;
         return;
       }

@@ -543,7 +543,7 @@
         "sidestory.clickFrame": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "After the click highlight (`#sidestory.clickHighlightSeconds#`) fades, keep a frame around those lines until the next one."
+          "markdownDescription": "After the click highlight (`#sidestory.clickHighlightSeconds#`) fades, keep a frame around those lines until the next one, or until the panel shows another sidestory."
         },
         "sidestory.widgets.enabled": {
           "type": "boolean",
