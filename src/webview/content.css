@@ -120,13 +120,18 @@ html, body {
   outline-offset: 2px;
 }
 
-:where(svg [data-cx-ref]:not([data-explain-plain]):hover) {
+:where(svg [data-cx-ref]:not([data-explain-plain]):hover, svg [data-cx-dive]:hover) {
   filter: drop-shadow(0 0 1px var(--cx-link-hover)) drop-shadow(0 0 2px var(--cx-link-hover));
 }
 
-:where(svg [data-cx-ref]:not([data-explain-plain]):focus-visible) {
+:where(svg [data-cx-ref]:not([data-explain-plain]):focus-visible, svg [data-cx-dive]:focus-visible) {
   outline: 2px solid var(--cx-link-ring);
   outline-offset: 2px;
+}
+
+/* A diagram box that dives into its detail (data-explain-detail on an SVG part): a link, like a code link. */
+:where(svg [data-cx-dive]) {
+  cursor: pointer;
 }
 
 /*

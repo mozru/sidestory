@@ -926,12 +926,22 @@ function decorateDetails(root: HTMLElement): void {
     const info = details.get(name);
     if (!info && !describing.has(name)) unknown.push(name);
     // A part of an SVG diagram (a box) can't hold the peek and dive controls: the part itself dives, as a link.
+    // Not for a detail that isn't there (once it's known) or for the sidestory being read, as the Dive button isn't.
     if (host.namespaceURI === 'http://www.w3.org/2000/svg') {
       box?.remove();
+      const usable = info?.found !== false && name !== trail.at(-1)?.name;
+      if (!usable) {
+        delete host.dataset.cxDive;
+        continue;
+      }
       host.dataset.cxDive = '1';
       if (!host.hasAttribute('tabindex')) host.setAttribute('tabindex', '0');
       if (!host.hasAttribute('role')) host.setAttribute('role', 'link');
-      host.setAttribute('aria-label', `Dive into ${info?.title || name}`);
+      const up = trail.some((t) => t.name === name);
+      if (!host.hasAttribute('aria-label') || host.dataset.cxLabel === '1') {
+        host.setAttribute('aria-label', `${up ? 'Up to' : 'Dive into'} ${info?.title || name}`);
+        host.dataset.cxLabel = '1'; // ours, so it can follow the title once it's known
+      }
       continue;
     }
     if (!box) {
@@ -996,7 +1006,8 @@ function arrived(title: string, leftDetail: string | undefined): void {
   announce(leftDetail ? `Back to ${title}` : `Opened ${title}`);
   if (!app.contains(document.activeElement) && document.activeElement !== document.body && !frame.root.contains(frame.root.ownerDocument.activeElement)) return;
   if (document.activeElement?.classList.contains('cx-hist')) return; // pressing Back again goes on back
-  const dive = leftDetail ? [...content.querySelectorAll<HTMLElement>('[data-explain-detail]')].find((h) => h.dataset.explainDetail === leftDetail)?.querySelector<HTMLElement>('.cx-dive') : undefined;
+  const host = leftDetail ? [...content.querySelectorAll<HTMLElement>('[data-explain-detail]')].find((h) => h.dataset.explainDetail === leftDetail) : undefined;
+  const dive = host?.hasAttribute('data-cx-dive') ? host : host?.querySelector<HTMLElement>('.cx-dive');
   if (dive) {
     focusingSelf = true; // not the reader tabbing into its section
     dive.focus({ preventScroll: true });
@@ -1842,14 +1853,14 @@ function onContentClick(e: MouseEvent): void {
     }
     return;
   }
-  // A diagram part that dives (an SVG box with data-explain-detail).
+  if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
+  // A diagram part that dives (an SVG box with data-explain-detail); a control inside it stays the control's.
   const diveBox = target.closest<HTMLElement>('[data-cx-dive]');
   if (diveBox && DETAIL_NAME.test(diveBox.dataset.explainDetail ?? '')) {
     e.preventDefault();
     const d = detailOf(diveBox);
     return dive(d.name, d.showCode);
   }
-  if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
   pick(section.dataset.explainAnchor!, 'click');

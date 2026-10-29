@@ -525,8 +525,7 @@ export class ExplainerSession implements vscode.Disposable {
       return this.refuse(id, child.dir.toString(), names, 'gone');
     }
     // The link asked for the editor to follow into the detail: its opening step's code shows, an editor open or not.
-    this.showCodeOnOpen = showCode;
-    await this.switchTo([...this.trail, child], section);
+    await this.switchTo([...this.trail, child], section, showCode);
     // Opened at a step the page already knew (the reader was here before): no 'initial' comes, so show it here.
     if (showCode) {
       const generation = this.generation;
@@ -554,8 +553,10 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   /** Shows another explainer in this panel: resets everything that belongs to the current one. */
-  private async switchTo(trail: ExplainerRef[], active?: string): Promise<void> {
+  private async switchTo(trail: ExplainerRef[], active?: string, showCode = false): Promise<void> {
     const generation = ++this.generation;
+    // Only for the dive that asked: any other switch (Back, Up, a list) leaves the editor alone.
+    this.showCodeOnOpen = showCode;
     this.switchEmitter.fire();
     this.widgets?.onSwitch();
     this.recovered = false;
