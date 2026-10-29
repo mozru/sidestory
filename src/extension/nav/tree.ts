@@ -21,8 +21,8 @@ export type TreeNode =
   | { kind: 'group'; id: string; pkg: IndexPackage; key: string; label: string; members: string[]; parent?: TreeNode }
   | { kind: 'sidestory'; id: string; entry: IndexEntry; path: string[]; startHere: boolean; parent?: TreeNode }
   | { kind: 'leaf'; id: string; entry: IndexEntry; path: string[]; reason: 'back' | 'deep'; parent?: TreeNode }
-  | { kind: 'branch'; id: string; description: string | undefined; rows: BranchRow[]; parent?: undefined }
-  | { kind: 'branchRow'; id: string; row: BranchRow; parent: TreeNode };
+  | { kind: 'branch'; id: string; description: string | undefined; rows: BranchRow[]; nested: Map<string, BranchRow[]>; parent?: undefined }
+  | { kind: 'branchRow'; id: string; row: BranchRow; nested: Map<string, BranchRow[]>; parent: TreeNode };
 
 /** What the "This branch" group shows (the changes service). */
 export interface BranchSource {
@@ -139,9 +139,10 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     }
     switch (node.kind) {
       case 'branch':
-        return node.rows.map((row) => this.make({ kind: 'branchRow', id: `branch/${encodeURIComponent(row.id)}`, row, parent: node }));
       case 'branchRow':
-        return [];
+        return (node.kind === 'branch' ? node.rows : (node.nested.get(node.row.id) ?? [])).map((row) =>
+          this.make({ kind: 'branchRow', id: `branch/${encodeURIComponent(row.id)}`, row, nested: node.nested, parent: node }),
+        );
       case 'package':
         return this.packageChildren(node.pkg, node);
       case 'group':
@@ -160,9 +161,44 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     const g = this.branch?.branchGroup();
     if (!g?.rows.length) return undefined;
     // Not through `make`: its rows change with coverage, and a cached node would keep the old ones.
-    const node: TreeNode = { kind: 'branch', id: 'branch', description: g.description, rows: g.rows };
+    const { rows, nested } = this.nestBranchRows(g.rows);
+    const node: TreeNode = { kind: 'branch', id: 'branch', description: g.description, rows, nested };
     this.nodes.set(node.id, node);
     return node;
+  }
+
+  /**
+   * The branch's sidestories as the hierarchy they form: each under the nearest sidestory on its trail (the near
+   * end of its primary path) that also explains the branch (an overview with its details), the rest at the top.
+   * Other rows stay where they are.
+   */
+  private nestBranchRows(all: BranchRow[]): { rows: BranchRow[]; nested: Map<string, BranchRow[]> } {
+    const entryOf = (r: BranchRow) => {
+      const dir = r.contextValue === 'branchSidestory' ? (r.command.arguments?.[0] as { dir?: unknown } | undefined)?.dir : undefined;
+      return typeof dir === 'string' ? this.index.entry(vscode.Uri.parse(dir)) : undefined;
+    };
+    const byKey = new Map<string, BranchRow>();
+    for (const r of all) {
+      const e = entryOf(r);
+      if (e) byKey.set(e.key, r);
+    }
+    const nested = new Map<string, BranchRow[]>();
+    const rows: BranchRow[] = [];
+    for (const r of all) {
+      const e = entryOf(r);
+      let parent: BranchRow | undefined;
+      if (e) {
+        const path = this.index.trail(e);
+        for (let i = path.length - 1; i >= 0 && !parent; i--) {
+          const up = this.index.sibling(e, path[i]!);
+          if (up && up.key !== e.key) parent = byKey.get(up.key);
+        }
+      }
+      if (!parent) rows.push(r);
+      else if (nested.has(parent.id)) nested.get(parent.id)!.push(r);
+      else nested.set(parent.id, [r]);
+    }
+    return { rows, nested };
   }
 
   private startHere(pkg: IndexPackage): string | undefined {
@@ -312,7 +348,7 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       }
       case 'branchRow': {
         const r = node.row;
-        const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.None);
+        const item = new vscode.TreeItem(r.label, node.nested.has(r.id) ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
         item.id = node.id;
         item.description = r.description;
         item.tooltip = r.tooltip;

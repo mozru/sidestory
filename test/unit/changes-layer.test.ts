@@ -131,7 +131,7 @@ describe('the "This branch" group (§9.6)', () => {
     expect(rows.map((r) => [r.label, r.command.command, r.command.arguments])).toEqual([['Retry compares with develop · Use develop', 'sidestory.changes.setBase', ['develop']]]);
   });
   it('drops the update prompt when nothing is left', () => {
-    expect(branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1 }), hasChanges: true, suggest: true }).map((r) => r.id)).toEqual(['b:.sidestory/retry-jitter']);
+    expect(branchRows({ belonging: [b], totals: totals({ explained: 3, trivial: 1 }), hasChanges: true, suggest: true }).map((r) => r.id)).toEqual(['b:file:///r/.sidestory/retry-jitter']);
   });
   it('offers to explain a branch with changes and no sidestory, unless dismissed; nothing on a branch without changes', () => {
     expect(branchRows({ belonging: [], totals: undefined, hasChanges: true, suggest: true }).map((r) => [r.label, r.contextValue])).toEqual([['Copy Prompt: Explain This Branch', 'explainPrompt']]);

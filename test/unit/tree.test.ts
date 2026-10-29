@@ -11,6 +11,7 @@ const { SidestoryIndex } = await import('../../src/extension/nav/index.ts');
 const { SidestoryWatcher } = await import('../../src/extension/nav/watcher.ts');
 const { DriftQueue } = await import('../../src/extension/nav/drift.ts');
 const { SidestoryTree } = await import('../../src/extension/nav/tree.ts');
+const { branchRows } = await import('../../src/extension/changes/coverage-labels.ts');
 
 let root = '';
 const owned: { dispose(): void }[] = [];
@@ -56,6 +57,33 @@ describe('the Sidestories tree', () => {
     expect(label(tree, nested)).toBe('Session tokens');
     expect(tree.getTreeItem(nested).description).toContain('also in Security');
     expect(tree.getTreeItem(nested).description).not.toContain('also under Auth overview');
+  });
+
+  it('"This branch" lists its sidestories as their hierarchy: each under its nearest ancestor that explains the branch', async () => {
+    story(root, '', 'overview', { title: 'Overview', details: ['mid', 'parser'] });
+    story(root, '', 'mid', { title: 'Mid', details: ['deep'] });
+    story(root, '', 'deep', { title: 'Deep' });
+    story(root, '', 'parser', { title: 'Parser', details: ['lexer'] });
+    story(root, '', 'lexer', { title: 'Lexer' });
+    story(root, '', 'other', { title: 'Other' });
+    const { tree, index } = await build();
+    const totals = { changes: 2, explained: 1, trivial: 0, left: 1, needsLook: 0, files: 1 };
+    // Details first, as the comparison may list them; "mid" doesn't explain the branch.
+    const belonging = ['lexer', 'deep', 'parser', 'other', 'overview'].map((n) => {
+      const e = [...index.all()].find((x) => x.ref.name === n)!;
+      return { folder: n, title: e.title, base: 'main', dir: e.ref.dir.toString(), totals };
+    });
+    tree.branch = { branchGroup: () => ({ description: undefined, rows: branchRows({ belonging, totals, hasChanges: true, suggest: true }) }) };
+    tree.refresh();
+    const group = tree.getChildren()[0]!;
+    const names = (n: Node) => tree.getChildren(n).map((c) => label(tree, c));
+    expect(names(group)).toEqual(['Other', 'Overview', 'Copy Prompt: Update the Sidestory for New Changes']);
+    const overview = tree.getChildren(group)[1]!;
+    expect(names(overview)).toEqual(['Deep', 'Parser']);
+    expect(names(tree.getChildren(overview)[1]!)).toEqual(['Lexer']);
+    expect(tree.getTreeItem(overview).collapsibleState).toBe(2); // Expanded
+    expect(tree.getTreeItem(tree.getChildren(group)[0]!).collapsibleState).toBe(0); // None
+    expect(tree.getParent(tree.getChildren(overview)[0]!)).toBe(overview);
   });
 
   it('top: true says so too', async () => {

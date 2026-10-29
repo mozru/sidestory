@@ -172,7 +172,7 @@ export function branchRows(i: BranchInputs): BranchRow[] {
   const leftWords = i.belonging.length > 1 ? ' on the branch' : '';
   for (const b of i.belonging) {
     rows.push({
-      id: `b:${b.folder}`,
+      id: `b:${b.dir}`, // the folder name is shortened for display, so two can read alike
       label: b.title || b.folder,
       description: `vs ${b.base} · ${totalsLabel({ ...b.totals, left: t?.left ?? 0 })}${leftWords}${partial}`,
       tooltip: `${b.title}\n${b.folder} · vs ${b.base}\n${b.totals.explained} explained and ${b.totals.trivial} marked trivial by it; ${t?.left ?? 0} left on the branch${partialLine}\nClick to open`,
