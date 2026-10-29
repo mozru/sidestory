@@ -16,7 +16,7 @@ import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
-import { GIT_SCHEME, gitUri } from './changes/git-fs.ts';
+import { emptyUri, GIT_SCHEME, gitUri } from './changes/git-fs.ts';
 import { pickVersion } from './compare.ts';
 import { createPanel, panelOptions } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
@@ -73,6 +73,8 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   const updateContext = () => {
     void vscode.commands.executeCommand('setContext', 'sidestory.active', [...sessions].some((s) => s.panel.visible));
     void vscode.commands.executeCommand('setContext', 'sidestory.versionPanel', !!current?.version && current.panel.active);
+    // The reader's panel while an older version is beside it: the diff buttons show there too.
+    void vscode.commands.executeCommand('setContext', 'sidestory.comparing', !!current && current.panel.active && (!!current.version || versions.has(current)));
   };
   // VS Code's own navigate keys run Sidestory: Back / Forward only while the active panel has somewhere to go.
   const canNavigate = { back: false, forward: false };
@@ -362,8 +364,27 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   };
 
   /** The explainer a command acts on: the one given, else the active panel's, else one the user picks. */
-  /** A version from git (Compare with…) → the panel it was opened beside. */
+  /** A version from git (Compare with…) → the panel it was opened beside, and back. */
   const partners = new WeakMap<ExplainerSession, ExplainerSession>();
+  const versions = new WeakMap<ExplainerSession, ExplainerSession>();
+  /** The comparison the current panel is in: the older version and the reader's panel. */
+  const comparison = (): { old: ExplainerSession; now: ExplainerSession } | undefined => {
+    const s = current;
+    if (!s) return undefined;
+    const pair = s.version ? { old: s, now: partners.get(s) } : { old: versions.get(s), now: s };
+    if (pair.old && pair.now) return { old: pair.old, now: pair.now };
+    if (s.version) void vscode.window.showInformationMessage('The panel this version was opened beside shows another sidestory now: compare again from it.');
+    return undefined;
+  };
+  /** The file, or an empty one in its place when it isn't there (a new file then, a removed one now). */
+  const orEmpty = async (uri: vscode.Uri, path: string): Promise<vscode.Uri> => {
+    try {
+      await vscode.workspace.fs.stat(uri);
+      return uri;
+    } catch {
+      return emptyUri(path);
+    }
+  };
 
   const explainerFor = async (dir?: unknown) => {
     const given = asUri(dir);
@@ -547,32 +568,35 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (sessions.has(s)) current = s;
       updateContext();
       partners.set(old, s);
+      versions.set(s, old);
       // Together: a step picked in either is the step in both (the follower doesn't reveal code: one editor).
       const links = [s.onDidChangeStep((id) => old.followStep(id)), old.onDidChangeStep((id) => s.followStep(id))];
       const unlink = () => {
         links.splice(0).forEach((d) => d.dispose());
         partners.delete(old); // its diffs and the commands that act on "the current sidestory" no longer point there
+        if (versions.get(s) === old) versions.delete(s);
+        updateContext();
       };
       // Until either closes, or the reader's panel moves to another sidestory.
       for (const d of [old.onDidDispose(unlink), s.onDidDispose(unlink), s.onDidSwitch(unlink)]) links.push(d);
       if (s.place().active && s.place().active !== old.place().active) old.followStep(s.place().active!);
     },
     // In the older version's panel: VS Code's diff of its step's code, or of the page's source, against now.
+    // From either panel of a comparison: VS Code's diff of the step's code, or of the page's source, then ↔ now.
+    // A file that isn't there on one side (a step's new file, a removed one) is diffed as empty: all added or removed.
     'sidestory.compare.stepDiff': async () => {
-      const s = current;
-      const id = s?.place().active;
-      const file = s?.version && id ? s.stepFile(id) : undefined;
-      const now = s && partners.get(s);
-      if (s?.version && !now) void vscode.window.showInformationMessage('The panel this version was opened beside shows another sidestory now: compare again from it.');
-      if (!s || !file || !now) return;
-      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.root, file), vscode.Uri.joinPath(now.ref.root, ...file.split('/')), `${file.split('/').at(-1)} (${s.version} ↔ now)`);
+      const pair = comparison();
+      const id = current?.place().active;
+      const file = pair && id ? (current!.stepFile(id) ?? (current === pair.now ? pair.old : pair.now).stepFile(id)) : undefined;
+      if (!pair || !file) return;
+      const then = await orEmpty(vscode.Uri.joinPath(pair.old.ref.root, ...file.split('/')), file);
+      const now = await orEmpty(vscode.Uri.joinPath(pair.now.ref.root, ...file.split('/')), file);
+      await vscode.commands.executeCommand('vscode.diff', then, now, `${file.split('/').at(-1)} (${pair.old.version} ↔ now)`);
     },
     'sidestory.compare.sourceDiff': async () => {
-      const s = current;
-      const now = s?.version ? partners.get(s) : undefined;
-      if (s?.version && !now) void vscode.window.showInformationMessage('The panel this version was opened beside shows another sidestory now: compare again from it.');
-      if (!s || !now) return;
-      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.dir, 'sidestory.html'), vscode.Uri.joinPath(now.ref.dir, 'sidestory.html'), `${s.ref.name}/sidestory.html (${s.version} ↔ now)`);
+      const pair = comparison();
+      if (!pair) return;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(pair.old.ref.dir, 'sidestory.html'), vscode.Uri.joinPath(pair.now.ref.dir, 'sidestory.html'), `${pair.now.ref.name}/sidestory.html (${pair.old.version} ↔ now)`);
     },
     // The page's right-click menu (webview/context): for what was right-clicked in the panel the menu opened in.
     'sidestory.page.copy': () => current?.menu('copy'),
