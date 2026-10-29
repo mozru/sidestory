@@ -1233,12 +1233,22 @@ function step(delta: 1 | -1, scroll = true): void {
 }
 
 /** The reader chose a step (a tab, the picker, a comment): a new history entry, as a link in a browser. */
-function jumpTo(id: string, source?: Source): void {
+function jumpTo(id: string, source?: Source, scroll: 'always' | 'ifHidden' = 'always'): void {
   hidePill();
   if (initialized) navHistory.update(hereEntry());
   setActive(id, source);
-  scrollToSection(id);
+  if (scroll === 'always' || !sectionOnScreen(id)) scrollToSection(id);
   if (initialized) remember('push');
+}
+
+/** Whether any of a section is on screen in the panel. */
+function sectionOnScreen(id: string): boolean {
+  const el = sectionEl(id);
+  if (!el) return false;
+  const view = scroller.getBoundingClientRect();
+  const top = topOf(el);
+  const bottom = top + el.getBoundingClientRect().height;
+  return bottom > view.top + 8 && top < view.bottom - 8;
 }
 
 /**
@@ -1858,10 +1868,11 @@ stepsEl.addEventListener('keydown', (e) => {
 
 stepsEl.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('.cx-step');
-  if (b) jumpTo(b.dataset.anchor!, 'step');
+  // The code follows the step; the page moves only when the step's section isn't on screen at all.
+  if (b) jumpTo(b.dataset.anchor!, 'step', 'ifHidden');
 });
 
-selectEl.addEventListener('change', () => jumpTo(selectEl.value, 'step'));
+selectEl.addEventListener('change', () => jumpTo(selectEl.value, 'step', 'ifHidden'));
 
 for (const b of app.querySelectorAll<HTMLButtonElement>('.cx-nav')) b.addEventListener('click', () => step(Number(b.dataset.delta) as 1 | -1));
 
