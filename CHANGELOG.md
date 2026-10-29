@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `.sidestory/GUIDELINES.md`, like a CLAUDE.md for sidestories: your team's guidance on how they read and look (tone, depth, diagrams). The Claude Code skill and the copied prompts read it before writing or updating one, and Claude offers to add lasting guidance you give it there.
 - Each row in the Sidestories view shows its sidestory's problems and open comment threads ("2 problems · 3 comments, 1 for you"), with a warning or comment icon.
 - Navigation fixes: Tab changes the step only when it moves from one section into another (not when it enters the page from the step bar); clicking the current section only gives the panel focus, without sending the editor back to its code; a click in a section or a widget, Tab, and a widget's `goToStep` are Back/Forward entries; a widget's `reveal()` shows code without taking focus or moving the cursor; following the panel never expands a row you collapsed in the Sidestories view.
 - The step changes only when you click or press a key. Scrolling the page no longer changes it, so diagrams, widgets and the editor stay on the step you chose while you read ahead; moving the cursor in the code offers its step ("Cursor is in … · Show") instead of jumping there.

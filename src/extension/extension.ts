@@ -60,7 +60,8 @@ let lastTextEditor: vscode.TextEditor | undefined;
 /** The text a reader can paste to their coding agent (the README's "Ask your agent"). */
 export const AGENT_PROMPT =
   'Write a sidestory for `<the code to explain>` in `.sidestory/<name>/`: a section per part, a diagram where it helps, and a widget only where ' +
-  'interaction makes it clearer. Follow https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and ' +
+  'interaction makes it clearer. Follow the repository\'s guidance in `.sidestory/GUIDELINES.md` if it has one, ' +
+  'https://github.com/mozru/sidestory/blob/main/docs/GUIDE.md and ' +
   'https://github.com/mozru/sidestory/blob/main/docs/WIDGETS.md, then run the checker until it reports no errors.';
 
 export function activateFull(context: vscode.ExtensionContext): FullApi {

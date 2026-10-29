@@ -260,6 +260,8 @@ describe('copied prompts (§14.3)', () => {
     const p = explainBranchPrompt('main');
     expect(p.indexOf('Explain this branch')).toBe(0);
     expect(p).toContain('```text\nbase: main\n```');
+    // Every prompt points the agent at the repository's standing guidance.
+    for (const q of [p, explainFilePrompt('src/a.ts'), updatePrompt('.sidestory/r', 'main')]) expect(q).toContain('.sidestory/GUIDELINES.md');
     expect(updatePrompt('.sidestory/retry', 'origin/main')).toContain('sidestory: .sidestory/retry\nbase: origin/main');
     expect(changePrompt({ sidestory: '.sidestory/r', base: 'main', file: 'src/a.ts', lines: 'L39–62 (removed)', kind: 'removed' })).toContain('file: src/a.ts\nlines: L39–62 (removed)\nkind: removed');
   });

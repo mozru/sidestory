@@ -1,6 +1,7 @@
 // The Sidestories view's items (docs/NAVIGATION-PLAN.md §8.2–§8.3): "also under" names the other place, leaves
 // nested too deep open on the primary path, and Start here is revealed where it is listed.
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { story, tempRoot } from './nav-fixtures.ts';
 import { config, EventEmitter, Uri, workspace } from './vscode-stub.ts';
@@ -137,6 +138,14 @@ describe('the Sidestories tree', () => {
     changed.fire();
     expect(fired).toBeGreaterThan(0);
     expect(row('B').description).not.toContain('comment');
+  });
+
+  it('.sidestory/GUIDELINES.md is no sidestory: the list and the index leave it alone', async () => {
+    story(root, '', 'a', { title: 'A' });
+    writeFileSync(join(root, '.sidestory', 'GUIDELINES.md'), '# Guidelines\n- Diagrams first.\n');
+    const { tree, index } = await build();
+    expect(index.size).toBe(1);
+    expect(tree.getChildren().map((n) => label(tree, n))).toEqual(['A']);
   });
 
   it('top: true says so too', async () => {

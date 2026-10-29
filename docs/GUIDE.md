@@ -56,6 +56,7 @@ A sidestory is a folder in your repository:
 
 ```
 .sidestory/
+  GUIDELINES.md      optional: how your team's sidestories should read and look
   bit-reader/
     sidestory.html   the page: any HTML and CSS
     manifest.json    which code each section is about
@@ -63,6 +64,8 @@ A sidestory is a folder in your repository:
 ```
 
 Open it with **Sidestory: Open Sidestory…**.
+
+**`.sidestory/GUIDELINES.md`** is to sidestories what CLAUDE.md is to code: your standing guidance for writing them (tone, how deep to go, what the diagrams look like, colors, naming, what to leave out). Claude's Sidestory skill and the copied prompts read it before writing or updating one, and when you give Claude guidance meant to last ("our diagrams always…"), it offers to add it there. Commit it with your sidestories so the team shares it. On a branch, a change to it counts like any other file's.
 
 A page can be mostly pictures (block diagrams that light up per step, timelines, before/after, byte layouts, animation), with widgets the reader drives where they help. The code is right beside the page, so the page doesn't need to retell it. How it reads is up to you; the rest of this section is what it can do.
 

@@ -85,7 +85,7 @@ A sidestory is just plain files: `sidestory.html`, `manifest.json`, and optional
 /plugin install sidestory@sidestory
 ```
 
-Then ask, for example *"Explain how the DMA controller works, with Sidestory."* Claude knows what a sidestory can do, writes the page in the style you ask for (or your repository's), checks it and pins the anchors.
+Then ask, for example *"Explain how the DMA controller works, with Sidestory."* Claude knows what a sidestory can do, writes the page in the style you ask for (or your repository's), checks it and pins the anchors. Keep your team's guidance for sidestories (tone, depth, diagram style) in `.sidestory/GUIDELINES.md`, like a CLAUDE.md for them: Claude reads it first, and offers to add guidance you give it there.
 
 **Codex** and other agents that support [Agent Skills](https://agentskills.io): copy [`plugins/sidestory/skills/sidestory`](plugins/sidestory/skills/sidestory) into the agent's skills folder (`~/.codex/skills/sidestory` for Codex).
 
