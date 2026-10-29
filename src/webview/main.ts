@@ -56,7 +56,6 @@ interface Step {
 type Source = 'scroll' | 'click' | 'step';
 
 const READING_LINE = 0.3; // fraction of the viewport height
-const USER_LEAD_MS = 1500; // after the reader scrolls, the editor doesn't move the page for this long
 const PILL_MS = 8000;
 const UPDATED_MS = 1800;
 const STATE_TEXT: Record<string, { badge: string; spoken: string; title: string }> = {
@@ -112,8 +111,6 @@ let navRequestId = 0;
 let anchors = new Map<string, AnchorView>();
 let steps: Step[] = [];
 let active: string | undefined = state.active;
-let lastUserScroll = 0;
-let programmaticUntil = 0;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
 let pillTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
@@ -391,11 +388,10 @@ let resizedAt = 0;
 let heldPlace: Position | undefined;
 let scrollTarget: { id: string; until: number } | undefined;
 /**
- * A step a widget (in section `from`) made current without scrolling (`to`), and the section the reading line
- * was in then (`at`): until the reader scrolls to another section or the step changes another way, the step
- * stays, and touching that widget again doesn't put back its own section.
+ * A step a widget (in section `from`) made current without scrolling (`to`): until the step changes another way,
+ * touching that widget again doesn't put back its own section.
  */
-let widgetHold: { to: string; at: string | undefined; from: string | undefined; dir: string } | undefined;
+let widgetHold: { to: string; from: string | undefined; dir: string } | undefined;
 
 function onPanelResize(): void {
   if (scroller.clientWidth === panelWidth) return;
@@ -429,7 +425,6 @@ function holdPlace(): void {
   if (scrollTarget && Date.now() < scrollTarget.until) {
     const el = sectionEl(scrollTarget.id);
     if (!el) return;
-    programmaticUntil = Date.now() + 300;
     scroller.scrollTo({ top: scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - 12, behavior: 'auto' });
   } else if (heldPlace) restorePosition(heldPlace);
 }
@@ -475,9 +470,7 @@ widgets = new WidgetFrames({
     return true;
   },
   history: (delta) => goHistory(delta),
-  readerInput,
   compensate: (dy) => {
-    programmaticUntil = Date.now() + 200;
     scroller.scrollTop += dy;
   },
   focusSelf: (el) => {
@@ -556,7 +549,6 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
         if (initialized) savePlace();
         // Until the new explainer renders, the old one is still on screen: don't save or hold its places.
         initialized = false;
-        lastUserScroll = 0; // scrolling in the old explainer says nothing about this one
         details.clear();
         describing.clear();
         peeked.clear();
@@ -626,7 +618,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       break;
     case 'syncTo':
       if (m.jump && initialized) navHistory.update(hereEntry());
-      followEditor(m.anchorId);
+      followEditor(m.anchorId, !!m.jump);
       // Go to Step, a CodeLens: the reader asked for this step, as for a tab.
       if (m.jump && initialized && active === m.anchorId) remember('push');
       break;
@@ -1204,7 +1196,7 @@ function setActive(id: string | undefined, notify?: Source): void {
 
 function holdForWidget(before: string | undefined, from: string | undefined): void {
   if (active === before) return; // nothing moved
-  widgetHold = active ? { to: active, at: sectionAtReadingLine()?.id, from, dir: state.dir } : undefined;
+  widgetHold = active ? { to: active, from, dir: state.dir } : undefined;
 }
 
 /** The widget hold applies: still on that page, at that step (other paths set `active` without setActive). */
@@ -1215,7 +1207,6 @@ function held(): boolean {
 function scrollToSection(id: string): void {
   const el = sectionEl(id);
   if (!el) return;
-  programmaticUntil = Date.now() + 1000;
   scrollTarget = { id, until: Date.now() + 1500 };
   scrollToTop(topOf(el));
   notePlaceWhenSettled();
@@ -1353,52 +1344,27 @@ function restoreEntry(e: HistoryEntry): void {
     return;
   }
   scrollTarget = undefined;
-  programmaticUntil = Date.now() + 1000;
   const top = scroller.scrollTop + topOf(el) - scroller.getBoundingClientRect().top - e.scroll.offset;
   scroller.scrollTo({ top, behavior: reducedMotion() ? 'auto' : 'smooth' });
   notePlaceWhenSettled();
 }
 
-const readerLeads = () => Date.now() - lastUserScroll < USER_LEAD_MS;
-
 /**
- * The editor cursor moved into a section. Follow it, unless the reader is scrolling the page:
- * then leave everything where it is and offer a pill instead.
+ * The editor's cursor moved into a step's code, or the reader asked for a step from the editor (`jump`: Go to Step, a
+ * CodeLens). Only the asking moves the panel: a cursor offers the step (the pill), so diagrams, widgets and the page
+ * stay where the reader left them until they click.
  */
-function followEditor(id: string): void {
+function followEditor(id: string, jump: boolean): void {
   if (!anchors.has(id)) return;
   const el = sectionEl(id);
   if (!el) return;
-  const view = scroller.getBoundingClientRect();
-  const top = topOf(el);
-  if (readerLeads()) {
-    // Already on screen: nothing to offer.
-    if (!(top >= view.top && top <= view.bottom - 40)) showPill(id, el);
-    return;
-  }
-  const visible = top >= view.top && top <= view.top + view.height * 0.6;
-  // A box the cursor rings is on screen (a diagram elsewhere in the page, §8.2): stay with it and offer the step, as
-  // when the reader leads; making the step current here would let a small scroll send the editor elsewhere.
-  if (!visible && ringOnScreen(view)) {
-    showPill(id, el);
+  if (!jump) {
+    if (id !== active) showPill(id, el);
     return;
   }
   hidePill();
   setActive(id);
-  if (!visible) scrollToSection(id);
-}
-
-/** Whether an element the editor cursor rings (cx-here) is visible in the panel now. */
-function ringOnScreen(view: DOMRect): boolean {
-  for (const { el } of linkEls) {
-    if (!el.classList.contains('cx-here')) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) continue; // not rendered (a hidden fallback)
-    const top = topOf(el);
-    const bottom = top + r.height;
-    if (bottom > view.top + 8 && top < view.bottom - 8) return true;
-  }
-  return false;
+  scrollToSection(id);
 }
 
 function showPill(id: string, el: HTMLElement): void {
@@ -1458,30 +1424,11 @@ scroller.addEventListener('scroll', () => {
     // Where the reader is, however they got there, so a resize can put it back (not mid-resize, nor on the way
     // to a section: notePlaceWhenSettled records those once they end).
     if (placeSettled()) heldPlace = readingPosition();
-    if (Date.now() < programmaticUntil) return;
-    // Only the reader's own scrolling picks the step: not layout (the editor opening beside the panel,
-    // images loading), which would undo a step the reader chose but the page can't scroll to.
-    if (!readerLeads()) return;
-    const s = sectionAtReadingLine();
-    if (s && pillEl.dataset.anchor === s.id) hidePill(); // the reader got there on their own
-    if (held() && s?.id === widgetHold!.at) return; // still at the widget that picked the step
-    widgetHold = undefined;
-    if (s && s.id !== activeStepId()) setActive(s.id, 'scroll');
+    // Scrolling never picks the step: diagrams, widgets and the editor change only on a click or a key.
   });
 });
-scroller.addEventListener('scrollend', () => {
-  programmaticUntil = 0;
-});
 // A hoisted function, not a const: the frame's listeners are attached (in buildFrame) before this line runs.
-function readerInput(): void {
-  lastUserScroll = Date.now();
-}
-// The scrollbar belongs to the panel; events over the content happen in the frame (bindFrameEvents).
-for (const ev of ['wheel', 'touchmove', 'pointerdown']) scroller.addEventListener(ev, readerInput, { passive: true });
-
 function bindFrameEvents(d: Document): void {
-  // Not pointerdown, as on the panel's scrollbar: a click in the content (a button, a link) isn't scrolling.
-  for (const ev of ['wheel', 'touchmove']) d.addEventListener(ev, readerInput, { passive: true });
   d.addEventListener('click', onContentClick);
   d.addEventListener('keydown', onContentKey);
   d.addEventListener('keydown', noteKey, true);
@@ -1738,7 +1685,6 @@ function onContentClick(e: MouseEvent): void {
         // Set the frame's fragment so CSS :target works (pop-outs, highlighted footnotes); the panel,
         // not the frame, scrolls, just below.
         const section = dest.closest<HTMLElement>('[data-explain-anchor]');
-        programmaticUntil = Date.now() + 1000;
         const from = scroller.scrollTop;
         try {
           // Absolute: a srcdoc frame resolves '#x' against the panel's URL, which would navigate it away.
@@ -1785,7 +1731,6 @@ function onContentKey(e: KeyboardEvent): void {
   const onControl = (e.target as HTMLElement).closest?.('summary, button, input, select, textarea, a[href], [tabindex], [contenteditable]');
   if (e.key === ' ' && !onControl && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    readerInput();
     scroller.scrollBy({ top: (e.shiftKey ? -1 : 1) * scroller.clientHeight * 0.9, behavior: reducedMotion() ? 'auto' : 'smooth' });
     return;
   }
@@ -1820,7 +1765,7 @@ pillShow.addEventListener('click', () => {
   const detail = pillEl.dataset.dive;
   hidePill();
   if (detail) return dive(detail);
-  if (id) jumpTo(id);
+  if (id) jumpTo(id, 'click'); // the reader took the cursor's step: the extension moves the editor's step too
 });
 $('.cx-pill-close').addEventListener('click', hidePill);
 backEl.addEventListener('click', () => goTo(trail.length - 2));
@@ -1869,7 +1814,6 @@ function onKey(e: KeyboardEvent): void {
     else if (trail.length > 1) goTo(trail.length - 2);
     return;
   }
-  if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key)) readerInput();
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
   // Comments (docs/COMMENTS-PLAN.md §11.3).
@@ -1904,7 +1848,6 @@ function restorePosition(p: Position): void {
   if (!el) return;
   const now = topOf(el) - scroller.getBoundingClientRect().top;
   if (Math.abs(now - p.offset) > 1) {
-    programmaticUntil = Date.now() + 200;
     scroller.scrollTop += now - p.offset;
   }
 }

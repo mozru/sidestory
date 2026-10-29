@@ -116,7 +116,7 @@ test.describe('data-explain-on', () => {
 
   test('a step lights its parts and fades exactly the rest: untagged subtrees under dim-rest, never defs, markers or kept content', async ({ page }) => {
     await open(page, DIAGRAM, { active: 'interface' });
-    await send(page, { type: 'syncTo', anchorId: 'state' });
+    await send(page, { type: 'syncTo', anchorId: 'state', jump: true });
     await expect(el(page, 'g-state')).toHaveClass(/cx-on/);
     expect(await classes(page, ALL)).toEqual({
       dia: 'cx-dimming',
@@ -148,12 +148,12 @@ test.describe('data-explain-on', () => {
     let c = await classes(page, ALL);
     expect([c['g-consume'], c['g-inner'], c['g-outer'], c['g-hs'], c['g-state']]).toEqual(['cx-on', '', 'cx-on', '', 'cx-dim']);
     // Nested anchor "handshakes" is in step "state": both ids are lit.
-    await send(page, { type: 'syncTo', anchorId: 'handshakes' });
+    await send(page, { type: 'syncTo', anchorId: 'handshakes', jump: true });
     await expect(el(page, 'g-hs')).toHaveClass(/cx-on/);
     c = await classes(page, ALL);
     expect([c['g-state'], c['g-hs'], c['g-outer'], c['r-outer-own'], c['g-consume'], c.row]).toEqual(['cx-on', 'cx-on', '', '', 'cx-dim', 'cx-on']);
     // refill lights both groups that name it.
-    await send(page, { type: 'syncTo', anchorId: 'refill' });
+    await send(page, { type: 'syncTo', anchorId: 'refill', jump: true });
     await expect(el(page, 'g-inner')).toHaveClass(/cx-on/);
     c = await classes(page, ALL);
     expect([c['g-consume'], c['g-inner'], c['g-outer'], c['g-state']]).toEqual(['cx-on', 'cx-on', 'cx-dim', 'cx-dim']);
@@ -214,7 +214,7 @@ test.describe('data-explain-on', () => {
     for (const id of ['state', 'consume', 'refill', 'state']) {
       const [w, f] = await page.evaluate(async (anchorId) => {
         const t0 = performance.now();
-        (window as unknown as { __send(m: unknown): void }).__send({ type: 'syncTo', anchorId });
+        (window as unknown as { __send(m: unknown): void }).__send({ type: 'syncTo', anchorId, jump: true });
         const t1 = performance.now();
         await new Promise((r) => requestAnimationFrame(() => setTimeout(r)));
         return [t1 - t0, performance.now() - t0];
@@ -385,10 +385,10 @@ test.describe('linked elements', () => {
     expect(await scrollTop()).toBeLessThan(50);
     await page.locator('.cx-pill button').first().click();
     await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
-    // With nothing lit, the panel follows the step as before.
+    // Go to Step (a jump) takes the panel there.
     await send(page, { type: 'here' });
-    await send(page, { type: 'syncTo', anchorId: 'interface' });
-    await send(page, { type: 'syncTo', anchorId: 'refill' });
+    await send(page, { type: 'syncTo', anchorId: 'interface', jump: true });
+    await send(page, { type: 'syncTo', anchorId: 'refill', jump: true });
     await expect.poll(scrollTop).toBeGreaterThan(1000);
   });
 

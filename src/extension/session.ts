@@ -138,6 +138,8 @@ export class ExplainerSession implements vscode.Disposable {
   /** Files that each described detail explainer covers, for "the cursor is in a detail" hints. */
   private readonly detailFiles = new Map<string, { title: string; files: Set<string> }>();
   private lastHint: string | undefined;
+  /** The step the editor cursor last offered (the page's pill), so resting in its code doesn't offer it again. */
+  private offered: string | undefined;
   /** Bumped by every dive or Back, so an older navigation still waiting gives way to the newer one. */
   private navRequest = 0;
   /** Bumped whenever the trail changes, so work started for the explainer shown before stops. */
@@ -200,7 +202,7 @@ export class ExplainerSession implements vscode.Disposable {
   /** The sidestory shown or its step changed, after the change (onDidSwitch fires before the switch). */
   readonly onDidChangePlace = this.placeEmitter.event;
   private readonly navigateEmitter = new vscode.EventEmitter<void>();
-  /** The reader acted in the panel (a step, a dive or Back, a widget input, a scroll that moved the section). */
+  /** The reader acted in the panel (a step, a dive or Back, a widget input). */
   readonly onDidNavigate = this.navigateEmitter.event;
   /** A preview panel: the next sidestory opened from code or a list replaces it (§7.5). */
   private previewing = false;
@@ -373,6 +375,7 @@ export class ExplainerSession implements vscode.Disposable {
   goTo(anchorId: string): void {
     if (this.initGeneration !== this.generation || !this.manifest) {
       this.active = anchorId;
+      this.offered = undefined;
       this.placeEmitter.fire();
       return;
     }
@@ -969,6 +972,7 @@ export class ExplainerSession implements vscode.Disposable {
     const linked = this.targets?.files.has(uriKey(uri)) ?? false;
     if (ids.size === 0 && !detail && !linked) {
       this.lastHint = undefined; // left the detail's code: offer it again when the cursor comes back
+      this.offered = undefined;
       clearTimeout(this.timers.get('cursor'));
       this.timers.delete('cursor');
       this.hereSeq++;
@@ -983,8 +987,7 @@ export class ExplainerSession implements vscode.Disposable {
   }
 
   /**
-   * The reader's cursor rested at `line`: light what links there, then follow with the step. Lighting goes first,
-   * so the page knows what's lit when it decides whether to scroll to the step (§8.2).
+   * The reader's cursor rested at `line`: light what links there, then offer its step (the page's pill).
    */
   private async followCursor(doc: vscode.TextDocument, line: number, ids: Set<string>, detail: [string, { title: string }] | undefined): Promise<void> {
     const mine = ++this.cursorSeq;
@@ -1009,10 +1012,9 @@ export class ExplainerSession implements vscode.Disposable {
         return;
       }
       this.lastHint = undefined;
-      if (id === this.active) return;
-      this.setActive(id);
-      this.decorateActive(false);
-      this.post({ type: 'syncTo', anchorId: id });
+      // Offered, not taken: the page shows "Cursor is in … · Show", and the step changes only if the reader clicks it.
+      if (id === this.active || id === this.offered) return;
+      if (this.post({ type: 'syncTo', anchorId: id })) this.offered = id;
     }
   }
 
@@ -1484,7 +1486,10 @@ export class ExplainerSession implements vscode.Disposable {
     if (changed) this.decorations.setWidget(undefined); // widget highlights belong to the step they were made in
     this.active = id;
     if (!id) this.decorations.set(undefined);
-    if (changed) this.placeEmitter.fire();
+    if (changed) {
+      this.offered = undefined; // a step the cursor offered before may be worth offering again
+      this.placeEmitter.fire();
+    }
   }
 
   /**

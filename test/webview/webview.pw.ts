@@ -78,28 +78,35 @@ test('choosing the step that is already current still reveals its code', async (
   expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'interface', source: 'step' });
 });
 
-test('the editor cursor moves the page without echoing back', async ({ page }) => {
+test('the editor cursor offers its step; only a click takes it, and nothing echoes back before', async ({ page }) => {
   await open(page);
+  const top = await page.locator('.cx-scroll').evaluate((el) => el.scrollTop);
   await clearPosted(page);
   await send(page, { type: 'syncTo', anchorId: 'refill' });
+  await expect(page.locator('.cx-pill')).toBeVisible();
+  await page.waitForTimeout(400);
+  await expect(section(page, 'refill')).not.toHaveClass(/cx-active/);
+  expect(await page.locator('.cx-scroll').evaluate((el) => el.scrollTop)).toBe(top);
+  expect((await posted(page)).filter((m) => m.type === 'focusAnchor')).toEqual([]);
+  // Go to Step, a CodeLens (jump): the reader asked, so the panel goes there.
+  await send(page, { type: 'syncTo', anchorId: 'refill', jump: true });
   await expect(section(page, 'refill')).toHaveClass(/cx-active/);
   await expect(section(page, 'refill')).toBeInViewport();
-  await page.waitForTimeout(400);
-  expect((await posted(page)).filter((m) => m.type === 'focusAnchor')).toEqual([]);
 });
 
-test('scrolling to a section tells the editor once', async ({ page }) => {
+test('scrolling changes no step: the diagram, widgets and the editor stay put', async ({ page }) => {
   await open(page);
+  const before = await page.locator('.cx-position').textContent();
   await clearPosted(page);
   await page.locator('.cx-scroll').hover();
   await page.mouse.wheel(0, 700);
-  await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'focusAnchor').length).toBeGreaterThan(0);
-  const last = (await posted(page)).filter((m) => m.type === 'focusAnchor').at(-1);
-  expect(last).toMatchObject({ source: 'scroll' });
-  await expect(section(page, (last as { anchorId: string }).anchorId)).toHaveClass(/cx-active/);
+  await expect.poll(() => page.locator('.cx-scroll').evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await page.waitForTimeout(500);
+  await expect(page.locator('.cx-position')).toHaveText(before!);
+  expect((await posted(page)).filter((m) => m.type === 'focusAnchor')).toEqual([]);
 });
 
-test('the cursor does not yank the page while the reader is scrolling', async ({ page }) => {
+test('the cursor offers its step after the reader scrolled too, and the pill takes the reader there', async ({ page }) => {
   await open(page);
   await page.locator('.cx-scroll').hover();
   await page.mouse.wheel(0, 200);
@@ -107,8 +114,11 @@ test('the cursor does not yank the page while the reader is scrolling', async ({
   await send(page, { type: 'syncTo', anchorId: 'refill' });
   await expect(page.locator('.cx-pill')).toBeVisible();
   await expect(page.locator('.cx-pill')).toContainText('Refill');
+  await clearPosted(page);
   await page.locator('.cx-pill').click();
   await expect(section(page, 'refill')).toBeInViewport();
+  // The extension is told, so the editor's highlight and dimming move to that step too.
+  expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'refill', source: 'click' });
 });
 
 test('an edit above the reader keeps their place and flags the changed section', async ({ page }) => {

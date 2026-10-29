@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The step changes only when you click or press a key. Scrolling the page no longer changes it, so diagrams, widgets and the editor stay on the step you chose while you read ahead; moving the cursor in the code offers its step ("Cursor is in … · Show") instead of jumping there.
 - Resting the pointer on a link or a diagram box now lights up its code in the editor instead of showing a snippet (`sidestory.hoverPreview` is `editor` by default; `card` brings the snippet back). The lines get a mark in the scrollbar, and when they're out of view a faint arrow at the editor's edge points at them; when no editor shows the file, a note by the link says so. Nothing opens, and focus, the cursor and the step stay put. New setting `sidestory.hoverReveal` (off by default; `hoverReveal` in a manifest's `highlight`) scrolls the editor to the lines while you hover, and back when you move on.
 - Clicking a box in a widget's diagram (or its own next / previous buttons) no longer scrolls the page away to that step's text: the step becomes current and its code shows in the editor, while the page stays on the diagram you're using.
 - New **This Sidestory** view under Sidestories: where the panel is in a hierarchy of sidestories, with the way up, the details below and the ones beside it, one click each. It follows the panel as you dive in, go back or switch panels.

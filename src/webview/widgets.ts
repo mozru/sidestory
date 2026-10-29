@@ -43,8 +43,7 @@ export interface WidgetPanel {
   back(): boolean;
   /** Back (-1) or Forward (1) in the panel's history. */
   history(delta: 1 | -1): void;
-  readerInput(): void;
-  /** Scrolls by `dy` without the scroll picking a step. */
+  /** Scrolls by `dy`, keeping the reader's place as a widget grows. */
   compensate(dy: number): void;
   /** Focuses an element in the content as the panel's own move (it doesn't pick a step). */
   focusSelf(el: HTMLElement): void;
@@ -1090,8 +1089,7 @@ export class WidgetFrames {
         break;
       }
       case 'activity':
-        this.panel.readerInput();
-        break;
+        break; // the reader scrolling over a widget: scrolling picks no step
       case 'focusExit':
         this.focusExit(w, m.dir, m.key);
         break;

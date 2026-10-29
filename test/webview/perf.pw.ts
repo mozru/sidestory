@@ -293,7 +293,7 @@ test.describe('speed', () => {
     const anchorsMs = await timeTo(page, { type: 'anchors', anchors: states }, { selector: '[data-explain-anchor="s7"][data-cx-state="changed"]', inFrame: true });
     const steps: number[] = [];
     for (let i = 0; i < 10; i++) steps.push(await timeTo(page, { type: 'navigate', delta: 1 }, position(i + 2)));
-    const sync = await timeTo(page, { type: 'syncTo', anchorId: 's400' }, position(401));
+    const sync = await timeTo(page, { type: 'syncTo', anchorId: 's400', jump: true }, position(401));
     const step = steps.sort((a, b) => a - b)[5]!;
     console.log(`[perf] 500 sections, ${(big.html.length / 1e6).toFixed(1)} MB: init ${init.toFixed(0)} ms, content update ${update.toFixed(0)} ms, anchors ${anchorsMs.toFixed(0)} ms, step (median) ${step.toFixed(0)} ms, syncTo ${sync.toFixed(0)} ms`);
     expect(init).toBeLessThan(5000);

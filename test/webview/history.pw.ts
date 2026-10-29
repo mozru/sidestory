@@ -234,12 +234,12 @@ test('shortcuts: the page’s own on macOS, VS Code’s through it, the mouse’
 
 test('Go to Step from the extension is an entry; the editor’s cursor moving is not', async ({ page }) => {
   await open(page);
-  await send(page, { type: 'syncTo', anchorId: 'two' });
-  await expect(position(page)).toHaveText('Step 2 of 5');
+  await send(page, { type: 'syncTo', anchorId: 'two' }); // offered, not taken
+  await expect(page.locator('.cx-pill')).toBeVisible();
   await expect(back(page)).toBeDisabled();
   await send(page, { type: 'syncTo', anchorId: 'four', jump: true });
   await expect(position(page)).toHaveText('Step 4 of 5');
-  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 2');
+  await expect(back(page)).toHaveAccessibleName('Back to Tour · step 1');
 });
 
 test('narrow panels fit the buttons beside the status, the title below', async ({ page }) => {

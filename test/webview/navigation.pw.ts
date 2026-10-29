@@ -41,9 +41,9 @@ test('a section the extension asks for wins over the place saved for that sidest
   await expect.poll(() => page.locator('.cx-scroll').evaluate((e) => e.scrollTop)).toBeLessThan(100);
 });
 
-test('syncTo moves the panel to the step', async ({ page }) => {
+test('a jump from the editor (Go to Step) moves the panel to the step', async ({ page }) => {
   await open(page);
-  await send(page, { type: 'syncTo', anchorId: 'three' });
+  await send(page, { type: 'syncTo', anchorId: 'three', jump: true });
   await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
 });
 

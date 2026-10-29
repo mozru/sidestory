@@ -337,7 +337,7 @@ test.describe('reveal, goToStep and focus need the reader’s interaction with t
     await expect(out(widgetFrame(page))).toContainText('go:true');
     await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
     expect(await settled()).toBe(top);
-    await send(page, { type: 'syncTo', anchorId: 'ring' }); // back to Ring, as when the editor's cursor moves there
+    await send(page, { type: 'syncTo', anchorId: 'ring', jump: true }); // back to Ring, as Go to Step does
     await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
     const there = await settled();
     await widgetFrame(page).getByTestId('next').click();
@@ -362,20 +362,17 @@ test.describe('reveal, goToStep and focus need the reader’s interaction with t
     await expect(page.locator('.cx-position')).toHaveText('Step 1 of 3');
   });
 
-  test('a step a widget chose stays while the reader scrolls a little, and follows once they scroll away', async ({ page }) => {
+  test('a step a widget chose stays while the reader scrolls, however far', async ({ page }) => {
     await openProbe(page);
     await widgetFrame(page).getByTestId('go').click();
     await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
     const box = (await page.locator('.cx-scroll').boundingBox())!;
     await page.mouse.move(box.x + 20, box.y + 20);
-    await page.mouse.wheel(0, 10);
-    await page.waitForTimeout(400);
-    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
-    // Away and back: the step follows the page again.
     await page.mouse.wheel(0, 5000);
     await page.waitForTimeout(400);
     await page.mouse.wheel(0, -5000);
-    await expect(page.locator('.cx-position')).not.toHaveText('Step 3 of 3');
+    await page.waitForTimeout(400);
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
   });
 
   test('a focused widget answers the extension’s focus question as legitimate after a click in it', async ({ page }) => {
@@ -393,7 +390,7 @@ test.describe('highlight, steps, keys and focus exits', () => {
     await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'widgetHighlight')).toEqual([hl]);
     await clearPosted(page);
     // The editor's cursor moves into the nested anchor: same step, and the widget highlights again in response.
-    await send(page, { type: 'syncTo', anchorId: 'inner' });
+    await send(page, { type: 'syncTo', anchorId: 'inner', jump: true });
     await expect.poll(async () => (await posted(page)).filter((m) => m.type === 'widgetHighlight')).toEqual([{ type: 'widgetHighlight' }, hl]);
   });
 
@@ -1077,7 +1074,7 @@ export default function R() { return <p data-testid="rm">{String(useReducedMotio
     await clearPosted(page);
     // The cursor moves into the nested anchor: a step change within the same section, where the old call
     // would still pass the highlight check.
-    await send(page, { type: 'syncTo', anchorId: 'inner' });
+    await send(page, { type: 'syncTo', anchorId: 'inner', jump: true });
     await page.waitForTimeout(1300);
     expect((await posted(page)).filter((m) => m.type === 'widgetHighlight' && 'anchor' in m && m.anchor)).toEqual([]);
   });

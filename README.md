@@ -32,7 +32,7 @@ You need VS Code 1.95 or later. It works locally and over Remote-SSH, WSL, Dev C
 
 ## Reading a sidestory
 
-Step through with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> from anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS). The editor scrolls to each step's code, highlights it, and marks the names that matter. It works the other way too. Click in the code, and the diagram boxes for that code light up and the page moves to the step about it.
+Step through with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> from anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS). The editor scrolls to each step's code, highlights it, and marks the names that matter. It works the other way too. Click in the code, and the diagram boxes for that code light up and the panel offers the step about it. The step only changes when you click or press a key: scrolling the page never moves the diagram or the editor.
 
 ![Clicking lines in dma_ctrl.sv: the IDLE, READ_BURST and WAIT_DATA states light up in the overview's diagram, then a line in the error override takes the sidestory to its Errors step](media/marketplace/cursor-follow.gif)
 
