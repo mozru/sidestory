@@ -204,6 +204,8 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly navigateEmitter = new vscode.EventEmitter<void>();
   private readonly stepEmitter = new vscode.EventEmitter<string>();
   private readonly opts: SessionOptions;
+  /** A dive whose link asked for the detail's code to show (data-explain-detail-code="show"), until it opens. */
+  private showCodeOnOpen = false;
   /** An older version from git (Compare with…), or undefined for the sidestory as it is. */
   get version(): string | undefined {
     return this.opts.version;
@@ -499,7 +501,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.post(id === undefined ? { type: 'historyFailed', dir, trail, reason } : { type: 'historyFailed', id, dir, trail, reason });
   }
 
-  private async dive(name: string, section?: string, id?: number): Promise<void> {
+  private async dive(name: string, section?: string, id?: number, showCode = false): Promise<void> {
     const child = this.detailRef(name);
     const names = [...this.trail.map((t) => t.name), name];
     if (!child) return this.refuse(id, '', names, 'refused');
@@ -522,7 +524,16 @@ export class ExplainerSession implements vscode.Disposable {
       void vscode.window.showWarningMessage(`There's no sidestory called "${plainForMessage(name, 64)}" next to this one.`);
       return this.refuse(id, child.dir.toString(), names, 'gone');
     }
+    // The link asked for the editor to follow into the detail: its opening step's code shows, an editor open or not.
+    this.showCodeOnOpen = showCode;
     await this.switchTo([...this.trail, child], section);
+    // Opened at a step the page already knew (the reader was here before): no 'initial' comes, so show it here.
+    if (showCode) {
+      const generation = this.generation;
+      setTimeout(() => {
+        if (this.showCodeOnOpen && this.active && generation === this.generation && !this.disposed) this.showInitial(this.active);
+      }, 600);
+    }
   }
 
   /** Back or Forward to a sidestory the panel showed before: checked like a restored trail, and still there. */
@@ -1092,7 +1103,7 @@ export class ExplainerSession implements vscode.Disposable {
         if (this.initGeneration === this.generation) this.sendInit();
         break;
       case 'dive':
-        void this.dive(m.name, m.section, m.id);
+        void this.dive(m.name, m.section, m.id, m.showCode === true);
         break;
       case 'goTo':
         if (m.depth < this.trail.length - 1) {
@@ -1174,7 +1185,9 @@ export class ExplainerSession implements vscode.Disposable {
    * editor the reader was using.
    */
   private showInitial(id: string): void {
-    if (this.editorOpen()) {
+    const show = this.showCodeOnOpen;
+    this.showCodeOnOpen = false;
+    if (this.editorOpen() && !show) {
       this.decorateActive(false);
       return;
     }

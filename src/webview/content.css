@@ -202,8 +202,10 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on:is
   }
 }
 
+/* The current step's bar sits just outside the section, in the page's gutter, so it never covers the author's text
+   (sections often have no padding of their own). */
 [data-explain-anchor].cx-active {
-  box-shadow: inset 3px 0 0 var(--cx-accent);
+  box-shadow: -6px 0 0 -3px var(--cx-accent);
   background: color-mix(in srgb, var(--cx-accent) 7%, transparent);
 }
 
@@ -264,14 +266,14 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) :where(svg .cx-on:is
     box-shadow: 0 0 0 1px var(--vscode-editorInfo-foreground);
   }
   [data-explain-anchor].cx-active.cx-updated {
-    box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 1px var(--vscode-editorInfo-foreground);
+    box-shadow: -6px 0 0 -3px var(--cx-accent), 0 0 0 1px var(--vscode-editorInfo-foreground);
   }
 }
 
 /* High contrast: no tints; mark things with borders. Box shadows leave the state outlines visible. */
 body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-active {
   background: transparent;
-  box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder);
+  box-shadow: -6px 0 0 -3px var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder);
 }
 
 body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-updated {
@@ -280,7 +282,7 @@ body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor
 }
 
 body:is(.vscode-high-contrast, .vscode-high-contrast-light) [data-explain-anchor].cx-active.cx-updated {
-  box-shadow: inset 3px 0 0 var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder), 0 0 0 3px var(--vscode-editorInfo-foreground);
+  box-shadow: -6px 0 0 -3px var(--cx-accent), 0 0 0 2px var(--vscode-contrastActiveBorder), 0 0 0 3px var(--vscode-editorInfo-foreground);
 }
 
 /* ---- detail explainers: peek in place, or dive in ---- */

@@ -201,6 +201,10 @@ Readers then choose, per piece:
 - **Peek**: "*Title* in brief" opens the detail's `summary` in place.
 - **Dive**: "Dive into *Title*" shows the detail sidestory in the same panel. A trail at the top shows the way back; **Up to *Title***, a trail entry or <kbd>Esc</kbd> returns to the step you left. The panel's ← button and <kbd>Alt</kbd>+<kbd>←</kbd> go back too, and → dives in again (see [Reading a sidestory](#reading-a-sidestory)).
 
+**From a diagram:** put `data-explain-detail` on a box of an SVG diagram (a `<g>`), and the box itself dives in on a click or <kbd>Enter</kbd>, with no Peek. Give it a title in the diagram, or the reader sees only its shape.
+
+**The editor on a dive:** it stays where it is by default, and the detail's code is highlighted where it's already on screen. Add `data-explain-detail-code="show"` to the detail link (an element or a diagram box) to have the editor go to the detail's first step too, so the code beside the page switches with it.
+
 Details can have details of their own (up to 16 levels). Give each sidestory a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the sidestory you're reading doesn't, the panel offers to dive into it. The Sidestories view lists details under their overviews ([above](#finding-your-way-in-big-repositories)).
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](../examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](../examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.

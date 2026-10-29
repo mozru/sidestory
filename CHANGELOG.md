@@ -7,6 +7,8 @@
 - The step changes only on a click or a key. Scrolling the page never changes it; moving the cursor in the code offers its step ("Cursor is in … · Show") instead of jumping there.
 - Clicking a step tab moves the code to that step and leaves the page where it is, unless the section is off screen. Clicking the current section only gives the panel focus; the editor stays where it is.
 - Tab picks a step only when it moves from one section into another.
+- A box in an SVG diagram with `data-explain-detail` dives into that detail on a click or Enter. `data-explain-detail-code="show"` on a detail link also moves the editor to the detail's code.
+- The current step's bar sits just outside the section, so it no longer covers text in sections without padding.
 - A widget's step changes (`goToStep`, its next / previous buttons, a box in its diagram) keep the page on the widget; a widget's `reveal()` no longer takes focus or moves the cursor.
 - Picked steps, clicks in a section or widget, and Tab are Back / Forward entries.
 - Resting the pointer on a link or diagram box lights its code in the editor, with an arrow at the edge when it's out of view (`sidestory.hoverPreview` is now `editor` by default; `card` brings the snippet back). New setting `sidestory.hoverReveal` scrolls the editor there while you hover.

@@ -925,6 +925,15 @@ function decorateDetails(root: HTMLElement): void {
     }
     const info = details.get(name);
     if (!info && !describing.has(name)) unknown.push(name);
+    // A part of an SVG diagram (a box) can't hold the peek and dive controls: the part itself dives, as a link.
+    if (host.namespaceURI === 'http://www.w3.org/2000/svg') {
+      box?.remove();
+      host.dataset.cxDive = '1';
+      if (!host.hasAttribute('tabindex')) host.setAttribute('tabindex', '0');
+      if (!host.hasAttribute('role')) host.setAttribute('role', 'link');
+      host.setAttribute('aria-label', `Dive into ${info?.title || name}`);
+      continue;
+    }
     if (!box) {
       box = frame.createElement('div');
       box.className = 'cx-detail';
@@ -1006,15 +1015,22 @@ function goTo(depth: number): void {
   vscode.postMessage({ type: 'goTo', depth, id: navRequestId });
 }
 
-function dive(name: string): void {
+/**
+ * Into a detail sidestory. `showCode`: its link asked for the editor to go to the detail's first step too
+ * (data-explain-detail-code="show"); else the editor stays, and only highlights what's on screen.
+ */
+function dive(name: string, showCode = false): void {
   // Already on the way here (a detail that points back to its overview): go back up instead.
   const i = trail.findIndex((t) => t.name === name);
   if (i >= 0) return goTo(i);
   savePlace();
   // Into the detail the reader just came back from: that's Forward, so what lay beyond it stays.
   expectEntry(1, [...trail.map((t) => t.name), name]);
-  vscode.postMessage({ type: 'dive', name, id: navRequestId });
+  vscode.postMessage({ type: 'dive', name, id: navRequestId, ...(showCode ? { showCode: true } : {}) });
 }
+
+/** The detail a link dives into, and whether it asks the editor to follow. */
+const detailOf = (host: HTMLElement) => ({ name: host.dataset.explainDetail!, showCode: host.getAttribute('data-explain-detail-code') === 'show' });
 
 /** A sibling sidestory's folder (details live next to each other under `.sidestory/`). */
 const siblingDir = (name: string) => state.dir.replace(/[^/]*$/, name);
@@ -1765,7 +1781,7 @@ function onContentClick(e: MouseEvent): void {
   const name = host?.dataset.explainDetail;
   if (control && name) {
     e.preventDefault();
-    if (control.classList.contains('cx-dive')) dive(name);
+    if (control.classList.contains('cx-dive')) dive(name, detailOf(host!).showCode);
     else {
       if (peeked.has(name)) peeked.delete(name);
       else peeked.add(name);
@@ -1826,6 +1842,13 @@ function onContentClick(e: MouseEvent): void {
     }
     return;
   }
+  // A diagram part that dives (an SVG box with data-explain-detail).
+  const diveBox = target.closest<HTMLElement>('[data-cx-dive]');
+  if (diveBox && DETAIL_NAME.test(diveBox.dataset.explainDetail ?? '')) {
+    e.preventDefault();
+    const d = detailOf(diveBox);
+    return dive(d.name, d.showCode);
+  }
   if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
@@ -1841,6 +1864,12 @@ function onContentKey(e: KeyboardEvent): void {
     e.preventDefault();
     if (e.isTrusted && !handled && !e.repeat && linked === aimedLink && linkKey(linked) === aimedKey) openLinked(linked);
     return;
+  }
+  const diveBox = (e.target as HTMLElement).closest?.<HTMLElement>('[data-cx-dive]');
+  if (diveBox && e.key === 'Enter' && e.target === diveBox && e.isTrusted && !e.repeat && DETAIL_NAME.test(diveBox.dataset.explainDetail ?? '')) {
+    e.preventDefault();
+    const d = detailOf(diveBox);
+    return dive(d.name, d.showCode);
   }
   // The frame can't scroll itself, so Space scrolls the panel, unless it is for a control.
   const onControl = (e.target as HTMLElement).closest?.('summary, button, input, select, textarea, a[href], [tabindex], [contenteditable]');

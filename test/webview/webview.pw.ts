@@ -980,3 +980,22 @@ test('a right-click in the page opens VS Code\'s menu for what was clicked, and 
   await send(page, { type: 'menu', action: 'comment' });
   await expect(page.locator('.cx-c-composer textarea')).toHaveValue(/^> Intro text\./);
 });
+
+test('a diagram box with data-explain-detail dives on a click or Enter; data-explain-detail-code="show" asks the editor to follow', async ({ page }) => {
+  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2>
+    <svg viewBox="0 0 200 60" role="group" aria-label="map">
+      <g id="fifo" data-explain-detail="dma-fifo" data-explain-detail-code="show"><rect width="80" height="40"/><text x="5" y="20">FIFO</text></g>
+      <g id="csr" data-explain-detail="dma-csr"><rect x="100" width="80" height="40"/><text x="105" y="20">CSR</text></g>
+    </svg></section>` });
+  // The box is the link: no HTML controls stuffed into the SVG.
+  await expect(frame(page).locator('#fifo .cx-detail')).toHaveCount(0);
+  await expect(frame(page).locator('#fifo')).toHaveAttribute('role', 'link');
+  await clearPosted(page);
+  await frame(page).locator('#fifo rect').click();
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'dive')).toMatchObject({ type: 'dive', name: 'dma-fifo', showCode: true });
+  await clearPosted(page);
+  await frame(page).locator('#csr').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'dive')).toMatchObject({ type: 'dive', name: 'dma-csr' });
+  expect((await posted(page)).find((m) => m.type === 'dive')).not.toHaveProperty('showCode');
+});

@@ -181,7 +181,8 @@ export type FromWebview =
   /** The content frame needs a file from the explainer folder (an image, font or stylesheet). */
   | { type: 'requestAsset'; id: number; path: string }
   /** Open a detail explainer in this panel, optionally at one of its sections. */
-  | { type: 'dive'; name: string; section?: string; id?: number }
+  /** `showCode`: the detail link asked for the editor to go to the detail's first step too. */
+  | { type: 'dive'; name: string; section?: string; id?: number; showCode?: boolean }
   /** Go back up the trail to this level (0 = the root explainer). */
   | { type: 'goTo'; depth: number; id?: number }
   /** Back or Forward to a sidestory in the panel's history: its folder, its trail's names (root first), its step. */
@@ -293,7 +294,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('openExternal'), url: z.string().max(2048).refine((u) => safeExternalUrl(u) !== null) }),
   z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
-  z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional(), id: requestIdSchema.optional() }),
+  z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional(), id: requestIdSchema.optional(), showCode: z.boolean().optional() }),
   z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL), id: requestIdSchema.optional() }),
   z.object({ type: z.literal('openHistory'), dir: z.string().max(4096), trail: z.array(explainerNameSchema).min(1).max(MAX_TRAIL), active: anchorIdSchema.optional(), id: requestIdSchema.optional() }),
   z.object({ type: z.literal('historyState'), canBack: z.boolean(), canForward: z.boolean() }),
