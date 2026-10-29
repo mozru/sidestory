@@ -2,21 +2,39 @@
 
 ## Unreleased
 
-- **Compare with…**: open another version of a sidestory (your branch's base, the previous version, or any commit, branch or tag) beside the current one, read-only from git. The two panels move through the steps together; VS Code's diff shows a step's code changes and the page source's.
-- Branch coverage can pass with some changes left: `"coverage": { "minimum": 90 }` in `.sidestory/checks.json` passes once 90% of the changes that need explaining are explained. Widget code, links, submodules, binaries and moves must still all be explained, and the minimum is read from the base branch, so a branch can't lower its own bar.
-- Clicking a step tab (or picking a step) moves the code to that step but leaves the page where it is, unless the step's section is off screen.
-- Checker rules: make any finding an error, a warning, info or off, for every sidestory (`.sidestory/checks.json`), one sidestory or one step (`"checks"` in the manifest), or one element (`data-explain-ignore="rule: why"`, reported when it no longer silences anything). Safety rules can't be turned down. New `box-unlinked` warning: a diagram part that lights up on a step but links to no code.
-- Right-click in a sidestory now opens a menu: Copy, Open Code, Go to This Step, Comment and Ask Claude, for what you clicked. Before, right-click did nothing in the page.
-- Fixed: clicking the same code link twice made the editor jump for a moment. Opening code now scrolls the editor once, and not at all when the lines are already on screen.
-- `.sidestory/GUIDELINES.md`, like a CLAUDE.md for sidestories: your team's guidance on how they read and look (tone, depth, diagrams). The Claude Code skill and the copied prompts read it before writing or updating one, and Claude offers to add lasting guidance you give it there.
-- Each row in the Sidestories view shows its sidestory's problems and open comment threads ("2 problems · 3 comments, 1 for you"), with a warning or comment icon.
-- Navigation fixes: Tab changes the step only when it moves from one section into another (not when it enters the page from the step bar); clicking the current section only gives the panel focus, without sending the editor back to its code; a click in a section or a widget, Tab, and a widget's `goToStep` are Back/Forward entries; a widget's `reveal()` shows code without taking focus or moving the cursor; following the panel never expands a row you collapsed in the Sidestories view.
-- The step changes only when you click or press a key. Scrolling the page no longer changes it, so diagrams, widgets and the editor stay on the step you chose while you read ahead; moving the cursor in the code offers its step ("Cursor is in … · Show") instead of jumping there.
-- Resting the pointer on a link or a diagram box now lights up its code in the editor instead of showing a snippet (`sidestory.hoverPreview` is `editor` by default; `card` brings the snippet back). The lines get a mark in the scrollbar, and when they're out of view a faint arrow at the editor's edge points at them; when no editor shows the file, a note by the link says so. Nothing opens, and focus, the cursor and the step stay put. New setting `sidestory.hoverReveal` (off by default; `hoverReveal` in a manifest's `highlight`) scrolls the editor to the lines while you hover, and back when you move on.
-- Clicking a box in a widget's diagram (or its own next / previous buttons) no longer scrolls the page away to that step's text: the step becomes current and its code shows in the editor, while the page stays on the diagram you're using.
-- **This branch** is now off by default (`sidestory.sidebar.thisBranch` turns it on), so the Sidestories view is for finding sidestories; when on, it shows a branch's sidestories as their hierarchy, each detail under its overview.
-- An agent can watch for comments without Claude Code's channels (which many work accounts block): `check.cjs threads --watch --json` prints a line for each of your comments that waits for an answer, and the Claude Code skill says to run it in the background when you ask Claude to watch for comments.
-- Comments say what they're about. In the editor, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> (or right-click → **Comment on These Lines**, now offered without a selection too) comments on the selected lines or the cursor's line. In the panel, <kbd>C</kbd> / <kbd>A</kbd> with text selected start the comment with it quoted, and Claude gets the step's title and the lines it explains.
+**Navigation**
+
+- The step changes only on a click or a key. Scrolling the page never changes it; moving the cursor in the code offers its step ("Cursor is in … · Show") instead of jumping there.
+- Clicking a step tab moves the code to that step and leaves the page where it is, unless the section is off screen. Clicking the current section only gives the panel focus; the editor stays where it is.
+- Tab picks a step only when it moves from one section into another.
+- A widget's step changes (`goToStep`, its next / previous buttons, a box in its diagram) keep the page on the widget; a widget's `reveal()` no longer takes focus or moves the cursor.
+- Picked steps, clicks in a section or widget, and Tab are Back / Forward entries.
+- Resting the pointer on a link or diagram box lights its code in the editor, with an arrow at the edge when it's out of view (`sidestory.hoverPreview` is now `editor` by default; `card` brings the snippet back). New setting `sidestory.hoverReveal` scrolls the editor there while you hover.
+- Right-click menu in the page: Copy, Open Code, Go to This Step, Comment and Ask Claude.
+- Fixed: clicking the same code link twice made the editor jump. Opening code now scrolls the editor once, and not at all when the lines are on screen.
+
+**Comments**
+
+- In the editor, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> or right-click → **Comment on These Lines** / **Ask Claude About These Lines** works on the selection or the cursor's line.
+- In the panel, <kbd>C</kbd> / <kbd>A</kbd> quote the selected text, and Claude gets the step's title and lines.
+- Agents can watch for comments without Claude Code channels: `check.cjs threads --watch --json`. The Claude Code skill says how.
+
+**Sidebar**
+
+- **This branch** is off by default (`sidestory.sidebar.thisBranch`), except in a workspace with no sidestory; when on, it nests a branch's sidestories under their overviews.
+- Sidestories rows show problems and open comment threads.
+- Following the panel never expands a row you collapsed.
+
+**Writing**
+
+- `.sidestory/GUIDELINES.md`: your team's guidance for sidestories, read by the Claude Code skill and the copied prompts.
+- Checker rules: set any finding to error, warning, info or off for every sidestory (`.sidestory/checks.json`), one sidestory or one step (`"checks"` in the manifest), or one element (`data-explain-ignore="rule: why"`). Rules that guard the reader can't be turned down.
+- New `box-unlinked` warning: a diagram part that lights up on a step but links to no code.
+
+**Branches**
+
+- `"coverage": { "minimum": 90 }` in `.sidestory/checks.json` lets coverage pass with some changes left. Widget code, links, submodules, binaries and moves must still all be explained, and the minimum is read from the base, so a branch can't lower its own bar.
+- **Compare with…**: open another version of a sidestory (the branch's base, the previous version, or any commit, branch or tag) beside it, read-only from git. The panels move through the steps together, and VS Code's diff shows a step's code changes or the page source's.
 
 ## 0.2.8 (2026-10-28)
 

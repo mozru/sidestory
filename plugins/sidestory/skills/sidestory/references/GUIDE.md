@@ -7,6 +7,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 
 - [Where it runs](#where-it-runs)
 - [Reading a sidestory](#reading-a-sidestory)
+  - [Finding your way in big repositories](#finding-your-way-in-big-repositories)
 - [Writing a sidestory](#writing-a-sidestory)
   - [Link sections to code](#link-sections-to-code)
   - [The manifest](#the-manifest)
@@ -43,16 +44,43 @@ The full reference for writing and reading sidestories. For a quick tour, see th
 
 ## Reading a sidestory
 
-Open one with **Sidestory: Open Sidestory…** from the Command Palette, or right-click a folder under `.sidestory/` in the Explorer.
+Open one with **Sidestory: Open Sidestory…**, or right-click a folder under `.sidestory/` in the Explorer. The editor shows and highlights the code of the current step.
 
-- **Step through the sidestory** and the editor shows and highlights the code each section is about. Step with the arrow buttons, <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>Alt</kbd>+<kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote).
-- **Rest the pointer on a link or a diagram box** (or Tab to it) and its code lights up in the editors that show its file, with a mark in the scrollbar. Your focus, cursor and step stay where they are. When those lines are scrolled out of view, a faint arrow at the editor's top or bottom edge points at them ("↑ Refill · L35–38"); when no editor shows the file, a note by the link says so ("bit_reader.sv isn't on screen · click to open"). Click to open the code. Turn on `sidestory.hoverReveal` to have the editor scroll to the lines while you hover, and back once you're done in the panel. It stays if you click the link, or go to that editor (move the pointer there, scroll it, click in it). `sidestory.hoverPreview` shows a small card with the first lines of the code in the panel instead (`card`), does both (`both`), or turns hovering off (`off`).
-- **Go back and forward** as in a browser: the ← → buttons at the top of the panel, the mouse's back and forward buttons, **Sidestory: Back** / **Forward**, or VS Code's own Go Back / Go Forward keys: <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> on Windows, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> (or <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd>) on Linux, <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> on macOS, where <kbd>Cmd</kbd>+<kbd>[</kbd> / <kbd>]</kbd> and <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> work too. Each panel remembers the steps you chose (from the tabs, the picker, a link or Go to Step), the details you dived into and the sidestories opened in it, and takes you back to the same step and scroll position. A run of <kbd>J</kbd>/<kbd>K</kbd> steps counts once, so Back skips to where it started. While the panel has focus and somewhere to go, these keys move through the panel; otherwise they are VS Code's as usual. In VS Code on Windows the mouse buttons keep doing VS Code's Go Back / Go Forward.
-- **VS Code's shortcuts work inside the page**: <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>P</kbd>, <kbd>F1</kbd> and the rest, also from inside a widget (a shortcut there leaves the widget; a widget can pass on only common ones: the Command Palette, Quick Open, switching editors and groups, the side bar and panel, Back / Forward and F1). Copy, paste, undo, select-all and the scroll keys (Ctrl/Cmd with the arrows, Home, End or Page Up/Down, except Ctrl+Page Up/Down, which switch editors) stay with the page, and keys typed into a text field stay with the field.
-- **Move your cursor in the code** and the panel offers the section about it ("Cursor is in … · Show"); click to go there. Boxes and links that point at the code under the cursor get a ring, wherever they are in the page.
+**The step changes only on a click or a key**, never on scrolling, so diagrams, widgets and the editor stay on the step you chose while you read ahead:
+
+- the step tabs, the picker narrow panels show and its < > buttons, a click in a section, a link;
+- <kbd>J</kbd>/<kbd>K</kbd> in the panel, or <kbd>Alt</kbd>+<kbd>]</kbd> / <kbd>[</kbd> anywhere (<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>]</kbd> / <kbd>[</kbd> on macOS, where <kbd>Option</kbd>+<kbd>]</kbd> types a quote);
+- <kbd>Tab</kbd> from one section into another;
+- Back / Forward, **Sidestory: Go to Step…**, a CodeLens, and the cursor pill (below).
+
+Clicking a step tab (or picking a step) moves the code to it, and scrolls the page only when the step's section is off screen. Clicking the section you're already on only gives the panel focus. A widget that changes the step (`goToStep`, its next / previous buttons, a box in its diagram) keeps the page on the widget. Opening code scrolls the editor once, and not at all when the lines are already on screen.
+
+- **Rest the pointer on a link or a diagram box** (or Tab to it) and its code lights up in the editors that show its file, with a mark in the scrollbar; your focus, cursor and step stay put. An arrow at the editor's edge points at lines out of view ("↑ Refill · L35–38"), and a note by the link says when no editor shows the file. Click to open the code. `sidestory.hoverReveal` also scrolls the editor to the lines while you hover, and back afterwards unless you clicked the link or went to that editor; `sidestory.hoverPreview` shows a `card` with the first lines instead, `both`, or `off`.
+- **Move the cursor in the code** and the panel offers the step about it ("Cursor is in … · Show"); the step changes only if you click it. Boxes and links that point at the code under the cursor get a ring.
 - **Right-click** in the page for **Copy** (with text selected), **Open Code** (on a link), **Go to This Step** (in another section), **Comment** and **Ask Claude** (on the section you clicked, with your selection quoted).
-- **The step changes only when you ask:** a click (a step tab, a section, a link, a button, the pill) or a key (<kbd>J</kbd>/<kbd>K</kbd>, Go to Step, Back/Forward). Scrolling the page never changes it, so diagrams, widgets and the editor stay on the step you chose while you read ahead.
-- **Everything updates live.** Edit the code (saved or not) or the sidestory and the panel follows at once, keeping your place, your focus and anything you're typing. Sections follow code that moves, and tell you when the code changed, needs a look, or can't be found.
+- **Back and forward** as in a browser: the ← → buttons, the mouse's back and forward buttons, **Sidestory: Back** / **Forward**, or VS Code's Go Back / Go Forward keys while the panel has focus (<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> on Windows; <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd> or <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> on Linux; <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd>, <kbd>Cmd</kbd>+<kbd>[</kbd> / <kbd>]</kbd> or <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> on macOS). History holds the steps you chose, the details you dived into and the sidestories opened in the panel, with their scroll position; a run of <kbd>J</kbd>/<kbd>K</kbd> steps counts once. With nowhere to go in the panel, the keys are VS Code's as usual (on Windows the mouse buttons always are).
+- **VS Code's shortcuts work inside the page** and widgets (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>P</kbd>, <kbd>F1</kbd>…; a widget passes on only common ones). Copy, paste, undo, select-all and the scroll keys stay with the page (Ctrl+Page Up/Down still switch editors), and typing in a text field stays with the field.
+- **Everything updates live.** Edit the code (saved or not) or the sidestory and the panel follows, keeping your place, focus and anything you're typing. Sections follow code that moves, and say when it changed, needs a look, or can't be found.
+
+### Finding your way in big repositories
+
+The **Sidestories** view (the Sidestory icon in the activity bar, shown once a workspace has sidestories, or **Sidestory: Show Sidestories**) lists every sidestory:
+
+- **Packages.** Each `.sidestory/` folder is a package, listed apart (`services/auth/.sidestory/`, `services/billing/.sidestory/`), with anchor paths relative to the folder that holds it. Detail links stay inside one package; a `.sidestory/` inside another sidestory is ignored.
+- **Start here.** In each package, a sidestory named `overview`, else the only one named `*-overview`, else the only top-level sidestory with details, is pinned first.
+- **Tops and details.** A sidestory nothing links to is top-level, with its details nested under it in page order; a detail linked from several places appears under each. `group` files top-level sidestories in folders, and `top: true` keeps a linked one at the top level.
+- **What needs you.** Each row shows its problems (errors, broken detail links, steps out of date or lost) and open comment threads ("2 problems · 3 comments, 1 for you"), with a warning or comment icon; the tooltip lists them.
+- **Filter** (the funnel in the title bar) matches titles, names, summaries and groups, and shows each match once, under its shortest path from a top-level sidestory.
+- The view selects the open panel's sidestory (`sidestory.sidebar.followPanel`), but never expands a row you collapsed.
+
+Elsewhere:
+
+- A **CodeLens** above explained code names the sidestory and step ("Overview › Detail · step 3: Title"); click it to open the sidestory there. The status bar names the sidestory for the cursor's line.
+- **This File** (in the Sidestory sidebar) lists every step that covers the active editor's file.
+- **Explain with Sidestory** (right-click a file) opens the first step that covers it, or copies a prompt to explain it.
+- **Go to Step…** finds a step by title in the current package or all of them.
+
+Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel you were last reading, if it's under the same top-level sidestory, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** always opens another.
 
 ## Writing a sidestory
 
@@ -113,7 +141,7 @@ Linked elements look the same in every sidestory, and your own CSS always wins o
 
 - Set `--cx-link-hover` or `--cx-link-ring` to `transparent` to turn that effect off, or to another color.
 - `data-explain-plain` on a linked element removes the built-in look (only the pointer cursor stays), for a link you style yourself.
-- A reader opens a link by clicking it, or by tabbing to it and pressing <kbd>Enter</kbd> (not <kbd>Space</kbd>, which scrolls). Resting the pointer on it, or tabbing to it, highlights its code in the editor without moving your focus, cursor or step (`sidestory.hoverPreview`; `sidestory.hoverReveal` also scrolls the editor there and back).
+- A reader opens a link by clicking it, or by tabbing to it and pressing <kbd>Enter</kbd> (not <kbd>Space</kbd>, which scrolls). Resting the pointer on it, or tabbing to it, lights its code as described in [Reading a sidestory](#reading-a-sidestory).
 - **Give a diagram with links `role="group"` and an `aria-label`**, not `role="img"`: screen readers don't see the children of an image, so its links would be out of their reach. Give each linked `<g>` a name with a `<title>` (which is also a tooltip) or an `aria-label`.
 - Links on form controls (`button`, `input`, `select`, `textarea`, `meter`, `output`, `progress`) or on a widget are ignored, and so are clicks on a control or widget inside a link: those clicks are for the control. Output says so.
 
@@ -174,20 +202,7 @@ Readers then choose, per piece:
 - **Peek**: "*Title* in brief" opens the detail's `summary` in place.
 - **Dive**: "Dive into *Title*" shows the detail sidestory in the same panel. A trail at the top shows the way back; **Up to *Title***, a trail entry or <kbd>Esc</kbd> returns to the step you left. The panel's ← button and <kbd>Alt</kbd>+<kbd>←</kbd> go back too, and → dives in again (see [Reading a sidestory](#reading-a-sidestory)).
 
-Details can have details of their own (up to 16 levels). Give each sidestory a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the sidestory you're reading doesn't, the panel offers to dive into it.
-
-### Finding your way in big repositories
-
-The **Sidestories** view (the Sidestory icon in the activity bar, shown once a workspace has sidestories, or with **Sidestory: Show Sidestories**) lists every sidestory:
-
-- **Packages.** Each `.sidestory/` folder is a package: `services/auth/.sidestory/` and `services/billing/.sidestory/` are listed apart, and each one's anchor paths are relative to the folder that holds it. Detail links stay inside one `.sidestory/` folder. A `.sidestory/` inside another sidestory is ignored.
-- **Start here.** In each package, a sidestory named `overview`, else the only one named `*-overview`, else the only top-level sidestory with details, is pinned first.
-- **Tops and details.** A sidestory nothing links to is listed at the top level, with the details it links to nested under it in the order the page links them. A detail linked from several places appears under each. Use `group` to file top-level sidestories in folders, or `top: true` to keep a linked sidestory at the top level.
-- **What needs you.** A row says how many problems its sidestory has (errors, broken detail links), with a warning icon, and how many open comment threads, with how many have something new for you; the tooltip lists them. Steps out of date or lost show there too.
-- **Filter** (the funnel in the view's title bar) matches titles, names, summaries and groups, and shows each match once, under its shortest path from a top-level sidestory.
-- **Explained here.** A CodeLens above code that a sidestory explains names it and its step ("Overview › Detail · step 3: Title"); click it to open the sidestory there. The status bar names the sidestory for the cursor's line. **Go to Step…** finds a step by its title in the current package or all of them.
-
-Opening from the view, a CodeLens or a picker reuses a panel that holds nothing you'd lose: the panel you were last reading, if it's under the same top-level sidestory, or a *preview* panel you haven't moved in yet (it says so, with **Keep Open**). **Open in New Panel** in the view always opens another.
+Details can have details of their own (up to 16 levels). Give each sidestory a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the sidestory you're reading doesn't, the panel offers to dive into it. The Sidestories view lists details under their overviews ([above](#finding-your-way-in-big-repositories)).
 
 Two complete examples in this repository work this way: [`examples/stream-dma`](https://github.com/mozru/sidestory/blob/main/examples/stream-dma), a DMA engine in SystemVerilog, and [`examples/tiny-lsm`](https://github.com/mozru/sidestory/blob/main/examples/tiny-lsm), a log-structured merge-tree key-value store in Python, each with an overview, a sidestory per component, block diagrams and widgets.
 
@@ -281,8 +296,8 @@ A box in a diagram often deserves a link to its code without a manifest entry or
 
     Prefix the module (`#dma_ctrl.driver(state_q)`) when a name isn't unique in the file. Only the first arm of each `` `ifdef `` is read, so a name declared only in a later arm isn't found.
   - a symbol in other languages: the names VS Code's outline shows (`#RetryClient.send`), found when the reader clicks (and, for the cursor ring below, in files the reader already has open).
-- **The cursor lights it.** With the editor cursor in a link's code, the element gets a ring (`--cx-here`); when several links contain the line, only the tightest does, so the cursor in an FSM's `case` arm rings that bubble, not the whole module. Links to `data-explain-ref` anchors light the same way. This never changes the step: only code a section covers does. Turn it off with `sidestory.followCursorInDiagrams`.
-  - When the cursor moves into code a section covers, a pill offers that step; the step changes only if you click it. Links inside a widget's fallback are never opened or lit.
+- **The cursor lights it.** With the editor cursor in a link's code, the element gets a ring (`--cx-here`); when several links contain the line, only the tightest does, so the cursor in an FSM's `case` arm rings that bubble, not the whole module. Links to `data-explain-ref` anchors light the same way. This never changes the step. Turn it off with `sidestory.followCursorInDiagrams`.
+  - Links inside a widget's fallback are never opened or lit.
   - Lighting goes by line: a line holding several connections (`.clk, .rst_n, .start,`) lights only one of their links. Put the connections a diagram links to on lines of their own.
   - Code written through macros (`` `FF(state_q, state_d, IDLE) ``) isn't followed yet; link its line (`#L50`). The checker says so when a name only appears in a macro call.
 - **No drift detection.** A symbol link either finds its name or doesn't, and a line link points wherever those lines are now; neither says "Code changed". Use a manifest anchor and `data-explain-ref` for code the text makes claims about, and `data-explain-code` for "where is this thing".
@@ -357,7 +372,7 @@ The built-in styles are light: body text in the editor font and colors, code blo
 Interactivity without script works well, and readers keep what they set while you edit:
 - **Steppers, tabs and switches** built from radio buttons and checkboxes with `:checked ~ …` or `:has(:checked)` rules. A switch the reader flipped stays flipped when you edit another part of the sidestory; changing that control's own `checked` in the source resets it.
 - **Pop-outs and footnotes** with `:target`: in-page links (`<a href="#id">`) set the target as in a browser.
-- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), **CSS animation**, **SVG animation** (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) and `@container` queries. Animations in sections far off screen pause until the reader gets there. Stop CSS animation for readers who ask for less motion, with `prefers-reduced-motion` and `body.vscode-reduce-motion` rules ([example](#moving-parts)); for them SVG animation stops at about its first frame, so make the drawing read well before it moves.
+- **`<details>`** for asides and quizzes, **hover and focus** effects (`:hover`, `:focus-within`, `:has(...)`), `@container` queries, and CSS and SVG animation ([Moving parts](#moving-parts)).
 
 #### Code blocks
 
@@ -509,7 +524,7 @@ The steps of a sidestory that explains the branch open the file itself, with the
 
 The mark is per file; for the changes inside one, open it:
 
-- **This File** (in the Sidestory sidebar) lists the changes of the file in the active editor that aren't done yet (unexplained, partly explained, or changed since their step was written), each with its state: click one to go to its lines (the diff for a removed line). It offers **Copy Prompt: Explain This Change** for your agent, and **Mark as Trivial…** for a change that needs no explanation (it asks for the `why`). A file that counts as one change as a whole is named by its kind ("binary file", "symlink", "submodule", "too large") and has no Mark as Trivial: give it a `trivialFiles` glob. Changed files whose paths Sidestory won't read have no file to open: **This branch** (with `sidestory.sidebar.thisBranch` on) lists them ("2 files with unsupported paths"), and a click copies them for `trivialFiles`.
+- **This File** (in the Sidestory sidebar), besides the steps covering the file, lists its changes that aren't done yet (unexplained, partly explained, or changed since their step was written), each with its state: click one to go to its lines (the diff for a removed line). It offers **Copy Prompt: Explain This Change** for your agent, and **Mark as Trivial…** for a change that needs no explanation (it asks for the `why`). A file that counts as one change as a whole is named by its kind ("binary file", "symlink", "submodule", "too large") and has no Mark as Trivial: give it a `trivialFiles` glob. Changed files whose paths Sidestory won't read have no file to open: **This branch** (with `sidestory.sidebar.thisBranch` on) lists them ("2 files with unsupported paths"), and a click copies them for `trivialFiles`.
 - With `sidestory.sidebar.thisBranch` on, the **Sidestories** view groups the sidestories that count toward the branch under **This branch**, with how many changes are left, each detail nested under its overview as in the list below; when none counts yet, or some changes are left, it offers a prompt to copy for your agent. When the branch can't be compared (the base set for it isn't found, it shares no commit with its base, there's no `main` or `master`, or git failed), the group says so, and clicking the row opens **Sidestory: Set Base…**.
 - **Sidestory: Next Unexplained Change** and **Previous Unexplained Change** walk the changes that are left, across the branch's files; **Next Changed File** and **Previous Changed File** walk every changed file. In a diff or a changed file they have keys: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the unexplained changes and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd> / <kbd>PageUp</kbd> for the files (on macOS <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd> and <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Down</kbd> / <kbd>Up</kbd>).
 
@@ -575,7 +590,7 @@ On a branch that changes a sidestory you already have, show reviewers what chang
 - **The previous version**: the last commit that changed it.
 - **Any commit, branch or tag** you type.
 
-The two panels move together: pick a step in either and both show it. In the older version's title bar, **Open This Step's Code Changes** opens VS Code's diff of that step's file then and now, and **Open Page Source Changes** the diff of `sidestory.html`. Its code links open the code as it was at that commit. Update the sidestory on the branch as you change the code, rather than writing a separate one: after the merge it's simply current.
+The two panels move together: pick a step in either and both show it. In the older version's title bar, **Open This Step's Code Changes** opens VS Code's diff of that step's file then and now, and **Open Page Source Changes** the diff of `sidestory.html`. Its code links open the code as it was at that commit. Updating a sidestory on the branch as you change the code keeps it current after the merge; for branch coverage, though, only a sidestory added on the branch counts ([Which sidestories count](#which-sidestories-count)).
 
 ## Comments and Claude
 
@@ -625,7 +640,7 @@ Comments from other people, and anything from the repository, reach Claude only 
 
 ## Settings
 
-A sidestory's `highlight` in its manifest can change the defaults of the first four (fading, the click highlight and its frame, hover previews); your own settings always win.
+A sidestory's `highlight` in its manifest can change the defaults of the first five (fading, the click highlight and its frame, hovering); your own settings always win.
 
 | Setting | Default | |
 |---|---|---|
@@ -638,7 +653,7 @@ A sidestory's `highlight` in its manifest can change the defaults of the first f
 | `sidestory.codeLens.enabled` | `true` | A CodeLens above explained code (at most 30 per file; hidden while that sidestory is open in a panel). Language-overridable. |
 | `sidestory.statusBar.enabled` | `true` | The sidestory for the cursor's line in the status bar, when no open panel shows it. |
 | `sidestory.gutter.enabled` | `false` | A gutter glyph and an overview ruler mark on explained code. |
-| `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view. |
+| `sidestory.sidebar.followPanel` | `true` | Select the open panel's sidestory in the Sidestories view (never expanding a row you collapsed). |
 | `sidestory.sidebar.thisBranch` | `false` | Show the **This branch** group at the top of the Sidestories view (the sidestories that explain the branch, what's left, and the prompts). In a workspace with no sidestory yet it shows anyway, to offer explaining the branch. |
 | `sidestory.changes.defaultBase` | `""` | The branch, tag or commit a branch is compared with (`develop`, `origin/develop`) when none was set with **Sidestory: Set Base…**, no sidestory added on the branch gives a `base`, and Git recorded no base for the branch (`branch.<name>.vscode-merge-base`, which VS Code's Source Control sets); empty means the remote's default branch, then `main`, then `master`. |
 | `sidestory.changes.includeUncommitted` | `true` | Compare the working tree (staged, unstaged and untracked changes) rather than the last commit, for coverage, its decorations and the diffs steps open. Turn it off to see what CI sees. |
