@@ -1450,6 +1450,7 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('keydown', noteKey, true);
   d.addEventListener('focusin', onContentFocus);
   d.addEventListener('contextmenu', onContentMenu);
+  d.addEventListener('pointerdown', onContentPointerDown, true);
   d.addEventListener('pointerdown', (e) => {
     if (!e.isTrusted) return;
     hoverCard?.hide(); // a click opens the code (or does something else): the card is done
@@ -1594,11 +1595,6 @@ function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
   return t.closest<HTMLElement>('[data-cx-ref]') ?? undefined;
 }
 
-/**
- * Opens what a linked element points at. Only ever called synchronously from the panel's own click and key handlers,
- * for trusted input: the content runs no script and widgets can't reach this, so the reader asked (§8.1).
- * A `data-explain-ref` wins over a `data-explain-code` on the same element.
- */
 /** The element a node is, or is in. Content nodes come from the frame's realm, where `instanceof Element` fails. */
 function elementOf(n: Node | null): Element | null {
   return !n ? null : n.nodeType === Node.ELEMENT_NODE ? (n as Element) : n.parentElement;
@@ -1620,6 +1616,12 @@ function composeAt(mode: 'comment' | 'ask', at?: Element | null): void {
 
 /** What the reader right-clicked, for the menu command that follows. */
 let menuTarget: Element | null = null;
+/** Whether text was selected before the right-click: on macOS the right-click itself selects the word under it. */
+let selectedBeforeMenu = false;
+
+function onContentPointerDown(e: PointerEvent): void {
+  if (e.isTrusted && e.button === 2) selectedBeforeMenu = !(frame.getSelection()?.isCollapsed ?? true);
+}
 
 /**
  * The content is a nested frame, where VS Code's webview doesn't see a right-click: hand it on to the panel's own
@@ -1630,7 +1632,10 @@ function onContentMenu(e: MouseEvent): void {
   e.preventDefault();
   const t = elementOf(e.target as Node | null);
   menuTarget = t;
-  const step = t ? steps.find((s) => s.el.contains(t)) : undefined;
+  // A word the right-click selected by itself isn't the reader's selection: no Copy of it, no quote in a comment.
+  if (!selectedBeforeMenu) frame.getSelection()?.removeAllRanges();
+  selectedBeforeMenu = false;
+  const step = t ? steps.find((s) => s.el.contains(t) && s.el.dataset.cxState !== 'lost') : undefined;
   const host = frame.el.parentElement!;
   host.dataset.vscodeContext = JSON.stringify({
     webviewSection: 'page',
@@ -1642,11 +1647,15 @@ function onContentMenu(e: MouseEvent): void {
   });
   const r = frame.el.getBoundingClientRect();
   host.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + e.clientX, clientY: r.top + e.clientY }));
+  // VS Code read it during the dispatch: gone again, so a right-click on a comment badge or widget label (also in
+  // this element) gets VS Code's own menu, not this one.
+  delete host.dataset.vscodeContext;
 }
 
 /** A command from the right-click menu, for what was right-clicked. */
 function onMenu(action: 'copy' | 'comment' | 'ask' | 'step' | 'open'): void {
-  const t = menuTarget;
+  // Only what is still on the page: the panel may have moved to another sidestory since the right-click.
+  const t = menuTarget && content.contains(menuTarget) ? menuTarget : null;
   switch (action) {
     case 'copy': {
       const text = frame.getSelection()?.toString() ?? '';
@@ -1659,7 +1668,7 @@ function onMenu(action: 'copy' | 'comment' | 'ask' | 'step' | 'open'): void {
       break;
     case 'step': {
       const step = t ? steps.find((s) => s.el.contains(t)) : undefined;
-      if (step) pick(step.id, 'click');
+      if (step && step.el.dataset.cxState !== 'lost') pick(step.id, 'click');
       break;
     }
     case 'open': {
@@ -1670,6 +1679,11 @@ function onMenu(action: 'copy' | 'comment' | 'ask' | 'step' | 'open'): void {
   }
 }
 
+/**
+ * Opens what a linked element points at. Only ever called from the panel's own click and key handlers, for trusted
+ * input, and from the right-click menu's Open Code: the content runs no script and widgets can't reach this, so the
+ * reader asked (§8.1). A `data-explain-ref` wins over a `data-explain-code` on the same element.
+ */
 function openLinked(el: HTMLElement): void {
   hoverCard?.hide();
   if (el.hasAttribute('data-explain-ref')) return openRef(el);

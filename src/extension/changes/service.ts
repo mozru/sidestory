@@ -9,6 +9,7 @@
 // No git work while nothing asks (§4.6): the comparison and coverage run only while a sidestory with a base is in the
 // workspace, one is open, or a command needs them.
 import * as vscode from 'vscode';
+import { placeCursor } from '../reveal.ts';
 import { displayText, escapeIcons, plainForMessage } from '../../core/display-text.ts';
 import type { ChangeCoverage } from '../../core/coverage.ts';
 import { decodePair, moveFiles, moveLabel, oldToNew, textLines, type ChangeBlock, type MoveGroup } from '../../core/hunks.ts';
@@ -1096,7 +1097,7 @@ export class ChangesService implements vscode.Disposable {
     // With a scroll position to keep, the cursor goes in without showTextDocument's own reveal: one scroll, not two.
     const ed = await vscode.window.showTextDocument(target, { viewColumn: active?.viewColumn ?? vscode.ViewColumn.Active, preview: false, ...(top ? {} : { selection }) });
     if (top) {
-      if (selection) ed.selection = selection;
+      if (selection) placeCursor(ed, selection.active.line);
       ed.revealRange(top, vscode.TextEditorRevealType.AtTop);
     }
   }

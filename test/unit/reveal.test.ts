@@ -32,7 +32,9 @@ describe('placeCursor', () => {
     placeCursor(e as never, 41);
     expect((e.selection as Selection).start.line).toBe(41);
     expect(isPlacedEcho(change(e, 41, TextEditorSelectionChangeKind.Command))).toBe(true);
-    // Used once: the reader's next move is theirs.
+    // Every panel's listener sees the same echo; the reader's next move elsewhere ends it.
+    expect(isPlacedEcho(change(e, 41, TextEditorSelectionChangeKind.Command))).toBe(true);
+    expect(isPlacedEcho(change(e, 50, TextEditorSelectionChangeKind.Mouse))).toBe(false);
     expect(isPlacedEcho(change(e, 41, TextEditorSelectionChangeKind.Command))).toBe(false);
   });
 

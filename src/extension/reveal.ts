@@ -22,12 +22,16 @@ export function placeCursor(editor: vscode.TextEditor, line: number): void {
   editor.selection = new vscode.Selection(at, at);
 }
 
-/** Whether a selection change is the echo of a cursor `placeCursor` put there (used once). */
+/**
+ * Whether a selection change is the echo of a cursor `placeCursor` put there. Not used up on reading: every panel's
+ * listener sees the same echo. A move anywhere else ends it.
+ */
 export function isPlacedEcho(e: vscode.TextEditorSelectionChangeEvent): boolean {
   const key = e.textEditor.document.uri.toString();
   const p = placed.get(key);
   if (!p) return false;
-  placed.delete(key);
   const s = e.selections[0];
-  return Date.now() <= p.until && e.kind === vscode.TextEditorSelectionChangeKind.Command && !!s && s.isEmpty && s.active.line === p.line;
+  const echo = Date.now() <= p.until && e.kind === vscode.TextEditorSelectionChangeKind.Command && !!s && s.isEmpty && s.active.line === p.line;
+  if (!echo) placed.delete(key);
+  return echo;
 }

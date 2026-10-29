@@ -959,6 +959,8 @@ test('a right-click in the page opens VS Code\'s menu for what was clicked, and 
   await frame(page).locator('#p2 code').click({ button: 'right' });
   await expect.poll(async () => (await menus()).length).toBe(1);
   expect((await menus())[0]).toMatchObject({ webviewSection: 'page', preventDefaultContextMenuItems: true, sidestoryLink: true, sidestoryOtherStep: true, sidestoryStep: true, sidestorySelection: false });
+  // Read during the dispatch, then gone: a right-click on a badge in the panel gets VS Code's own menu.
+  expect(await page.locator('.cx-frame').getAttribute('data-vscode-context')).toBeNull();
   // Go to This Step: the right-clicked section, without scrolling there.
   await send(page, { type: 'menu', action: 'step' });
   await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
