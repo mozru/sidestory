@@ -90,6 +90,11 @@ export interface CoverageJson {
   totals: Totals & { notCounted: number };
   /** Something stopped coverage from being complete (a cap, a missing object, a page too complex to scan). */
   incomplete: boolean;
+  /**
+   * The repository's coverage minimum (.sidestory/checks.json at the merge-base): the percent asked for, the share of
+   * the changes that need explaining that are explained, and whether that passes (`enough`: exit 0 with changes left).
+   */
+  minimum?: { percent: number; share: number; enough: boolean };
 }
 
 export interface CoverageResult {
@@ -99,7 +104,7 @@ export interface CoverageResult {
   header: string;
   /** The totals line. */
   summary: string;
-  /** Exit 3 unless every change is done (and nothing stopped the count). */
+  /** Exit 3 unless every change is done, or the repository's minimum is met (and nothing stopped the count). */
   done: boolean;
   /** Belonging sidestories as absolute folders, for the normal checks. */
   sidestoryDirs: string[];
@@ -800,9 +805,22 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const notCounted = classified.filter((e) => e.kind !== 'text' && e.kind !== 'rename' && !ONE_CHANGE_KINDS.has(e.kind) && e.kind !== 'sidestory' && e.kind !== 'line-endings');
   const totals = { ...result.totals, notCounted: notCounted.length };
   const kinds = [...new Set(notCounted.map((e) => kindLabel(e.kind)))];
-  const share = totals.changes ? Math.floor(((totals.explained + totals.trivial) / totals.changes) * 1000) / 10 : 100;
-  const enough = minimum !== undefined && share >= minimum;
-  const bar = minimum === undefined ? '' : ` ${share}% done (the repository asks for ${minimum}%${totals.left && enough ? ': enough' : ''}).`;
+  // The minimum is a share of the changes that need explaining (trivial ones aren't counted, so trivial marks can't
+  // buy room), and never covers the changes the gate is for: widget and other code in a .sidestory folder, a link,
+  // a submodule, a binary, an archive, a move (src/auth.js → src/disabled/auth.js switches code off).
+  const counted2 = new Map(counted.map((e, i) => [e, i]));
+  const mustExplainLeft = classified.some((e) => {
+    const fi = counted2.get(e);
+    if (fi === undefined) return false;
+    const strict = ONE_CHANGE_KINDS.has(e.kind) || e.path.startsWith('.sidestory/') || e.path.includes('/.sidestory/');
+    return result.files[fi]!.changes.some((c, ci) => c.state !== 'explained' && c.state !== 'trivial' && (strict || !!inputs[fi]!.changes[ci]!.move));
+  });
+  const needing = totals.changes - totals.trivial;
+  const share = needing ? Math.floor((totals.explained / needing) * 1000) / 10 : 100;
+  const enough = minimum !== undefined && !mustExplainLeft && totals.explained * 100 >= minimum * needing;
+  const bar =
+    minimum === undefined ? ''
+    : ` ${share}% of the changes that need explaining are explained (the repository asks for ${minimum}%${totals.left === 0 ? '' : enough ? ': enough' : mustExplainLeft ? '; changes in .sidestory/, links, submodules, binaries and moves must all be explained' : ''}).`;
   const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${bar}${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
 
   const countedAt = new Map(counted.map((e, i) => [e, i]));
@@ -820,6 +838,7 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
       }),
     totals,
     incomplete,
+    ...(minimum !== undefined ? { minimum: { percent: minimum, share, enough } } : {}),
   };
   return {
     coverage: json,

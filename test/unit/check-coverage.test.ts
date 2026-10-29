@@ -114,19 +114,26 @@ describe('--coverage on the fixture', () => {
     const own = await run(['--coverage', '--base', 'main', '--repo', dir]);
     expect(own.code).toBe(3);
     expect(own.out).not.toContain('% done');
-    // Landed on main and merged into the branch: 5 of 6 changes done is 83.3%, enough for 80%.
+    // Landed on main and merged into the branch: 3 of the 4 changes that need explaining (2 are trivial) is 75%.
     rmSync(join(dir, '.sidestory/checks.json'));
     const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
     git(dir, 'checkout', '-q', 'main');
     mkdirSync(join(dir, '.sidestory'), { recursive: true });
-    writeFileSync(join(dir, '.sidestory/checks.json'), JSON.stringify({ coverage: { minimum: 80 } }));
+    writeFileSync(join(dir, '.sidestory/checks.json'), JSON.stringify({ coverage: { minimum: 70 } }));
     git(dir, 'add', '.sidestory/checks.json');
     git(dir, 'commit', '-qm', 'Coverage bar');
     git(dir, 'checkout', '-q', branch);
     git(dir, 'merge', '-q', '--no-edit', 'main');
     const r = await run(['--coverage', '--base', 'main', '--repo', dir]);
-    expect(r.out).toContain('83.3% done (the repository asks for 80%: enough).');
+    expect(r.out).toContain('75% of the changes that need explaining are explained (the repository asks for 70%: enough).');
     expect(r.code).toBe(0);
+    const j = await json(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(j.coverage.minimum).toEqual({ percent: 70, share: 75, enough: true });
+    // An unexplained change in a .sidestory folder (widget code runs in the reviewer's VS Code) is never left out.
+    writeFileSync(join(dir, '.sidestory/retry-jitter/helper.js'), 'export const x = 1;\n');
+    const strict = await run(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(strict.out).toContain('must all be explained');
+    expect(strict.code).toBe(3);
   });
 
   it('exit 1 on errors, which win over unexplained changes', async () => {

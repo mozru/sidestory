@@ -91,7 +91,7 @@ If none is found, the extension isn't installed here: tell the user to install `
    node "$CHECK" .sidestory/<branch-slug> --pin --coverage
    ```
 
-   Run it again after each fix until it **exits 0**: no errors, and every change explained or marked trivial. `--pin` pins new anchors (base-side ones against the merge-base) and adds an `id`, but never accepts code added inside an existing step. Read the findings:
+   Run it again after each fix until it **exits 0**: no errors, and every change explained or marked trivial. If the repository sets a coverage minimum (`"minimum"` in the `coverage` JSON), exit 0 can come with changes left: that's the floor CI accepts, not the goal; still explain every change listed unless the user says to stop there. `--pin` pins new anchors (base-side ones against the merge-base) and adds an `id`, but never accepts code added inside an existing step. Read the findings:
    - `unexplained`: write a step for it, widen a step's anchor, or mark it trivial if it truly is.
    - `partly-explained`: widen the anchor, or give the uncovered lines their own step.
    - `changed-since-pinned`: read that step, make its prose cover the new lines, then `node "$CHECK" .sidestory/<branch-slug> --accept <anchor> --coverage`. **Only after updating the prose.**

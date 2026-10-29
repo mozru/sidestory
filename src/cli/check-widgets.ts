@@ -27,6 +27,7 @@
 // exits 3 when there are no errors but some change isn't explained or marked trivial.
 import { applyRules, lockedLevels, lockedWhy, manifestLevels, parseChecksFile, parseIgnore, type Ignore } from '../core/check-rules.ts';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
 import { simple } from 'acorn-walk';
@@ -809,8 +810,12 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
 async function applyCheckRules(ctx: Context, report: CheckReport, manifestText: string | undefined, ignoresRaw: readonly { value: string; line: number; endLine: number; start: number; end: number }[]) {
   const checksFile = join(dirname(ctx.dir), 'checks.json');
   const checksText = await readText(checksFile);
-  const global = checksText === undefined ? { levels: new Map(), problems: [] as string[] } : parseChecksFile(checksText);
+  const global: ReturnType<typeof parseChecksFile> = checksText === undefined ? { levels: new Map(), problems: [] } : parseChecksFile(checksText);
   for (const p of global.problems) add(ctx, { severity: 'error', file: checksFile, code: 'checks-json', message: `.sidestory/checks.json ${p}.` });
+  // Coverage reads only the repository root's file: a package's own minimum would do nothing, so say so.
+  if (global.coverageMinimum !== undefined && !existsSync(join(dirname(dirname(ctx.dir)), '.git'))) {
+    add(ctx, { severity: 'info', file: checksFile, code: 'checks-json', message: '"coverage" is read only from the .sidestory/checks.json at the repository root; this one, in a package, has no effect on branch coverage.' });
+  }
   const local = manifestText === undefined ? undefined : manifestLevels(manifestText);
   for (const p of local?.problems ?? []) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'checks-json', message: `manifest.json ${p}.` });
   const ignores: Ignore[] = [];
@@ -920,7 +925,7 @@ const USAGE = [
   '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--new-id] [--json]',
   '       node check.cjs threads [<root>] [--waiting] [--all] [--json]',
   '       node check.cjs threads [<root>] --watch [--json]',
-  'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial',
+  'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial (and the repository\'s coverage minimum isn\'t met)',
 ].join('\n');
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;
 
