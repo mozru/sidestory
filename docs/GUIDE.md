@@ -24,6 +24,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [Coverage in VS Code](#coverage-in-vs-code)
   - [Checking coverage](#checking-coverage)
   - [Coverage in CI](#coverage-in-ci)
+- [Comparing versions](#comparing-versions)
 - [Comments and Claude](#comments-and-claude)
   - [Local or shared](#local-or-shared)
   - [Turning on Ask Claude](#turning-on-ask-claude)
@@ -564,6 +565,16 @@ jobs:
 ```
 
 Record the hash once from a VSIX you downloaded and checked yourself (`sha256sum sidestory.vsix`), and update both values together when you move to a newer release. Values from the event reach the script through `env:`, never inside it, and `persist-credentials: false` keeps the token out of `.git/config`.
+
+## Comparing versions
+
+On a branch that changes a sidestory you already have, show reviewers what changed in it: **Sidestory: Compare with…** (the compare button in the panel's title bar) opens another version of the sidestory beside the current one, read-only from git:
+
+- **Your branch's base** (its merge base): what this branch changed in the sidestory.
+- **The previous version**: the last commit that changed it.
+- **Any commit, branch or tag** you type.
+
+The two panels move together: pick a step in either and both show it. In the older version's title bar, **Open This Step's Code Changes** opens VS Code's diff of that step's file then and now, and **Open Page Source Changes** the diff of `sidestory.html`. Its code links open the code as it was at that commit. Update the sidestory on the branch as you change the code, rather than writing a separate one: after the merge it's simply current.
 
 ## Comments and Claude
 

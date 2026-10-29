@@ -26,7 +26,7 @@ afterEach(async () => {
   await new Promise((r) => setTimeout(r, 200));
 });
 
-function open(name: string, historyChanged?: (s: InstanceType<typeof ExplainerSession>) => void) {
+function open(name: string, historyChanged?: (s: InstanceType<typeof ExplainerSession>) => void, opts: { version?: string } = {}) {
   const ref = refFromDir(Uri.file(`${root}/.sidestory/${name}`) as never)!;
   const posted: ToWebview[] = [];
   const messages = new EventEmitter<unknown>();
@@ -42,9 +42,9 @@ function open(name: string, historyChanged?: (s: InstanceType<typeof ExplainerSe
   };
   panels.push(panel);
   const decorations = { set() {}, setWidget() {}, isDimmed: () => false, refresh() {}, flash() {}, clearFlash() {} };
-  const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: { get: <T>(_k: string, d: T) => d, update: async () => {} } as never, reanchor() {}, historyChanged });
+  const session = new ExplainerSession([ref], panel as never, Uri.file('/ext') as never, decorations as never, { memento: { get: <T>(_k: string, d: T) => d, update: async () => {} } as never, reanchor() {}, historyChanged }, opts);
   const lastInit = () => posted.filter((m) => m.type === 'init').at(-1) as Extract<ToWebview, { type: 'init' }> | undefined;
-  return { session, posted, lastInit, send: (m: unknown) => messages.fire(m) };
+  return { session, panel, posted, lastInit, send: (m: unknown) => messages.fire(m) };
 }
 
 const dirOf = (name: string) => Uri.file(`${root}/.sidestory/${name}`).toString();
@@ -60,6 +60,22 @@ describe('Back / Forward', () => {
     expect(lastInit()?.trail.map((t) => t.name)).toEqual(['overview', 'retry-backoff']);
     expect(lastInit()?.active).toBe('loop');
     expect(session.trailRefs.map((r) => r.name)).toEqual(['overview', 'retry-backoff']);
+  });
+
+  it('an older version (Compare with…) says which in its tab, and tells its partner each step picked', async () => {
+    const { session, panel, lastInit, send } = open('bit-reader', undefined, { version: 'main, a1b2c3d' });
+    await session.load();
+    send({ type: 'ready' });
+    await vi.waitFor(() => expect(lastInit()).toBeDefined());
+    expect(panel.title).toMatch(/\(main, a1b2c3d\)$/);
+    expect(session.version).toBe('main, a1b2c3d');
+    const steps: string[] = [];
+    session.onDidChangeStep((id) => steps.push(id));
+    const id = lastInit()!.anchors[1]!.id;
+    session.goTo(id);
+    session.goTo(id); // the same step: nothing to tell
+    expect(steps).toEqual([id]);
+    expect(session.stepFile(id)).toBe(lastInit()!.anchors[1]!.file);
   });
 
   it('refuses what a restored trail would refuse: outside a .sidestory folder, a trail not ending at it, repeats', async () => {

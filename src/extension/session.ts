@@ -126,6 +126,8 @@ export interface SessionOptions {
   active?: string;
   /** Recreated by the widget watchdog: no second recovery. */
   recovered?: boolean;
+  /** An older version from git, shown beside the current one (Compare with…): its tab says which. */
+  version?: string;
 }
 
 export class ExplainerSession implements vscode.Disposable {
@@ -200,6 +202,12 @@ export class ExplainerSession implements vscode.Disposable {
   /** The panel moved to another sidestory (dive, Back, `openAt`): overlays from before are void. */
   readonly onDidSwitch = this.switchEmitter.event;
   private readonly navigateEmitter = new vscode.EventEmitter<void>();
+  private readonly stepEmitter = new vscode.EventEmitter<string>();
+  private readonly opts: SessionOptions;
+  /** An older version from git (Compare with…), or undefined for the sidestory as it is. */
+  get version(): string | undefined {
+    return this.opts.version;
+  }
   /** The reader acted in the panel (a step, a dive or Back, a widget input). */
   readonly onDidNavigate = this.navigateEmitter.event;
   /** A preview panel: the next sidestory opened from code or a list replaces it (§7.5). */
@@ -255,6 +263,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.panel = panel;
     this.decorations = decorations;
     this.host = host;
+    this.opts = opts;
     this.active = opts.active;
     panel.webview.html = shellHtml(panel.webview, extensionUri, this.ref);
     if (host.widgets) {
@@ -269,6 +278,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.subscriptions.push(
       this.resolveEmitter,
       this.switchEmitter,
+      this.stepEmitter,
       this.navigateEmitter,
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
       panel.onDidDispose(() => this.dispose()),
@@ -425,6 +435,20 @@ export class ExplainerSession implements vscode.Disposable {
     };
   }
 
+  private tabTitle(title: string): string {
+    const t = displayText(title, 120) || 'Sidestory';
+    return this.opts.version ? `${t} (${displayText(this.opts.version, 40)})` : t;
+  }
+
+  /** The step changed (after the change): the version shown beside follows it (Compare with…). */
+  readonly onDidChangeStep = this.stepEmitter.event;
+
+  /** The file a step's code is in (its anchor's first part), for Compare's step diff. */
+  stepFile(id: string): string | undefined {
+    const a = this.manifest?.anchors.get(id);
+    return a ? anchorParts(a)[0].file : undefined;
+  }
+
   /** A command from the page's right-click menu: the page acts on what was right-clicked. */
   menu(action: MenuAction): void {
     this.post({ type: 'menu', action });
@@ -521,7 +545,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.postSettings(); // back to the defaults until the new manifest loads (it may not parse)
     this.html = '';
     this.title = this.titles.get(this.ref.dir.toString()) ?? '';
-    this.panel.title = displayText(this.title || this.ref.name, 120) || 'Sidestory';
+    this.panel.title = this.tabTitle(this.title || this.ref.name);
     this.lastError = null;
     this.warnings = null;
     this.resolutions.clear();
@@ -738,7 +762,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.title = title;
     this.titles.set(this.ref.dir.toString(), title);
     // Plain text in the tab, but still repository text: no controls or bidirectional tricks (§11.4).
-    this.panel.title = displayText(title || this.ref.name, 120) || 'Sidestory';
+    this.panel.title = this.tabTitle(title || this.ref.name);
   }
 
   /**
@@ -1493,7 +1517,10 @@ export class ExplainerSession implements vscode.Disposable {
     if (changed) this.decorations.setWidget(undefined); // widget highlights belong to the step they were made in
     this.active = id;
     if (!id) this.decorations.set(undefined);
-    if (changed) this.offered = undefined; // a step the cursor offered before may be worth offering again
+    if (changed) {
+      this.offered = undefined; // a step the cursor offered before may be worth offering again
+      if (id) this.stepEmitter.fire(id);
+    }
   }
 
   /**

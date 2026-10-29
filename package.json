@@ -304,6 +304,24 @@
         "icon": "$(book)"
       },
       {
+        "command": "sidestory.compare",
+        "title": "Compare with…",
+        "category": "Sidestory",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "sidestory.compare.stepDiff",
+        "title": "Open This Step's Code Changes",
+        "category": "Sidestory",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "sidestory.compare.sourceDiff",
+        "title": "Open Page Source Changes",
+        "category": "Sidestory",
+        "icon": "$(file-code)"
+      },
+      {
         "command": "sidestory.page.copy",
         "title": "Copy",
         "category": "Sidestory"
@@ -945,6 +963,9 @@
         { "command": "sidestory.page.ask", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestoryStep", "group": "3_comment@2" }
       ],
       "commandPalette": [
+        { "command": "sidestory.compare", "when": "sidestory.active" },
+        { "command": "sidestory.compare.stepDiff", "when": "sidestory.versionPanel" },
+        { "command": "sidestory.compare.sourceDiff", "when": "sidestory.versionPanel" },
         { "command": "sidestory.page.copy", "when": "false" },
         { "command": "sidestory.page.openCode", "when": "false" },
         { "command": "sidestory.page.goToStep", "when": "false" },
@@ -1509,6 +1530,21 @@
         }
       ],
       "editor/title": [
+        {
+          "command": "sidestory.compare",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId == 'sidestory.explainer' && !sidestory.versionPanel"
+        },
+        {
+          "command": "sidestory.compare.stepDiff",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId == 'sidestory.explainer' && sidestory.versionPanel"
+        },
+        {
+          "command": "sidestory.compare.sourceDiff",
+          "group": "navigation@2",
+          "when": "activeWebviewPanelId == 'sidestory.explainer' && sidestory.versionPanel"
+        },
         {
           "command": "sidestory.changes.openChangesWithBase",
           "group": "navigation@2",

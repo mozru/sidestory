@@ -16,6 +16,8 @@ import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
+import { GIT_SCHEME, gitUri, parseGitUri } from './changes/git-fs.ts';
+import { pickVersion } from './compare.ts';
 import { createPanel, panelOptions } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
 import { ThisFileView } from './this-file.ts';
@@ -68,7 +70,10 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   lastTextEditor = vscode.window.activeTextEditor;
   context.subscriptions.push(log, { dispose: () => [...sessions].forEach((s) => s.dispose()) });
 
-  const updateContext = () => void vscode.commands.executeCommand('setContext', 'sidestory.active', [...sessions].some((s) => s.panel.visible));
+  const updateContext = () => {
+    void vscode.commands.executeCommand('setContext', 'sidestory.active', [...sessions].some((s) => s.panel.visible));
+    void vscode.commands.executeCommand('setContext', 'sidestory.versionPanel', !!current?.version && current.panel.active);
+  };
   // VS Code's own navigate keys run Sidestory: Back / Forward only while the active panel has somewhere to go.
   const canNavigate = { back: false, forward: false };
   const updateNavContext = () => {
@@ -151,11 +156,14 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png'); // marks the tab, so its title is just the sidestory's
     const s = new ExplainerSession(trail, panel, context.extensionUri, decorations, host, opts);
     sessions.add(s);
-    const commentsAttached = host.comments ? comments.attach(s) : undefined;
+    // A version from git (Compare with…) is for reading beside the current one: no comments, and no panel reuse.
+    const commentsAttached = host.comments && !opts.version ? comments.attach(s) : undefined;
     s.onDidDispose(() => commentsAttached?.dispose());
     current = s;
-    navigator?.attach(s);
-    here.attach(s);
+    if (!opts.version) {
+      navigator?.attach(s);
+      here.attach(s);
+    }
     s.onDidDispose(() => {
       decorations.dispose();
       sessions.delete(s);
@@ -506,6 +514,43 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (text !== undefined) tree.setFilter(text);
     },
     'sidestory.tree.clearFilter': () => tree.setFilter(''),
+    // Compare with…: another version of the panel's sidestory, read from git, beside it; the two move together.
+    'sidestory.compare': async () => {
+      const s = current;
+      if (!s || s.version) {
+        void vscode.window.showInformationMessage(s ? 'This is already an older version: compare from the current one.' : 'Open a sidestory first.');
+        return;
+      }
+      const v = await pickVersion(s.ref.dir, changes.snapshot);
+      if (!v) return;
+      const ref: ExplainerRef = {
+        name: s.ref.name,
+        dir: gitUri(changes.ids, v.repo, v.commit, v.rel),
+        root: vscode.Uri.from({ scheme: GIT_SCHEME, authority: changes.ids.idOf(v.repo), path: '/', query: v.commit }),
+      };
+      const old = await start([ref], createPanel(context.extensionUri, ref, vscode.ViewColumn.Beside), { active: s.place().active, version: v.label });
+      // Together: a step picked in either is the step in both.
+      const follow = (from: ExplainerSession, to: ExplainerSession) => from.onDidChangeStep((id) => to.place().active !== id && to.goTo(id));
+      const links = [follow(s, old), follow(old, s)];
+      const unlink = () => links.forEach((d) => d.dispose());
+      old.onDidDispose(unlink);
+      s.onDidDispose(unlink);
+    },
+    // In the older version's panel: VS Code's diff of its step's code, or of the page's source, against now.
+    'sidestory.compare.stepDiff': async () => {
+      const s = current;
+      const id = s?.place().active;
+      const file = s?.version && id ? s.stepFile(id) : undefined;
+      const at = s && parseGitUri(changes.ids, s.ref.root);
+      if (!s || !file || !at) return;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.root, file), vscode.Uri.joinPath(at.repo.rootUri, ...file.split('/')), `${file.split('/').at(-1)} (${s.version} ↔ now)`);
+    },
+    'sidestory.compare.sourceDiff': async () => {
+      const s = current;
+      const at = s?.version ? parseGitUri(changes.ids, s.ref.dir) : undefined;
+      if (!s || !at) return;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.dir, 'sidestory.html'), vscode.Uri.joinPath(at.repo.rootUri, ...at.path.split('/'), 'sidestory.html'), `${s.ref.name}/sidestory.html (${s.version} ↔ now)`);
+    },
     // The page's right-click menu (webview/context): for what was right-clicked in the panel the menu opened in.
     'sidestory.page.copy': () => current?.menu('copy'),
     'sidestory.page.comment': () => current?.menu('comment'),

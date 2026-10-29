@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Compare with…**: open another version of a sidestory (your branch's base, the previous version, or any commit, branch or tag) beside the current one, read-only from git. The two panels move through the steps together; VS Code's diff shows a step's code changes and the page source's.
 - Branch coverage can pass with some changes left: `"coverage": { "minimum": 90 }` in `.sidestory/checks.json` passes once 90% of the changes that need explaining are explained. Widget code, links, submodules, binaries and moves must still all be explained, and the minimum is read from the base branch, so a branch can't lower its own bar.
 - Clicking a step tab (or picking a step) moves the code to that step but leaves the page where it is, unless the step's section is off screen.
 - Checker rules: make any finding an error, a warning, info or off, for every sidestory (`.sidestory/checks.json`), one sidestory or one step (`"checks"` in the manifest), or one element (`data-explain-ignore="rule: why"`, reported when it no longer silences anything). Safety rules can't be turned down. New `box-unlinked` warning: a diagram part that lights up on a step but links to no code.
