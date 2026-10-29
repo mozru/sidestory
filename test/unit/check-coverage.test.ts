@@ -107,6 +107,28 @@ describe('--coverage on the fixture', () => {
     expect(r.code).toBe(0);
   });
 
+  it('a minimum share of changes passes coverage, read from the base: a branch can\'t lower its own bar', async () => {
+    const dir = copy();
+    // On the branch alone (not at the merge-base): ignored.
+    writeFileSync(join(dir, '.sidestory/checks.json'), JSON.stringify({ coverage: { minimum: 50 } }));
+    const own = await run(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(own.code).toBe(3);
+    expect(own.out).not.toContain('% done');
+    // Landed on main and merged into the branch: 5 of 6 changes done is 83.3%, enough for 80%.
+    rmSync(join(dir, '.sidestory/checks.json'));
+    const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+    git(dir, 'checkout', '-q', 'main');
+    mkdirSync(join(dir, '.sidestory'), { recursive: true });
+    writeFileSync(join(dir, '.sidestory/checks.json'), JSON.stringify({ coverage: { minimum: 80 } }));
+    git(dir, 'add', '.sidestory/checks.json');
+    git(dir, 'commit', '-qm', 'Coverage bar');
+    git(dir, 'checkout', '-q', branch);
+    git(dir, 'merge', '-q', '--no-edit', 'main');
+    const r = await run(['--coverage', '--base', 'main', '--repo', dir]);
+    expect(r.out).toContain('83.3% done (the repository asks for 80%: enough).');
+    expect(r.code).toBe(0);
+  });
+
   it('exit 1 on errors, which win over unexplained changes', async () => {
     const dir = copy();
     const file = join(dir, '.sidestory/retry-jitter/manifest.json');

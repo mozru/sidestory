@@ -2,6 +2,7 @@
 // which of its changes the sidestories that belong to it explain. Git runs only through src/cli/git.ts (§13.2);
 // changes, coverage and membership are the shared core (src/core/hunks.ts, coverage.ts, membership.ts), so the
 // checker and the extension agree. The checker in CI is authoritative (§4.1).
+import { parseChecksFile } from '../core/check-rules.ts';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative as pathRelative, sep } from 'node:path';
 import { coverage as computeCoverage, usedAnchorIds, type ChangeCoverage, type FileInput, type Target, type Totals } from '../core/coverage.ts';
@@ -284,6 +285,9 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   }
   const headLabel = mode === 'working' ? 'working tree' : mode === 'committed' ? `HEAD ${headSha.slice(0, 7)}` : headSha.slice(0, 7);
   let header = `${where}: base ${resolved.label}, merge-base ${mergeBase.slice(0, 7)}, head: ${headLabel}`;
+  // The share of changes that must be done, from .sidestory/checks.json as it is at the merge-base: a branch can't
+  // lower its own bar (a change to it applies once it has landed).
+  const minimum = await baseMinimum(git, mergeBase);
 
   // The file list (§5.1, §13.1).
   let incomplete = false;
@@ -796,7 +800,10 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
   const notCounted = classified.filter((e) => e.kind !== 'text' && e.kind !== 'rename' && !ONE_CHANGE_KINDS.has(e.kind) && e.kind !== 'sidestory' && e.kind !== 'line-endings');
   const totals = { ...result.totals, notCounted: notCounted.length };
   const kinds = [...new Set(notCounted.map((e) => kindLabel(e.kind)))];
-  const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
+  const share = totals.changes ? Math.floor(((totals.explained + totals.trivial) / totals.changes) * 1000) / 10 : 100;
+  const enough = minimum !== undefined && share >= minimum;
+  const bar = minimum === undefined ? '' : ` ${share}% done (the repository asks for ${minimum}%${totals.left && enough ? ': enough' : ''}).`;
+  const summary = `${totals.explained} explained · ${totals.trivial} trivial · ${totals.left} left${totals.needsLook ? ` (${totals.needsLook} changed since pinned)` : ''}, in ${totals.files} file${totals.files === 1 ? '' : 's'}.${bar}${notCounted.length ? ` ${notCounted.length} file${notCounted.length === 1 ? '' : 's'} not counted (${kinds.join(', ')}).` : ''}${incomplete ? ' Incomplete: see the warnings above.' : ''}`;
 
   const countedAt = new Map(counted.map((e, i) => [e, i]));
   const json: CoverageJson = {
@@ -819,11 +826,24 @@ async function compute(git: Git, opts: CoverageOptions, findings: Finding[], add
     findings,
     header,
     summary,
-    done: totals.left === 0 && !incomplete,
+    done: (totals.left === 0 || enough) && !incomplete,
     sidestoryDirs: sidestories.map((s) => abs(s.folder)),
     branch,
     staleExplained,
   };
+}
+
+/** `.sidestory/checks.json`'s coverage minimum at a commit; undefined when there is none, or it can't be read. */
+async function baseMinimum(git: Git, commit: string): Promise<number | undefined> {
+  try {
+    const path = '.sidestory/checks.json';
+    const entry = (await git.lsTree(commit, [path])).get(path);
+    if (!entry || entry.mode !== '100644') return undefined;
+    const bytes = (await git.blobs([entry.id])).bytes.get(entry.id);
+    return bytes ? parseChecksFile(new TextDecoder().decode(bytes)).coverageMinimum : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function toJson(c: ChangeCoverage, b: ChangeBlock): JsonChange {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Branch coverage can pass with some changes left: `"coverage": { "minimum": 90 }` in `.sidestory/checks.json` passes once 90% of the branch's changes are explained or marked trivial. It's read from the base branch, so a branch can't lower its own bar.
 - Clicking a step tab (or picking a step) moves the code to that step but leaves the page where it is, unless the step's section is off screen.
 - Checker rules: make any finding an error, a warning, info or off, for every sidestory (`.sidestory/checks.json`), one sidestory or one step (`"checks"` in the manifest), or one element (`data-explain-ignore="rule: why"`, reported when it no longer silences anything). Safety rules can't be turned down. New `box-unlinked` warning: a diagram part that lights up on a step but links to no code.
 - Right-click in a sidestory now opens a menu: Copy, Open Code, Go to This Step, Comment and Ask Claude, for what you clicked. Before, right-click did nothing in the page.

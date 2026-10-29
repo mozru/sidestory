@@ -44,6 +44,8 @@ describe('check rules', () => {
     expect([...parseChecksFile('{"rules":{"anchor-stale":"error","box-unlinked":"off"}}').levels]).toEqual([['anchor-stale', 'error'], ['box-unlinked', 'off']]);
     expect(parseChecksFile('{"rules":{"Anchor":"loud"},"extra":1}').problems).toHaveLength(2);
     expect(parseChecksFile('{nope').problems[0]).toMatch(/valid JSON/);
+    expect(parseChecksFile('{"coverage":{"minimum":90}}').coverageMinimum).toBe(90);
+    expect(parseChecksFile('{"coverage":{"minimum":120,"x":1}}').problems).toHaveLength(2);
     const m = manifestLevels(JSON.stringify({ checks: { 'no-title': 'off' }, anchors: { refill: { file: 'a', range: [1, 2], checks: { 'anchor-changed': 'info' } }, bad: { checks: 'x' } } }));
     expect([...m.sidestory]).toEqual([['no-title', 'off']]);
     expect([...m.anchors.get('refill')!]).toEqual([['anchor-changed', 'info']]);

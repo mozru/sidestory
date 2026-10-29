@@ -64,8 +64,11 @@ export function parseLevels(raw: unknown): { levels: Map<string, Level>; problem
   return { levels, problems };
 }
 
-/** `.sidestory/checks.json`: `{ "rules": { … } }`. */
-export function parseChecksFile(text: string): { levels: Map<string, Level>; problems: string[] } {
+/**
+ * `.sidestory/checks.json`: `{ "rules": { … }, "coverage": { "minimum": 90 } }`. `coverageMinimum`: the share of a
+ * branch's changes (0–100) that must be explained or marked trivial for coverage to pass.
+ */
+export function parseChecksFile(text: string): { levels: Map<string, Level>; coverageMinimum?: number; problems: string[] } {
   let raw: unknown;
   try {
     raw = JSON.parse(text.replace(/^﻿/, ''));
@@ -73,9 +76,15 @@ export function parseChecksFile(text: string): { levels: Map<string, Level>; pro
     return { levels: new Map(), problems: [`isn't valid JSON: ${(e as Error).message}`] };
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { levels: new Map(), problems: ['must be an object with "rules"'] };
-  const { rules, ...rest } = raw as Record<string, unknown>;
-  const r = parseLevels(rules);
-  for (const k of Object.keys(rest)) r.problems.push(`"${k.slice(0, 60)}" isn't a known key (only "rules")`);
+  const { rules, coverage, ...rest } = raw as Record<string, unknown>;
+  const r: { levels: Map<string, Level>; coverageMinimum?: number; problems: string[] } = parseLevels(rules);
+  for (const k of Object.keys(rest)) r.problems.push(`"${k.slice(0, 60)}" isn't a known key (only "rules" and "coverage")`);
+  if (coverage !== undefined) {
+    const { minimum, ...extra } = (coverage && typeof coverage === 'object' && !Array.isArray(coverage) ? coverage : {}) as Record<string, unknown>;
+    if (typeof minimum === 'number' && Number.isFinite(minimum) && minimum >= 0 && minimum <= 100) r.coverageMinimum = minimum;
+    else r.problems.push('"coverage" must be { "minimum": <a percentage from 0 to 100> }');
+    for (const k of Object.keys(extra)) r.problems.push(`"coverage.${k.slice(0, 60)}" isn't a known key (only "minimum")`);
+  }
   return r;
 }
 
