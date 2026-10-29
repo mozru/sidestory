@@ -63,7 +63,7 @@ describe('Back / Forward', () => {
   });
 
   it('an older version (Compare with…) says which in its tab, and tells its partner each step picked', async () => {
-    const { session, panel, lastInit, send } = open('bit-reader', undefined, { version: 'main, a1b2c3d' });
+    const { session, panel, posted, lastInit, send } = open('bit-reader', undefined, { version: 'main, a1b2c3d' });
     await session.load();
     send({ type: 'ready' });
     await vi.waitFor(() => expect(lastInit()).toBeDefined());
@@ -76,6 +76,13 @@ describe('Back / Forward', () => {
     session.goTo(id); // the same step: nothing to tell
     expect(steps).toEqual([id]);
     expect(session.stepFile(id)).toBe(lastInit()!.anchors[1]!.file);
+    // Following the panel beside it: the page goes to the step, the step is current, and no code is revealed.
+    const other = lastInit()!.anchors[2]!.id;
+    posted.length = 0;
+    session.followStep(other);
+    expect(session.place().active).toBe(other);
+    expect(posted).toContainEqual({ type: 'syncTo', anchorId: other, jump: true });
+    expect(steps.at(-1)).toBe(other);
   });
 
   it('refuses what a restored trail would refuse: outside a .sidestory folder, a trail not ending at it, repeats', async () => {

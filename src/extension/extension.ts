@@ -16,7 +16,7 @@ import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
-import { GIT_SCHEME, gitUri, parseGitUri } from './changes/git-fs.ts';
+import { GIT_SCHEME, gitUri } from './changes/git-fs.ts';
 import { pickVersion } from './compare.ts';
 import { createPanel, panelOptions } from './panel.ts';
 import { pickAnchor, pinAnchors, reanchorToSelection, repinAnchor, type SelectionSide } from './pin.ts';
@@ -362,10 +362,15 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
   };
 
   /** The explainer a command acts on: the one given, else the active panel's, else one the user picks. */
+  /** A version from git (Compare with…) → the panel it was opened beside. */
+  const partners = new WeakMap<ExplainerSession, ExplainerSession>();
+
   const explainerFor = async (dir?: unknown) => {
     const given = asUri(dir);
     if (given) return refFromDir(given);
-    return current?.ref ?? (await pick())?.ref;
+    // A version from git (Compare with…) is read-only: commands that write or compile act on the current one.
+    const s = current?.version ? partners.get(current) : current;
+    return s?.ref ?? (await pick())?.ref;
   };
 
   // Restricted Mode: panels left open aren't restored, but say so once and offer to reopen them.
@@ -523,33 +528,46 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       }
       const v = await pickVersion(s.ref.dir, changes.snapshot);
       if (!v) return;
-      const ref: ExplainerRef = {
-        name: s.ref.name,
-        dir: gitUri(changes.ids, v.repo, v.commit, v.rel),
-        root: vscode.Uri.from({ scheme: GIT_SCHEME, authority: changes.ids.idOf(v.repo), path: '/', query: v.commit }),
-      };
+      // The folder holding .sidestory/ at that commit (the repository's root, or a package's in a monorepo): the
+      // code the version's anchors name is there.
+      const rootRel = v.rel.split('/').slice(0, -2).join('/');
+      let ref: ExplainerRef;
+      try {
+        ref = {
+          name: s.ref.name,
+          dir: gitUri(changes.ids, v.repo, v.commit, v.rel),
+          root: rootRel ? gitUri(changes.ids, v.repo, v.commit, rootRel) : vscode.Uri.from({ scheme: GIT_SCHEME, authority: changes.ids.idOf(v.repo), path: '/', query: v.commit }),
+        };
+      } catch {
+        void vscode.window.showWarningMessage("This sidestory's folder can't be read from git.");
+        return;
+      }
       const old = await start([ref], createPanel(context.extensionUri, ref, vscode.ViewColumn.Beside), { active: s.place().active, version: v.label });
-      // Together: a step picked in either is the step in both.
-      const follow = (from: ExplainerSession, to: ExplainerSession) => from.onDidChangeStep((id) => to.place().active !== id && to.goTo(id));
-      const links = [follow(s, old), follow(old, s)];
-      const unlink = () => links.forEach((d) => d.dispose());
-      old.onDidDispose(unlink);
-      s.onDidDispose(unlink);
+      // The reader is still in their panel (the new one opened without taking focus).
+      current = s;
+      updateContext();
+      partners.set(old, s);
+      // Together: a step picked in either is the step in both (the follower doesn't reveal code: one editor).
+      const links = [s.onDidChangeStep((id) => old.followStep(id)), old.onDidChangeStep((id) => s.followStep(id))];
+      const unlink = () => links.splice(0).forEach((d) => d.dispose());
+      // Until either closes, or the reader's panel moves to another sidestory.
+      for (const d of [old.onDidDispose(unlink), s.onDidDispose(unlink), s.onDidSwitch(unlink)]) links.push(d);
+      if (s.place().active && s.place().active !== old.place().active) old.followStep(s.place().active!);
     },
     // In the older version's panel: VS Code's diff of its step's code, or of the page's source, against now.
     'sidestory.compare.stepDiff': async () => {
       const s = current;
       const id = s?.place().active;
       const file = s?.version && id ? s.stepFile(id) : undefined;
-      const at = s && parseGitUri(changes.ids, s.ref.root);
-      if (!s || !file || !at) return;
-      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.root, file), vscode.Uri.joinPath(at.repo.rootUri, ...file.split('/')), `${file.split('/').at(-1)} (${s.version} ↔ now)`);
+      const now = s && partners.get(s);
+      if (!s || !file || !now) return;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.root, file), vscode.Uri.joinPath(now.ref.root, ...file.split('/')), `${file.split('/').at(-1)} (${s.version} ↔ now)`);
     },
     'sidestory.compare.sourceDiff': async () => {
       const s = current;
-      const at = s?.version ? parseGitUri(changes.ids, s.ref.dir) : undefined;
-      if (!s || !at) return;
-      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.dir, 'sidestory.html'), vscode.Uri.joinPath(at.repo.rootUri, ...at.path.split('/'), 'sidestory.html'), `${s.ref.name}/sidestory.html (${s.version} ↔ now)`);
+      const now = s?.version ? partners.get(s) : undefined;
+      if (!s || !now) return;
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.joinPath(s.ref.dir, 'sidestory.html'), vscode.Uri.joinPath(now.ref.dir, 'sidestory.html'), `${s.ref.name}/sidestory.html (${s.version} ↔ now)`);
     },
     // The page's right-click menu (webview/context): for what was right-clicked in the panel the menu opened in.
     'sidestory.page.copy': () => current?.menu('copy'),

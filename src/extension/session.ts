@@ -266,7 +266,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.opts = opts;
     this.active = opts.active;
     panel.webview.html = shellHtml(panel.webview, extensionUri, this.ref);
-    if (host.widgets) {
+    if (host.widgets && this.ref.dir.scheme === 'file') {
       this.widgets = host.widgets.attach(this.widgetPort(opts.recovered === true));
       // A hidden panel's frames are gone (retainContextWhenHidden is off): nothing to watch until it is shown.
       this.subscriptions.push(panel.onDidChangeViewState(() => {
@@ -274,7 +274,7 @@ export class ExplainerSession implements vscode.Disposable {
       }));
     }
     this.watchExplainer();
-    host.opened?.(this.ref);
+    if (!opts.version) host.opened?.(this.ref); // a version from git isn't a recent sidestory
     this.subscriptions.push(
       this.resolveEmitter,
       this.switchEmitter,
@@ -443,6 +443,21 @@ export class ExplainerSession implements vscode.Disposable {
   /** The step changed (after the change): the version shown beside follows it (Compare with…). */
   readonly onDidChangeStep = this.stepEmitter.event;
 
+  /**
+   * Shows a step the panel beside it picked (Compare with…): the page goes there and the step is current, but the
+   * code isn't revealed, so the two panels don't both open code in the same editor.
+   */
+  followStep(id: string): void {
+    if (id === this.active) return;
+    if (this.initGeneration !== this.generation || !this.manifest) {
+      this.active = id;
+      return;
+    }
+    if (!this.manifest.anchors.has(id)) return;
+    this.setActive(id);
+    this.post({ type: 'syncTo', anchorId: id, jump: true });
+  }
+
   /** The file a step's code is in (its anchor's first part), for Compare's step diff. */
   stepFile(id: string): string | undefined {
     const a = this.manifest?.anchors.get(id);
@@ -564,7 +579,7 @@ export class ExplainerSession implements vscode.Disposable {
     this.decorations.set(undefined);
     this.decorations.clearFlash();
     this.watchExplainer();
-    this.host.opened?.(this.ref);
+    if (!this.opts.version) this.host.opened?.(this.ref);
     await this.reload();
     // A later switch took over while this one loaded: it sends its own `init`.
     if (generation !== this.generation || this.disposed) return;
@@ -754,7 +769,7 @@ export class ExplainerSession implements vscode.Disposable {
     await this.updateDiff();
     if (this.disposed || generation !== this.generation) return;
     this.watchAnchorFiles();
-    if ([...parsed.manifest.anchors.values()].some((a) => !a.quote)) this.noteUnpinned();
+    if (!this.opts.version && [...parsed.manifest.anchors.values()].some((a) => !a.quote)) this.noteUnpinned();
     await this.resolveAll();
   }
 
@@ -1540,7 +1555,8 @@ export class ExplainerSession implements vscode.Disposable {
       const room = MAX_ASSET_BUDGET - this.assetBytes;
       const uri = vscode.Uri.joinPath(this.ref.dir, path);
       // Inside the explainer folder *and* the repository (the folder itself could be a link elsewhere).
-      const inside = mime && room > 0 && (uri.scheme !== 'file' || (await realPathInside(uri.fsPath, this.ref.root.fsPath)));
+      const dirPath = this.ref.dir.path.replace(/\/?$/, '/');
+      const inside = mime && room > 0 && (uri.scheme !== 'file' ? uri.path.startsWith(dirPath) : await realPathInside(uri.fsPath, this.ref.root.fsPath));
       const data = inside ? await readBytesInside(uri, this.ref.dir, Math.min(MAX_ASSET_BYTES, room)) : undefined;
       if (data) this.assetBytes += data.byteLength;
       this.post({ type: 'asset', id, mime: mime ?? '', data: data ? Buffer.from(data).toString('base64') : null });
