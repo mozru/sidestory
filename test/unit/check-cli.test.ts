@@ -375,14 +375,14 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
     const moved = ['// header', ...Array.from({ length: 30 }, (_, i) => `// pad ${i}`), 'import x from "y";', '', ...fn(), ''].join('\n');
     for (const code of [ORIG, moved]) expect((await check(sidestory(code))).findings).toEqual([]);
     const r = await check(sidestory(ORIG.replace('item * 1', 'item * 2')));
-    expect(r.findings).toEqual([{ severity: 'info', file: expect.any(String), line: 5, code: 'anchor-changed', message: 'Step "refill" (anchor "refill"): the code in src/a.ts changed a little since it was pinned at lines 4–11 ("Code changed" in VS Code). If the prose still fits, run check.cjs .sidestory/demo --pin.' }]);
+    expect(r.findings).toEqual([{ severity: 'info', file: expect.any(String), line: 5, anchor: 'refill', code: 'anchor-changed', message: 'Step "refill" (anchor "refill"): the code in src/a.ts changed a little since it was pinned at lines 4–11 ("Code changed" in VS Code). If the prose still fits, run check.cjs .sidestory/demo --pin.' }]);
   });
 
   it('lost code is anchor-lost: which step, the file, the last pinned range and how to fix it', async () => {
     const dir = sidestory(['// header', 'import x from "y";', '', 'const tail = 1;', ''].join('\n'));
     const r = await check(dir);
     expect(drift(r)).toEqual([{
-      severity: 'warning', file: join(dir, 'manifest.json'), line: 5, code: 'anchor-lost',
+      severity: 'warning', file: join(dir, 'manifest.json'), line: 5, anchor: 'refill', code: 'anchor-lost',
       message: `Step "refill" (anchor "refill"): its code isn't in src/a.ts any more (last pinned at lines 4–11). If it moved or was rewritten, ${REANCHOR}; if it was removed on purpose, remove the step.`,
     }]);
     expect(r.errors).toBe(0);
@@ -452,7 +452,7 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
 
     it('a merge-base blob too large to read is unchecked, not lost', async () => {
       const dir = sidestory(undefined, anchors, undefined, {}, { base: 'main' });
-      expect(drift(await at(dir, { unchecked: 'too large to read' }))).toEqual([{ severity: 'info', file: join(dir, 'manifest.json'), line: 6, code: 'anchor-unchecked', message: 'Step "refill" (anchor "refill"): src/a.ts at the merge-base is too large to read, so its code wasn\'t checked.' }]);
+      expect(drift(await at(dir, { unchecked: 'too large to read' }))).toEqual([{ severity: 'info', file: join(dir, 'manifest.json'), line: 6, anchor: 'refill', code: 'anchor-unchecked', message: 'Step "refill" (anchor "refill"): src/a.ts at the merge-base is too large to read, so its code wasn\'t checked.' }]);
     });
 
     it('one a widget reads keeps the widget\'s finding: widgets read the working tree', async () => {
@@ -520,7 +520,7 @@ describe('anchor drift (lost, out-of-date and changed code, as VS Code shows it)
     expect(await main([dir, '--json'], { out: (s) => out.push(s), err: (s) => out.push(s) }, compilerOpts)).toBe(0);
     const r = JSON.parse(out.join('\n')) as CheckReport;
     expect(r.warnings).toBe(1);
-    expect(r.findings).toEqual([{ severity: 'warning', file: join(dir, 'manifest.json'), line: 5, code: 'anchor-lost', message: expect.stringMatching(/^Step "refill" \(anchor "refill"\): its code isn't in src\/a\.ts any more/) }]);
+    expect(r.findings).toEqual([{ severity: 'warning', file: join(dir, 'manifest.json'), line: 5, anchor: 'refill', code: 'anchor-lost', message: expect.stringMatching(/^Step "refill" \(anchor "refill"\): its code isn't in src\/a\.ts any more/) }]);
   });
 });
 
@@ -822,5 +822,57 @@ describe('the text report', () => {
     const first = formatReport(report, '/r').split('\n')[0]!;
     expect(first).toBe(join('.sidestory', 'x', 'agnp.js b.ts') + ': warning odd: name evil x y');
     expect(first).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u2028\u2029]/);
+  });
+});
+
+describe('the repository\'s rules (.sidestory/checks.json, manifest "checks", data-explain-ignore)', () => {
+  const diagram = (boxes: string) => `<svg viewBox="0 0 100 40" role="group" aria-label="map">${boxes}</svg>`;
+  it('box-unlinked: a lit box (a shape and a label) with no code link on, in or around it; not a wire', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', diagram(
+        '<g data-explain-on="refill"><rect width="9" height="9"/><text>lone</text></g>' +
+        '<g data-explain-code="src/a.ts#L2-L4"><g data-explain-on="refill"><rect width="9" height="9"/><text>in a link</text></g></g>' +
+        '<g data-explain-on="refill"><rect width="9" height="9"/><text data-explain-ref="other">x</text></g>' +
+        '<g data-explain-on="refill"><path d="M0 0L9 9"/></g>' +
+        '<g data-explain-on=""><rect width="1" height="1"/><text>never lit</text></g>',
+      )) + section('other', '<p>x</p>')),
+    });
+    const r = await check(dir);
+    expect(r.findings.filter((f) => f.code === 'box-unlinked').map((f) => f.line)).toEqual([5]);
+  });
+
+  it('levels from checks.json and the manifest, a reasoned element exception, and what was ignored', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/checks.json': JSON.stringify({ rules: { 'box-unlinked': 'error', 'unused-anchor': 'off' } }),
+      '.sidestory/demo/manifest.json': JSON.stringify({ version: 1, title: 'Demo', anchors: { ...ANCHORS, spare: { file: 'src/a.ts', range: [1, 1] } } }, null, 2),
+      '.sidestory/demo/sidestory.html': page(section('refill', diagram(
+        '<g data-explain-on="refill"><rect width="9" height="9"/><text>Box</text></g>\n' +
+        '<g data-explain-ignore="box-unlinked: the legend" data-explain-on="refill"><rect width="9" height="9"/><text>Legend</text></g>\n' +
+        '<g data-explain-ignore="no-title: stale"><rect width="1" height="1"/></g>',
+      )) + section('other', '<p>x</p>')),
+    });
+    const r = await check(dir);
+    expect(r.findings.filter((f) => f.code === 'box-unlinked').map((f) => f.severity)).toEqual(['error']);
+    expect(codes(r)).not.toContain('unused-anchor');
+    expect(codes(r, 'warning')).toContain('unused-ignore');
+    expect(r.ignored).toEqual(expect.arrayContaining([{ code: 'box-unlinked', reason: 'the legend' }]));
+    const out: string[] = [];
+    await main([dir], { out: (s) => out.push(s), err: (s) => out.push(s) }, compilerOpts);
+    expect(out.join('\n')).toMatch(/ignored by the repository's rules \(.*box-unlinked: the legend/);
+  });
+
+  it('a safety rule can\'t be turned off, and a bad checks.json is an error', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.env': 'TOKEN=1\n',
+      '.sidestory/checks.json': '{ "rules": { "code-link-secret": "off", "x": "loud" } }',
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<p><code data-explain-code=".env">env</code></p>') + section('other', '<p>x</p>')),
+    });
+    const r = await check(dir);
+    expect(codes(r)).toEqual(expect.arrayContaining(['code-link-secret', 'rule-locked', 'checks-json']));
   });
 });

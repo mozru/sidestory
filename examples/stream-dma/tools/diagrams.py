@@ -86,6 +86,9 @@ class Diagram:
 
     def block_svg(self, b):
         attrs = f' data-explain-ref="{b["ref"]}" aria-label="{escape(b["title"])}: show its code"' if b['ref'] else ''
+        # Outside the design (the CPU, memory): no code to link, which the checker would flag when it lights up.
+        if b['kind'] == 'ext' and b.get('on') is not None:
+            attrs += ' data-explain-ignore="box-unlinked: outside the design, no code"'
         cx = b['x'] + b['w'] / 2
         out = [f'<g class="blk blk-{b["kind"]}" data-block="{b["id"]}"{attrs}{self.on_attr(b)}>',
                f'<rect class="blk-box" x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" rx="6"/>']

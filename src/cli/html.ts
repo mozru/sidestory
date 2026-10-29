@@ -43,6 +43,13 @@ export interface ScannedHtml {
   steps: string[];
   /** Every data-explain-anchor id in the page. */
   anchors: string[];
+  /** Elements with data-explain-ignore, with the lines they span (the checker's element exceptions). */
+  ignores: { value: string; line: number; endLine: number }[];
+  /**
+   * Boxes in a diagram that light up per step (data-explain-on, inside an <svg>: a shape and a text label in one
+   * part, not a wire or an arrow) with no code link on, in or around them.
+   */
+  unlinkedBoxes: { line: number; el: Element }[];
 }
 
 /** 1-based line of each offset, by binary search over line starts. */
@@ -63,6 +70,9 @@ export function lineIndex(text: string): (offset: number) => number {
     return lo + 1;
   };
 }
+
+/** What makes a lit diagram part a box (with a <text> label), rather than a wire (a path, an arrowhead polygon). */
+const BOX_SHAPES = new Set(['rect', 'circle', 'ellipse']);
 
 /** Widgets past this many get no ancestor list (each copy is up to MAX_DEPTH elements); only 24 run anyway. */
 const MAX_WIDGETS_WITH_ANCESTORS = 1000;
@@ -103,6 +113,16 @@ export function scanHtml(html: string): ScannedHtml {
   const openWidgets: { el: Element; widget: WidgetElement }[] = [];
   /** Open anchored elements, innermost last. */
   const openAnchors: Element[] = [];
+  const ignores: ScannedHtml['ignores'] = [];
+  const openIgnores = new Map<Element, ScannedHtml['ignores'][number]>();
+  const unlinkedBoxes: ScannedHtml['unlinkedBoxes'] = [];
+  /** Open lit diagram parts, innermost last: whether a code link, a shape and a label were seen in them. */
+  const openBoxes: { el: Element; linked: boolean; shape: boolean; label: boolean }[] = [];
+  let svgDepth = 0;
+  /** Open elements with a code link: a part inside one is linked through it (a click on it opens that code). */
+  const openLinks = new Set<Element>();
+  /** Where the tokenizer is: an element's end line is the line of the token that closes it. */
+  let at = 0;
   const markContent = () => {
     const w = openWidgets.at(-1);
     if (w) w.widget.hasFallback = true;
@@ -110,6 +130,24 @@ export function scanHtml(html: string): ScannedHtml {
 
   /** Every start tag, after its implied ends; `pushed` when it is now the innermost open element. */
   const start = (el: ScanElement, t: StartTag, pushed: boolean) => {
+    const ignore = t.attrs.get('data-explain-ignore');
+    if (ignore !== undefined) {
+      const entry = { value: ignore, line: el.line, endLine: el.line };
+      ignores.push(entry);
+      if (pushed) openIgnores.set(el, entry);
+    }
+    const linked = t.attrs.has('data-explain-code') || t.attrs.has('data-explain-ref');
+    if (linked) for (const b of openBoxes) b.linked = true;
+    const inLink = linked || openLinks.size > 0;
+    if (linked && pushed) openLinks.add(el);
+    const shape = BOX_SHAPES.has(t.name);
+    const label = t.name === 'text';
+    for (const b of openBoxes) {
+      b.shape ||= shape;
+      b.label ||= label;
+    }
+    if (svgDepth > 0 && pushed && (t.attrs.get('data-explain-on') ?? '').trim()) openBoxes.push({ el, linked: inLink, shape, label });
+    if (t.name === 'svg' && pushed) svgDepth++;
     const stack = tree.stack;
     const below = pushed ? stack.length - 1 : stack.length;
     const anchorId = t.attrs.get('data-explain-anchor');
@@ -155,6 +193,17 @@ export function scanHtml(html: string): ScannedHtml {
     leaf: (el, t) => start(el, t, false),
     raw: (el, t) => start(el, t, false),
     close: (el) => {
+      const ig = openIgnores.get(el);
+      if (ig) {
+        ig.endLine = lineOf(at);
+        openIgnores.delete(el);
+      }
+      if (openBoxes.at(-1)?.el === el) {
+        const b = openBoxes.pop()!;
+        if (!b.linked && b.shape && b.label) unlinkedBoxes.push({ line: el.line, el });
+      }
+      if (el.name === 'svg' && svgDepth > 0) svgDepth--;
+      openLinks.delete(el);
       if (openWidgets.at(-1)?.el === el) openWidgets.pop();
       if (openAnchors.at(-1) === el) openAnchors.pop();
     },
@@ -165,10 +214,12 @@ export function scanHtml(html: string): ScannedHtml {
 
   const tokens = new HtmlTokenizer(html);
   for (let t = tokens.next(); t; t = tokens.next()) {
+    if ('offset' in t && typeof t.offset === 'number') at = t.offset;
     tree.token(t);
   }
+  at = html.length;
   tree.finish();
-  return { widgets, styles, steps, anchors };
+  return { widgets, styles, steps, anchors, ignores, unlinkedBoxes };
 }
 
 /** A short description of an element for messages: div#id.class1.class2 */

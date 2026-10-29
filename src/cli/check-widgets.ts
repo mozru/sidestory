@@ -25,6 +25,7 @@
 //
 // --coverage checks the branch's merge diff against the sidestories that belong to it (src/cli/coverage.ts) and
 // exits 3 when there are no errors but some change isn't explained or marked trivial.
+import { applyRules, manifestLevels, parseChecksFile, parseIgnore, type Ignore } from '../core/check-rules.ts';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
@@ -44,7 +45,7 @@ import { isSecretFileName, isSecretPath } from '../extension/widgets/secret-file
 import { TYPECHECK_COMMAND, writeWidgetTypes } from '../widget-types/index.ts';
 import { describeProblem, parseCss, placementProblems, type ParsedCss } from './css.ts';
 import { threadsMain } from './threads.ts';
-import { lineIndex, scanHtml, type WidgetElement } from './html.ts';
+import { describeElement, lineIndex, scanHtml, type WidgetElement } from './html.ts';
 import { manifestLines, type ManifestLines } from './manifest-lines.ts';
 import { checkCodeLinks, checkIds, scanPageLinks } from './checks/links.ts';
 import { newUlid } from '../comments/fsx.ts';
@@ -60,6 +61,8 @@ export interface Finding {
   column?: number;
   code: string;
   message: string;
+  /** The anchor (step) it is about: its step's rule levels apply (src/core/check-rules.ts). */
+  anchor?: string;
 }
 
 export interface WidgetReport {
@@ -98,6 +101,8 @@ export interface CheckReport {
   pin?: PinReport;
   errors: number;
   warnings: number;
+  /** Findings the repository's rules turned off (src/core/check-rules.ts), and why. */
+  ignored?: { code: string; reason: string }[];
 }
 
 export interface CheckOptions {
@@ -482,7 +487,7 @@ async function anchorDrift(ctx: Context, manifest: Manifest, steps: ReadonlyMap<
     const title = steps.get(a.id);
     const report = (code: string, severity: Severity, message: string) => {
       const line = lines?.anchor(a.id);
-      const f: Finding = { severity, file: ctx.manifestFile, ...(line ? { line } : {}), code, message: `${title !== undefined ? `Step "${title}" (anchor "${a.id}")` : `Anchor "${a.id}"`}: ${message}` };
+      const f: Finding = { severity, file: ctx.manifestFile, ...(line ? { line } : {}), anchor: a.id, code, message: `${title !== undefined ? `Step "${title}" (anchor "${a.id}")` : `Anchor "${a.id}"`}: ${message}` };
       driftAnchor.set(f, a.id);
       out.set(a.id, f);
     };
@@ -713,6 +718,9 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
   for (const p of await checkCodeLinks(ctx.root, page.codes, CHECK_LIMITS.codeBytes)) add(ctx, { ...p, file: ctx.htmlFile });
 
   const scanned = scanHtml(html);
+  for (const b of scanned.unlinkedBoxes) {
+    add(ctx, { severity: 'warning', file: ctx.htmlFile, line: b.line, code: 'box-unlinked', message: `This diagram part lights up on a step (data-explain-on) but links to no code, so readers can't click it to see the code it stands for (${describeElement(b.el)}). Add data-explain-code or data-explain-ref to it or around it; if it isn't about code (a legend, a label), mark it data-explain-ignore="box-unlinked: why".` });
+  }
   const widgets = scanned.widgets;
   if (widgets.length > CHECK_LIMITS.widgetsPerExplainer) {
     add(ctx, { severity: 'warning', file: ctx.htmlFile, line: widgets[CHECK_LIMITS.widgetsPerExplainer]!.line, code: 'too-many-widgets', message: `${widgets.length} widgets: at most ${CHECK_LIMITS.widgetsPerExplainer} run per sidestory (and 8 at once); the rest show their fallback.` });
@@ -787,7 +795,35 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
     for (const p of ids.html) add(ctx, { ...p, file: ctx.htmlFile });
     for (const p of ids.manifest) add(ctx, { ...p, file: ctx.manifestFile });
   }
+  await applyCheckRules(ctx, report, manifestText, scanned.ignores);
   return finish(report);
+}
+
+/**
+ * The repository's rules (src/core/check-rules.ts): `.sidestory/checks.json`, the manifest's and its anchors'
+ * "checks", and the page's data-explain-ignore. Mistakes in them are findings too, and so is an exception that no
+ * longer silences anything.
+ */
+async function applyCheckRules(ctx: Context, report: CheckReport, manifestText: string | undefined, ignoresRaw: readonly { value: string; line: number; endLine: number }[]) {
+  const checksFile = join(dirname(ctx.dir), 'checks.json');
+  const checksText = await readText(checksFile);
+  const global = checksText === undefined ? { levels: new Map(), problems: [] as string[] } : parseChecksFile(checksText);
+  for (const p of global.problems) add(ctx, { severity: 'error', file: checksFile, code: 'checks-json', message: `.sidestory/checks.json ${p}.` });
+  const local = manifestText === undefined ? undefined : manifestLevels(manifestText);
+  for (const p of local?.problems ?? []) add(ctx, { severity: 'error', file: ctx.manifestFile, code: 'checks-json', message: `manifest.json ${p}.` });
+  const ignores: Ignore[] = [];
+  for (const raw of ignoresRaw) {
+    const i = parseIgnore(raw.value);
+    if (i.bad.length) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: raw.line, code: 'ignore-syntax', message: `data-explain-ignore: ${i.bad.slice(0, 3).map((b) => `"${b.slice(0, 40)}"`).join(', ')} isn't a rule name. Write data-explain-ignore="rule-name: why".` });
+    if (!i.codes.length) continue;
+    if (!i.reason) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: raw.line, code: 'ignore-no-reason', message: `data-explain-ignore="${raw.value.slice(0, 60)}" gives no reason: add one after a colon ("${i.codes[0]}: why"), so the next person knows why it's off.` });
+    ignores.push({ codes: i.codes, reason: i.reason, line: raw.line, endLine: raw.endLine });
+  }
+  const applied = applyRules(ctx.findings, { global: global.levels, sidestory: local?.sidestory ?? new Map(), anchors: local?.anchors ?? new Map(), ignores, htmlFile: ctx.htmlFile });
+  ctx.findings.splice(0, ctx.findings.length, ...applied.findings);
+  for (const l of applied.locked) add(ctx, { severity: 'error', file: l.where.startsWith('data-explain-ignore') ? ctx.htmlFile : l.where === '.sidestory/checks.json' ? checksFile : ctx.manifestFile, code: 'rule-locked', message: `${l.code} guards the reader's safety and can't be turned down or off (${l.where}); the finding stays. Fix what it reports instead.` });
+  for (const u of applied.unusedIgnores) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: u.line, code: 'unused-ignore', message: `data-explain-ignore="${u.codes.join(' ')}" silences nothing here any more: remove it.` });
+  if (applied.off.length) report.ignored = applied.off;
 }
 
 /** The outline the workspace index builds, and the detail links in it (docs/NAVIGATION-PLAN.md §5.3). */
@@ -858,6 +894,11 @@ export function formatReport(report: CheckReport, cwd = process.cwd(), coverage 
     }
   }
   const n = report.widgets.length;
+  const off = report.ignored ?? [];
+  if (off.length) {
+    const why = [...new Set(off.map((o) => `${o.code}: ${o.reason}`))].slice(0, 5);
+    out.push(`${off.length} ignored by the repository's rules (${why.join('; ')}${off.length > why.length ? '; …' : ''}).`);
+  }
   if (coverage) {
     if (n) out.push(`${n} widget${n === 1 ? '' : 's'} checked.`);
   } else if (n === 0) out.push(`Checked: ${report.errors} error(s), ${report.warnings} warning(s); no widgets.`);

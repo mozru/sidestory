@@ -16,6 +16,7 @@ The full reference for writing and reading sidestories. For a quick tour, see th
   - [How sections follow the code](#how-sections-follow-the-code)
   - [Styling](#styling)
   - [What's supported, and what's removed](#whats-supported-and-whats-removed)
+  - [Checker rules](#checker-rules)
   - [Interactive widgets](#interactive-widgets)
 - [Explaining a branch](#explaining-a-branch)
   - [Base, side and trivial marks](#base-side-and-trivial-marks)
@@ -387,6 +388,21 @@ Removed or ignored, for safety (see [SECURITY.md](https://github.com/mozru/sides
 - links to `localhost` or private addresses.
 
 Limits: `sidestory.html` up to 5 MB, `manifest.json` up to 1 MB, 500 anchors, each quote up to 2,000 lines, each asset up to 5 MB (20 MB per open sidestory).
+
+### Checker rules
+
+The checker's findings are errors, warnings or info. The repository decides how serious each one is, and where one doesn't apply, at four levels; the narrowest wins:
+
+| Level | Where | Example |
+|---|---|---|
+| Every sidestory | `.sidestory/checks.json` | `{ "rules": { "anchor-stale": "error", "box-unlinked": "warning", "no-fallback": "off" } }` |
+| One sidestory | its `manifest.json` | `"checks": { "box-unlinked": "off" }` |
+| One step | its anchor in the manifest | `"refill": { "file": "…", "range": […], "checks": { "anchor-changed": "off" } }` |
+| One element | the page | `<g data-explain-ignore="box-unlinked: legend, not code">` |
+
+A level is `"error"`, `"warning"`, `"info"` or `"off"`; the rule names are the codes the checker prints. An error makes the checker exit with 1, so it fails CI and an agent's run. An element's exception only turns rules off, inside that element; it needs a reason after the colon (the checker warns without one, and when it no longer silences anything), and the report's last line counts what was ignored and why. A few rules guard the reader rather than the page (`code-link-secret`, `secret-file`, `outside-folder`, `pin-needs-consent`): no level lowers them, and trying is an error (`rule-locked`).
+
+`box-unlinked` (a warning) is a diagram part that lights up on a step (`data-explain-on`, inside an `<svg>`) with no code link on it or around it, so a reader can't click it to see its code.
 
 ### Interactive widgets
 
