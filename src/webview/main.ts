@@ -906,6 +906,7 @@ function decorateTree(root: HTMLElement): void {
   // The author's `open`, before the reader toggles it (see keepReaderState).
   for (const el of root.querySelectorAll<HTMLElement>('details, dialog')) if (el.dataset.cxOpen === undefined) el.dataset.cxOpen = el.hasAttribute('open') ? '1' : '0';
   decorateDetails(root);
+  decorateUps(root);
   widgets?.decorate(root);
 }
 
@@ -1018,12 +1019,31 @@ function arrived(title: string, leftDetail: string | undefined): void {
   titleEl.focus({ preventScroll: true });
 }
 
-function goTo(depth: number): void {
+function goTo(depth: number, showCode = false): void {
   if (depth >= trail.length - 1) return;
   savePlace();
   // Up to where the reader just came from: that's Back, so Forward returns here.
   expectEntry(-1, trail.slice(0, depth + 1).map((t) => t.name));
-  vscode.postMessage({ type: 'goTo', depth, id: navRequestId });
+  vscode.postMessage({ type: 'goTo', depth, id: navRequestId, ...(showCode ? { showCode: true } : {}) });
+}
+
+/**
+ * Elements marked data-explain-up (a diagram's "up" arrow, a link back to the overview) go up one level of the trail,
+ * as "Up to …" does. A link while there is a level above; inert in a top-level sidestory.
+ */
+function decorateUps(root: HTMLElement): void {
+  const parent = trail.length >= 2 ? trail[trail.length - 2] : undefined;
+  for (const el of root.querySelectorAll<HTMLElement>('[data-explain-up]')) {
+    if (el.closest('a, button, label, summary, [data-explain-ref], [data-explain-code], [data-explain-detail]')) continue;
+    if (!parent) {
+      if (el.dataset.cxUp) for (const a of ['data-cx-up', 'tabindex', 'role', 'aria-label']) el.removeAttribute(a);
+      continue;
+    }
+    el.dataset.cxUp = '1';
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+    if (!el.hasAttribute('role')) el.setAttribute('role', 'link');
+    el.setAttribute('aria-label', `Up to ${parent.title || parent.name}`);
+  }
 }
 
 /**
@@ -1874,6 +1894,12 @@ function onContentClick(e: MouseEvent): void {
     return;
   }
   if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
+  // An up link (data-explain-up): one level up the trail.
+  const upLink = target.closest<HTMLElement>('[data-cx-up]');
+  if (upLink) {
+    e.preventDefault();
+    return goTo(trail.length - 2, upLink.getAttribute('data-explain-detail-code') === 'show');
+  }
   // A diagram part that dives (an SVG box with data-explain-detail); a control inside it stays the control's.
   const diveBox = target.closest<HTMLElement>('[data-cx-dive]');
   if (diveBox && DETAIL_NAME.test(diveBox.dataset.explainDetail ?? '')) {
@@ -1895,6 +1921,11 @@ function onContentKey(e: KeyboardEvent): void {
     e.preventDefault();
     if (e.isTrusted && !handled && !e.repeat && linked === aimedLink && linkKey(linked) === aimedKey) openLinked(linked);
     return;
+  }
+  const upLink = (e.target as HTMLElement).closest?.<HTMLElement>('[data-cx-up]');
+  if (upLink && e.key === 'Enter' && e.target === upLink && e.isTrusted && !e.repeat) {
+    e.preventDefault();
+    return goTo(trail.length - 2, upLink.getAttribute('data-explain-detail-code') === 'show');
   }
   const diveBox = (e.target as HTMLElement).closest?.<HTMLElement>('[data-cx-dive]');
   if (diveBox && e.key === 'Enter' && e.target === diveBox && e.isTrusted && !e.repeat && DETAIL_NAME.test(diveBox.dataset.explainDetail ?? '')) {

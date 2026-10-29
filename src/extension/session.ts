@@ -1109,7 +1109,7 @@ export class ExplainerSession implements vscode.Disposable {
       case 'goTo':
         if (m.depth < this.trail.length - 1) {
           this.navRequest++; // a dive still waiting is overtaken
-          void this.switchTo(this.trail.slice(0, m.depth + 1));
+          void this.switchTo(this.trail.slice(0, m.depth + 1), undefined, m.showCode === true);
         } else this.refuse(m.id, '', [], 'refused');
         break;
       case 'openHistory':

@@ -1015,3 +1015,16 @@ test('Cmd/Ctrl+C copies the page\'s selection, and VS Code\'s own Copy gets it t
   });
   expect(copied).toBe('Copy me.');
 });
+
+test('data-explain-up goes one level up the trail on a click or Enter, and is inert in a top-level sidestory', async ({ page }) => {
+  const html = `<section data-explain-anchor="interface"><h2>I</h2>
+    <svg viewBox="0 0 100 40" role="group" aria-label="map"><g id="up" data-explain-up data-explain-detail-code="show"><path d="M0 0L9 9"/><text x="10" y="25">Overview</text></g></svg></section>`;
+  await open(page, { html });
+  // Top level: nothing above, so not a link.
+  await expect(frame(page).locator('#up')).not.toHaveAttribute('role', 'link');
+  await send(page, { type: 'init', title: 'Detail', html, anchors: anchors(), dir: DIR, base: await base(page), trail: [{ name: 'overview', title: 'The overview' }, { name: 'bit-reader', title: 'Detail' }] });
+  await expect(frame(page).locator('#up')).toHaveAttribute('aria-label', 'Up to The overview');
+  await clearPosted(page);
+  await frame(page).locator('#up text').click();
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'goTo')).toMatchObject({ type: 'goTo', depth: 0, showCode: true });
+});

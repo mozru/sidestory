@@ -184,7 +184,8 @@ export type FromWebview =
   /** `showCode`: the detail link asked for the editor to go to the detail's first step too. */
   | { type: 'dive'; name: string; section?: string; id?: number; showCode?: boolean }
   /** Go back up the trail to this level (0 = the root explainer). */
-  | { type: 'goTo'; depth: number; id?: number }
+  /** `showCode`: an up link (data-explain-up) asked for the editor to follow (data-explain-detail-code="show"). */
+  | { type: 'goTo'; depth: number; id?: number; showCode?: boolean }
   /** Back or Forward to a sidestory in the panel's history: its folder, its trail's names (root first), its step. */
   | { type: 'openHistory'; dir: string; trail: string[]; active?: string; id?: number }
   /** Whether Back / Forward have anywhere to go (otherwise VS Code's own navigate keys stay VS Code's). */
@@ -295,7 +296,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('openFile'), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('requestAsset'), id: z.number().int().nonnegative(), path: z.string().max(1024).refine(isSafeRelativePath) }),
   z.object({ type: z.literal('dive'), name: explainerNameSchema, section: anchorIdSchema.optional(), id: requestIdSchema.optional(), showCode: z.boolean().optional() }),
-  z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL), id: requestIdSchema.optional() }),
+  z.object({ type: z.literal('goTo'), depth: z.number().int().min(0).max(MAX_TRAIL), id: requestIdSchema.optional(), showCode: z.boolean().optional() }),
   z.object({ type: z.literal('openHistory'), dir: z.string().max(4096), trail: z.array(explainerNameSchema).min(1).max(MAX_TRAIL), active: anchorIdSchema.optional(), id: requestIdSchema.optional() }),
   z.object({ type: z.literal('historyState'), canBack: z.boolean(), canForward: z.boolean() }),
   z.object({ type: z.literal('describe'), names: z.array(explainerNameSchema).max(50) }),

@@ -203,7 +203,9 @@ Readers then choose, per piece:
 
 **From a diagram:** put `data-explain-detail` on a box of an SVG diagram (a `<g>`), and the box itself dives in on a click or <kbd>Enter</kbd>, with no Peek. Give it a title in the diagram, or the reader sees only its shape.
 
-**The editor on a dive:** it stays where it is by default, and the detail's code is highlighted where it's already on screen. Add `data-explain-detail-code="show"` to the detail link (an element or a diagram box) to have the editor go to the detail's first step too, so the code beside the page switches with it.
+**Back up from a diagram:** in a detail, mark an element with `data-explain-up` (an "up" arrow, a box standing for the overview), and it goes up one level, as **Up to *Title*** does. It does nothing in a top-level sidestory.
+
+**The editor on a dive:** it stays where it is by default, and the detail's code is highlighted where it's already on screen. Add `data-explain-detail-code="show"` to the detail link (an element or a diagram box), or to a `data-explain-up` element, to have the editor go to that sidestory's step too, so the code beside the page switches with it.
 
 Details can have details of their own (up to 16 levels). Give each sidestory a one-line `summary` in its manifest for the peek. When the editor cursor is in code a detail covers but the sidestory you're reading doesn't, the panel offers to dive into it. The Sidestories view lists details under their overviews ([above](#finding-your-way-in-big-repositories)).
 
