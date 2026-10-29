@@ -1,7 +1,7 @@
 // One explainer panel: keeps the current explainer's anchors resolved against live buffers and the
 // webview in sync. The panel can dive into detail explainers and come back (the trail).
 import * as vscode from 'vscode';
-import { revealLines } from './reveal.ts';
+import { isPlacedEcho, placeCursor, revealLines } from './reveal.ts';
 import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
 import { anchorParts, explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
 import { decodePair } from '../core/hunks.ts';
@@ -19,7 +19,7 @@ import { trackRange } from '../core/tracking.ts';
 import { formatCodeLink, parseCodeLink, parseCodeTarget, type CodeLink } from '../shared/code-link.ts';
 import { langName } from '../shared/highlight-languages.ts';
 import type { AnchorView, CodePreview, DetailInfo, FromWebview, HoverPreview, ToWebview } from '../shared/protocol.ts';
-import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar } from '../shared/protocol.ts';
+import { assetMime, fromWebviewSchema, MAX_TRAIL, safeExternalUrl, themeColorVar, type MenuAction } from '../shared/protocol.ts';
 import type { GroupView } from './columns.ts';
 import type { Requester } from './highlight/host.ts';
 import type { HighlightService } from './highlight/service.ts';
@@ -423,6 +423,11 @@ export class ExplainerSession implements vscode.Disposable {
         this.decorations.setWidget(a && h ? { uri: this.fileUri(a.file), range: h.range, identifiers: h.identifiers } : undefined);
       },
     };
+  }
+
+  /** A command from the page's right-click menu: the page acts on what was right-clicked. */
+  menu(action: MenuAction): void {
+    this.post({ type: 'menu', action });
   }
 
   /** The panel just became active: if a widget holds focus, ask whether it got there legitimately (§5.3). */
@@ -957,6 +962,8 @@ export class ExplainerSession implements vscode.Disposable {
     // (view state restored), which would pull the explainer back to whatever section that old cursor is in.
     const k = vscode.TextEditorSelectionChangeKind;
     if (e.kind !== k.Keyboard && e.kind !== k.Mouse && e.kind !== k.Command) return;
+    // The cursor the panel just placed (opening a link's code), echoed back as a Command change.
+    if (isPlacedEcho(e)) return;
     // Nor do the panel's own reveals (an inline reference puts the cursor in its code): the selection changes a
     // reveal causes reach the extension before showTextDocument resolves, so while one runs, none are the reader's.
     if (this.reveal.running || this.opening > 0) return;
@@ -1033,6 +1040,9 @@ export class ExplainerSession implements vscode.Disposable {
       case 'keepOpen':
         this.preview = false;
         this.navigateEmitter.fire();
+        break;
+      case 'copyText':
+        void vscode.env.clipboard.writeText(m.text);
         break;
       case 'ready':
         // A rebuilt panel (hidden, then shown) starts with an empty cache: give it a fresh budget.
@@ -1294,7 +1304,7 @@ export class ExplainerSession implements vscode.Disposable {
       // No `selection` here: showTextDocument would scroll to it, and revealLines again; one scroll, or none.
       const editor = await vscode.window.showTextDocument(doc, { viewColumn: this.codeColumn(doc.uri), preserveFocus: false, preview: true });
       if (this.disposed) return;
-      editor.selection = new vscode.Selection(range.start, range.start);
+      placeCursor(editor, range.start.line);
       revealLines(editor, range);
       this.decorations.flash(editor, range, this.flashOptions());
       // The cursor is now in the link's code: ring what links there (the box just clicked, or a tighter one).

@@ -616,6 +616,9 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       anchors = new Map(m.anchors.map((a) => [a.id, a]));
       decorate();
       break;
+    case 'menu':
+      onMenu(m.action);
+      break;
     case 'syncTo':
       if (m.jump && initialized) navHistory.update(hereEntry());
       followEditor(m.anchorId, !!m.jump);
@@ -1446,6 +1449,7 @@ function bindFrameEvents(d: Document): void {
   d.addEventListener('keydown', onContentKey);
   d.addEventListener('keydown', noteKey, true);
   d.addEventListener('focusin', onContentFocus);
+  d.addEventListener('contextmenu', onContentMenu);
   d.addEventListener('pointerdown', (e) => {
     if (!e.isTrusted) return;
     hoverCard?.hide(); // a click opens the code (or does something else): the card is done
@@ -1595,6 +1599,77 @@ function linkedTarget(target: EventTarget | null): HTMLElement | undefined {
  * for trusted input: the content runs no script and widgets can't reach this, so the reader asked (§8.1).
  * A `data-explain-ref` wins over a `data-explain-code` on the same element.
  */
+/** The element a node is, or is in. Content nodes come from the frame's realm, where `instanceof Element` fails. */
+function elementOf(n: Node | null): Element | null {
+  return !n ? null : n.nodeType === Node.ELEMENT_NODE ? (n as Element) : n.parentElement;
+}
+
+/**
+ * A new comment (C, A, or the right-click menu). Text selected in a step starts it, quoted, on that step; else it is
+ * on the step `at` is in (where the reader right-clicked), else on the current step.
+ */
+function composeAt(mode: 'comment' | 'ask', at?: Element | null): void {
+  const sel = frame.getSelection();
+  const from = sel && !sel.isCollapsed && sel.anchorNode ? elementOf(sel.anchorNode) : null;
+  const inStep = from ? steps.find((s) => s.el.contains(from)) : undefined;
+  const clicked = at ? steps.find((s) => s.el.contains(at)) : undefined;
+  comments?.compose(mode, inStep?.id ?? clicked?.id ?? activeStepId(), inStep ? sel!.toString() : undefined);
+}
+
+// ---- the right-click menu: VS Code's own (webview/context in package.json) ----
+
+/** What the reader right-clicked, for the menu command that follows. */
+let menuTarget: Element | null = null;
+
+/**
+ * The content is a nested frame, where VS Code's webview doesn't see a right-click: hand it on to the panel's own
+ * document at the same place, with what was clicked as `data-vscode-context` (the keys the menu's `when` reads).
+ */
+function onContentMenu(e: MouseEvent): void {
+  if (!e.isTrusted) return;
+  e.preventDefault();
+  const t = elementOf(e.target as Node | null);
+  menuTarget = t;
+  const step = t ? steps.find((s) => s.el.contains(t)) : undefined;
+  const host = frame.el.parentElement!;
+  host.dataset.vscodeContext = JSON.stringify({
+    webviewSection: 'page',
+    preventDefaultContextMenuItems: true,
+    sidestorySelection: !(frame.getSelection()?.isCollapsed ?? true),
+    sidestoryStep: !!step || !!activeStepId(),
+    sidestoryOtherStep: !!step && step.id !== activeStepId(),
+    sidestoryLink: !!(t && linkedTarget(t)),
+  });
+  const r = frame.el.getBoundingClientRect();
+  host.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + e.clientX, clientY: r.top + e.clientY }));
+}
+
+/** A command from the right-click menu, for what was right-clicked. */
+function onMenu(action: 'copy' | 'comment' | 'ask' | 'step' | 'open'): void {
+  const t = menuTarget;
+  switch (action) {
+    case 'copy': {
+      const text = frame.getSelection()?.toString() ?? '';
+      if (text) vscode.postMessage({ type: 'copyText', text: text.slice(0, 100_000) });
+      break;
+    }
+    case 'comment':
+    case 'ask':
+      composeAt(action, t);
+      break;
+    case 'step': {
+      const step = t ? steps.find((s) => s.el.contains(t)) : undefined;
+      if (step) pick(step.id, 'click');
+      break;
+    }
+    case 'open': {
+      const link = t ? linkedTarget(t) : undefined;
+      if (link) openLinked(link);
+      break;
+    }
+  }
+}
+
 function openLinked(el: HTMLElement): void {
   hoverCard?.hide();
   if (el.hasAttribute('data-explain-ref')) return openRef(el);
@@ -1834,11 +1909,7 @@ function onKey(e: KeyboardEvent): void {
   else if (e.key === 'k') step(-1);
   // Comments (docs/COMMENTS-PLAN.md §11.3).
   else if ((e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'a') && e.isTrusted) {
-    // Text selected in a step starts the comment, on that step; with none, the comment is on the current step.
-    const sel = frame.getSelection();
-    const at = sel && !sel.isCollapsed && sel.anchorNode ? (sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement) : null;
-    const inStep = at ? steps.find((s) => s.el.contains(at)) : undefined;
-    comments?.compose(e.key.toLowerCase() === 'c' ? 'comment' : 'ask', inStep?.id ?? activeStepId(), inStep ? sel!.toString() : undefined);
+    composeAt(e.key.toLowerCase() === 'c' ? 'comment' : 'ask');
   }
   else if (e.key.toLowerCase() === 't' && e.isTrusted) comments?.toggle();
   else if ((e.key === 'n' || e.key === 'N') && e.isTrusted) comments?.next(e.shiftKey ? -1 : 1);

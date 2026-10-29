@@ -85,7 +85,12 @@ export interface CodePreview {
   runs?: number[];
 }
 
+/** Commands of the page's right-click menu. */
+export type MenuAction = 'copy' | 'comment' | 'ask' | 'step' | 'open';
+
 export type ToWebview =
+  /** A command from the page's right-click menu, for what was right-clicked. */
+  | { type: 'menu'; action: MenuAction }
   /** Everything the page needs; sent in reply to `ready`, and when the panel moves to another explainer. */
   | {
       type: 'init';
@@ -235,6 +240,8 @@ export type FromWebview =
   | { type: 'codeTargets'; sections: string[]; refs: string[]; links: string[] }
   /** Keep Open on a preview panel (docs/NAVIGATION-PLAN.md §7.5). */
   | { type: 'keepOpen' }
+  /** The right-click menu's Copy: the reader's selection in the page (the content frame can't reach the clipboard). */
+  | { type: 'copyText'; text: string }
   /**
    * The pointer rests on (or keyboard focus is on) a linked element: its code for the hover card, a mark in visible
    * editors, or both (`sidestory.hoverPreview`). Never opens, scrolls or focuses anything. Same targets as `openRef`.
@@ -309,6 +316,7 @@ export const fromWebviewSchema: z.ZodType<FromWebview> = z.discriminatedUnion('t
   z.object({ type: z.literal('focusAnswer'), id: z.number().int(), legit: z.boolean() }),
   z.object({ type: z.literal('focusTheft') }),
   z.object({ type: z.literal('keepOpen') }),
+  z.object({ type: z.literal('copyText'), text: z.string().max(100_000) }),
   z.object({ type: z.literal('previewRef'), id: previewIdSchema, anchorId: anchorIdSchema }),
   z.object({ type: z.literal('previewCode'), id: previewIdSchema, path: codePathSchema, target: codeTargetSchema.optional() }),
   z.object({ type: z.literal('previewShow'), id: previewIdSchema }),

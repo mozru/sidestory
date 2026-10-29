@@ -943,3 +943,38 @@ test('the panel chrome says "sidestory": no accessible name, tooltip or visible 
   });
   expect(chrome).not.toMatch(/explainer/i);
 });
+
+test('a right-click in the page opens VS Code\'s menu for what was clicked, and its commands act on it', async ({ page }) => {
+  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2><p id="p1">Intro text.</p></section>
+    <section data-explain-anchor="state"><h2>S</h2><p id="p2">See <code data-explain-code="rtl/bit_reader.sv#L3-L5">the port</code>.</p></section>` });
+  // VS Code's webview listens on the panel's own document: what reaches it, and with which context.
+  await page.evaluate(() => {
+    (window as unknown as { __menus: unknown[] }).__menus = [];
+    document.addEventListener('contextmenu', (e) => {
+      const host = (e.target as HTMLElement).closest('[data-vscode-context]') as HTMLElement | null;
+      (window as unknown as { __menus: unknown[] }).__menus.push(host ? JSON.parse(host.dataset.vscodeContext!) : null);
+    });
+  });
+  const menus = () => page.evaluate(() => (window as unknown as { __menus: Record<string, unknown>[] }).__menus);
+  await frame(page).locator('#p2 code').click({ button: 'right' });
+  await expect.poll(async () => (await menus()).length).toBe(1);
+  expect((await menus())[0]).toMatchObject({ webviewSection: 'page', preventDefaultContextMenuItems: true, sidestoryLink: true, sidestoryOtherStep: true, sidestoryStep: true, sidestorySelection: false });
+  // Go to This Step: the right-clicked section, without scrolling there.
+  await send(page, { type: 'menu', action: 'step' });
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
+  // Open Code: the link that was right-clicked.
+  await clearPosted(page);
+  await send(page, { type: 'menu', action: 'open' });
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'openCode')).toMatchObject({ path: 'rtl/bit_reader.sv' });
+  // Copy: the selection, through the extension.
+  await frame(page).locator('#p1').evaluate((el) => el.ownerDocument.getSelection()!.selectAllChildren(el));
+  await frame(page).locator('#p1').click({ button: 'right' });
+  await expect.poll(async () => (await menus()).length).toBe(2);
+  expect((await menus())[1]).toMatchObject({ sidestorySelection: true, sidestoryLink: false });
+  await clearPosted(page);
+  await send(page, { type: 'menu', action: 'copy' });
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'copyText')).toEqual({ type: 'copyText', text: 'Intro text.' });
+  // Comment: on the right-clicked section's step, the selection quoted.
+  await send(page, { type: 'menu', action: 'comment' });
+  await expect(page.locator('.cx-c-composer textarea')).toHaveValue(/^> Intro text\./);
+});

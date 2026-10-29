@@ -304,6 +304,31 @@
         "icon": "$(book)"
       },
       {
+        "command": "sidestory.page.copy",
+        "title": "Copy",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.page.openCode",
+        "title": "Open Code",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.page.goToStep",
+        "title": "Go to This Step",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.page.comment",
+        "title": "Comment",
+        "category": "Sidestory"
+      },
+      {
+        "command": "sidestory.page.ask",
+        "title": "Ask Claude",
+        "category": "Sidestory"
+      },
+      {
         "command": "sidestory.commentOnSelection",
         "title": "Comment on These Lines",
         "category": "Sidestory"
@@ -912,7 +937,19 @@
       }
     ],
     "menus": {
+      "webview/context": [
+        { "command": "sidestory.page.copy", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestorySelection", "group": "1_copy@1" },
+        { "command": "sidestory.page.openCode", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestoryLink", "group": "2_go@1" },
+        { "command": "sidestory.page.goToStep", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestoryOtherStep", "group": "2_go@2" },
+        { "command": "sidestory.page.comment", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestoryStep", "group": "3_comment@1" },
+        { "command": "sidestory.page.ask", "when": "webviewId == 'sidestory.explainer' && webviewSection == 'page' && sidestoryStep", "group": "3_comment@2" }
+      ],
       "commandPalette": [
+        { "command": "sidestory.page.copy", "when": "false" },
+        { "command": "sidestory.page.openCode", "when": "false" },
+        { "command": "sidestory.page.goToStep", "when": "false" },
+        { "command": "sidestory.page.comment", "when": "false" },
+        { "command": "sidestory.page.ask", "when": "false" },
         {
           "command": "sidestory.nextStep",
           "when": "sidestory.active"

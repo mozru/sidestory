@@ -506,6 +506,12 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       if (text !== undefined) tree.setFilter(text);
     },
     'sidestory.tree.clearFilter': () => tree.setFilter(''),
+    // The page's right-click menu (webview/context): for what was right-clicked in the panel the menu opened in.
+    'sidestory.page.copy': () => current?.menu('copy'),
+    'sidestory.page.comment': () => current?.menu('comment'),
+    'sidestory.page.ask': () => current?.menu('ask'),
+    'sidestory.page.goToStep': () => current?.menu('step'),
+    'sidestory.page.openCode': () => current?.menu('open'),
     'sidestory.tree.refresh': async () => {
       drift.invalidateAll();
       await index.refresh();

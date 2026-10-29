@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Right-click in a sidestory now opens a menu: Copy, Open Code, Go to This Step, Comment and Ask Claude, for what you clicked. Before, right-click did nothing in the page.
 - Fixed: clicking the same code link twice made the editor jump for a moment. Opening code now scrolls the editor once, and not at all when the lines are already on screen.
 - `.sidestory/GUIDELINES.md`, like a CLAUDE.md for sidestories: your team's guidance on how they read and look (tone, depth, diagrams). The Claude Code skill and the copied prompts read it before writing or updating one, and Claude offers to add lasting guidance you give it there.
 - Each row in the Sidestories view shows its sidestory's problems and open comment threads ("2 problems · 3 comments, 1 for you"), with a warning or comment icon.

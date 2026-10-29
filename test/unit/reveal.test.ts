@@ -1,41 +1,47 @@
-// Showing lines with one scroll: none when they're on screen, centred when they fit, else from their first line.
+// Showing lines with one scroll, and a cursor the extension places that isn't taken for the reader's own move.
 import { describe, expect, it, vi } from 'vitest';
-import { Range } from './vscode-stub.ts';
+import { Range, Selection, TextEditorRevealType, TextEditorSelectionChangeKind, Uri } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
-const { revealLines } = await import('../../src/extension/reveal.ts');
+const { isPlacedEcho, placeCursor, revealLines } = await import('../../src/extension/reveal.ts');
 
-/** An editor showing lines `top`–`bottom` (0-based), recording its reveals. */
-function editor(top: number, bottom: number) {
-  const calls: { start: number; end: number; type: number }[] = [];
+function editor(path = '/ws/a.ts') {
+  const calls: { start: number; end: number; type: unknown }[] = [];
   return {
     calls,
-    visibleRanges: [new Range(top, 0, bottom, 0)],
-    revealRange: (r: Range, type: number) => calls.push({ start: r.start.line, end: r.end.line, type }),
+    document: { uri: Uri.file(path) },
+    selection: undefined as unknown,
+    revealRange: (r: Range, type: unknown) => calls.push({ start: r.start.line, end: r.end.line, type }),
   };
 }
 
+const change = (e: ReturnType<typeof editor>, line: number, kind: number) => ({ textEditor: e, selections: [new Selection(line, 0, line, 0)], kind }) as never;
+
 describe('revealLines', () => {
-  it('leaves lines already fully on screen alone, so a second click on the same link never moves the view', () => {
-    const e = editor(10, 50);
-    revealLines(e as never, new Range(20, 0, 30, 0));
-    revealLines(e as never, new Range(10, 0, 50, 0));
-    expect(e.calls).toEqual([]);
+  it('is one reveal, and one VS Code leaves alone when the lines are on screen', () => {
+    const e = editor();
+    revealLines(e as never, new Range(100, 4, 110, 2) as never);
+    expect(e.calls).toEqual([{ start: 100, end: 110, type: TextEditorRevealType.InCenterIfOutsideViewport }]);
+  });
+});
+
+describe('placeCursor', () => {
+  it('puts the cursor at a line start, and its echo (once, a Command change on that line) is the extension\'s', () => {
+    const e = editor();
+    placeCursor(e as never, 41);
+    expect((e.selection as Selection).start.line).toBe(41);
+    expect(isPlacedEcho(change(e, 41, TextEditorSelectionChangeKind.Command))).toBe(true);
+    // Used once: the reader's next move is theirs.
+    expect(isPlacedEcho(change(e, 41, TextEditorSelectionChangeKind.Command))).toBe(false);
   });
 
-  it('scrolls once: centred when the lines fit, from their first line when they are taller than the editor', () => {
-    const fits = editor(0, 40);
-    revealLines(fits as never, new Range(100, 0, 110, 0));
-    expect(fits.calls).toHaveLength(1);
-    expect(fits.calls[0]).toMatchObject({ start: 100, end: 110 });
-    const tall = editor(0, 40);
-    revealLines(tall as never, new Range(100, 0, 200, 0));
-    expect(tall.calls).toHaveLength(1);
-    expect(tall.calls[0]).toMatchObject({ start: 100, end: 100 });
-    // Partly on screen and taller than the editor: one scroll to its first line, not a centre and back.
-    const part = editor(90, 130);
-    revealLines(part as never, new Range(100, 0, 200, 0));
-    expect(part.calls).toEqual([expect.objectContaining({ start: 100, end: 100 })]);
+  it('the reader\'s own click or another line is never taken for the echo', () => {
+    const e = editor('/ws/b.ts');
+    placeCursor(e as never, 7);
+    expect(isPlacedEcho(change(e, 7, TextEditorSelectionChangeKind.Mouse))).toBe(false);
+    placeCursor(e as never, 7);
+    expect(isPlacedEcho(change(e, 9, TextEditorSelectionChangeKind.Command))).toBe(false);
+    expect(isPlacedEcho(change(editor('/ws/c.ts'), 7, TextEditorSelectionChangeKind.Command))).toBe(false);
   });
 });

@@ -1093,8 +1093,12 @@ export class ChangesService implements vscode.Disposable {
       const line = map ? oldToNew(map, active.selection.active.line + 1) - 1 : active.selection.active.line;
       if (entry) selection = new vscode.Selection(line, 0, line, 0);
     }
-    const ed = await vscode.window.showTextDocument(target, { viewColumn: active?.viewColumn ?? vscode.ViewColumn.Active, preview: false, selection });
-    if (top) ed.revealRange(top, vscode.TextEditorRevealType.AtTop);
+    // With a scroll position to keep, the cursor goes in without showTextDocument's own reveal: one scroll, not two.
+    const ed = await vscode.window.showTextDocument(target, { viewColumn: active?.viewColumn ?? vscode.ViewColumn.Active, preview: false, ...(top ? {} : { selection }) });
+    if (top) {
+      if (selection) ed.selection = selection;
+      ed.revealRange(top, vscode.TextEditorRevealType.AtTop);
+    }
   }
 
   // ---- the "This branch" group (§9.6) ----
