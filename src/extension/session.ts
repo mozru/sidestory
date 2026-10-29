@@ -510,7 +510,10 @@ export class ExplainerSession implements vscode.Disposable {
     // Already on the trail (a detail that links back to its overview): go back up to it, no loops.
     const at = this.trail.findIndex(onTrail);
     if (at >= 0) {
-      if (at < this.trail.length - 1) await this.switchTo(this.trail.slice(0, at + 1), section);
+      if (at < this.trail.length - 1) {
+        await this.switchTo(this.trail.slice(0, at + 1), section, showCode);
+        this.showCodeSoon(showCode);
+      }
       return;
     }
     if (this.trail.length >= MAX_TRAIL) {
@@ -526,13 +529,19 @@ export class ExplainerSession implements vscode.Disposable {
     }
     // The link asked for the editor to follow into the detail: its opening step's code shows, an editor open or not.
     await this.switchTo([...this.trail, child], section, showCode);
-    // Opened at a step the page already knew (the reader was here before): no 'initial' comes, so show it here.
-    if (showCode) {
-      const generation = this.generation;
-      setTimeout(() => {
-        if (this.showCodeOnOpen && this.active && generation === this.generation && !this.disposed) this.showInitial(this.active);
-      }, 600);
-    }
+    this.showCodeSoon(showCode);
+  }
+
+  /**
+   * After a switch whose link asked for the code (data-explain-detail-code="show"): when the page opens at a step it
+   * already knew (the reader was here before), no 'initial' comes to show it, so it's shown here.
+   */
+  private showCodeSoon(showCode: boolean): void {
+    if (!showCode) return;
+    const generation = this.generation;
+    setTimeout(() => {
+      if (this.showCodeOnOpen && this.active && generation === this.generation && !this.disposed) this.showInitial(this.active);
+    }, 600);
   }
 
   /** Back or Forward to a sidestory the panel showed before: checked like a restored trail, and still there. */
@@ -1109,7 +1118,7 @@ export class ExplainerSession implements vscode.Disposable {
       case 'goTo':
         if (m.depth < this.trail.length - 1) {
           this.navRequest++; // a dive still waiting is overtaken
-          void this.switchTo(this.trail.slice(0, m.depth + 1), undefined, m.showCode === true);
+          void this.switchTo(this.trail.slice(0, m.depth + 1), undefined, m.showCode === true).then(() => this.showCodeSoon(m.showCode === true));
         } else this.refuse(m.id, '', [], 'refused');
         break;
       case 'openHistory':

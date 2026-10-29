@@ -1042,7 +1042,10 @@ function decorateUps(root: HTMLElement): void {
     el.dataset.cxUp = '1';
     if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
     if (!el.hasAttribute('role')) el.setAttribute('role', 'link');
-    el.setAttribute('aria-label', `Up to ${parent.title || parent.name}`);
+    if (!el.hasAttribute('aria-label') || el.dataset.cxLabel === '1') {
+      el.setAttribute('aria-label', `Up to ${parent.title || parent.name}`);
+      el.dataset.cxLabel = '1'; // ours, so it follows the parent's title
+    }
   }
 }
 
@@ -1539,14 +1542,16 @@ function bindFrameEvents(d: Document): void {
  * frame's selection isn't, so the page copies it itself (through the extension, as the right-click menu's Copy).
  */
 function onCopyKey(e: KeyboardEvent): void {
-  if (!e.isTrusted || e.repeat || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'c' || typingIn(e.target as Element)) return;
+  const copyMod = navigator.platform.includes('Mac') ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  if (!e.isTrusted || e.repeat || e.altKey || e.shiftKey || !copyMod || e.key.toLowerCase() !== 'c' || typingIn(e.target as Element)) return;
   const text = frame.getSelection()?.toString() ?? '';
   if (text) vscode.postMessage({ type: 'copyText', text: text.slice(0, 100_000) });
 }
 
 /** VS Code's Copy (its menu, its key) runs in the panel's document: give it the content frame's selection. */
 document.addEventListener('copy', (e) => {
-  if (!(document.getSelection()?.isCollapsed ?? true)) return; // a selection in the panel's own chrome: its own
+  // Only while the page has focus: a copy in the comment box, the panel's chrome or a widget is theirs.
+  if (!frame || document.activeElement !== frame.el) return;
   const text = frame?.getSelection()?.toString() ?? '';
   if (!text || !e.clipboardData) return;
   e.clipboardData.setData('text/plain', text);
@@ -1894,9 +1899,10 @@ function onContentClick(e: MouseEvent): void {
     return;
   }
   if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
-  // An up link (data-explain-up): one level up the trail.
+  // An up link (data-explain-up): one level up the trail; a dive box inside it dives instead (the innermost wins).
   const upLink = target.closest<HTMLElement>('[data-cx-up]');
-  if (upLink) {
+  const innerDive = target.closest<HTMLElement>('[data-cx-dive]');
+  if (upLink && !(innerDive && upLink.contains(innerDive))) {
     e.preventDefault();
     return goTo(trail.length - 2, upLink.getAttribute('data-explain-detail-code') === 'show');
   }

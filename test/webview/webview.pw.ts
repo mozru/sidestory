@@ -1014,6 +1014,14 @@ test('Cmd/Ctrl+C copies the page\'s selection, and VS Code\'s own Copy gets it t
     return data.getData('text/plain');
   });
   expect(copied).toBe('Copy me.');
+  // With focus elsewhere in the panel (the comment box, the chrome), a copy is theirs.
+  await page.locator('.cx-scroll').focus();
+  const elsewhere = await page.evaluate(() => {
+    const data = new DataTransfer();
+    document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, cancelable: true, bubbles: true }));
+    return data.getData('text/plain');
+  });
+  expect(elsewhere).toBe('');
 });
 
 test('data-explain-up goes one level up the trail on a click or Enter, and is inert in a top-level sidestory', async ({ page }) => {
