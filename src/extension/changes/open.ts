@@ -6,6 +6,7 @@
 // change opens a plain editor. When the left side has no editor (an inline diff, §7.5), the base-side lines are
 // revealed on the right at their mapped position.
 import * as vscode from 'vscode';
+import { revealLines } from '../reveal.ts';
 import type { FileDiff } from '../../core/hunks.ts';
 import type { LineRange } from '../../core/manifest.ts';
 import type { Snapshot } from './comparison.ts';
@@ -122,9 +123,7 @@ function reveal(editor: vscode.TextEditor, r: LineRange, moveCursor: boolean): v
   const last = Math.max(0, editor.document.lineCount - 1);
   const range = new vscode.Range(Math.min(r.start - 1, last), 0, Math.min(r.end - 1, last), 0);
   if (moveCursor) editor.selection = new vscode.Selection(range.start, range.start);
-  editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-  // Vertically only: revealing the first line's start scrolls a long line's editor back (as revealNow did).
-  editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
+  revealLines(editor, range);
 }
 
 /**
@@ -159,12 +158,8 @@ export async function openTarget(ctx: DiffContext | undefined, target: SideKey &
   const uri = ctx?.uriFor(target) ?? plain;
   if (!uri) return undefined;
   const r = target.range;
-  const editor = await vscode.window.showTextDocument(uri, {
-    viewColumn: o.viewColumn,
-    preserveFocus: o.preserveFocus,
-    preview: true,
-    selection: o.moveCursor ? new vscode.Range(r.start - 1, 0, r.start - 1, 0) : undefined,
-  });
-  reveal(editor, r, false);
+  // The cursor is placed by `reveal`, not by showTextDocument's `selection`, which would scroll a second time.
+  const editor = await vscode.window.showTextDocument(uri, { viewColumn: o.viewColumn, preserveFocus: o.preserveFocus, preview: true });
+  reveal(editor, r, o.moveCursor);
   return { editor, uri, range: r, inDiff: false };
 }

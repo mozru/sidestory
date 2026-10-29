@@ -129,6 +129,17 @@ export class Range {
     return this.start.line === o.start.line && this.start.character === o.start.character && this.end.line === o.end.line && this.end.character === o.end.character;
   }
 }
+export class Selection extends Range {
+  get anchor(): Position {
+    return this.start;
+  }
+  get active(): Position {
+    return this.end;
+  }
+  get isEmpty(): boolean {
+    return this.start.line === this.end.line && this.start.character === this.end.character;
+  }
+}
 export const DiagnosticSeverity = { Error: 0, Warning: 1 };
 export class Diagnostic {
   readonly range: Range;
@@ -205,7 +216,7 @@ export function fakeDocument(uri: Uri, text: string, version = 1) {
 }
 
 /** Editors the extension showed (showTextDocument), in order. */
-export const shown: { document: { uri: Uri }; options: Record<string, unknown> }[] = [];
+export const shown: { document: { uri: Uri }; options: Record<string, unknown>; editor: { selection: unknown } }[] = [];
 /** Status bar messages, in order. */
 export const statusMessages: string[] = [];
 
@@ -439,8 +450,10 @@ export const window = {
     return { dispose() {} };
   },
   showTextDocument: async (document: { uri: Uri }, options: Record<string, unknown> = {}) => {
-    shown.push({ document, options });
-    return { document, selection: options.selection, revealRange() {}, setDecorations() {} };
+    // The cursor as showTextDocument's `selection` puts it, or as the extension sets it after.
+    const editor = { document, selection: options.selection, visibleRanges: [] as unknown[], revealRange() {}, setDecorations() {} };
+    shown.push({ document, options, editor });
+    return editor;
   },
 };
 

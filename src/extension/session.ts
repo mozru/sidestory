@@ -1,6 +1,7 @@
 // One explainer panel: keeps the current explainer's anchors resolved against live buffers and the
 // webview in sync. The panel can dive into detail explainers and come back (the trail).
 import * as vscode from 'vscode';
+import { revealLines } from './reveal.ts';
 import type { Anchor, LineRange, Manifest } from '../core/manifest.ts';
 import { anchorParts, explainerNameSchema, parseManifest, sideOf } from '../core/manifest.ts';
 import { decodePair } from '../core/hunks.ts';
@@ -1290,10 +1291,11 @@ export class ExplainerSession implements vscode.Disposable {
         return;
       }
       const range = new vscode.Range(r.range.start - 1, 0, r.range.end - 1, 0);
-      const editor = await vscode.window.showTextDocument(doc, { viewColumn: this.codeColumn(doc.uri), preserveFocus: false, preview: true, selection: new vscode.Range(range.start, range.start) });
+      // No `selection` here: showTextDocument would scroll to it, and revealLines again; one scroll, or none.
+      const editor = await vscode.window.showTextDocument(doc, { viewColumn: this.codeColumn(doc.uri), preserveFocus: false, preview: true });
       if (this.disposed) return;
-      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-      editor.revealRange(new vscode.Range(range.start, range.start), vscode.TextEditorRevealType.Default);
+      editor.selection = new vscode.Selection(range.start, range.start);
+      revealLines(editor, range);
       this.decorations.flash(editor, range, this.flashOptions());
       // The cursor is now in the link's code: ring what links there (the box just clicked, or a tighter one).
       this.lightAt(editor.document, r.range.start).catch((e: unknown) => log.warn(`cursor lighting: ${(e as Error).message}`));

@@ -159,7 +159,7 @@ describe('openCode (§8.1)', () => {
     send({ type: 'openCode', path: 'rtl/bit_reader.sv', target: 'driver(cnt_q)' });
     await vi.waitFor(() => expect(shown).toHaveLength(1));
     expect(shown[0]!.document.uri.fsPath).toBe(Uri.file(join(root, 'rtl/bit_reader.sv')).fsPath);
-    expect((shown[0]!.options.selection as { start: { line: number } }).start.line).toBe(22);
+    expect((shown[0]!.editor.selection as { start: { line: number } }).start.line).toBe(22);
     await vi.waitFor(() => expect(lastHere(posted)).toEqual({ type: 'here', link: 'rtl/bit_reader.sv#driver(cnt_q)' }));
   });
 
@@ -167,7 +167,7 @@ describe('openCode (§8.1)', () => {
     const { send } = await ready('bit-reader');
     send({ type: 'openCode', path: 'rtl/bit_reader.sv', target: 'L5-L7' });
     await vi.waitFor(() => expect(shown).toHaveLength(1));
-    expect((shown[0]!.options.selection as { start: { line: number } }).start.line).toBe(4);
+    expect((shown[0]!.editor.selection as { start: { line: number } }).start.line).toBe(4);
     send({ type: 'openCode', path: 'rtl/bit_reader.sv' });
     await vi.waitFor(() => expect(shown).toHaveLength(2));
     send({ type: 'openCode', path: 'rtl/bit_reader.sv', target: 'i_order_q' });
