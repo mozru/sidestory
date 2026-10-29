@@ -37,8 +37,9 @@ export interface WidgetPanel {
   sectionEl(id: string): HTMLElement | null;
   /** A click or focus inside a widget makes its section current, without scrolling. */
   touchSection(id: string): void;
-  goToStep(id: string): boolean;
-  step(delta: 1 | -1): void;
+  /** From the widget in section `from`: the page stays on it (no scroll), and touching it again keeps the step. */
+  goToStep(id: string, from: string | undefined): boolean;
+  step(delta: 1 | -1, from: string | undefined): void;
   back(): boolean;
   /** Back (-1) or Forward (1) in the panel's history. */
   history(delta: 1 | -1): void;
@@ -1274,9 +1275,9 @@ export class WidgetFrames {
       if (m.type === 'reveal') {
         ok = this.panel.anchors().some((a) => a.id === m.anchor);
         if (ok) this.panel.post({ type: 'widgetReveal', anchor: m.anchor, lines: m.lines, highlight: m.highlight });
-      } else if (m.type === 'step') ok = this.panel.goToStep(m.anchor);
+      } else if (m.type === 'step') ok = this.panel.goToStep(m.anchor, w.anchor ?? undefined);
       else if (m.action === 'back') ok = this.panel.back();
-      else this.panel.step(m.action === 'next' ? 1 : -1);
+      else this.panel.step(m.action === 'next' ? 1 : -1, w.anchor ?? undefined);
     } else {
       const what = m.type === 'reveal' ? 'reveal()' : m.type === 'step' ? 'goToStep()' : `${m.action}()`;
       this.logOnce(w, `nav-${m.type}`, `${w.src}: ${what} only works from a click in the widget, called synchronously (not after an await or from a timer); the call returned false.`);

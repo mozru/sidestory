@@ -390,6 +390,12 @@ let panelWidth = 0;
 let resizedAt = 0;
 let heldPlace: Position | undefined;
 let scrollTarget: { id: string; until: number } | undefined;
+/**
+ * A step a widget (in section `from`) made current without scrolling (`to`), and the section the reading line
+ * was in then (`at`): until the reader scrolls to another section or the step changes another way, the step
+ * stays, and touching that widget again doesn't put back its own section.
+ */
+let widgetHold: { to: string; at: string | undefined; from: string | undefined; dir: string } | undefined;
 
 function onPanelResize(): void {
   if (scroller.clientWidth === panelWidth) return;
@@ -444,16 +450,25 @@ widgets = new WidgetFrames({
   anchors: widgetAnchors,
   sectionEl: (id) => sectionEl(id),
   touchSection: (id) => {
+    if (held() && id === widgetHold!.from) return;
+    widgetHold = undefined;
     if (id !== active && sectionEl(id)?.dataset.cxState !== 'lost') setActive(id, 'click');
   },
-  goToStep: (id) => {
+  // From a widget the page stays on the widget the reader is using: the step becomes current and its code
+  // shows in the editor, without scrolling to the step's text.
+  goToStep: (id, from) => {
     if (!anchors.has(id) || !sectionEl(id)) return false;
     hidePill();
+    const before = active;
     setActive(id, 'step');
-    scrollToSection(id);
+    holdForWidget(before, from);
     return true;
   },
-  step,
+  step: (delta, from) => {
+    const before = active;
+    step(delta, false);
+    holdForWidget(before, from);
+  },
   back: () => {
     if (trail.length < 2) return false;
     goTo(trail.length - 2);
@@ -1177,6 +1192,7 @@ function setActive(id: string | undefined, notify?: Source): void {
     return;
   }
   active = id;
+  if (widgetHold && id !== widgetHold.to) widgetHold = undefined;
   markActive();
   saveState();
   if (!id || !notify) return;
@@ -1184,6 +1200,16 @@ function setActive(id: string | undefined, notify?: Source): void {
   const send = () => vscode.postMessage({ type: 'focusAnchor', anchorId: id, source: notify });
   if (notify === 'scroll') focusTimer = setTimeout(send, 120);
   else send();
+}
+
+function holdForWidget(before: string | undefined, from: string | undefined): void {
+  if (active === before) return; // nothing moved
+  widgetHold = active ? { to: active, at: sectionAtReadingLine()?.id, from, dir: state.dir } : undefined;
+}
+
+/** The widget hold applies: still on that page, at that step (other paths set `active` without setActive). */
+function held(): boolean {
+  return !!widgetHold && widgetHold.to === active && widgetHold.dir === state.dir;
 }
 
 function scrollToSection(id: string): void {
@@ -1200,7 +1226,7 @@ function scrollToTop(top: number): void {
   scroller.scrollTo({ top: scroller.scrollTop + top - scroller.getBoundingClientRect().top - 12, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
 
-function step(delta: 1 | -1): void {
+function step(delta: 1 | -1, scroll = true): void {
   if (steps.length === 0) return;
   const i = steps.findIndex((s) => s.id === activeStepId());
   const target = steps[Math.min(steps.length - 1, Math.max(0, i < 0 ? 0 : i + delta))]!;
@@ -1208,7 +1234,7 @@ function step(delta: 1 | -1): void {
   hidePill();
   if (initialized) navHistory.update(hereEntry());
   setActive(target.id, 'step');
-  scrollToSection(target.id);
+  if (scroll) scrollToSection(target.id);
   if (initialized) remember('step');
 }
 
@@ -1438,6 +1464,8 @@ scroller.addEventListener('scroll', () => {
     if (!readerLeads()) return;
     const s = sectionAtReadingLine();
     if (s && pillEl.dataset.anchor === s.id) hidePill(); // the reader got there on their own
+    if (held() && s?.id === widgetHold!.at) return; // still at the widget that picked the step
+    widgetHold = undefined;
     if (s && s.id !== activeStepId()) setActive(s.id, 'scroll');
   });
 });

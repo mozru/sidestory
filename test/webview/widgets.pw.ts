@@ -9,7 +9,7 @@ import { clearPosted, compile, content, explainerHtml, filler, frames, ON, openW
 
 const PROBE = `import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { useWidgetState, useActiveStep, reveal, highlight, goToStep } from 'explainer';
+import { useWidgetState, useActiveStep, reveal, highlight, goToStep, next, prev } from 'explainer';
 
 declare global { interface Window { __probe: Record<string, (...a: any[]) => unknown> } }
 
@@ -47,6 +47,8 @@ export default function Probe({ name = 'w', start = 0, onStep = '' }: { name?: s
     <Button data-testid="reveal" onClick={() => { reveal('ring').then((ok) => setResult('reveal:' + ok)); }}>reveal</Button>
     <Button data-testid="later" onClick={async () => { await new Promise((r) => setTimeout(r, 600)); setResult('later:' + await reveal('ring')); }}>later</Button>
     <Button data-testid="go" onClick={() => { goToStep('tail').then((ok) => setResult('go:' + ok)); }}>go</Button>
+    <Button data-testid="next" onClick={() => { next(); }}>next</Button>
+    <Button data-testid="prev" onClick={() => { prev(); }}>prev</Button>
     <input id="inp" data-testid="inp" />
   </div>;
 }
@@ -324,6 +326,56 @@ test.describe('reveal, goToStep and focus need the reader’s interaction with t
     await expect(out(widgetFrame(page))).toContainText('go:true');
     await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
     expect(await posted(page)).toContainEqual({ type: 'focusAnchor', anchorId: 'tail', source: 'step' });
+  });
+
+  test('goToStep and next from a widget keep the page on the widget', async ({ page }) => {
+    await openProbe(page);
+    const scrollTop = () => page.locator('.cx-scroll').evaluate((s) => s.scrollTop);
+    const settled = () => page.locator('.cx-scroll').evaluate((s) => new Promise<number>((r) => setTimeout(() => r(s.scrollTop), 600)));
+    const top = await scrollTop();
+    await widgetFrame(page).getByTestId('go').click();
+    await expect(out(widgetFrame(page))).toContainText('go:true');
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    expect(await settled()).toBe(top);
+    await send(page, { type: 'syncTo', anchorId: 'ring' }); // back to Ring, as when the editor's cursor moves there
+    await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
+    const there = await settled();
+    await widgetFrame(page).getByTestId('next').click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    expect(await settled()).toBe(there);
+    // Clicking the widget again goes on from the step it chose, not from the widget's own section. (A widget
+    // may navigate twice a second.)
+    for (const [button, to] of [['prev', 2], ['next', 3], ['prev', 2]] as const) {
+      await page.waitForTimeout(1000);
+      await widgetFrame(page).getByTestId(button).click();
+      await expect(page.locator('.cx-position')).toHaveText(`Step ${to} of 3`);
+    }
+  });
+
+  test('after one widget picks a step, clicking a widget in another section makes that section current', async ({ page }) => {
+    // Both widgets on screen: one in the intro, one in Ring.
+    await openWith(page, explainerHtml(probeTag(), { before: probeTag() }), builds, { active: 'intro' });
+    await expect(out(widgetFrame(page, 1))).toContainText('w:0');
+    await widgetFrame(page, 1).getByTestId('go').click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    await widgetFrame(page, 0).getByTestId('inc').click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 1 of 3');
+  });
+
+  test('a step a widget chose stays while the reader scrolls a little, and follows once they scroll away', async ({ page }) => {
+    await openProbe(page);
+    await widgetFrame(page).getByTestId('go').click();
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    const box = (await page.locator('.cx-scroll').boundingBox())!;
+    await page.mouse.move(box.x + 20, box.y + 20);
+    await page.mouse.wheel(0, 10);
+    await page.waitForTimeout(400);
+    await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+    // Away and back: the step follows the page again.
+    await page.mouse.wheel(0, 5000);
+    await page.waitForTimeout(400);
+    await page.mouse.wheel(0, -5000);
+    await expect(page.locator('.cx-position')).not.toHaveText('Step 3 of 3');
   });
 
   test('a focused widget answers the extension’s focus question as legitimate after a click in it', async ({ page }) => {
