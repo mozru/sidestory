@@ -3,7 +3,7 @@
 import { rmSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { story, tempRoot } from './nav-fixtures.ts';
-import { config, Uri, workspace } from './vscode-stub.ts';
+import { config, EventEmitter, Uri, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -89,6 +89,54 @@ describe('the Sidestories tree', () => {
     expect(tree.getTreeItem(overview).collapsibleState).toBe(2); // Expanded
     expect(tree.getTreeItem(tree.getChildren(group)[0]!).collapsibleState).toBe(0); // None
     expect(tree.getParent(tree.getChildren(overview)[0]!)).toBe(overview);
+  });
+
+  it('following the panel selects its sidestory without expanding a row the reader collapsed', async () => {
+    story(root, '', 'a', { title: 'A', details: ['b'] });
+    story(root, '', 'b', { title: 'B', details: ['c'] });
+    story(root, '', 'c', { title: 'C' });
+    const { tree, index } = await build();
+    const expand = new EventEmitter<{ element: Node }>();
+    const collapse = new EventEmitter<{ element: Node }>();
+    const revealed: { node: Node; opts: unknown }[] = [];
+    tree.attachView({ visible: true, reveal: async (node: Node, opts: unknown) => void revealed.push({ node, opts }), onDidExpandElement: expand.event, onDidCollapseElement: collapse.event } as never);
+    const refs = ['a', 'b', 'c'].map((n) => [...index.all()].find((e) => e.ref.name === n)!.ref);
+    const panel = { ref: refs[2], trailRefs: refs } as never;
+    const a = tree.getChildren()[0]!;
+    const b = tree.getChildren(a)[0]!;
+    // A and B start collapsed: the nearest row the reader can see is A.
+    tree.follow(panel);
+    expect(label(tree, revealed.at(-1)!.node)).toBe('A');
+    expect(revealed.at(-1)!.opts).toMatchObject({ select: true, focus: false, expand: false });
+    expand.fire({ element: a });
+    expand.fire({ element: b });
+    tree.follow(panel);
+    expect(label(tree, revealed.at(-1)!.node)).toBe('C');
+    collapse.fire({ element: a });
+    tree.follow(panel);
+    expect(label(tree, revealed.at(-1)!.node)).toBe('A');
+  });
+
+  it('a row shows its problems and open comments, and repaints when the comments change', async () => {
+    story(root, '', 'a', { title: 'A', details: ['missing'] });
+    story(root, '', 'b', { title: 'B' });
+    const { tree, index } = await build();
+    const keyOf = (n: string) => [...index.all()].find((e) => e.ref.name === n)!.key;
+    const changed = new EventEmitter<void>();
+    let counts: Record<string, { open: number; forYou: number }> = { [keyOf('b')]: { open: 3, forYou: 1 } };
+    tree.setComments({ on: (k) => counts[k], onDidChange: changed.event });
+    const row = (t: string) => tree.getTreeItem(tree.getChildren().find((n) => label(tree, n) === t)!);
+    expect(row('A').description).toContain('1 problem');
+    expect((row('A').iconPath as { id: string }).id).toBe('warning');
+    expect(row('B').description).toContain('3 comments, 1 for you');
+    expect(row('B').tooltip).toContain('3 open comment threads (1 with something new for you)');
+    expect((row('B').iconPath as { id: string }).id).toBe('comment-unresolved');
+    let fired = 0;
+    tree.onDidChangeTreeData(() => fired++);
+    counts = {};
+    changed.fire();
+    expect(fired).toBeGreaterThan(0);
+    expect(row('B').description).not.toContain('comment');
   });
 
   it('top: true says so too', async () => {

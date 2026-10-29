@@ -18,6 +18,11 @@ const GROUPS: { id: Group; label: string; collapsed?: boolean }[] = [
 
 export type CommentNode = { kind: 'group'; group: Group; count: number } | { kind: 'thread'; group: Group; entry: Entry; label: string; description: string; tooltip: string };
 
+export interface SidestoryComments {
+  open: number;
+  forYou: number;
+}
+
 export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscode.Disposable {
   private readonly service: CommentService;
   private readonly index: SidestoryIndex;
@@ -25,6 +30,10 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
   readonly onDidChangeTreeData = this.emitter.event;
   view: vscode.TreeView<CommentNode> | undefined;
   private groups = new Map<Group, CommentNode[]>();
+  /** Open threads per sidestory (its index key), and how many have something for the reader: for the Sidestories view. */
+  private perSidestory = new Map<string, SidestoryComments>();
+  private readonly countsEmitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeCounts = this.countsEmitter.event;
   private readonly subs: vscode.Disposable[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   filter = '';
@@ -33,8 +42,13 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
   constructor(service: CommentService, index: SidestoryIndex) {
     this.service = service;
     this.index = index;
-    this.subs.push(this.emitter, service.onDidChange(() => this.schedule()), index.onDidChangeState(() => this.schedule()));
+    this.subs.push(this.emitter, this.countsEmitter, service.onDidChange(() => this.schedule()), index.onDidChangeState(() => this.schedule()));
     this.schedule();
+  }
+
+  /** Open comment threads on a sidestory (by index key). */
+  commentsOn(key: string): SidestoryComments | undefined {
+    return this.perSidestory.get(key);
   }
 
   dispose(): void {
@@ -50,8 +64,9 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
   /** Every thread, grouped. */
   async rebuild(): Promise<void> {
     const entries = await this.service.allEntries(threadRoots(this.index));
-    const known = new Map<string, { title: string; id?: string }>();
-    for (const e of this.index.all()) known.set(`${e.ref.root.toString()}|${e.ref.name}`, { title: e.title, id: e.id });
+    const known = new Map<string, { title: string; id?: string; key: string }>();
+    for (const e of this.index.all()) known.set(`${e.ref.root.toString()}|${e.ref.name}`, { title: e.title, id: e.id, key: e.key });
+    const counts = new Map<string, SidestoryComments>();
     const groups = new Map<Group, CommentNode[]>(GROUPS.map((g) => [g.id, []]));
     const f = this.filter.toLowerCase();
     for (const e of entries) {
@@ -69,8 +84,15 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
         description: escapeIcons(excerpt),
         tooltip: `${displayText(e.thread.comments[0]?.body ?? '', 300)}\n\n${e.location.tier === 'local' ? 'Local: only on this machine' : 'Shared: committed with the sidestory'}`,
       });
-      if (f && !`${where} ${excerpt}`.toLowerCase().includes(f)) continue;
       const elsewhere = (sc.kind === 'sidestory' && !ss) || (sc.kind === 'sidestory' && e.location.tier === 'local' && ss?.id && e.thread.origin?.sidestory && e.thread.origin.sidestory !== ss.id);
+      const forReader = e.thread.state === 'open' && !elsewhere && ((this.service.tookPart(e) && this.service.isUnread(e)) || e.thread.claudeSuggestsResolve);
+      if (ss && !elsewhere && e.thread.state === 'open') {
+        const c = counts.get(ss.key) ?? { open: 0, forYou: 0 };
+        c.open++;
+        if (forReader && !this.service.isWaiting(e)) c.forYou++;
+        counts.set(ss.key, c);
+      }
+      if (f && !`${where} ${excerpt}`.toLowerCase().includes(f)) continue;
       if (elsewhere) groups.get('elsewhere')!.push(node('elsewhere'));
       else if (e.thread.state === 'resolved') {
         if (this.showResolved) groups.get('resolved')!.push(node('resolved'));
@@ -87,6 +109,10 @@ export class CommentsView implements vscode.TreeDataProvider<CommentNode>, vscod
       }
     }
     this.groups = groups;
+    if (JSON.stringify([...counts]) !== JSON.stringify([...this.perSidestory])) {
+      this.perSidestory = counts;
+      this.countsEmitter.fire();
+    }
     const forYou = groups.get('forYou')!.length;
     const waiting = groups.get('waiting')!.length;
     if (this.view) {

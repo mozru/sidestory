@@ -198,9 +198,6 @@ export class ExplainerSession implements vscode.Disposable {
   private readonly switchEmitter = new vscode.EventEmitter<void>();
   /** The panel moved to another sidestory (dive, Back, `openAt`): overlays from before are void. */
   readonly onDidSwitch = this.switchEmitter.event;
-  private readonly placeEmitter = new vscode.EventEmitter<void>();
-  /** The sidestory shown or its step changed, after the change (onDidSwitch fires before the switch). */
-  readonly onDidChangePlace = this.placeEmitter.event;
   private readonly navigateEmitter = new vscode.EventEmitter<void>();
   /** The reader acted in the panel (a step, a dive or Back, a widget input). */
   readonly onDidNavigate = this.navigateEmitter.event;
@@ -271,7 +268,6 @@ export class ExplainerSession implements vscode.Disposable {
     this.subscriptions.push(
       this.resolveEmitter,
       this.switchEmitter,
-      this.placeEmitter,
       this.navigateEmitter,
       panel.webview.onDidReceiveMessage((m: unknown) => this.onMessage(m)),
       panel.onDidDispose(() => this.dispose()),
@@ -376,7 +372,6 @@ export class ExplainerSession implements vscode.Disposable {
     if (this.initGeneration !== this.generation || !this.manifest) {
       this.active = anchorId;
       this.offered = undefined;
-      this.placeEmitter.fire();
       return;
     }
     if (!this.manifest.anchors.has(anchorId)) return;
@@ -418,7 +413,8 @@ export class ExplainerSession implements vscode.Disposable {
       title: () => this.title,
       resolution: (id) => this.resolutions.get(id),
       reveal: (anchor, lines, identifiers) => {
-        this.requestReveal(anchor, true);
+        // Shows the code without taking focus or the cursor: the reader is still using the widget.
+        this.requestReveal(anchor, false);
         if (lines || identifiers?.length) this.widgets?.handle({ type: 'widgetHighlight', anchor, lines, identifiers });
       },
       highlight: (h) => {
@@ -535,7 +531,6 @@ export class ExplainerSession implements vscode.Disposable {
     this.endHover();
     this.revealWhenResolved = undefined;
     this.active = active ?? this.positions.get(this.ref.dir.toString());
-    this.placeEmitter.fire();
     this.decorations.set(undefined);
     this.decorations.clearFlash();
     this.watchExplainer();
@@ -1486,10 +1481,7 @@ export class ExplainerSession implements vscode.Disposable {
     if (changed) this.decorations.setWidget(undefined); // widget highlights belong to the step they were made in
     this.active = id;
     if (!id) this.decorations.set(undefined);
-    if (changed) {
-      this.offered = undefined; // a step the cursor offered before may be worth offering again
-      this.placeEmitter.fire();
-    }
+    if (changed) this.offered = undefined; // a step the cursor offered before may be worth offering again
   }
 
   /**

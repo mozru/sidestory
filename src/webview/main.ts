@@ -447,15 +447,15 @@ widgets = new WidgetFrames({
   touchSection: (id) => {
     if (held() && id === widgetHold!.from) return;
     widgetHold = undefined;
-    if (id !== active && sectionEl(id)?.dataset.cxState !== 'lost') setActive(id, 'click');
+    if (sectionEl(id)?.dataset.cxState !== 'lost') pick(id, 'click');
   },
   // From a widget the page stays on the widget the reader is using: the step becomes current and its code
   // shows in the editor, without scrolling to the step's text.
   goToStep: (id, from) => {
     if (!anchors.has(id) || !sectionEl(id)) return false;
-    hidePill();
     const before = active;
-    setActive(id, 'step');
+    if (id === active) setActive(id, 'step'); // shows its code again, as asked
+    else pick(id, 'step');
     holdForWidget(before, from);
     return true;
   },
@@ -1238,6 +1238,19 @@ function jumpTo(id: string, source?: Source): void {
   if (initialized) remember('push');
 }
 
+/**
+ * The reader chose a step where the page already is (a click in its text or a widget, Tab into it, a widget's
+ * goToStep): no scroll, a history entry as for a jump (`step`: one entry for a run, as J/K). The current step again
+ * does nothing, so a click that only gives the panel focus doesn't send the editor back to the step's code.
+ */
+function pick(id: string, source: Source, kind: 'push' | 'step' = 'push'): void {
+  if (id === active) return;
+  hidePill();
+  if (initialized) navHistory.update(hereEntry());
+  setActive(id, source);
+  if (initialized) remember(kind);
+}
+
 // ---- history (Back / Forward) ----
 
 /** The page shown, as history entries name it. */
@@ -1494,7 +1507,10 @@ function noteKey(e: KeyboardEvent): void {
 }
 document.addEventListener('keydown', noteKey, true);
 
-/** Tabbing into a section makes it the current step, as scrolling to it would. */
+/**
+ * Tabbing from one section into another makes it the current step, as a click there would. Tabbing into the page
+ * from outside it (the step bar, Back) doesn't: the first link of the page isn't where the reader is.
+ */
 function onContentFocus(e: FocusEvent): void {
   lastFocused = e.target as HTMLElement;
   // Aimed only when the reader's last input was a Tab that landed on the link itself (not on a control inside it, and
@@ -1503,11 +1519,12 @@ function onContentFocus(e: FocusEvent): void {
   if (link !== aimedLink) aim(link && link === e.target && !focusingSelf && lastKeyAt === lastTabAt && Date.now() - lastTabAt < 500 ? link : null);
   // The keyboard brought focus to a link (not a click, nor the panel itself): its card, as for the pointer.
   if (link && link === e.target && !focusingSelf && lastKeyAt === lastTabAt && Date.now() - lastTabAt < 500) hoverCard?.enter(link, true);
-  if (focusingSelf || Date.now() - lastKeyAt > 500) return; // a click: the click handler decides
+  // Only the reader's Tab (a click: the click handler decides; a key that opened something: not the reader's move).
+  if (focusingSelf || lastKeyAt !== lastTabAt || Date.now() - lastTabAt > 500) return;
+  const from = (e.relatedTarget as HTMLElement | null)?.closest?.<HTMLElement>('[data-explain-anchor]');
   const section = (e.target as HTMLElement).closest?.<HTMLElement>('[data-explain-anchor]');
-  if (!section || section.dataset.cxState === 'lost') return;
-  const step = steps.find((s) => s.el === section || s.el.contains(section));
-  if (step && step.id !== activeStepId()) setActive(step.id, 'scroll');
+  if (!from || !section || from === section || section.dataset.cxState === 'lost') return;
+  pick(section.dataset.explainAnchor!, 'scroll', 'step');
 }
 
 /*
@@ -1713,8 +1730,7 @@ function onContentClick(e: MouseEvent): void {
   if (target.closest('button, input, select, textarea, summary, label') || (frame.getSelection()?.toString() ?? '') !== '') return;
   const section = target.closest<HTMLElement>('[data-explain-anchor]');
   if (!section || section.dataset.cxState === 'lost') return;
-  const id = section.dataset.explainAnchor!;
-  setActive(id, 'click');
+  pick(section.dataset.explainAnchor!, 'click');
 }
 
 function onContentKey(e: KeyboardEvent): void {

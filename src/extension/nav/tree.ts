@@ -48,6 +48,11 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
   private filterText: string;
   private filtered: { matches: Set<string>; needed: Set<string>; shown: number; total: number } | undefined;
   view: vscode.TreeView<TreeNode> | undefined;
+  /** Open comment threads per sidestory, shown on its row. */
+  private comments: { on(key: string): { open: number; forYou: number } | undefined } | undefined;
+  /** Rows the reader expanded or collapsed (ids), over the state each row starts in. */
+  private readonly expandedIds = new Set<string>();
+  private readonly collapsedIds = new Set<string>();
   /** The "This branch" group's rows; none on a branch without changes or outside git. */
   branch: BranchSource | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -400,8 +405,13 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       }
     }
     if (e.truncated) parts.push('page too complex to outline');
-    item.description = parts.join(' · ');
+    // What needs the reader: problems (errors, broken detail links), then comments.
     const broken = pkg?.graph.brokenLinks(e.ref.name) ?? [];
+    const problems = e.errors.length + (broken.length ? 1 : 0);
+    if (problems) parts.push(`${problems} problem${problems === 1 ? '' : 's'}`);
+    const comments = this.comments?.on(e.key);
+    if (comments?.open) parts.push(`${comments.open} comment${comments.open === 1 ? '' : 's'}${comments.forYou ? `, ${comments.forYou} for you` : ''}`);
+    item.description = parts.join(' · ');
     item.tooltip = [
       name,
       e.summary,
@@ -409,15 +419,18 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
       parents.length ? `Also under: ${parents.slice(0, 5).map((p) => this.nameOf(pkg, p)).join(', ')}${parents.length > 5 ? ` and ${parents.length - 5} more` : ''}` : '',
       broken.length ? `Broken detail links: ${broken.slice(0, 10).map((b) => displayText(b, 64)).join(', ')}` : '',
       ...e.errors,
+      comments?.open ? `${comments.open} open comment thread${comments.open === 1 ? '' : 's'}${comments.forYou ? ` (${comments.forYou} with something new for you)` : ''}: see Comments` : '',
     ]
       .filter(Boolean)
       .join('\n');
-    const warn = drift && (drift.lost || drift.outOfDate);
+    const warn = (drift && (drift.lost || drift.outOfDate)) || problems > 0;
     item.iconPath = node.startHere
       ? new vscode.ThemeIcon('home')
       : warn
-        ? new vscode.ThemeIcon('warning', new vscode.ThemeColor(drift.lost ? 'sidestory.lostForeground' : 'sidestory.staleForeground'))
-        : new vscode.ThemeIcon(isTop && node.path.length === 1 ? 'book' : 'file-text');
+        ? new vscode.ThemeIcon('warning', new vscode.ThemeColor(problems || drift?.lost ? 'sidestory.lostForeground' : 'sidestory.staleForeground'))
+        : comments?.forYou
+          ? new vscode.ThemeIcon('comment-unresolved')
+          : new vscode.ThemeIcon(isTop && node.path.length === 1 ? 'book' : 'file-text');
     item.contextValue = e.errors.length && !e.ids.length ? 'broken' : isTop && node.path.length === 1 ? 'top' : 'detail';
     item.command = { title: 'Open', command: 'sidestory.openAt', arguments: [{ dir: e.ref.dir.toString(), trail: node.path, source: 'tree' }] };
     item.resourceUri = undefined;
@@ -473,12 +486,46 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     return node;
   }
 
-  /** Reveals a panel's sidestory when the view is visible (`sidestory.sidebar.followPanel`). */
+  /** Shows each sidestory's open comment threads on its row, repainting as they change. */
+  setComments(c: { on(key: string): { open: number; forYou: number } | undefined; onDidChange: vscode.Event<void> }): void {
+    this.comments = c;
+    this.subscriptions.push(c.onDidChange(() => this.refresh()));
+  }
+
+  attachView(view: vscode.TreeView<TreeNode>): void {
+    this.view = view;
+    this.subscriptions.push(
+      view.onDidExpandElement((e) => {
+        this.expandedIds.add(e.element.id);
+        this.collapsedIds.delete(e.element.id);
+      }),
+      view.onDidCollapseElement((e) => {
+        this.collapsedIds.add(e.element.id);
+        this.expandedIds.delete(e.element.id);
+      }),
+    );
+  }
+
+  private isExpanded(n: TreeNode): boolean {
+    if (this.expandedIds.has(n.id)) return true;
+    if (this.collapsedIds.has(n.id)) return false;
+    return this.getTreeItem(n).collapsibleState === vscode.TreeItemCollapsibleState.Expanded;
+  }
+
+  /**
+   * Selects a panel's sidestory when the view is visible (`sidestory.sidebar.followPanel`), without expanding
+   * anything: inside a row the reader collapsed, the nearest row they can see is selected instead.
+   */
   follow(s: ExplainerSession): void {
     if (!this.view?.visible || this.filtered) return;
     if (!vscode.workspace.getConfiguration('sidestory').get<boolean>('sidebar.followPanel', true)) return;
     const node = this.nodeFor(s);
-    if (node) void Promise.resolve(this.view.reveal(node, { select: true, focus: false, expand: false })).catch(() => {});
+    if (!node) return;
+    const chain: TreeNode[] = [];
+    for (let n: TreeNode | undefined = node; n; n = n.parent) chain.unshift(n);
+    let shown = chain[0]!;
+    for (let i = 1; i < chain.length && this.isExpanded(chain[i - 1]!); i++) shown = chain[i]!;
+    void Promise.resolve(this.view.reveal(shown, { select: true, focus: false, expand: false })).catch(() => {});
   }
 
   dispose(): void {

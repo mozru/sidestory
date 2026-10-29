@@ -14,7 +14,6 @@ import { ExplainedHere, NO_SIDESTORY_HERE } from './nav/explained-here.ts';
 import { SidestoryIndex } from './nav/index.ts';
 import { Navigator } from './nav/open-at.ts';
 import { goToStep, pickSidestory } from './nav/pickers.ts';
-import { THIS_SIDESTORY_VIEW, ThisSidestoryView } from './nav/this-sidestory.ts';
 import { SidestoryTree } from './nav/tree.ts';
 import { SidestoryWatcher } from './nav/watcher.ts';
 import { createPanel, panelOptions } from './panel.ts';
@@ -132,9 +131,6 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
 
   const drift = new DriftQueue(index);
   const tree = new SidestoryTree(index, drift, context.workspaceState);
-  // This Sidestory: where the active panel is in its sidestory's hierarchy.
-  const thisStory = new ThisSidestoryView(index, () => current);
-  context.subscriptions.push(thisStory, vscode.window.createTreeView(THIS_SIDESTORY_VIEW, { treeDataProvider: thisStory }), index.onDidChange(() => thisStory.refresh(true)));
   const here = new ExplainedHere(index, { sessions: () => [...sessions], prepared }, context.extensionUri);
   context.subscriptions.push(drift, tree, here);
   drift.live = (key) => {
@@ -163,18 +159,13 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
       decorations.dispose();
       sessions.delete(s);
       if (current === s) current = [...sessions].at(-1);
-      thisStory.refresh();
       updateContext();
       updateNavContext();
     });
     s.onDidSwitch(() => setTimeout(() => tree.follow(s), 0));
-    s.onDidChangePlace(() => {
-      if (s === current) thisStory.refresh();
-    });
     panel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         current = s;
-        thisStory.refresh();
         // Focus may have been pulled in from the editor by a widget (docs/WIDGETS-PLAN.md §5.3).
         s.queryFocus();
         tree.follow(s);
@@ -186,9 +177,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     s.onDidNavigate(() => setPreviewIcon(s));
     updateContext();
     tree.follow(s);
-    thisStory.refresh();
     await s.load();
-    thisStory.refresh();
     return s;
   };
 
@@ -217,6 +206,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     },
   });
   host.comments = comments;
+  tree.setComments(comments.comments);
   // Sidestories in use first: open panels, then recently opened (§6.1, §6.5).
   // Cheap: the index calls it once per key per sort (open panels are few; recent ranks are cached).
   index.priority = (key) => {
@@ -291,7 +281,7 @@ export function activateFull(context: vscode.ExtensionContext): FullApi {
     }),
   );
   const view = vscode.window.createTreeView('sidestory.tree', { treeDataProvider: tree, showCollapseAll: true });
-  tree.view = view;
+  tree.attachView(view);
   // This File starts collapsed; the first time a sidestory explains a branch in this workspace, it opens once (no
   // focus taken), so its "Not explained yet" list is found. Never again in this workspace: the user's layout wins.
   // Tried only when This File would have rows for the active file: no rebuild on every changes event before that.

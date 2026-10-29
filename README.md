@@ -43,7 +43,6 @@ Big systems get an overview plus one sidestory per piece. From the overview you 
 There are a few ways to find what's been explained:
 
 - The **Sidestory icon** in the activity bar lists every sidestory, with overviews first (**Start here**) and their details under them.
-- **This Sidestory**, below the list, shows where you are: the way up, the details below and the ones beside it, one click each.
 - A **CodeLens** above explained code names the sidestory and step. Click it to open the page right there.
 - **Sidestory: Go to Step…** searches every step by title.
 

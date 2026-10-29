@@ -120,8 +120,8 @@ describe('package.json', () => {
     for (const k of named) expect(set, k).toContain(k);
   });
 
-  it('has no Changes view of its own: Sidestories, This Sidestory, This File, then Comments', () => {
-    expect(pkg.contributes.views.sidestory.map((v: { id: string }) => v.id)).toEqual(['sidestory.tree', 'sidestory.thisSidestory', 'sidestory.thisFile', 'sidestory.comments']);
+  it('has no Changes view of its own: Sidestories, This File, then Comments', () => {
+    expect(pkg.contributes.views.sidestory.map((v: { id: string }) => v.id)).toEqual(['sidestory.tree', 'sidestory.thisFile', 'sidestory.comments']);
     const commands = pkg.contributes.commands.map((c: { command: string }) => c.command);
     for (const gone of ['sidestory.showChanges', 'sidestory.changes.pickBase', 'sidestory.changes.filter', 'sidestory.changes.viewAsList', 'sidestory.changes.sort']) expect(commands).not.toContain(gone);
     for (const kept of ['sidestory.changes.nextUnexplained', 'sidestory.changes.nextFile', 'sidestory.changes.repinStep', 'sidestory.changes.setBase', 'sidestory.changes.markTrivial']) expect(commands).toContain(kept);

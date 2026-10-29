@@ -10,7 +10,7 @@ import { claudeCommandText, showHowTo } from './commands-text.ts';
 import { CommentsController } from './controller.ts';
 import { CommentsPanels, threadAction, type CommentsSession } from './panel.ts';
 import { CommentService } from './service.ts';
-import { CommentsView, type CommentNode } from './view.ts';
+import { CommentsView, type CommentNode, type SidestoryComments } from './view.ts';
 import { localPath } from '../local-path.ts';
 
 export interface CommentsDeps {
@@ -22,12 +22,20 @@ export interface CommentsDeps {
   openCode(root: vscode.Uri, file: string, lines?: [number, number]): Promise<void>;
 }
 
+/** Open comment threads per sidestory (index key). */
+export interface CommentCounts {
+  on(key: string): SidestoryComments | undefined;
+  onDidChange: vscode.Event<void>;
+}
+
 export interface CommentsApi {
   commands: Record<string, (...args: unknown[]) => unknown>;
   /** For SessionHost: a message from the panel, the page's init, a new session. */
   handle(s: CommentsSession, m: CommentsFromWebview): boolean;
   onInit(s: CommentsSession): void;
   attach(s: CommentsSession): vscode.Disposable;
+  /** Open comment threads per sidestory, for the Sidestories view. */
+  comments: CommentCounts;
 }
 
 export function activateComments(context: vscode.ExtensionContext, deps: CommentsDeps): CommentsApi {
@@ -165,6 +173,7 @@ export function activateComments(context: vscode.ExtensionContext, deps: Comment
     handle: (s, m) => panels.handle(s, m),
     onInit: (s) => panels.onInit(s),
     attach: (s) => panels.attach(s),
+    comments: { on: (key) => view.commentsOn(key), onDidChange: view.onDidChangeCounts },
   };
 }
 

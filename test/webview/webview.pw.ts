@@ -734,17 +734,34 @@ test('CSS the rewriter passes on loads no remote url(), as the browser itself pa
   }
 });
 
-test('tabbing into a section makes it the current step; J/K work from a switch', async ({ page }) => {
-  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2><p style="height:900px">long</p></section>
+test('tabbing from one section into another makes it the current step, as a Back entry; J/K work from a switch', async ({ page }) => {
+  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2><button id="b1">one</button><p style="height:900px">long</p></section>
     <section data-explain-anchor="state"><h2>S</h2><input type="checkbox" id="sw"><label for="sw">x</label></section>
     <section data-explain-anchor="refill"><h2>R</h2></section>` });
   await expect(page.locator('.cx-position')).toHaveText('Step 1 of 3');
-  await frame(page).locator('#sw').focus();
-  await page.keyboard.press('Shift+Tab');
+  await frame(page).locator('#b1').focus();
   await page.keyboard.press('Tab');
   await expect(page.locator('.cx-position')).toHaveText('Step 2 of 3');
+  await expect(page.locator('.cx-hist[data-delta="-1"]')).toBeEnabled();
   await page.keyboard.press('j');
   await expect(page.locator('.cx-position')).toHaveText('Step 3 of 3');
+});
+
+test('tabbing into the page from outside it, or clicking the current section, changes nothing', async ({ page }) => {
+  await open(page, { html: `<section data-explain-anchor="interface"><h2>I</h2><button id="b1">one</button></section>
+    <section data-explain-anchor="state"><h2>S</h2><p id="s-text">State text.</p></section>` });
+  await page.locator('.cx-step', { hasText: 'S' }).last().click();
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
+  await clearPosted(page);
+  // From the panel into the page: the first focusable is in section 1, which isn't where the reader is.
+  await page.locator('.cx-scroll').focus();
+  await page.keyboard.press('Tab');
+  await expect(frame(page).locator('#b1')).toBeFocused();
+  await expect(page.locator('.cx-position')).toHaveText('Step 2 of 2');
+  // A click in the current section's text only gives the panel focus: the editor isn't sent back to its code.
+  await frame(page).locator('#s-text').click();
+  await page.waitForTimeout(300);
+  expect((await posted(page)).filter((m) => m.type === 'focusAnchor')).toEqual([]);
 });
 
 test('a section with no usable anchor is counted in the header', async ({ page }) => {

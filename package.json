@@ -1510,13 +1510,6 @@
           "contextualTitle": "Sidestory"
         },
         {
-          "id": "sidestory.thisSidestory",
-          "name": "This Sidestory",
-          "when": "sidestory.available",
-          "icon": "media/sidestory.svg",
-          "contextualTitle": "Sidestory"
-        },
-        {
           "id": "sidestory.thisFile",
           "name": "This File",
           "when": "sidestory.available",
@@ -1535,10 +1528,6 @@
       ]
     },
     "viewsWelcome": [
-      {
-        "view": "sidestory.thisSidestory",
-        "contents": "Open a sidestory to see where you are in it: the way up, its details, and the details beside it."
-      },
       {
         "view": "sidestory.tree",
         "when": "workbenchState == empty",

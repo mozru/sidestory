@@ -62,25 +62,6 @@ describe('Back / Forward', () => {
     expect(session.trailRefs.map((r) => r.name)).toEqual(['overview', 'retry-backoff']);
   });
 
-  it('onDidChangePlace fires after the panel moves (with the new trail) and when its step changes', async () => {
-    const { session, lastInit, send } = open('bit-reader');
-    await session.load();
-    send({ type: 'ready' });
-    await vi.waitFor(() => expect(lastInit()?.dir).toBe(dirOf('bit-reader')));
-    const seen: string[] = [];
-    session.onDidChangePlace(() => seen.push(`${session.trailRefs.map((r) => r.name).join('/')}@${session.place().active ?? ''}`));
-    send({ type: 'openHistory', dir: dirOf('retry-backoff'), trail: ['overview', 'retry-backoff'], active: 'loop' });
-    await vi.waitFor(() => expect(seen).toContain('overview/retry-backoff@loop'));
-    expect(seen.some((x) => x.startsWith('bit-reader'))).toBe(false); // never the old place
-    await vi.waitFor(() => expect(lastInit()?.dir).toBe(dirOf('retry-backoff')));
-    const other = lastInit()!.anchors.find((a) => a.id !== 'loop')!.id;
-    seen.length = 0;
-    session.goTo(other);
-    expect(seen).toEqual([`overview/retry-backoff@${other}`]);
-    session.goTo(other);
-    expect(seen).toHaveLength(1); // the same step again: no change
-  });
-
   it('refuses what a restored trail would refuse: outside a .sidestory folder, a trail not ending at it, repeats', async () => {
     const { session, lastInit, posted, send } = open('bit-reader');
     await session.load();
