@@ -1484,6 +1484,7 @@ scroller.addEventListener('scroll', () => {
 function bindFrameEvents(d: Document): void {
   d.addEventListener('click', onContentClick);
   d.addEventListener('keydown', onContentKey);
+  d.addEventListener('keydown', onCopyKey);
   d.addEventListener('keydown', noteKey, true);
   d.addEventListener('focusin', onContentFocus);
   d.addEventListener('contextmenu', onContentMenu);
@@ -1512,6 +1513,25 @@ function bindFrameEvents(d: Document): void {
   d.defaultView!.addEventListener('blur', () => passedDown.clear()); // their key-ups happen elsewhere
   for (const ev of ['mousedown', 'mouseup']) d.addEventListener(ev, onMouseNav as EventListener);
 }
+
+/**
+ * Cmd/Ctrl+C with text selected in the page: VS Code's own Copy runs in the panel's document, where the content
+ * frame's selection isn't, so the page copies it itself (through the extension, as the right-click menu's Copy).
+ */
+function onCopyKey(e: KeyboardEvent): void {
+  if (!e.isTrusted || e.repeat || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'c' || typingIn(e.target as Element)) return;
+  const text = frame.getSelection()?.toString() ?? '';
+  if (text) vscode.postMessage({ type: 'copyText', text: text.slice(0, 100_000) });
+}
+
+/** VS Code's Copy (its menu, its key) runs in the panel's document: give it the content frame's selection. */
+document.addEventListener('copy', (e) => {
+  if (!(document.getSelection()?.isCollapsed ?? true)) return; // a selection in the panel's own chrome: its own
+  const text = frame?.getSelection()?.toString() ?? '';
+  if (!text || !e.clipboardData) return;
+  e.clipboardData.setData('text/plain', text);
+  e.preventDefault();
+});
 
 /**
  * VS Code only sees keys pressed in the panel's own document (keys.ts): one pressed in the content frame that the page

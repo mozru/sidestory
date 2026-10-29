@@ -13,6 +13,7 @@
 - Picked steps, clicks in a section or widget, and Tab are Back / Forward entries.
 - Resting the pointer on a link or diagram box lights its code in the editor, with an arrow at the edge when it's out of view (`sidestory.hoverPreview` is now `editor` by default; `card` brings the snippet back). New setting `sidestory.hoverReveal` scrolls the editor there while you hover.
 - Right-click menu in the page: Copy, Open Code, Go to This Step, Comment and Ask Claude.
+- Fixed: <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>C</kbd> didn't copy text selected in the page.
 - Fixed: clicking the same code link twice made the editor jump. Opening code now scrolls the editor once, and not at all when the lines are on screen.
 
 **Comments**

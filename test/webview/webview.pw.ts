@@ -999,3 +999,19 @@ test('a diagram box with data-explain-detail dives on a click or Enter; data-exp
   await expect.poll(async () => (await posted(page)).find((m) => m.type === 'dive')).toMatchObject({ type: 'dive', name: 'dma-csr' });
   expect((await posted(page)).find((m) => m.type === 'dive')).not.toHaveProperty('showCode');
 });
+
+test('Cmd/Ctrl+C copies the page\'s selection, and VS Code\'s own Copy gets it too', async ({ page }) => {
+  await open(page, { html: '<section data-explain-anchor="interface"><h2>I</h2><p id="p1">Copy me.</p></section>' });
+  await frame(page).locator('#p1').evaluate((el) => el.ownerDocument.getSelection()!.selectAllChildren(el));
+  await clearPosted(page);
+  await page.locator('iframe.cx-content-frame').focus();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+c' : 'Control+c');
+  await expect.poll(async () => (await posted(page)).find((m) => m.type === 'copyText')).toEqual({ type: 'copyText', text: 'Copy me.' });
+  // VS Code's Copy runs execCommand('copy') in the panel's document: its copy event carries the page's selection.
+  const copied = await page.evaluate(() => {
+    const data = new DataTransfer();
+    document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, cancelable: true, bubbles: true }));
+    return data.getData('text/plain');
+  });
+  expect(copied).toBe('Copy me.');
+});
