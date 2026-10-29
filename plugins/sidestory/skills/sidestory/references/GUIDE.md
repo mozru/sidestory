@@ -592,6 +592,8 @@ On a branch that changes a sidestory you already have, show reviewers what chang
 
 The two panels move together: pick a step in either and both show it. In the older version's title bar, **Open This Step's Code Changes** opens VS Code's diff of that step's file then and now, and **Open Page Source Changes** the diff of `sidestory.html`. Its code links open the code as it was at that commit. Updating a sidestory on the branch as you change the code keeps it current after the merge; for branch coverage, though, only a sidestory added on the branch counts ([Which sidestories count](#which-sidestories-count)).
 
+The older version is for reading: its widgets show their fallback, its detail links and code links without an anchor don't open, and it doesn't take comments.
+
 ## Comments and Claude
 
 Comment on a step of a sidestory, or on lines of code, and ask Claude about it without leaving the panel.
