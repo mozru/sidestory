@@ -11,21 +11,21 @@ A sidestory is a folder `.sidestory/<name>/` at the repository root (the folder 
 - `manifest.json`: which code each anchor is about.
 - `assets/` (optional), plus widget `.tsx` files when the sidestory has interactive widgets.
 
-The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code. The editor follows the steps, and the steps follow the cursor.
+The Sidestory VS Code extension (`paperkite.sidestory`) shows it beside the code. The editor follows the step the reader picks (a click or a key; scrolling the page never changes it), and moving the cursor in the code offers the step about it.
 
 ## What Sidestory supports
 
 Use whichever fit; the page's style is the user's (see "Style").
 
 **The page** (`sidestory.html`: HTML and CSS, no script)
-- **Steps:** top-level sections with `data-explain-anchor`; readers step through them, or the cursor in the code picks the step. Nested anchors (a card, a figure) are linked too.
+- **Steps:** top-level sections with `data-explain-anchor`; readers pick them (tabs, J/K, a click in the section, links), and the cursor in the code offers the step about it. Nested anchors (a card, a figure) are linked too. Since scrolling never changes the step, a diagram that follows the steps changes only when the reader picks one.
 - **Code links:** `data-explain-ref="<anchor>"` on any element jumps the editor to that code without changing the step; `data-explain-code` links code with no anchor, by line range or symbol (`#name`, and for SystemVerilog `#driver(x)`, `#driver(state_d).case(IDLE)`, `#u_inst(.port)`). Hovering a link lights up its code in the editor (an arrow at the editor's edge when it's out of view; `hoverReveal` scrolls to it), or shows it in a card.
 - **Diagrams that follow the steps:** inline SVG or HTML whose boxes and wires light up on the steps they matter in (`data-explain-on`), fade the rest, open their code when clicked, and light up while the editor cursor is in their code. Colors come from theme tokens (`--cx-wire-data`, `--cx-box-fill`, `--cx-on`, …).
 - **Pictures a page can draw:** block diagrams, sequences and timelines, state diagrams, before → after, byte and struct layouts, small SVG charts, frames of an algorithm's data, tables.
 - **Motion without script:** CSS and SVG animation (`<animate>`, `<animateMotion>`, …), tied to the steps with `.cx-on` rules. For readers who ask for less motion, SVG animation stops at its first frame; CSS animation needs the guide's reduced-motion rules.
 - **Interactivity without script:** tabs, steppers, before/after switches and quizzes from radio buttons and `:has(:checked)`; `<details>` for asides.
 - **Code blocks** colored in the reader's theme (`class="language-python"`).
-- **Widgets:** React components (Tailwind, Recharts, D3, Motion, shadcn-style UI) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor. Readers agree once per sidestory (again when widget code arrives through git) before widgets run; until then they see each widget's fallback.
+- **Widgets:** React components (Tailwind, Recharts, D3, Motion, shadcn-style UI) for what the reader should drive: simulations, playgrounds, charts that change with input. They read the code their sidestory points at and highlight lines in the editor; `goToStep`, `next` and `prev` change the step without scrolling the page away from the widget. Readers agree once per sidestory (again when widget code arrives through git) before widgets run; until then they see each widget's fallback.
 
 **The editor**
 - Each step highlights its lines with the step's `color`, marks the identifiers in its `highlight`, and fades the rest of the file. A clicked link flashes its lines, then leaves a frame.
@@ -34,8 +34,10 @@ Use whichever fit; the page's style is the user's (see "Style").
 
 **Structure and navigation**
 - **Overviews and details:** a tree of sidestories that follows the code's hierarchy (up to 16 levels). A step marks a part with `data-explain-detail="<name>"`; readers peek at its `summary` or dive in, with a trail back. The Sidestories view shows the same tree, pins the overview as **Start here**, and files top-level ones by `group`.
-- **Branches:** a sidestory with a `base` explains a branch's changes. VS Code marks each changed file explained, partly, not yet, trivial or needing a look, and the checker's `--coverage` counts what's left.
-- **Comments:** readers comment on steps and code lines; the comments plugin lets you read and answer them.
+- **Branches:** a sidestory with a `base` explains a branch's changes. VS Code marks each changed file explained, partly, not yet, trivial or needing a look, and the checker's `--coverage` counts what's left (the repository may accept a share: `"coverage": { "minimum": … }` in `.sidestory/checks.json`).
+- **Changing an existing sidestory on a branch:** update it in place, as you change the code (edit, add and remove steps; keep anchor ids for steps that stay, so the versions line up). Reviewers open **Sidestory: Compare with…** to read the base version beside the new one, and VS Code's diff for each step's code.
+- **Checker rules:** the repository sets how serious each finding is (`.sidestory/checks.json`, the manifest's `"checks"`, `data-explain-ignore="rule: why"`); see "Check and pin" below.
+- **Comments:** readers comment on steps and code lines; the comments plugin lets you read and answer them, and the checker's `threads --watch` lets you answer them as they come (see "Comments").
 
 ## Style
 
