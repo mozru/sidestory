@@ -44,12 +44,12 @@ export interface ScannedHtml {
   /** Every data-explain-anchor id in the page. */
   anchors: string[];
   /** Elements with data-explain-ignore, with the lines they span (the checker's element exceptions). */
-  ignores: { value: string; line: number; endLine: number }[];
+  ignores: { value: string; line: number; endLine: number; start: number; end: number }[];
   /**
    * Boxes in a diagram that light up per step (data-explain-on, inside an <svg>: a shape and a text label in one
    * part, not a wire or an arrow) with no code link on, in or around them.
    */
-  unlinkedBoxes: { line: number; el: Element }[];
+  unlinkedBoxes: { line: number; offset: number; el: Element }[];
 }
 
 /** 1-based line of each offset, by binary search over line starts. */
@@ -121,8 +121,9 @@ export function scanHtml(html: string): ScannedHtml {
   let svgDepth = 0;
   /** Open elements with a code link: a part inside one is linked through it (a click on it opens that code). */
   const openLinks = new Set<Element>();
-  /** Where the tokenizer is: an element's end line is the line of the token that closes it. */
+  /** Where the tokenizer is, and whether that token is an end tag: an element ends where the token that closes it starts. */
   let at = 0;
+  let atEnd = false;
   const markContent = () => {
     const w = openWidgets.at(-1);
     if (w) w.widget.hasFallback = true;
@@ -132,7 +133,7 @@ export function scanHtml(html: string): ScannedHtml {
   const start = (el: ScanElement, t: StartTag, pushed: boolean) => {
     const ignore = t.attrs.get('data-explain-ignore');
     if (ignore !== undefined) {
-      const entry = { value: ignore, line: el.line, endLine: el.line };
+      const entry = { value: ignore, line: el.line, endLine: el.line, start: el.offset, end: el.offset + 1 };
       ignores.push(entry);
       if (pushed) openIgnores.set(el, entry);
     }
@@ -195,12 +196,15 @@ export function scanHtml(html: string): ScannedHtml {
     close: (el) => {
       const ig = openIgnores.get(el);
       if (ig) {
-        ig.endLine = lineOf(at);
+        // Closed by its end tag: that tag's line. Closed by the next element's start (a <p> or <li> without an end
+        // tag): the line before it, so the exception doesn't reach into that element.
+        ig.end = at;
+        ig.endLine = atEnd || at === html.length ? lineOf(at) : lineOf(Math.max(el.offset, at - 1));
         openIgnores.delete(el);
       }
       if (openBoxes.at(-1)?.el === el) {
         const b = openBoxes.pop()!;
-        if (!b.linked && b.shape && b.label) unlinkedBoxes.push({ line: el.line, el });
+        if (!b.linked && b.shape && b.label) unlinkedBoxes.push({ line: el.line, offset: el.offset, el });
       }
       if (el.name === 'svg' && svgDepth > 0) svgDepth--;
       openLinks.delete(el);
@@ -214,7 +218,10 @@ export function scanHtml(html: string): ScannedHtml {
 
   const tokens = new HtmlTokenizer(html);
   for (let t = tokens.next(); t; t = tokens.next()) {
-    if ('offset' in t && typeof t.offset === 'number') at = t.offset;
+    if ('offset' in t && typeof t.offset === 'number') {
+      at = t.offset;
+      atEnd = t.kind === 'end';
+    }
     tree.token(t);
   }
   at = html.length;

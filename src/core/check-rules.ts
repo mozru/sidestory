@@ -20,7 +20,30 @@ const RANK: Record<Level, number> = { error: 3, warning: 2, info: 1, off: 0 };
  * Rules that guard the reader or their machine, not the page's quality: a code link to a secret-looking file, code
  * outside the repository, pinning code widgets may read without the reader's go-ahead. No level lowers them.
  */
-export const LOCKED_RULES: ReadonlySet<string> = new Set(['code-link-secret', 'secret-file', 'outside-folder', 'pin-needs-consent']);
+export const LOCKED_RULES: ReadonlySet<string> = new Set(['code-link-secret', 'secret-file', 'outside-folder', 'pin-needs-consent', 'bad-specifier', 'dynamic-import']);
+
+/**
+ * Errors that mean the page or a widget doesn't load (a manifest VS Code rejects, a widget that doesn't compile): a
+ * passing check must mean the page works, so these can be raised but not lowered either.
+ */
+export const LOAD_RULES: ReadonlySet<string> = new Set([
+  'manifest', 'not-found', 'unsupported-version', 'too-large', 'no-src', 'nested-widget',
+  'syntax', 'unknown-import', 'unknown-export', 'unavailable-import', 'no-default-export', 'bad-extension', 'invalid-json', 'top-level-await', 'too-many-files', 'too-complex', 'internal',
+]);
+
+/** The rules' own findings (a bad checks.json, an exception without a reason): no rule changes them. */
+export const RULE_FINDINGS: ReadonlySet<string> = new Set(['checks-json', 'ignore-syntax', 'ignore-no-reason', 'rule-locked', 'unused-ignore']);
+
+/** The step-level rules: the findings about a step's code. */
+export const STEP_RULES: ReadonlySet<string> = new Set(['anchor-lost', 'anchor-stale', 'anchor-changed', 'anchor-unchecked']);
+
+/** Why a rule can't be turned down, for the message; undefined when it can. */
+export function lockedWhy(code: string): string | undefined {
+  if (LOCKED_RULES.has(code)) return "guards the reader's safety";
+  if (LOAD_RULES.has(code)) return "means the page or a widget doesn't load";
+  if (RULE_FINDINGS.has(code)) return 'reports a mistake in the rules themselves';
+  return undefined;
+}
 
 /** A rule code: lowercase words joined by hyphens (`anchor-stale`). */
 const RULE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -74,6 +97,11 @@ export function manifestLevels(text: string): { sidestory: Map<string, Level>; a
     for (const [id, a] of Object.entries(m.anchors as Record<string, unknown>)) {
       if (!a || typeof a !== 'object' || !Object.hasOwn(a, 'checks')) continue;
       const r = parseLevels((a as { checks?: unknown }).checks);
+      for (const code of [...r.levels.keys()]) {
+        if (STEP_RULES.has(code)) continue;
+        r.levels.delete(code);
+        r.problems.push(`"${code}" can't be set for one step (a step's "checks" takes ${[...STEP_RULES].join(', ')}); set it for the sidestory or in .sidestory/checks.json`);
+      }
       out.anchors.set(id, r.levels);
       out.problems.push(...r.problems.map((p) => `anchor "${id.slice(0, 60)}" "checks": ${p}`));
     }
@@ -90,12 +118,15 @@ export function parseIgnore(value: string): { codes: string[]; reason: string; b
   return { codes: words.filter((w) => RULE.test(w)), reason, bad: words.filter((w) => !RULE.test(w)) };
 }
 
-/** An element's exception in the page: its rules, its reason, and the lines it spans. */
+/** An element's exception in the page: its rules, its reason, and where it is (lines, and offsets in the page). */
 export interface Ignore {
   codes: string[];
   reason: string;
   line: number;
   endLine: number;
+  /** The element's start and end in the page's text: findings that know their element are matched by these. */
+  start?: number;
+  end?: number;
 }
 
 export interface RuleFinding {
@@ -106,6 +137,8 @@ export interface RuleFinding {
   message: string;
   /** The anchor (step) the finding is about, for its step's levels. */
   anchor?: string;
+  /** Where in the page the element it is about starts: an exception then covers it only when it is inside. */
+  offset?: number;
 }
 
 export interface RuleContext {
@@ -137,14 +170,37 @@ function levelFor<F extends RuleFinding>(f: F, ctx: RuleContext): { level: Level
   return undefined;
 }
 
+/** Levels that try to turn a locked rule off, wherever they are, so the mistake shows even when nothing fires. */
+export function lockedLevels(levels: Levels): { code: string; why: string }[] {
+  const out: { code: string; why: string }[] = [];
+  for (const [code, level] of levels) {
+    const why = lockedWhy(code);
+    if (why && (level === 'off' || (LOAD_RULES.has(code) && level !== 'error'))) out.push({ code, why });
+  }
+  return out;
+}
+
+/** The severity a finding shows with under the repository's and the sidestory's levels (for VS Code's Problems panel); undefined: off. */
+export function severityFor(code: string, severity: Severity, levels: { global: Levels; sidestory: Levels }): Severity | undefined {
+  const set = levels.sidestory.get(code) ?? levels.global.get(code);
+  if (!set) return severity;
+  if (lockedWhy(code) && RANK[set] < RANK[severity]) return severity;
+  return set === 'off' ? undefined : set;
+}
+
 /** Applies the levels and the page's exceptions to a check's findings. */
 export function applyRules<F extends RuleFinding>(findings: readonly F[], ctx: RuleContext): Applied<F> {
   const out: Applied<F> = { findings: [], off: [], unusedIgnores: [], locked: [] };
   const used = new Set<Ignore>();
   for (const f of findings) {
-    const locked = LOCKED_RULES.has(f.code);
-    // Every exception around it counts as used (a page may repeat a diagram, its copies on the same lines).
-    const around = f.file === ctx.htmlFile && f.line !== undefined ? ctx.ignores.filter((i) => i.codes.includes(f.code) && f.line! >= i.line && f.line! <= i.endLine) : [];
+    const locked = lockedWhy(f.code) !== undefined;
+    if (RULE_FINDINGS.has(f.code)) {
+      out.findings.push(f);
+      continue;
+    }
+    // By element when the finding knows its element (a page may put a whole diagram on one line), else by line.
+    const inside = (i: Ignore) => (f.offset !== undefined && i.start !== undefined && i.end !== undefined ? f.offset >= i.start && f.offset < i.end : f.line! >= i.line && f.line! <= i.endLine);
+    const around = f.file === ctx.htmlFile && f.line !== undefined ? ctx.ignores.filter((i) => i.codes.includes(f.code) && inside(i)) : [];
     for (const i of around) used.add(i);
     const ignore = around[0];
     if (ignore) {

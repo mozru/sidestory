@@ -25,7 +25,7 @@
 //
 // --coverage checks the branch's merge diff against the sidestories that belong to it (src/cli/coverage.ts) and
 // exits 3 when there are no errors but some change isn't explained or marked trivial.
-import { applyRules, manifestLevels, parseChecksFile, parseIgnore, type Ignore } from '../core/check-rules.ts';
+import { applyRules, lockedLevels, lockedWhy, manifestLevels, parseChecksFile, parseIgnore, type Ignore } from '../core/check-rules.ts';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { parse, type Node } from 'acorn';
@@ -63,6 +63,8 @@ export interface Finding {
   message: string;
   /** The anchor (step) it is about: its step's rule levels apply (src/core/check-rules.ts). */
   anchor?: string;
+  /** Where in the page the element it is about starts, for the page's exceptions (not in the report). */
+  offset?: number;
 }
 
 export interface WidgetReport {
@@ -259,7 +261,7 @@ type CodeFile = { real: string; doc: PreparedText } | { error: string; missing: 
 export type CodeFiles = Map<string, Promise<CodeFile>>;
 
 function add(ctx: Context, f: Finding) {
-  if (ctx.findings.some((g) => g.file === f.file && g.line === f.line && g.code === f.code && g.message === f.message)) return;
+  if (ctx.findings.some((g) => g.file === f.file && g.line === f.line && g.offset === f.offset && g.code === f.code && g.message === f.message)) return;
   ctx.findings.push(f);
 }
 
@@ -719,7 +721,7 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
 
   const scanned = scanHtml(html);
   for (const b of scanned.unlinkedBoxes) {
-    add(ctx, { severity: 'warning', file: ctx.htmlFile, line: b.line, code: 'box-unlinked', message: `This diagram part lights up on a step (data-explain-on) but links to no code, so readers can't click it to see the code it stands for (${describeElement(b.el)}). Add data-explain-code or data-explain-ref to it or around it; if it isn't about code (a legend, a label), mark it data-explain-ignore="box-unlinked: why".` });
+    add(ctx, { severity: 'warning', file: ctx.htmlFile, line: b.line, offset: b.offset, code: 'box-unlinked', message: `This diagram part lights up on a step (data-explain-on) but links to no code, so readers can't click it to see the code it stands for (${describeElement(b.el)}). Add data-explain-code or data-explain-ref to it or around it; if it isn't about code (a legend, a label), mark it data-explain-ignore="box-unlinked: why".` });
   }
   const widgets = scanned.widgets;
   if (widgets.length > CHECK_LIMITS.widgetsPerExplainer) {
@@ -804,7 +806,7 @@ export async function checkExplainer(dirArg: string, opts: CheckOptions = {}): P
  * "checks", and the page's data-explain-ignore. Mistakes in them are findings too, and so is an exception that no
  * longer silences anything.
  */
-async function applyCheckRules(ctx: Context, report: CheckReport, manifestText: string | undefined, ignoresRaw: readonly { value: string; line: number; endLine: number }[]) {
+async function applyCheckRules(ctx: Context, report: CheckReport, manifestText: string | undefined, ignoresRaw: readonly { value: string; line: number; endLine: number; start: number; end: number }[]) {
   const checksFile = join(dirname(ctx.dir), 'checks.json');
   const checksText = await readText(checksFile);
   const global = checksText === undefined ? { levels: new Map(), problems: [] as string[] } : parseChecksFile(checksText);
@@ -817,11 +819,17 @@ async function applyCheckRules(ctx: Context, report: CheckReport, manifestText: 
     if (i.bad.length) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: raw.line, code: 'ignore-syntax', message: `data-explain-ignore: ${i.bad.slice(0, 3).map((b) => `"${b.slice(0, 40)}"`).join(', ')} isn't a rule name. Write data-explain-ignore="rule-name: why".` });
     if (!i.codes.length) continue;
     if (!i.reason) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: raw.line, code: 'ignore-no-reason', message: `data-explain-ignore="${raw.value.slice(0, 60)}" gives no reason: add one after a colon ("${i.codes[0]}: why"), so the next person knows why it's off.` });
-    ignores.push({ codes: i.codes, reason: i.reason, line: raw.line, endLine: raw.endLine });
+    ignores.push({ codes: i.codes, reason: i.reason, line: raw.line, endLine: raw.endLine, start: raw.start, end: raw.end });
   }
+  // A rule that can't be turned down, turned down anywhere: a mistake even before anything fires.
+  const tried = [
+    ...lockedLevels(global.levels).map((l) => ({ ...l, file: checksFile, where: '.sidestory/checks.json' })),
+    ...lockedLevels(local?.sidestory ?? new Map()).map((l) => ({ ...l, file: ctx.manifestFile, where: 'manifest.json' })),
+  ];
+  for (const t of tried) add(ctx, { severity: 'error', file: t.file, code: 'rule-locked', message: `${t.code} ${t.why}, so it can't be turned down (${t.where}). Remove that line, and fix what it reports instead.` });
   const applied = applyRules(ctx.findings, { global: global.levels, sidestory: local?.sidestory ?? new Map(), anchors: local?.anchors ?? new Map(), ignores, htmlFile: ctx.htmlFile });
-  ctx.findings.splice(0, ctx.findings.length, ...applied.findings);
-  for (const l of applied.locked) add(ctx, { severity: 'error', file: l.where.startsWith('data-explain-ignore') ? ctx.htmlFile : l.where === '.sidestory/checks.json' ? checksFile : ctx.manifestFile, code: 'rule-locked', message: `${l.code} guards the reader's safety and can't be turned down or off (${l.where}); the finding stays. Fix what it reports instead.` });
+  ctx.findings.splice(0, ctx.findings.length, ...applied.findings.map(({ offset: _offset, ...f }) => f));
+  for (const l of applied.locked) add(ctx, { severity: 'error', file: l.where.startsWith('data-explain-ignore') ? ctx.htmlFile : l.where === '.sidestory/checks.json' ? checksFile : ctx.manifestFile, code: 'rule-locked', message: `${l.code} ${lockedWhy(l.code)}, so it can't be turned down (${l.where}); the finding stays. Fix what it reports instead.` });
   for (const u of applied.unusedIgnores) add(ctx, { severity: 'warning', file: ctx.htmlFile, line: u.line, code: 'unused-ignore', message: `data-explain-ignore="${u.codes.join(' ')}" silences nothing here any more: remove it.` });
   if (applied.off.length) report.ignored = applied.off;
 }
@@ -1034,7 +1042,7 @@ export async function main(argv: string[], io: { out: (s: string) => void; err: 
   const staleIds = new Set<string>();
   for (const r of [...(report ? [report] : []), ...others]) {
     for (const f of r.findings) {
-      const id = driftAnchor.get(f);
+      const id = driftAnchor.get(f) ?? f.anchor; // a finding the rules re-levelled is a copy, with its anchor
       if (f.code === 'anchor-stale' && id !== undefined) staleIds.add(`${await real(r.sidestory)}\u0000${id}`);
     }
   }

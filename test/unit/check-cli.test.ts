@@ -875,4 +875,30 @@ describe('the repository\'s rules (.sidestory/checks.json, manifest "checks", da
     const r = await check(dir);
     expect(codes(r)).toEqual(expect.arrayContaining(['code-link-secret', 'rule-locked', 'checks-json']));
   });
+
+  it('on a one-line diagram an exception covers its own element only; an element closed by the next one ends before it', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', diagram(
+        '<g data-explain-on="refill" data-explain-ignore="box-unlinked: legend"><rect width="9" height="9"/><text>Legend</text></g><g data-explain-on="refill"><rect width="9" height="9"/><text>Real</text></g>',
+      )) + section('other', '<p>x</p>')),
+    });
+    const r = await check(dir);
+    expect(r.findings.filter((x) => x.code === 'box-unlinked')).toHaveLength(1);
+    expect(codes(r)).not.toContain('unused-ignore');
+    expect(JSON.stringify(r.findings)).not.toContain('"offset"');
+    const { scanHtml } = await import('../../src/cli/html.ts');
+    expect(scanHtml('<p data-explain-ignore="x: y">one\n<p>two</p>').ignores.map((i) => [i.line, i.endLine])).toEqual([[1, 1]]);
+  });
+
+  it('turning a locked rule off is an error even when nothing fires', async () => {
+    const dir = repoWith({
+      'src/a.ts': CODE,
+      '.sidestory/checks.json': '{ "rules": { "secret-file": "off" } }',
+      '.sidestory/demo/manifest.json': manifest(ANCHORS),
+      '.sidestory/demo/sidestory.html': page(section('refill', '<p>x</p>') + section('other', '<p>x</p>')),
+    });
+    expect(codes(await check(dir), 'error')).toContain('rule-locked');
+  });
 });

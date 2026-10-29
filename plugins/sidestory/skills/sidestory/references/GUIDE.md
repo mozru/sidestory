@@ -400,7 +400,12 @@ The checker's findings are errors, warnings or info. The repository decides how 
 | One step | its anchor in the manifest | `"refill": { "file": "…", "range": […], "checks": { "anchor-changed": "off" } }` |
 | One element | the page | `<g data-explain-ignore="box-unlinked: legend, not code">` |
 
-A level is `"error"`, `"warning"`, `"info"` or `"off"`; the rule names are the codes the checker prints. An error makes the checker exit with 1, so it fails CI and an agent's run. An element's exception only turns rules off, inside that element; it needs a reason after the colon (the checker warns without one, and when it no longer silences anything), and the report's last line counts what was ignored and why. A few rules guard the reader rather than the page (`code-link-secret`, `secret-file`, `outside-folder`, `pin-needs-consent`): no level lowers them, and trying is an error (`rule-locked`).
+A level is `"error"`, `"warning"`, `"info"` or `"off"`; the rule names are the codes the checker prints. An error makes the checker exit with 1, so it fails CI and an agent's run. VS Code's Problems panel uses the same levels for widget diagnostics.
+
+- **A step's `"checks"`** take the findings about its code: `anchor-lost`, `anchor-stale`, `anchor-changed`, `anchor-unchecked`. Other rules go in the manifest's or the repository's.
+- **An element's exception** only turns rules off, for that element and what's inside it. It needs a reason after the colon; the checker warns without one, and when it no longer silences anything. The report's last line counts what was ignored and why.
+- **Some rules can't be turned down**, and trying is an error (`rule-locked`): those that guard the reader (`code-link-secret`, `secret-file`, `outside-folder`, `pin-needs-consent`, `bad-specifier`, `dynamic-import`), errors that mean the page or a widget doesn't load (a manifest VS Code rejects, a widget that doesn't compile), and the rules' own findings (`checks-json`, `ignore-no-reason`, `unused-ignore`…). A passing check means the page works.
+- **Branch coverage** (`--coverage`) isn't affected: its findings and its exit code stay as they are, so the rules can't hide an unexplained change. A changed `.sidestory/checks.json` counts as a change on the branch, like any file.
 
 `box-unlinked` (a warning) is a diagram part that lights up on a step (`data-explain-on`, inside an `<svg>`) with no code link on it or around it, so a reader can't click it to see its code.
 

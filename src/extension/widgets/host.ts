@@ -9,6 +9,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import * as vscode from 'vscode';
 import type { Anchor, LineRange, Manifest, Quote } from '../../core/manifest.ts';
 import { parseManifest } from '../../core/manifest.ts';
+import { manifestLevels, parseChecksFile, severityFor, type Severity } from '../../core/check-rules.ts';
 import type { Resolution } from '../../core/resolve.ts';
 import { splitLines } from '../../core/text.ts';
 import type { FromWebview, ToWebview, WidgetBuild, WidgetGate } from '../../shared/protocol.ts';
@@ -442,6 +443,13 @@ export class WidgetHost implements vscode.Disposable {
     })();
   }
 
+  /** `.sidestory/checks.json`'s levels and the manifest's own (bad entries are the checker's to report). */
+  private async ruleLevels(ref: ExplainerRef): Promise<{ global: Map<string, Severity | 'off'>; sidestory: Map<string, Severity | 'off'> }> {
+    const checks = await readInside(vscode.Uri.joinPath(ref.dir, '..', 'checks.json'), ref.root, 256 * 1024, true);
+    const manifest = await readInside(vscode.Uri.joinPath(ref.dir, 'manifest.json'), ref.root, 1024 * 1024, true);
+    return { global: checks === undefined ? new Map() : parseChecksFile(checks).levels, sidestory: manifest === undefined ? new Map() : manifestLevels(manifest).sidestory };
+  }
+
   /** Diagnostics for an explainer's widgets (compiling runs nothing, so it needs no consent; not in Restricted Mode). */
   async check(ref: ExplainerRef, html?: string): Promise<CompileResult[]> {
     html ??= (await readInside(htmlUri(ref), ref.root, MAX_HTML_BYTES)) ?? '';
@@ -460,12 +468,17 @@ export class WidgetHost implements vscode.Disposable {
       d.source = 'Sidestory';
       add(htmlUri(ref), d);
     }
+    // The repository's rule levels, as the checker applies them (its file and the manifest's own "checks").
+    const levels = await this.ruleLevels(ref);
+    const vsSeverity: Record<Severity, vscode.DiagnosticSeverity> = { error: vscode.DiagnosticSeverity.Error, warning: vscode.DiagnosticSeverity.Warning, info: vscode.DiagnosticSeverity.Information };
     for (const r of results) {
-      for (const [list, severity] of [[r.errors, vscode.DiagnosticSeverity.Error], [r.warnings, vscode.DiagnosticSeverity.Warning]] as const) {
+      for (const [list, base] of [[r.errors, 'error'], [r.warnings, 'warning']] as const) {
         for (const e of list) {
+          const level = e.code ? severityFor(e.code, base, levels) : base;
+          if (!level) continue; // off
           const line = Math.max(0, (e.line ?? 1) - 1);
           const col = Math.max(0, (e.column ?? 1) - 1);
-          const d = new vscode.Diagnostic(new vscode.Range(line, col, line, col + 1000), e.message, severity);
+          const d = new vscode.Diagnostic(new vscode.Range(line, col, line, col + 1000), e.message, vsSeverity[level]);
           d.source = 'Sidestory';
           d.code = e.code;
           add(vscode.Uri.joinPath(ref.dir, e.file), d);
