@@ -6,6 +6,7 @@
 - Clicking a box in a widget's diagram (or its own next / previous buttons) no longer scrolls the page away to that step's text: the step becomes current and its code shows in the editor, while the page stays on the diagram you're using.
 - New **This Sidestory** view under Sidestories: where the panel is in a hierarchy of sidestories, with the way up, the details below and the ones beside it, one click each. It follows the panel as you dive in, go back or switch panels.
 - **This branch** is now off by default (`sidestory.sidebar.thisBranch` turns it on), so the Sidestories view is for finding sidestories; when on, it shows a branch's sidestories as their hierarchy, each detail under its overview.
+- An agent can watch for comments without Claude Code's channels (which many work accounts block): `check.cjs threads --watch --json` prints a line for each of your comments that waits for an answer, and the Claude Code skill says to run it in the background when you ask Claude to watch for comments.
 - Comments say what they're about. In the editor, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> (or right-click → **Comment on These Lines**, now offered without a selection too) comments on the selected lines or the cursor's line. In the panel, <kbd>C</kbd> / <kbd>A</kbd> with text selected start the comment with it quoted, and Claude gets the step's title and the lines it explains.
 
 ## 0.2.8 (2026-10-28)

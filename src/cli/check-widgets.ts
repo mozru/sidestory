@@ -870,6 +870,7 @@ const USAGE = [
   '                      [--coverage [--base <ref>] [--committed | --head <sha>] [--new-id]]',
   '       node check.cjs --coverage --base <ref> [--committed | --head <sha>] [--repo <dir>] [--new-id] [--json]',
   '       node check.cjs threads [<root>] [--waiting] [--all] [--json]',
+  '       node check.cjs threads [<root>] --watch [--json]',
   'exit codes: 0 clean; 1 errors; 2 usage or crash; 3 (--coverage) no errors, but some change isn\'t explained or marked trivial',
 ].join('\n');
 const bundleDir = typeof __dirname === 'string' ? __dirname : undefined;

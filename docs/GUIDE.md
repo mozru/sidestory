@@ -581,6 +581,8 @@ These tools only read and write thread files; edits Claude makes still ask as us
 
 **Other agents** (Codex, Cursor): **Sidestory: Copy MCP Server Config** copies a server entry with the tools (no push); then ask the agent to answer the waiting comments. Without MCP, `node <extension>/dist/check.cjs threads --waiting --json` lists them.
 
+**Without channels** (work accounts often block them): ask Claude, in the session that wrote the sidestory, to watch for your comments. With the Sidestory skill it runs `node <extension>/dist/check.cjs threads --watch --json` in the background, which prints a line for each comment of yours that waits for an answer (your questions still unanswered when it starts, then each new comment), and answers each one in its thread.
+
 Comments from other people, and anything from the repository, reach Claude only when it reads them, labelled as theirs; [SECURITY.md](../SECURITY.md#comments-and-claude) has the details.
 
 ## Settings
