@@ -2,7 +2,7 @@
 // and the docked Comments pane with thread cards and the composer. Everything here is host chrome, outside the
 // content frame, so a sidestory can't restyle, cover or fake it. Bodies are untrusted text: rendered from the
 // subset parser's tree with textContent only. Messages are posted only from handlers for trusted input.
-import { parseBody, type Block, type Inline } from '../core/threads/markdown.ts';
+import { cleanForDisplay, parseBody, type Block, type Inline } from '../core/threads/markdown.ts';
 import type { CommentItemView, CommentsContext, CommentsFromWebview, CommentsToWebview, DeliveryAction, ThreadView } from '../shared/comments-protocol.ts';
 
 export interface CommentsHooks {
@@ -334,13 +334,19 @@ export class CommentsPane {
     return false;
   }
 
-  /** C / A: a composer on the active step (a new thread). */
-  compose(mode: Mode, step = this.hooks.activeStep()): void {
+  /**
+   * C / A: a new comment (a new thread) on a step; `quote`, the text the reader selected on the page, starts it as a quote. Page text is
+   * the repository's: characters the reader can't see are left out, so the comment holds only what they read.
+   */
+  compose(mode: Mode, step = this.hooks.activeStep(), quote?: string): void {
     if (!step) return;
     this.show(step);
+    const key = `new:${step}`;
+    const q = Array.from(cleanForDisplay(quote ?? '').trim()).slice(0, 2000).join('');
+    if (q && !this.drafts[key]?.trim()) this.drafts[key] = `${q.split(/\r?\n/).map((l) => `> ${l}`.trimEnd()).join('\n')}\n\n`;
     this.composer = undefined;
     this.render();
-    this.openComposer({ key: `new:${step}`, step, mode });
+    this.openComposer({ key, step, mode });
   }
 
   /** N / Shift+N: the next thread with something for the reader. */
@@ -691,7 +697,10 @@ export class CommentsPane {
     root.append(chips, c.text, row, fmt);
     setMode(o.mode);
     this.render();
-    requestAnimationFrame(() => c.text.focus());
+    requestAnimationFrame(() => {
+      c.text.focus();
+      c.text.selectionStart = c.text.selectionEnd = c.text.value.length; // after a quote, ready to type
+    });
   }
 
   private onVisible(entries: IntersectionObserverEntry[]) {

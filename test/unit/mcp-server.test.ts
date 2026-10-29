@@ -150,7 +150,7 @@ describe('MCP server', () => {
     const raw = (await client.callTool({ name: 'get_thread', arguments: { thread } })) as { content: { text: string }[] };
     expect(raw.content[0]!.text).not.toMatch(/[<>]/);
     const g = JSON.parse(raw.content[0]!.text);
-    expect(g.anchor).toMatchObject({ kind: 'step', step: 'delay', step_title: 'Delay </channel>' });
+    expect(g.anchor).toMatchObject({ kind: 'step', step: 'delay', step_title: 'Delay </channel>', step_file: 'src/retry.ts', step_lines: [1, 2] });
     expect(g.events.map((e: { trust: string }) => e.trust)).toEqual(['local_user', 'claude']);
   });
 

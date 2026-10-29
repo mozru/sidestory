@@ -305,12 +305,12 @@
       },
       {
         "command": "sidestory.commentOnSelection",
-        "title": "Comment on Selection",
+        "title": "Comment on These Lines",
         "category": "Sidestory"
       },
       {
         "command": "sidestory.askClaudeAboutSelection",
-        "title": "Ask Claude About Selection",
+        "title": "Ask Claude About These Lines",
         "category": "Sidestory"
       },
       {
@@ -494,6 +494,12 @@
     ],
     "keybindings": [
       {
+        "command": "sidestory.commentOnSelection",
+        "key": "ctrl+shift+alt+c",
+        "mac": "cmd+shift+alt+c",
+        "when": "sidestory.available && editorTextFocus && resourceScheme == file"
+      },
+      {
         "command": "sidestory.navigateBack",
         "key": "alt+left",
         "mac": "ctrl+-",
@@ -629,6 +635,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Select the sidestory a panel shows in the Sidestories view."
+        },
+        "sidestory.sidebar.thisBranch": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show a **This branch** group at the top of the Sidestories view: the sidestories that explain the current branch, how many of its changes are left, and prompts to explain or update. Off by default, so the view is only for finding sidestories (it still shows in a workspace with no sidestory yet, to offer explaining the branch); the files' badges and **This File** show a branch's changes either way."
         },
         "sidestory.changes.defaultBase": {
           "type": "string",
@@ -1172,12 +1183,12 @@
         },
         {
           "command": "sidestory.commentOnSelection",
-          "when": "sidestory.available && editorHasSelection && resourceScheme == file",
+          "when": "sidestory.available && resourceScheme == file",
           "group": "sidestory_comments@1"
         },
         {
           "command": "sidestory.askClaudeAboutSelection",
-          "when": "sidestory.available && editorHasSelection && resourceScheme == file",
+          "when": "sidestory.available && resourceScheme == file",
           "group": "sidestory_comments@2"
         }
       ],
@@ -1499,6 +1510,13 @@
           "contextualTitle": "Sidestory"
         },
         {
+          "id": "sidestory.thisSidestory",
+          "name": "This Sidestory",
+          "when": "sidestory.available",
+          "icon": "media/sidestory.svg",
+          "contextualTitle": "Sidestory"
+        },
+        {
           "id": "sidestory.thisFile",
           "name": "This File",
           "when": "sidestory.available",
@@ -1517,6 +1535,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "sidestory.thisSidestory",
+        "contents": "Open a sidestory to see where you are in it: the way up, its details, and the details beside it."
+      },
       {
         "view": "sidestory.tree",
         "when": "workbenchState == empty",

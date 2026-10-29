@@ -75,7 +75,7 @@ if (!only || only === 'changes') {
   execFileSync(process.execPath, [join(root, 'test/fixtures/git-repo.mjs'), workspace, '--many', String(generated)]);
   const userData = join(base, 'user-data');
   mkdirSync(join(userData, 'User'), { recursive: true });
-  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never' }));
+  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never', 'sidestory.sidebar.thisBranch': true }));
   console.log(`\n== desktop VS Code ${version}, ${process.platform}, branch comparison ==`);
   try {
     await runTests({
@@ -99,7 +99,7 @@ if (!only || only === 'diffsteps') {
   execFileSync(process.execPath, [join(root, 'test/fixtures/git-repo.mjs'), workspace, '--explained']);
   const userData = join(base, 'user-data');
   mkdirSync(join(userData, 'User'), { recursive: true });
-  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never' }));
+  writeFileSync(join(userData, 'User', 'settings.json'), JSON.stringify({ 'window.zoomLevel': -2, 'workbench.startupEditor': 'none', 'git.openRepositoryInParentFolders': 'never', 'sidestory.sidebar.thisBranch': true }));
   console.log(`\n== desktop VS Code ${version}, ${process.platform}, steps in diff editors ==`);
   try {
     await runTests({

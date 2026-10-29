@@ -109,7 +109,7 @@ Not documented, settled by the spike (§14.2.1, Claude Code 2.1.306):
 
 **A plain comment for the team:** **C** instead of **A**, then **Share** on the thread. Nothing is sent to Claude.
 
-**Commenting on code:** select lines, then the Comments gutter **+** (on lines a step covers), **Sidestory: Comment on Selection** or **Sidestory: Ask Claude About Selection**. A native comment thread opens (§7), and the panel lists it under the step whose anchor covers those lines.
+**Commenting on code:** select lines, then the Comments gutter **+** (on lines a step covers), **Sidestory: Comment on These Lines** or **Sidestory: Ask Claude About These Lines**. A native comment thread opens (§7), and the panel lists it under the step whose anchor covers those lines.
 
 **No channel:** the send shows "No Claude session with Sidestory's channel is running here" with **Copy Prompt** and **How to Turn It On** (§9.8, §10.1). A session whose channel the extension can't detect is offered in a picker, marked "channel not detected".
 
@@ -360,12 +360,12 @@ The parser has a fuzz test (§13.1): any input yields only the allowed node type
 
 **Decision: use the Comments API** (`comments.createCommentController('sidestory', 'Sidestory')`) for code threads: the gutter **+**, inline thread widgets, the Comments panel, keyboard navigation (`workbench.action.addComment`, next/previous comment thread) and accessibility, as reviewers know them from the GitHub Pull Requests extension.
 
-- **Commenting ranges** (`commentingRangeProvider`): the lines of a document covered by any step (the index's interval table), on `file:` documents and both sides of diff editors (including `sidestory-git:` documents in review mode), **plus the current selection** when the user runs Comment on Selection. Elsewhere the **+** doesn't appear.
+- **Commenting ranges** (`commentingRangeProvider`): the lines of a document covered by any step (the index's interval table), on `file:` documents and both sides of diff editors (including `sidestory-git:` documents in review mode), **plus the current selection** when the user runs Comment on These Lines. Elsewhere the **+** doesn't appear.
 - **Coexisting with the GitHub Pull Requests extension:** it claims every line of a PR's changed files, and where both claim a line, VS Code asks which provider to use at each **+**. To keep that rare, Sidestory claims only step-covered lines by default. The setting `sidestory.comments.ranges` (`steps` default \| `changes`, adding every line of files in the current Changes comparison \| `everywhere`, any `file:` document) widens it; the `changes` and `everywhere` descriptions say they overlap the GitHub extension. The GUIDE documents the picker.
 - **Threads shown in the editor:** code threads only. A step's threads show as a count on its Explained-here CodeLens, which opens the pane at that step.
 - **Thread properties:** `label` is the target and delivery state ("Asked Claude · waiting" / "Claude replied"); `state` Resolved or Unresolved; `contextValue` combines flags (`sidestory:open:local:waiting:askOnly`), so menus are `when`-filtered; `canReply` is false for threads read from git in review mode (§8.2).
 - **Comments:** `author.name` from the event (cleaned); `author.iconPath` our Claude icon only for `claude`-trust events; `label` "local", "shared" or "from the repository"; `body` a `MarkdownString` with `isTrusted: false`, `supportHtml: false`, `supportThemeIcons: false`, built from the subset of §6.5 with every text piece escaped **and autolinks broken** (§12.4); `mode` Preview, Editing for your own comments.
-- **The reply box buttons** (`comments/commentThread/context`), in this order: **Comment**, then **Ask Claude**. Ctrl/Cmd+Enter in the reply box runs the first, so the key always comments. **Ask Claude About Selection** creates its thread with the `askOnly` flag in `contextValue`, whose `when` clause hides Comment on that new thread, so its only button (and its Ctrl/Cmd+Enter) is Ask Claude. Ask Claude from the editor uses the composer's defaults (Answer only, the routed session); the thread title's `⋯` offers **Ask Claude and Let It Edit…** and **Ask Claude in Session…**.
+- **The reply box buttons** (`comments/commentThread/context`), in this order: **Comment**, then **Ask Claude**. Ctrl/Cmd+Enter in the reply box runs the first, so the key always comments. **Ask Claude About These Lines** creates its thread with the `askOnly` flag in `contextValue`, whose `when` clause hides Comment on that new thread, so its only button (and its Ctrl/Cmd+Enter) is Ask Claude. Ask Claude from the editor uses the composer's defaults (Answer only, the routed session); the thread title's `⋯` offers **Ask Claude and Let It Edit…** and **Ask Claude in Session…**.
 - **The thread title** (`comments/commentThread/title`): Resolve / Reopen, Share / Make Local, Show in Sidestory, Copy Prompt. **Each comment** (`comments/comment/title`): Edit, Delete (writes `retract`), Send to Claude Again.
 - **Positions** come from the resolver (§4.2): a thread whose code moved moves with it; one whose code is lost shows at its last line with "Code not found" in its label.
 
@@ -501,7 +501,7 @@ All tools validate input with zod, read only inside the server's repositories (r
 |---|---|---|
 | `reply` | `thread`, `text` (≤ 8,000), `nonce?`, `in_reply_to?`, `edited?` (≤ 20 `step:<id>` or safe paths), `resolve_suggested?` | A `nonce` this server pushed counts as an `ack` too (seen, `confirmed`), so a quick answer that skipped `ack` still confirms the channel. Writes a `comment` event by `{ kind: "claude" }` (or `"agent"` for non-Claude clients, §5.1) into the thread's folder, wherever it lives; records it in the ledger as that kind. Returns `{ event }`. Refuses unknown threads, read-only review threads read from git, and repositories it doesn't serve. |
 | `ack` | `thread`, `nonce` | Called first, as the push asks (one cheap call that makes "Claude is on it" reliable). Records `seen/<sendId>` for the send with that nonce and marks this server's channel `confirmed` (§9.8). Returns `{ ok }`. An unknown nonce is accepted and ignored. |
-| `get_thread` | `thread` | `{ thread, sidestory, state, anchor: { kind, step?, step_title?, file?, lines?, side?, code_state? }, events: [{ id, at, trust, author, kind, body }] }`, newest 50 events (with `more` and a `before` cursor). Anchor fields are repository data (§3.4 rule 6). |
+| `get_thread` | `thread` | `{ thread, sidestory, state, anchor: { kind, step?, step_title?, step_file?, step_lines?, step_side?, file?, lines?, side?, code_state? }, events: [{ id, at, trust, author, kind, body }] }`, newest 50 events (with `more` and a `before` cursor). Anchor fields are repository data (§3.4 rule 6). |
 | `list_threads` | `status?` (`waiting_for_claude` default \| `open` \| `all`), `sidestory?`, `limit?` (≤ 50), `cursor?` | Summaries: `{ thread, sidestory, anchor (short), state, waiting_for_claude, last: { trust, author, excerpt (≤ 200) } }`. `waiting_for_claude`: a `local_user` comment with `to: "claude"` and no later `claude`-trust reply. |
 
 - **Claude never resolves** a thread; `resolve_suggested` shows a one-click Resolve to the reader.
@@ -698,7 +698,7 @@ In the panel (when focus isn't in a text field), next to `J`/`K`:
 
 In the pane, Tab and Shift+Tab move between threads and their controls; each card is a labelled region named by its target. `F6` moves focus between the content and the pane.
 
-Commands (palette; no default keybindings, so nothing collides): **Sidestory: Comment on Selection**, **Ask Claude About Selection**, **Next Comment for You** / **Previous**, **Show Comments**, **Copy Claude Command with Comments**, **Copy MCP Server Config**. VS Code's `workbench.action.addComment` and next/previous comment thread work on code threads.
+Commands (palette): **Sidestory: Comment on These Lines** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> in a file's editor; <kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> is the Find widget's Match Case on macOS), **Ask Claude About These Lines**, **Next Comment for You** / **Previous**, **Show Comments**, **Copy Claude Command with Comments**, **Copy MCP Server Config**. VS Code's `workbench.action.addComment` and next/previous comment thread work on code threads.
 
 ---
 
@@ -723,8 +723,8 @@ What's new: text written by other people, stored in the repository, shown in the
 ### 12.3 Who can send
 
 - The send buttons are in host chrome (panel) or native UI (Comments API), and the panel posts sends only from its own handlers for trusted events, like `openCode` (§6.6). Sidestory content runs no script and widgets can't reach the host's handlers, so a sidestory can't send a comment or change its text, mode, intent or session.
-- Nothing is pre-filled from repository text. The chips show exactly what's attached.
-- Other extensions can run our commands: **Ask Claude About Selection** takes no text (it opens the thread); hidden commands take ids from our store only.
+- Nothing is pre-filled from repository text except what the reader selected on the page before pressing C or A: quoted, with characters they can't see (controls, zero-width, bidi, tags) left out, on the step that holds it, and editable before sending. The chips show exactly what's attached.
+- Other extensions can run our commands: **Ask Claude About These Lines** takes no text (it opens the thread); hidden commands take ids from our store only.
 
 ### 12.4 Rendering
 

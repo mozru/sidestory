@@ -3,7 +3,7 @@
 import { join } from 'node:path';
 import { displayText } from '../core/display-text.ts';
 import { outlineHtml } from '../core/html-scan.ts';
-import { type Anchor } from '../core/manifest.ts';
+import { anchorParts, parseManifest, type Anchor } from '../core/manifest.ts';
 import { resolveAnchor } from '../core/resolve.ts';
 import { authorLabel, type Thread } from '../core/threads/reduce.ts';
 import { CAPS, type CodeAnchor } from '../core/threads/schema.ts';
@@ -85,6 +85,33 @@ async function stepTitle(root: string, sidestory: string | undefined, step: stri
   }
 }
 
+/**
+ * The code a step explains (its anchor's first part), where it is now: so an agent reading a step's thread knows
+ * which lines the reader was looking at. Base-side code (a removed line) says so. Undefined when the manifest or the
+ * anchor can't be read.
+ */
+async function stepCode(root: string, sidestory: string | undefined, step: string): Promise<{ file: string; lines: [number, number]; side: 'head' | 'base' } | undefined> {
+  if (!sidestory) return undefined;
+  try {
+    const p = join(root, '.sidestory', sidestory, 'manifest.json');
+    if (!(await realInside(p, root))) return undefined;
+    const text = await readSmall(p, 5_000_000);
+    if (text === undefined) return undefined;
+    const parsed = parseManifest(text);
+    const a = parsed.ok ? parsed.manifest.anchors.get(step) : undefined;
+    if (!a) return undefined;
+    const part = anchorParts(a)[0];
+    const side = part.side === 'base' ? 'base' : 'head';
+    const lines: [number, number] = [part.range.start, part.range.end];
+    if (side === 'base' || !part.quote) return { file: part.file, lines, side };
+    // Head-side code moves as the file is edited: resolved like a code thread's quote.
+    const r = await resolveCode(root, { kind: 'code', file: part.file, side: 'head', quote: { exact: part.quote.exact, prefix: part.quote.prefix, suffix: part.quote.suffix }, range: lines });
+    return { file: part.file, lines: r.lines ?? lines, side };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Where a code thread's quote is now, with the core resolver (exact, moved, changed, stale, lost). */
 export async function resolveCode(root: string, a: CodeAnchor): Promise<{ state: string; lines?: [number, number] }> {
   const p = join(root, ...a.file.split('/'));
@@ -105,6 +132,8 @@ export async function threadDetail(e: ThreadEntry, limit = 50, before?: string):
     anchor.step = a.step;
     const title = await stepTitle(e.files.root, ss, a.step);
     if (title) anchor.step_title = title;
+    const code = await stepCode(e.files.root, ss, a.step);
+    if (code) Object.assign(anchor, { step_file: code.file, step_lines: code.lines, ...(code.side === 'base' ? { step_side: 'base' } : {}) });
   } else {
     const r = await resolveCode(e.files.root, a);
     Object.assign(anchor, { file: a.file, lines: r.lines ?? a.range, side: a.side, code_state: r.state });

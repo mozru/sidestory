@@ -3,8 +3,10 @@
 // paths). A filter shows each match once, under its primary path. Labels are repository text: cleaned when
 // indexed, never escaped here (tree items render no icon syntax), and tooltips are plain strings.
 //
-// On a branch, a "This branch" group comes first (docs/CHANGES-PLAN.md §9.6): the sidestories that explain the
-// branch with their coverage, and the copied prompts (update one, or explain the branch when none does).
+// With `sidestory.sidebar.thisBranch` on, a "This branch" group comes first on a branch (docs/CHANGES-PLAN.md §9.6):
+// the sidestories that explain the branch with their coverage, and the copied prompts (update one, or explain the
+// branch when none does). Off by default, so the view is for finding sidestories, but shown in a workspace with no
+// sidestory yet, where it offers to explain the branch.
 import * as vscode from 'vscode';
 import { displayText } from '../../core/display-text.ts';
 import { MAX_TRAIL } from '../../shared/protocol.ts';
@@ -58,6 +60,10 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
     this.subscriptions.push(
       this.emitter,
       index.onDidChange(() => this.refresh()),
+      index.onDidChangeState(() => this.refresh()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('sidestory.sidebar.thisBranch')) this.refresh();
+      }),
       drift.onDidChange((key) => {
         for (const n of this.byEntry.get(key) ?? []) this.emitter.fire(n);
       }),
@@ -158,6 +164,8 @@ export class SidestoryTree implements vscode.TreeDataProvider<TreeNode>, vscode.
 
   /** The "This branch" group, when it has rows. Not filtered: it is about the branch, not a match. */
   private branchNode(): TreeNode | undefined {
+    // Off unless asked for, except in a workspace with no sidestory yet: there it is how a branch gets its first one.
+    if (this.index.state !== 'empty' && !vscode.workspace.getConfiguration('sidestory').get<boolean>('sidebar.thisBranch', false)) return undefined;
     const g = this.branch?.branchGroup();
     if (!g?.rows.length) return undefined;
     // Not through `make`: its rows change with coverage, and a cached node would keep the old ones.

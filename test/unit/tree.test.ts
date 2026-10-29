@@ -1,9 +1,9 @@
 // The Sidestories view's items (docs/NAVIGATION-PLAN.md §8.2–§8.3): "also under" names the other place, leaves
 // nested too deep open on the primary path, and Start here is revealed where it is listed.
 import { rmSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { story, tempRoot } from './nav-fixtures.ts';
-import { Uri, workspace } from './vscode-stub.ts';
+import { config, Uri, workspace } from './vscode-stub.ts';
 
 vi.mock('vscode', () => import('./vscode-stub.ts'));
 
@@ -74,8 +74,13 @@ describe('the Sidestories tree', () => {
       return { folder: n, title: e.title, base: 'main', dir: e.ref.dir.toString(), totals };
     });
     tree.branch = { branchGroup: () => ({ description: undefined, rows: branchRows({ belonging, totals, hasChanges: true, suggest: true }) }) };
+    // Off by default: the view is for finding sidestories.
+    expect(tree.getChildren().map((n) => label(tree, n))).not.toContain('This branch');
+    config['sidestory.sidebar.thisBranch'] = true;
+    onTestFinished(() => void delete config['sidestory.sidebar.thisBranch']);
     tree.refresh();
     const group = tree.getChildren()[0]!;
+    expect(label(tree, group)).toBe('This branch');
     const names = (n: Node) => tree.getChildren(n).map((c) => label(tree, c));
     expect(names(group)).toEqual(['Other', 'Overview', 'Copy Prompt: Update the Sidestory for New Changes']);
     const overview = tree.getChildren(group)[1]!;

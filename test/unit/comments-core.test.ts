@@ -208,6 +208,11 @@ describe('what reaches Claude', () => {
   });
   it('adds the follow-up, edit and review lines, and caps the length', () => {
     expect(channelContent({ ...base, followUp: 2 })).toContain('follow-up in a thread with 2 earlier comments');
+    // A step comment (no lines of its own) points at get_thread for the step's title and code; once.
+    const step = channelContent({ ...base, target: { step: 'delay' } });
+    expect(step).toContain('The comment is on a step; mcp__plugin_sidestory-comments_sidestory__get_thread gives its title and the code it explains.');
+    expect(channelContent(base)).not.toContain('The comment is on a step');
+    expect(channelContent({ ...base, target: { step: 'delay' }, followUp: 2 })).not.toContain('The comment is on a step');
     expect(channelContent({ ...base, intent: 'edit' })).toContain("You may edit the sidestory named in this event's sidestory attribute");
     expect(channelContent({ ...base, intent: 'edit' })).not.toContain('retry-jitter');
     expect(channelContent({ ...base, mode: 'review' })).toContain('git show');

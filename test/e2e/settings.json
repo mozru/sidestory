@@ -12,5 +12,6 @@
   "workbench.secondarySideBar.defaultVisibility": "hidden",
   "workbench.welcomePage.walkthroughs.openOnInstall": false,
   "git.openRepositoryInParentFolders": "never",
-  "workbench.colorTheme": "Default Dark Modern"
+  "workbench.colorTheme": "Default Dark Modern",
+  "sidestory.sidebar.thisBranch": true
 }

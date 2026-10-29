@@ -99,7 +99,9 @@ export function channelContent(p: PushInput): string {
     p.followUp > 0
       ? `This is a follow-up in a thread with ${Math.min(p.followUp, 999)} earlier comment${p.followUp === 1 ? '' : 's'}; read it with ${toolName('get_thread')} first.\n`
       : '';
-  const tail = `${follow}${intentLine(p)} Reply with ${toolName('reply')} (thread "${t}"). First call ${toolName('ack')} with thread "${t}" and nonce "${nonce}", then work, then reply with the same nonce. Keep your terminal output to one line; put the answer in the reply. Claude Code's permission rules apply as usual.`;
+  // A step comment carries only the step's id: the step's title and the lines it explains are in get_thread.
+  const where = p.followUp > 0 || !p.target.step || p.target.file ? '' : `The comment is on a step; ${toolName('get_thread')} gives its title and the code it explains.\n`;
+  const tail = `${follow}${where}${intentLine(p)} Reply with ${toolName('reply')} (thread "${t}"). First call ${toolName('ack')} with thread "${t}" and nonce "${nonce}", then work, then reply with the same nonce. Keep your terminal output to one line; put the answer in the reply. Claude Code's permission rules apply as usual.`;
   const head = 'Sidestory comment sent from VS Code by the user at this machine:\n\n';
   const room = MAX_CONTENT - head.length - tail.length - 4;
   const text = p.text.length > room ? `${p.text.slice(0, Math.max(0, room - 1))}…` : p.text;

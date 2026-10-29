@@ -1873,8 +1873,13 @@ function onKey(e: KeyboardEvent): void {
   if (e.key === 'j') step(1);
   else if (e.key === 'k') step(-1);
   // Comments (docs/COMMENTS-PLAN.md §11.3).
-  else if (e.key.toLowerCase() === 'c' && e.isTrusted) comments?.compose('comment');
-  else if (e.key.toLowerCase() === 'a' && e.isTrusted) comments?.compose('ask');
+  else if ((e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'a') && e.isTrusted) {
+    // Text selected in a step starts the comment, on that step; with none, the comment is on the current step.
+    const sel = frame.getSelection();
+    const at = sel && !sel.isCollapsed && sel.anchorNode ? (sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement) : null;
+    const inStep = at ? steps.find((s) => s.el.contains(at)) : undefined;
+    comments?.compose(e.key.toLowerCase() === 'c' ? 'comment' : 'ask', inStep?.id ?? activeStepId(), inStep ? sel!.toString() : undefined);
+  }
   else if (e.key.toLowerCase() === 't' && e.isTrusted) comments?.toggle();
   else if ((e.key === 'n' || e.key === 'N') && e.isTrusted) comments?.next(e.shiftKey ? -1 : 1);
   else return;

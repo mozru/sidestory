@@ -63,7 +63,7 @@ export class CommentsController implements vscode.Disposable {
   private readonly icon: vscode.Uri;
   private refreshing: Promise<void> | undefined;
   private again = false;
-  /** Lines the user selected for Comment on Selection: commentable even outside steps. */
+  /** Lines the user picked for Comment on These Lines: commentable even outside steps. */
   private expandNext: string | undefined;
   private selection: { key: string; range: vscode.Range } | undefined;
 
@@ -107,16 +107,25 @@ export class CommentsController implements vscode.Disposable {
     return out;
   }
 
-  /** Comment on Selection / Ask Claude About Selection: makes the selection commentable and opens a thread there. */
+  /** Comment on These Lines / Ask Claude About These Lines: makes the selected lines (or the cursor's) commentable and opens a thread there. */
   async commentOnSelection(ask: boolean): Promise<void> {
     const ed = vscode.window.activeTextEditor;
     if (!ed || ed.document.uri.scheme !== 'file') {
       // A diff's old side (and HEAD's, with includeUncommitted off) is a read-only version from git: no comments there.
-      void vscode.window.showInformationMessage(ed?.document.uri.scheme === 'sidestory-git' ? "This is a read-only version from git. Comments go on the file as it is in your working tree: select the lines there." : 'Select lines in a file first.');
+      void vscode.window.showInformationMessage(ed?.document.uri.scheme === 'sidestory-git' ? "This is a read-only version from git. Comments go on the file as it is in your working tree: select the lines there." : 'Put the cursor on code in a file first.');
       return;
     }
     const sel = ed.selection;
-    const range = new vscode.Range(sel.start.line, 0, sel.end.line, 0);
+    // A selection that ends at the start of a line (Shift+Down, a triple-click) doesn't take that line.
+    const end = !sel.isEmpty && sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line - 1 : sel.end.line;
+    // Refused now, not after the reader has typed: blank lines only, or more than a comment can pin.
+    const lines = splitLines(ed.document.getText());
+    const trimmed = trimBlankLines(lines, { start: sel.start.line + 1, end: end + 1 });
+    if (!trimmed || !pinQuote(lines, trimmed)) {
+      void vscode.window.showInformationMessage(trimmed ? 'Those lines are too many for one comment: select fewer.' : 'Those lines are blank: put the cursor on code.');
+      return;
+    }
+    const range = new vscode.Range(sel.start.line, 0, end, 0);
     this.selection = { key: uriKey(ed.document.uri), range };
     // Re-register the provider so VS Code asks for ranges again, then open a new thread on the selection.
     this.controller.commentingRangeProvider = { provideCommentingRanges: (doc) => this.ranges(doc) };

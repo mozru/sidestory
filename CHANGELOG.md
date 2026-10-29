@@ -4,7 +4,9 @@
 
 - Resting the pointer on a link or a diagram box now lights up its code in the editor instead of showing a snippet (`sidestory.hoverPreview` is `editor` by default; `card` brings the snippet back). The lines get a mark in the scrollbar, and when they're out of view a faint arrow at the editor's edge points at them; when no editor shows the file, a note by the link says so. Nothing opens, and focus, the cursor and the step stay put. New setting `sidestory.hoverReveal` (off by default; `hoverReveal` in a manifest's `highlight`) scrolls the editor to the lines while you hover, and back when you move on.
 - Clicking a box in a widget's diagram (or its own next / previous buttons) no longer scrolls the page away to that step's text: the step becomes current and its code shows in the editor, while the page stays on the diagram you're using.
-- **This branch** in the Sidestories view shows a branch's sidestories as their hierarchy, each detail under its overview, instead of one flat list.
+- New **This Sidestory** view under Sidestories: where the panel is in a hierarchy of sidestories, with the way up, the details below and the ones beside it, one click each. It follows the panel as you dive in, go back or switch panels.
+- **This branch** is now off by default (`sidestory.sidebar.thisBranch` turns it on), so the Sidestories view is for finding sidestories; when on, it shows a branch's sidestories as their hierarchy, each detail under its overview.
+- Comments say what they're about. In the editor, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> (or right-click → **Comment on These Lines**, now offered without a selection too) comments on the selected lines or the cursor's line. In the panel, <kbd>C</kbd> / <kbd>A</kbd> with text selected start the comment with it quoted, and Claude gets the step's title and the lines it explains.
 
 ## 0.2.8 (2026-10-28)
 

@@ -108,6 +108,27 @@ test('composer: C comments, A asks Claude with the intent; Ctrl/Cmd+Enter sends 
   expect(await posted(page)).toContainEqual({ type: 'commentCreate', step: 'interface', body: 'A note', toClaude: false });
 });
 
+test('C with text selected on the page starts the comment with that text quoted', async ({ page }) => {
+  await open(page);
+  const picked = await page.evaluate(() => {
+    const w = (document.querySelector('iframe.cx-content-frame') as HTMLIFrameElement).contentWindow!;
+    const p = w.document.querySelector('section p')!;
+    p.append(w.document.createTextNode(' hid\u200bden\u202e'));
+    w.getSelection()!.selectAllChildren(p);
+    return w.getSelection()!.toString().replace(/[\u200b\u202e]/g, '').trim();
+  });
+  expect(picked.length).toBeGreaterThan(0);
+  await page.locator('iframe.cx-content-frame').focus();
+  await page.keyboard.press('c');
+  const text = page.locator('.cx-c-composer textarea');
+  await expect(text).toBeFocused();
+  const value = await text.inputValue();
+  expect(value.startsWith('> ')).toBe(true);
+  expect(value).not.toMatch(/[\u200b\u202e]/); // characters the reader can't see are left out
+  expect(value.replace(/^> ?/gm, '').trim()).toBe(picked.split(/\r?\n/).map((l) => l.trimEnd()).join('\n'));
+  expect(await text.evaluate((t: HTMLTextAreaElement) => t.selectionStart)).toBe(value.length);
+});
+
 test('replying after a Claude reply defaults to Ask Claude; delivery lines and their actions', async ({ page }) => {
   await open(page);
   const t = thread();

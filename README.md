@@ -43,6 +43,7 @@ Big systems get an overview plus one sidestory per piece. From the overview you 
 There are a few ways to find what's been explained:
 
 - The **Sidestory icon** in the activity bar lists every sidestory, with overviews first (**Start here**) and their details under them.
+- **This Sidestory**, below the list, shows where you are: the way up, the details below and the ones beside it, one click each.
 - A **CodeLens** above explained code names the sidestory and step. Click it to open the page right there.
 - **Sidestory: Go to Step…** searches every step by title.
 
@@ -141,7 +142,7 @@ Add a `"base"` to a sidestory's manifest and it explains a branch: its steps cov
 
 ![Explaining a branch: as steps get written the changed files' badges go from not yet to partly to explained, tests and docs are marked trivial, and new code in an explained file gets a warning badge. This branch keeps the count](media/marketplace/branch-coverage.gif)
 
-- **This branch**, at the top of the Sidestories view, shows the totals. If nothing explains the branch yet, **Copy Prompt: Explain This Branch** gives you a prompt for your agent.
+- **This branch**, at the top of the Sidestories view once you turn on `sidestory.sidebar.thisBranch`, shows the totals. If nothing explains the branch yet, **Copy Prompt: Explain This Branch** gives you a prompt for your agent.
 - **Steps open the file itself**, with the step's lines highlighted. **Open Changes with Base**, in the editor title bar, switches to the diff at the same spot. To start in the diff instead, set `sidestory.changes.openStepsIn` to `"diff"`.
 - Right-click a change for **Copy Prompt: Explain This Change**, **Mark as Trivial…** (it asks why), or **Re-pin This Step** once you've updated a step whose code grew.
 - **Sidestory: Next Unexplained Change** (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>PageDown</kbd>, or <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Down</kbd> on macOS) walks through what's left. **Sidestory: Next Changed File** drops the <kbd>Shift</kbd>.
@@ -150,7 +151,7 @@ To pick the base yourself, run **Sidestory: Set Base…**. Otherwise Sidestory u
 
 ## Comments, and Ask Claude
 
-Comment on a step (<kbd>C</kbd> in the panel) or on code (**Sidestory: Comment on Selection**, or the gutter **+**). Threads stay on your machine in `.sidestory/.local/`, which git ignores, until you **Share** one. Sharing commits it with the sidestory.
+Comment on a step (<kbd>C</kbd> in the panel) or on code (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, right-click → **Comment on These Lines**, or the gutter **+**). Threads stay on your machine in `.sidestory/.local/`, which git ignores, until you **Share** one. Sharing commits it with the sidestory.
 
 **Ask Claude** (<kbd>A</kbd>) sends your comment to a running Claude Code session, and Claude replies in the thread. To set it up, run `/plugin install sidestory-comments@sidestory`, then start Claude with the command that **Sidestory: Copy Claude Command with Comments** copies. For Codex, Cursor and other MCP clients, use **Sidestory: Copy MCP Server Config**. There's more in [Comments and Claude](docs/GUIDE.md#comments-and-claude).
 
@@ -181,7 +182,7 @@ These are the commands you'll use most. They're all in the Command Palette.
 | **Sidestory: Pin Anchors to the Current Code** | Record each section's code, so it can follow edits. |
 | **Sidestory: Re-anchor Section to Selection** | Point a section at the selected code. |
 | **Sidestory: Check Widgets** | Check the open page's widgets now. |
-| **Sidestory: Comment on Selection** / **Ask Claude About Selection** | Comment on lines, or ask Claude about them. |
+| **Sidestory: Comment on These Lines** (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>) / **Ask Claude About These Lines** | Comment on the selected lines (or the cursor's line), or ask Claude about them. Also in the editor's right-click menu. |
 | **Sidestory: Set Base…** | Choose the branch to compare with. |
 | **Sidestory: Revoke Widget Consent** | Forget that you agreed to run this workspace's widgets. |
 
